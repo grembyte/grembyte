@@ -1,0 +1,21 @@
+# Ignore virtual environments
+.venv/
+venv/
+ENV/
+
+# Ignore VS Code settings
+.vscode
+
+# Python backup files
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Sensible files, database, logs
+.env*
+logs/
+instance/

@@ -1,0 +1,12 @@
+capstone==5.0.9
+frida==17.15.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
+numpy==2.4.6
+psutil==7.2.2
+pyelftools==0.33
+Pygments==2.20.0
+PyQt6==6.11.0
+PyQt6-Qt6==6.11.1
+PyQt6_sip==13.11.1
+rich==15.0.0
