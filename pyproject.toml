@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "hermes-hook"
+version = "0.1.0"
+description = "Linux memory scanner, hook engine and reverse engineering tool"
+requires-python = ">=3.11"
+dependencies = [
+    "frida",
+    "capstone",
+    "pyelftools",
+    "psutil",
+    "numpy",
+    "rich",
+    "PyQt6",
+    "sqlalchemy",
+    "alembic",
+]
+
+[project.scripts]
+hermes = "hermes.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
