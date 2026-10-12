@@ -5,16 +5,18 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QSplitter, QTableWidget, QTableWidgetItem, QLabel,
     QPushButton, QLineEdit, QComboBox, QGroupBox,
     QHeaderView, QStatusBar, QToolBar, QDialog,
-    QListWidget, QAbstractItemView,
-    QMessageBox, QFrame,
+    QAbstractItemView,
+    QMessageBox, QFrame, QProgressBar,
 )
-from PyQt6.QtCore import Qt, QSize  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import Qt, QSize, QTimer  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
 
 from hermes.ui.localization import load_translations
 from hermes.ui.styles.styles import STYLE
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.process_list import ProcessSelectDialog
+from hermes.core.scanner import ScanWorker, ValueRefreshWorker
+from hermes.core.memory import write_process_value
 
 
 # ---------------------------------------------------------------------------
@@ -79,10 +81,17 @@ class MainWindow(QMainWindow):
 
         self._current_pid = None
         self._current_proc = self.translations["app.no_process"]
+        self._scan_results = []
+        self._scan_worker = None
+        self._scan_failed = False
+        self._refresh_worker = None
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(1000)
+        self._refresh_timer.timeout.connect(self._refresh_memory_values)
 
         # Initialize UI attributes assigned in builder methods.
         self.lbl_result_count = None
-        self.result_list = None
+        self.result_table = None
         self.combo_type = None
         self.combo_scan_type = None
         self.input_value = None
@@ -92,6 +101,7 @@ class MainWindow(QMainWindow):
         self.btn_next_scan = None
         self.btn_reset = None
         self.lbl_scan_status = None
+        self.progress_scan = None
         self.addr_table = None
 
         self._build_toolbar()
@@ -171,11 +181,23 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(ctrl)
 
-        self.result_list = QListWidget()
-        self.result_list.setAlternatingRowColors(True)
-        self.result_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.result_list.doubleClicked.connect(self._add_selected_to_table)
-        layout.addWidget(self.result_list)
+        self.result_table = QTableWidget(0, 3)
+        self.result_table.setHorizontalHeaderLabels([
+            self.translations["address_table.address"],
+            self.translations["address_table.type"],
+            self.translations["address_table.value"],
+        ])
+        header = self.result_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.result_table.setAlternatingRowColors(True)
+        self.result_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.result_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.result_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.result_table.verticalHeader().setVisible(False)
+        self.result_table.doubleClicked.connect(self._add_selected_to_table)
+        layout.addWidget(self.result_table)
 
         return box
 
@@ -190,7 +212,11 @@ class MainWindow(QMainWindow):
         # Data type selector
         layout.addWidget(QLabel(self.translations["search.datatype"]))
         self.combo_type = QComboBox()
-        self.combo_type.addItems(["int32", "int64", "float", "double"])
+        for value_type in ("int32", "int64", "float", "double"):
+            self.combo_type.addItem(value_type, value_type)
+        self.combo_type.addItem(
+            self.translations["search.auto_type"], "auto"
+        )
         layout.addWidget(self.combo_type)
 
         # Scan mode
@@ -251,6 +277,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.btn_reset)
 
         layout.addStretch()
+
+        self.progress_scan = QProgressBar()
+        self.progress_scan.setRange(0, 100)
+        self.progress_scan.setValue(0)
+        self.progress_scan.setVisible(False)
+        layout.addWidget(self.progress_scan)
 
         # Status label
         self.lbl_scan_status = QLabel(self.translations["search.ready"])
@@ -380,27 +412,222 @@ class MainWindow(QMainWindow):
             )
             return
         value = self.input_value.text().strip()
-        vtype = self.combo_type.currentText()
-        scan_mode = self.combo_scan_type.currentText()
+        vtype = self.combo_type.currentData()
+        scan_mode = self.combo_scan_type.currentData()
+        value2 = self.input_value2.text().strip()
+        if vtype == "auto" and scan_mode not in {
+            "exact", "greater_than", "less_than", "between"
+        }:
+            QMessageBox.warning(
+                self,
+                self.translations["search.auto_type"],
+                self.translations["search.auto_type_requires_value"],
+            )
+            return
         self.lbl_scan_status.setText(
             self.translations["search.scanning"].format(
-                type=vtype, mode=scan_mode, value=value
+                type=self.combo_type.currentText(),
+                mode=self.combo_scan_type.currentText(),
+                value=value,
             )
         )
-        self.btn_next_scan.setEnabled(True)
-        self.btn_reset.setEnabled(True)
-        self.btn_first_scan.setEnabled(False)
-        # Pending: start a ScanWorker thread and populate result_list.
+        self.result_table.setRowCount(0)
+        self._scan_results = []
+        self._start_scan_worker(
+            self._current_pid, vtype, scan_mode, value, value2
+        )
 
     def _next_scan(self):
         value = self.input_value.text().strip()
+        vtype = self.combo_type.currentData()
+        scan_mode = self.combo_scan_type.currentData()
+        value2 = self.input_value2.text().strip()
         self.lbl_scan_status.setText(
             self.translations["search.refining"].format(value=value)
         )
-        # Pending: run a follow-up scan on existing addresses.
+        self._start_scan_worker(
+            self._current_pid,
+            vtype,
+            scan_mode,
+            value,
+            value2,
+            self._scan_results,
+        )
+
+    def _start_scan_worker(
+        self, pid, value_type, scan_mode, value, value2="", previous_results=None
+    ):
+        self._refresh_timer.stop()
+        self._scan_failed = False
+        self.btn_first_scan.setEnabled(False)
+        self.btn_next_scan.setEnabled(False)
+        self.btn_reset.setEnabled(False)
+        self.progress_scan.setValue(0)
+        self.progress_scan.setVisible(True)
+        self._scan_worker = ScanWorker(
+            pid,
+            value_type,
+            scan_mode,
+            value,
+            value2,
+            previous_results,
+            self,
+        )
+        self._scan_worker.results_ready.connect(self._on_scan_results)
+        self._scan_worker.scan_failed.connect(self._on_scan_failed)
+        self._scan_worker.scan_cancelled.connect(self._on_scan_cancelled)
+        self._scan_worker.progress_changed.connect(self.progress_scan.setValue)
+        self._scan_worker.finished.connect(self._on_scan_worker_finished)
+        self._scan_worker.start()
+
+    def _on_scan_results(self, results):
+        self._scan_results = results
+        self.result_table.setUpdatesEnabled(False)
+        self.result_table.setRowCount(len(results))
+        for row, result in enumerate(results):
+            address_item = QTableWidgetItem(f"0x{result['address']:X}")
+            address_item.setData(Qt.ItemDataRole.UserRole, {
+                "address": f"0x{result['address']:X}",
+                "address_value": result["address"],
+                "type": result["type"],
+                "value": str(result["value"]),
+            })
+            self.result_table.setItem(row, 0, address_item)
+            self.result_table.setItem(row, 1, QTableWidgetItem(result["type"]))
+            self.result_table.setItem(row, 2, QTableWidgetItem(str(result["value"])))
+        self.result_table.setUpdatesEnabled(True)
+        self.lbl_result_count.setText(
+            self.translations["results.count"].format(count=len(results))
+        )
+
+    def _on_scan_failed(self, message):
+        self._scan_failed = True
+        self.lbl_scan_status.setText(message)
+
+    def _on_scan_cancelled(self):
+        self.lbl_scan_status.setText(self.translations["search.ready"])
+
+    def _on_scan_worker_finished(self):
+        self.btn_first_scan.setEnabled(self._current_pid is not None)
+        has_results = bool(self._scan_results)
+        self.btn_next_scan.setEnabled(has_results)
+        self.btn_reset.setEnabled(has_results)
+        self.progress_scan.setVisible(False)
+        if not self._scan_failed:
+            self.lbl_scan_status.setText(self.translations["search.ready"])
+        self._scan_worker.deleteLater()
+        self._scan_worker = None
+        if self._current_pid is not None and self._has_refresh_targets():
+            self._refresh_timer.start()
+
+    def _has_refresh_targets(self):
+        return self.result_table.rowCount() > 0 or self.addr_table.rowCount() > 0
+
+    def _visible_result_rows(self):
+        first_row = self.result_table.rowAt(0)
+        if first_row < 0:
+            return range(0)
+        last_row = self.result_table.rowAt(self.result_table.viewport().height() - 1)
+        if last_row < first_row:
+            last_row = self.result_table.rowCount() - 1
+        return range(first_row, last_row + 1)
+
+    def _refresh_memory_values(self):
+        if self._current_pid is None or self._refresh_worker is not None:
+            return
+
+        entries = {}
+        for row in self._visible_result_rows():
+            item = self.result_table.item(row, 0)
+            metadata = item.data(Qt.ItemDataRole.UserRole) if item else None
+            if metadata:
+                address = metadata["address_value"]
+                entries[address] = {"address": address, "type": metadata["type"]}
+
+        for row in range(self.addr_table.rowCount()):
+            try:
+                address = int(self.addr_table.item(row, 1).text(), 0)
+                value_type = self.addr_table.item(row, 2).text()
+            except (AttributeError, ValueError):
+                continue
+            entries[address] = {"address": address, "type": value_type}
+
+        if not entries:
+            return
+
+        self._refresh_worker = ValueRefreshWorker(
+            self._current_pid,
+            list(entries.values()),
+            self,
+        )
+        self._refresh_worker.values_ready.connect(self._on_refreshed_values)
+        self._refresh_worker.refresh_failed.connect(self._on_refresh_failed)
+        self._refresh_worker.finished.connect(self._on_refresh_worker_finished)
+        self._refresh_worker.start()
+
+    def _on_refreshed_values(self, values):
+        for row in self._visible_result_rows():
+            item = self.result_table.item(row, 0)
+            metadata = item.data(Qt.ItemDataRole.UserRole) if item else None
+            if metadata and metadata["address_value"] in values:
+                self.result_table.item(row, 2).setText(
+                    str(values[metadata["address_value"]])
+                )
+
+        for row in range(self.addr_table.rowCount()):
+            try:
+                address = int(self.addr_table.item(row, 1).text(), 0)
+            except (AttributeError, ValueError):
+                continue
+            if address in values:
+                self.addr_table.item(row, 3).setText(str(values[address]))
+
+    def _on_refresh_failed(self, message):
+        self._refresh_timer.stop()
+        self.lbl_scan_status.setText(message)
+
+    def _on_refresh_worker_finished(self):
+        worker = self.sender()
+        if worker is self._refresh_worker:
+            worker.deleteLater()
+            self._refresh_worker = None
+
+    def closeEvent(self, event):
+        self._refresh_timer.stop()
+        worker = self._scan_worker
+        if worker is not None and worker.isRunning():
+            answer = QMessageBox.question(
+                self,
+                self.translations["search.close_scan_title"],
+                self.translations["search.close_scan_message"],
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                if self._has_refresh_targets():
+                    self._refresh_timer.start()
+                event.ignore()
+                return
+
+            self.lbl_scan_status.setText(
+                self.translations["search.canceling"]
+            )
+            worker.requestInterruption()
+
+        refresh_worker = self._refresh_worker
+        if refresh_worker is not None and refresh_worker.isRunning():
+            refresh_worker.requestInterruption()
+            refresh_worker.wait()
+        if worker is not None and worker.isRunning():
+            worker.wait()
+
+        event.accept()
 
     def _reset_scan(self):
-        self.result_list.clear()
+        if self._scan_worker is not None and self._scan_worker.isRunning():
+            return
+        self.result_table.setRowCount(0)
+        self._scan_results = []
         self.lbl_result_count.setText(self.translations["results.count"].format(count=0))
         self.lbl_scan_status.setText(self.translations["search.ready"])
         self.btn_first_scan.setEnabled(True)
@@ -409,7 +636,12 @@ class MainWindow(QMainWindow):
 
     def _add_selected_to_table(self):
         """Add selected scan result entries to the address table."""
-        for item in self.result_list.selectedItems():
+        selected_rows = {
+            index.row()
+            for index in self.result_table.selectionModel().selectedRows()
+        }
+        for row in selected_rows:
+            item = self.result_table.item(row, 0)
             data = item.data(Qt.ItemDataRole.UserRole)
             if data:
                 self._add_address_row(
@@ -429,13 +661,29 @@ class MainWindow(QMainWindow):
         cur = self.addr_table.item(row, 3).text()
         dlg = ValueInputDialog(addr, cur, vtype, self, self.translations)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.new_value:
-            self.addr_table.item(row, 3).setText(dlg.new_value)
+            try:
+                written_value = write_process_value(
+                    self._current_pid,
+                    int(addr, 0),
+                    dlg.new_value,
+                    vtype,
+                )
+            except (OSError, ValueError) as error:
+                QMessageBox.warning(
+                    self,
+                    self.translations["warning.write_failed_title"],
+                    self.translations["warning.write_failed_message"].format(
+                        error=error
+                    ),
+                )
+                return
+
+            self.addr_table.item(row, 3).setText(str(written_value))
             self.lbl_status.setText(
                 self.translations["status.written"].format(
-                    address=addr, value=dlg.new_value
+                    address=addr, value=written_value
                 )
             )
-            # Pending: implement memory.write(pid, addr, dlg.new_value, vtype).
 
     def _toggle_freeze(self):
         row = self.addr_table.currentRow()

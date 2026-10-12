@@ -26,6 +26,8 @@
   "results.add_tooltip": "Add selected address to the table below",
   "search.title": "Value search",
   "search.datatype": "Data type",
+  "search.auto_type": "Guess automatically",
+  "search.auto_type_requires_value": "Automatic type guessing requires a value or range for the first scan.",
   "search.scan_type": "Scan type",
   "search.exact": "Exact value",
   "search.greater_than": "Greater than",
@@ -44,6 +46,9 @@
   "search.ready": "Ready.",
   "search.scanning": "Scanning … [{type}] {mode} = {value}",
   "search.refining": "Refining search … value = {value}",
+  "search.close_scan_title": "Scan in progress",
+  "search.close_scan_message": "A scan is still running. Cancel it and close the window?",
+  "search.canceling": "Canceling scan …",
   "address_table.title": "Tracked addresses",
   "address_table.description": "Description",
   "address_table.address": "Address",
@@ -59,5 +64,7 @@
   "status.no_process_attached": "No process attached",
   "warning.no_process_title": "No process",
   "warning.select_process": "Select a process first.",
+  "warning.write_failed_title": "Write failed",
+  "warning.write_failed_message": "Could not write the value to process memory:\n{error}",
   "status.written": "Written: {address} = {value}"
 }

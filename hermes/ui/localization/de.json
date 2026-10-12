@@ -26,6 +26,8 @@
   "results.add_tooltip": "Markierte Adresse in die untere Tabelle übernehmen",
   "search.title": "Wertsuche",
   "search.datatype": "Datentyp",
+  "search.auto_type": "Automatisch raten",
+  "search.auto_type_requires_value": "Für die automatische Typauswahl muss der erste Scan einen Suchwert oder Wertebereich verwenden.",
   "search.scan_type": "Scan-Art",
   "search.exact": "Exakter Wert",
   "search.greater_than": "Größer als",
@@ -44,6 +46,9 @@
   "search.ready": "Bereit.",
   "search.scanning": "Scanne … [{type}] {mode} = {value}",
   "search.refining": "Verfeinere Suche … Wert = {value}",
+  "search.close_scan_title": "Scan läuft",
+  "search.close_scan_message": "Der Scan läuft noch. Abbrechen und Fenster schließen?",
+  "search.canceling": "Breche Scan ab …",
   "address_table.title": "Gemerkte Adressen",
   "address_table.description": "Beschreibung",
   "address_table.address": "Adresse",
@@ -59,5 +64,7 @@
   "status.no_process_attached": "Kein Prozess angehängt",
   "warning.no_process_title": "Kein Prozess",
   "warning.select_process": "Bitte zuerst einen Prozess auswählen.",
+  "warning.write_failed_title": "Schreiben fehlgeschlagen",
+  "warning.write_failed_message": "Der Wert konnte nicht in den Prozessspeicher geschrieben werden:\n{error}",
   "status.written": "Geschrieben: {address} = {value}"
 }
