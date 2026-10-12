@@ -3,15 +3,14 @@
 from pathlib import Path
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import sessionmaker
+
+from hermes.db.base import Base
 
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "hermes.db"
 
 engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 SESSION_LOCAL = sessionmaker(bind=engine)
-
-class Base(DeclarativeBase): # pylint: disable=R0903
-    """Base class"""
 
 def init_db():
     """Create all tables defined in the ORM models (idempotent)."""

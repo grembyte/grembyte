@@ -1,10 +1,11 @@
 """Address ORM model."""
 
 from sqlalchemy import Column, Integer, String, Float
-from hermes.db.engine import Base
+
+from hermes.db.base import Base
 
 
-class Address(Base):
+class Address(Base):  # pylint: disable=too-few-public-methods
     """A memory address entry tracked by the scanner."""
 
     __tablename__ = "addresses"

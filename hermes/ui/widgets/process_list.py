@@ -2,18 +2,22 @@
 
 import psutil
 
-from hermes.ui.localization import load_translations
-
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
-    QDialog, QVBoxLayout, QHBoxLayout,
+    QDialog, QVBoxLayout,
     QTableWidget, QTableWidgetItem, QLineEdit,
-    QPushButton, QHeaderView, QAbstractItemView, QMessageBox,
+    QHeaderView, QAbstractItemView, QMessageBox,
 )
 from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
+
+from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.localization import load_translations
 
 
 class ProcessSelectDialog(QDialog):
     """Lists running processes and lets the user select one."""
+
+    # Dialog behavior is exposed through Qt signals rather than public methods.
+    # pylint: disable=too-few-public-methods
 
     def __init__(self, parent=None, translations=None):
         super().__init__(parent)
@@ -51,16 +55,9 @@ class ProcessSelectDialog(QDialog):
         layout.addWidget(self.list)
 
         # Buttons
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_cancel = QPushButton(self.translations["button.cancel"])
-        btn_cancel.clicked.connect(self.reject)
-        btn_ok = QPushButton(self.translations["process.attach"])
-        btn_ok.setObjectName("btn_primary")
-        btn_ok.clicked.connect(self._accept)
-        btn_row.addWidget(btn_cancel)
-        btn_row.addWidget(btn_ok)
-        layout.addLayout(btn_row)
+        layout.addLayout(dialog_button_row(
+            self.translations, "process.attach", self._accept, self.reject
+        ))
 
     def _load_processes(self):
         """Loads the process list via psutil."""

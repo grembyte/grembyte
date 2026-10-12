@@ -206,6 +206,9 @@ ATTR_DEFS = [
 class Character:
     """Spieler-Charakter mit abgeleiteten Werten."""
 
+    # A character stores both primary and derived game state.
+    # pylint: disable=too-many-instance-attributes
+
     def __init__(self):
         # Primärattribute (5–18)
         self.staerke           = 10
@@ -221,9 +224,10 @@ class Character:
         self.xp    = 0
         self.xp_next = 100
 
-        self._recalc()
+        self.recalculate()
 
-    def _recalc(self):
+    def recalculate(self):
+        """Update derived health and mana limits from the primary attributes."""
         self.max_hp   = 20 + self.gesundheit * 3 + self.ausdauer * 2
         self.max_mana = 10 + self.mana * 3 + self.intelligenz * 2
         # Kap auf aktuelle Werte
@@ -233,18 +237,22 @@ class Character:
     # Abgeleitete Kampfwerte
     @property
     def angriff(self):
+        """Return the character's weapon damage bonus."""
         return self.staerke // 3 + 2               # Waffe: 1d6 + angriff
 
     @property
     def ruestung(self):
+        """Return the character's damage reduction."""
         return max(0, self.wachsamkeit // 4)       # Schadensreduzierung
 
     @property
     def zauberschaden(self):
+        """Return the character's spell damage bonus."""
         return self.intelligenz // 3 + 3           # Feuerball: 1d8 + zauberschaden
 
     @property
     def ausweichen(self):
+        """Return the character's dodge threshold."""
         return self.geschicklichkeit // 4          # Ausweichchance in %*5
 
     def gain_xp(self, amount: int) -> bool:
@@ -276,7 +284,14 @@ class GiantRat:
 
     @property
     def name(self):
-        prefix = {1: "Gewöhnliche", 2: "Große", 3: "Riesige", 4: "Uralte"}.get(self.level, "Legendäre")
+        """Return the rat's level-appropriate display name."""
+        prefixes = {
+            1: "Gewöhnliche",
+            2: "Große",
+            3: "Riesige",
+            4: "Uralte",
+        }
+        prefix = prefixes.get(self.level, "Legendäre")
         return f"{prefix} Riesenratte"
 
     def attack(self, player: Character) -> tuple[int, str]:
@@ -298,6 +313,8 @@ class GiantRat:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class AttrRow(QWidget):
+    """Widget containing one primary attribute and its modifier indicator."""
+
     changed = pyqtSignal()
 
     def __init__(self, icon: str, label: str, parent=None):
@@ -322,17 +339,21 @@ class AttrRow(QWidget):
         self.spin.valueChanged.connect(self.changed.emit)
         lay.addWidget(self.spin)
 
-        self.bar = QProgressBar()
-        self.bar.setRange(5, 18)
-        self.bar.setValue(10)
-        self.bar.setTextVisible(False)
-        self.bar.setFixedHeight(8)
-        self.bar.setStyleSheet(f"""
-            QProgressBar {{ border: 1px solid {BORDER}; background: {BG_LIGHT}; border-radius:2px; }}
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(5, 18)
+        self.progress_bar.setValue(10)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(8)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                border: 1px solid {BORDER};
+                background: {BG_LIGHT};
+                border-radius: 2px;
+            }}
             QProgressBar::chunk {{ background: {GOLD}; border-radius:2px; }}
         """)
-        self.spin.valueChanged.connect(self.bar.setValue)
-        lay.addWidget(self.bar, 1)
+        self.spin.valueChanged.connect(self.progress_bar.setValue)
+        lay.addWidget(self.progress_bar, 1)
 
         self.mod_lbl = QLabel("+0")
         self.mod_lbl.setFixedWidth(30)
@@ -343,13 +364,18 @@ class AttrRow(QWidget):
     def _update_mod(self, v):
         mod = (v - 10) // 2
         self.mod_lbl.setText(f"{mod:+d}")
-        self.mod_lbl.setStyleSheet(f"color: {'#58d68d' if mod > 0 else RED if mod < 0 else GRAY}; font-size:11px;")
+        color = "#58d68d" if mod > 0 else RED if mod < 0 else GRAY
+        self.mod_lbl.setStyleSheet(
+            f"color: {color}; font-size:11px;"
+        )
 
     @property
     def value(self):
+        """Return the selected attribute value."""
         return self.spin.value()
 
     def set_value(self, v):
+        """Set the selected attribute value."""
         self.spin.setValue(v)
 
 
@@ -357,7 +383,11 @@ class AttrRow(QWidget):
 # Haupt-Fenster
 # ──────────────────────────────────────────────────────────────────────────────
 
-class TestApp(QMainWindow):
+class GameWindow(QMainWindow):
+    """Interactive RPG demo window used as a memory-scanner target."""
+
+    # UI state is initialized by the dedicated Qt widget-builder methods.
+    # pylint: disable=attribute-defined-outside-init,too-few-public-methods,too-many-instance-attributes
 
     def __init__(self):
         super().__init__()
@@ -418,11 +448,13 @@ class TestApp(QMainWindow):
         header.addWidget(lbl_range)
         lay.addLayout(header)
 
-        div = QFrame(); div.setObjectName("divider"); div.setFrameShape(QFrame.Shape.HLine)
+        div = QFrame()
+        div.setObjectName("divider")
+        div.setFrameShape(QFrame.Shape.HLine)
         lay.addWidget(div)
 
         self.attr_rows = {}
-        for key, label, short, icon in ATTR_DEFS:
+        for key, label, _, icon in ATTR_DEFS:
             row = AttrRow(icon, label)
             row.changed.connect(self._on_attr_changed)
             lay.addWidget(row)
@@ -438,7 +470,7 @@ class TestApp(QMainWindow):
         return box
 
     # ── Charakter-Anzeige (rechts) ───────────────
-    def _build_char_display(self):
+    def _build_char_display(self):  # pylint: disable=too-many-statements
         box = QGroupBox("Charakterblatt")
         lay = QVBoxLayout(box)
         lay.setSpacing(8)
@@ -454,7 +486,9 @@ class TestApp(QMainWindow):
         name_row.addWidget(self.lbl_level)
         lay.addLayout(name_row)
 
-        div = QFrame(); div.setObjectName("divider"); div.setFrameShape(QFrame.Shape.HLine)
+        div = QFrame()
+        div.setObjectName("divider")
+        div.setFrameShape(QFrame.Shape.HLine)
         lay.addWidget(div)
 
         # HP & Mana Balken
@@ -477,7 +511,7 @@ class TestApp(QMainWindow):
         bars.addWidget(self.mana_bar, 1, 1)
         self.lbl_mana = QLabel()
         self.lbl_mana.setObjectName("stat_val")
-        self.lbl_mana.setStyleSheet(f"color: #5dade2; font-size:16px; font-weight:bold;")
+        self.lbl_mana.setStyleSheet("color: #5dade2; font-size:16px; font-weight:bold;")
         bars.addWidget(self.lbl_mana, 1, 2)
 
         bars.addWidget(QLabel("✧  Erfahrung"), 2, 0)
@@ -488,7 +522,9 @@ class TestApp(QMainWindow):
 
         lay.addLayout(bars)
 
-        div2 = QFrame(); div2.setObjectName("divider"); div2.setFrameShape(QFrame.Shape.HLine)
+        div2 = QFrame()
+        div2.setObjectName("divider")
+        div2.setFrameShape(QFrame.Shape.HLine)
         lay.addWidget(div2)
 
         # Abgeleitete Kampfwerte
@@ -521,7 +557,7 @@ class TestApp(QMainWindow):
         return box
 
     # ── Kampf-Panel (unten) ──────────────────────
-    def _build_combat_panel(self):
+    def _build_combat_panel(self):  # pylint: disable=too-many-statements
         box = QGroupBox("Rundenbasierter Kampf")
         lay  = QVBoxLayout(box)
         lay.setSpacing(8)
@@ -613,7 +649,7 @@ class TestApp(QMainWindow):
     def _read_attrs_into_char(self):
         for key, _, _, _ in ATTR_DEFS:
             setattr(self.char, key, self.attr_rows[key].value)
-        self.char._recalc()
+        self.char.recalculate()
 
     def _sync_from_char(self):
         c = self.char
@@ -634,7 +670,9 @@ class TestApp(QMainWindow):
 
         self._derived_labels["angriff"].setText(f"+{c.angriff}  (1W6+{c.angriff})")
         self._derived_labels["ruestung"].setText(f"{c.ruestung} Punkte")
-        self._derived_labels["zauberschaden"].setText(f"+{c.zauberschaden}  (1W8+{c.zauberschaden})")
+        self._derived_labels["zauberschaden"].setText(
+            f"+{c.zauberschaden}  (1W8+{c.zauberschaden})"
+        )
         self._derived_labels["ausweichen"].setText(f"{c.ausweichen * 5} %")
         self._derived_labels["max_hp"].setText(str(c.max_hp))
         self._derived_labels["max_mana"].setText(str(c.max_mana))
@@ -690,10 +728,13 @@ class TestApp(QMainWindow):
 
         self._sync_from_char()
         self.combat_log.clear()
-        self._log(f"━━━  Neuer Kampf  ━━━", GOLD)
-        self._log(f"Eine {self.rat.name} erscheint! "
-                  f"(HP: {self.rat.max_hp}, Angriff: {self.rat.atk})", RAT_COL)
-        self._log(f"Dein Zug, Abenteurer!", AMBER)
+        self._log("━━━  Neuer Kampf  ━━━", GOLD)
+        self._log(
+            f"Eine {self.rat.name} erscheint! "
+            f"(HP: {self.rat.max_hp}, Angriff: {self.rat.atk})",
+            RAT_COL,
+        )
+        self._log("Dein Zug, Abenteurer!", AMBER)
         self._set_combat_buttons(True)
 
     def _set_combat_buttons(self, enabled: bool):
@@ -727,7 +768,7 @@ class TestApp(QMainWindow):
         self._log(f"  [{self.rat.name} greift an]", RAT_COL)
         dmg, msg = self.rat.attack(self.char)
         if dmg == 0:
-            self._log(f"  Du weichst dem Angriff aus!", GREEN)
+            self._log("  Du weichst dem Angriff aus!", GREEN)
         else:
             self._log(f"  {msg}", RED)
         self._sync_from_char()
@@ -749,7 +790,11 @@ class TestApp(QMainWindow):
         dmg    = max(1, total - armor)
         self.rat.hp = max(0, self.rat.hp - dmg)
 
-        self._log(f"Du schlägst mit der Waffe: W6({roll}) + {bonus} – {armor} (Rüstung) = {dmg} Schaden", AMBER)
+        self._log(
+            f"Du schlägst mit der Waffe: W6({roll}) + {bonus} – {armor} "
+            f"(Rüstung) = {dmg} Schaden",
+            AMBER,
+        )
         self._sync_rat()
 
         if not self._check_combat_end():
@@ -803,6 +848,6 @@ class TestApp(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    win = TestApp()
+    win = GameWindow()
     win.show()
     sys.exit(app.exec())

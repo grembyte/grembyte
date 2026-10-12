@@ -9,6 +9,7 @@ hermes/core/pointer.py
 hermes/core/process.py
 hermes/core/scanner.py
 hermes/db/__init__.py
+hermes/db/base.py
 hermes/db/engine.py
 hermes/db/models/__init__.py
 hermes/db/models/address.py
@@ -23,6 +24,7 @@ hermes/ui/localization/de.json
 hermes/ui/localization/en.json
 hermes/ui/styles/__init__.py
 hermes/ui/styles/styles.py
+hermes/ui/widgets/dialog_buttons.py
 hermes/ui/widgets/process_list.py
 hermes_hook.egg-info/PKG-INFO
 hermes_hook.egg-info/SOURCES.txt

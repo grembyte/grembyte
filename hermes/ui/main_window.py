@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QSplitter, QTableWidget, QTableWidgetItem, QLabel,
     QPushButton, QLineEdit, QComboBox, QGroupBox,
     QHeaderView, QStatusBar, QToolBar, QDialog,
-    QListWidget, QListWidgetItem, QAbstractItemView,
+    QListWidget, QAbstractItemView,
     QMessageBox, QFrame,
 )
 from PyQt6.QtCore import Qt, QSize  # pylint: disable=import-error,no-name-in-module
@@ -13,6 +13,7 @@ from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
 
 from hermes.ui.localization import load_translations
 from hermes.ui.styles.styles import STYLE
+from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 
 
@@ -20,6 +21,8 @@ from hermes.ui.widgets.process_list import ProcessSelectDialog
 # Dialog: edit value
 # ---------------------------------------------------------------------------
 class ValueInputDialog(QDialog):
+    # Dialogs expose behavior through Qt signals rather than public methods.
+    # pylint: disable=too-few-public-methods
     """Simple dialog for entering a new value for a tracked address."""
 
     def __init__(self, address: str, current_value: str, value_type: str,
@@ -49,16 +52,9 @@ class ValueInputDialog(QDialog):
         self.input.setPlaceholderText(self.translations["value_dialog.placeholder"])
         layout.addWidget(self.input)
 
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_cancel = QPushButton(self.translations["button.cancel"])
-        btn_cancel.clicked.connect(self.reject)
-        btn_ok = QPushButton(self.translations["button.write"])
-        btn_ok.setObjectName("btn_primary")
-        btn_ok.clicked.connect(self._accept)
-        btn_row.addWidget(btn_cancel)
-        btn_row.addWidget(btn_ok)
-        layout.addLayout(btn_row)
+        layout.addLayout(dialog_button_row(
+            self.translations, "button.write", self._accept, self.reject
+        ))
 
     def _accept(self):
         self.new_value = self.input.text().strip()
@@ -69,6 +65,9 @@ class ValueInputDialog(QDialog):
 # Main Window
 # ---------------------------------------------------------------------------
 class MainWindow(QMainWindow):
+    """Main application window for scanning and managing addresses."""
+
+    # pylint: disable=too-many-instance-attributes,too-few-public-methods
 
     def __init__(self, language: str | None = None):
         super().__init__()
@@ -391,14 +390,14 @@ class MainWindow(QMainWindow):
         self.btn_next_scan.setEnabled(True)
         self.btn_reset.setEnabled(True)
         self.btn_first_scan.setEnabled(False)
-        # TODO: start ScanWorker thread and populate result_list.
+        # Pending: start a ScanWorker thread and populate result_list.
 
     def _next_scan(self):
         value = self.input_value.text().strip()
         self.lbl_scan_status.setText(
             self.translations["search.refining"].format(value=value)
         )
-        # TODO: run follow-up scan on existing addresses.
+        # Pending: run a follow-up scan on existing addresses.
 
     def _reset_scan(self):
         self.result_list.clear()
@@ -436,7 +435,7 @@ class MainWindow(QMainWindow):
                     address=addr, value=dlg.new_value
                 )
             )
-            # TODO: memory.write(pid, addr, dlg.new_value, vtype)
+            # Pending: implement memory.write(pid, addr, dlg.new_value, vtype).
 
     def _toggle_freeze(self):
         row = self.addr_table.currentRow()
@@ -450,7 +449,7 @@ class MainWindow(QMainWindow):
             if frozen else self.translations["address_table.yes"]
         )
         item.setForeground(QColor("#8b949e") if frozen else QColor("#58a6ff"))
-        # TODO: start/stop FreezeWorker thread.
+        # Pending: start or stop a FreezeWorker thread.
 
     def _remove_address(self):
         row = self.addr_table.currentRow()
