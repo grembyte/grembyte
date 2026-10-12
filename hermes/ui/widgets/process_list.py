@@ -2,6 +2,8 @@
 
 import psutil
 
+from hermes.ui.localization import load_translations
+
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QDialog, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QLineEdit,
@@ -13,9 +15,10 @@ from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
 class ProcessSelectDialog(QDialog):
     """Lists running processes and lets the user select one."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, translations=None):
         super().__init__(parent)
-        self.setWindowTitle("Prozess auswählen")
+        self.translations = translations or load_translations()
+        self.setWindowTitle(self.translations["process.dialog_title"])
         self.setMinimumSize(480, 400)
         self.selected_pid = None
         self.selected_name = None
@@ -28,13 +31,17 @@ class ProcessSelectDialog(QDialog):
 
         # Search bar
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Prozessname filtern …")
+        self.search_input.setPlaceholderText(self.translations["process.search_placeholder"])
         self.search_input.textChanged.connect(self._filter)
         layout.addWidget(self.search_input)
 
         # Process list
         self.list = QTableWidget(0, 3)
-        self.list.setHorizontalHeaderLabels(["PID", "Name", "Pfad"])
+        self.list.setHorizontalHeaderLabels([
+            self.translations["process.column_pid"],
+            self.translations["process.column_name"],
+            self.translations["process.column_path"],
+        ])
         self.list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.list.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -46,9 +53,9 @@ class ProcessSelectDialog(QDialog):
         # Buttons
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        btn_cancel = QPushButton("Abbrechen")
+        btn_cancel = QPushButton(self.translations["button.cancel"])
         btn_cancel.clicked.connect(self.reject)
-        btn_ok = QPushButton("Anhängen")
+        btn_ok = QPushButton(self.translations["process.attach"])
         btn_ok.setObjectName("btn_primary")
         btn_ok.clicked.connect(self._accept)
         btn_row.addWidget(btn_cancel)
@@ -72,7 +79,11 @@ class ProcessSelectDialog(QDialog):
             self._all_procs.sort(key=lambda x: x[1].lower())
             self._populate(self._all_procs)
         except ImportError:
-            QMessageBox.warning(self, "psutil fehlt", "pip install psutil")
+            QMessageBox.warning(
+                self,
+                self.translations["process.psutil_missing_title"],
+                self.translations["process.psutil_missing_message"],
+            )
 
     def _populate(self, procs):
         self.list.setRowCount(0)

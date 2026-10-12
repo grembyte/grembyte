@@ -1,20 +1,9 @@
-"""Hermes Hook - application entry point."""
+"""Compatibility entry point for running the application from the repository."""
 
-import sys
-
-from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
-
-from hermes.db.engine import init_db
-from hermes.ui.main_window import MainWindow
+from hermes.main import main
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    init_db()
-
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    win = MainWindow()
-    win.show()
-    sys.exit(app.exec())
+    raise SystemExit(main())

@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtCore import Qt, QSize  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
 
+from hermes.ui.localization import load_translations
 from hermes.ui.styles.styles import STYLE
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 
@@ -21,9 +22,11 @@ from hermes.ui.widgets.process_list import ProcessSelectDialog
 class ValueInputDialog(QDialog):
     """Simple dialog for entering a new value for a tracked address."""
 
-    def __init__(self, address: str, current_value: str, value_type: str, parent=None):
+    def __init__(self, address: str, current_value: str, value_type: str,
+                 parent=None, translations=None):
         super().__init__(parent)
-        self.setWindowTitle("Wert ändern")
+        self.translations = translations or load_translations()
+        self.setWindowTitle(self.translations["value_dialog.title"])
         self.setFixedSize(340, 160)
         self.new_value = None
         self._build_ui(address, current_value, value_type)
@@ -32,21 +35,25 @@ class ValueInputDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        info = QLabel(f"Adresse: <span style='color:#3fb950'>{address}</span>"
-                      f"  &nbsp;Typ: <span style='color:#f0883e'>{vtype}</span>")
+        info = QLabel(
+            f"{self.translations['value_dialog.address']}: "
+            f"<span style='color:#3fb950'>{address}</span>"
+            f"  &nbsp;{self.translations['value_dialog.type']}: "
+            f"<span style='color:#f0883e'>{vtype}</span>"
+        )
         info.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(info)
 
         self.input = QLineEdit(current)
         self.input.selectAll()
-        self.input.setPlaceholderText("Neuen Wert eingeben …")
+        self.input.setPlaceholderText(self.translations["value_dialog.placeholder"])
         layout.addWidget(self.input)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        btn_cancel = QPushButton("Abbrechen")
+        btn_cancel = QPushButton(self.translations["button.cancel"])
         btn_cancel.clicked.connect(self.reject)
-        btn_ok = QPushButton("Schreiben")
+        btn_ok = QPushButton(self.translations["button.write"])
         btn_ok.setObjectName("btn_primary")
         btn_ok.clicked.connect(self._accept)
         btn_row.addWidget(btn_cancel)
@@ -63,15 +70,16 @@ class ValueInputDialog(QDialog):
 # ---------------------------------------------------------------------------
 class MainWindow(QMainWindow):
 
-    def __init__(self):
+    def __init__(self, language: str | None = None):
         super().__init__()
-        self.setWindowTitle("hermes-hook  //  v0.1.0")
+        self.translations = load_translations(language)
+        self.setWindowTitle(self.translations["app.window_title"])
         self.setMinimumSize(1100, 700)
         self.resize(1280, 800)
         self.setStyleSheet(STYLE)
 
         self._current_pid = None
-        self._current_proc = "Kein Prozess"
+        self._current_proc = self.translations["app.no_process"]
 
         # Initialize UI attributes assigned in builder methods.
         self.lbl_result_count = None
@@ -95,19 +103,19 @@ class MainWindow(QMainWindow):
     # Toolbar
     # ------------------------------------------------------------------
     def _build_toolbar(self):
-        tb = QToolBar("Hauptleiste")
+        tb = QToolBar(self.translations["app.brand"])
         tb.setMovable(False)
         tb.setIconSize(QSize(16, 16))
         self.addToolBar(tb)
 
-        title = QLabel("⚡ hermes-hook")
+        title = QLabel(self.translations["app.brand"])
         title.setObjectName("lbl_title")
         title.setContentsMargins(8, 0, 16, 0)
         tb.addWidget(title)
 
         tb.addSeparator()
 
-        self.btn_process = QPushButton("⬡  Prozess auswählen")
+        self.btn_process = QPushButton(self.translations["process.select"])
         self.btn_process.clicked.connect(self._open_process_dialog)
         tb.addWidget(self.btn_process)
 
@@ -146,19 +154,19 @@ class MainWindow(QMainWindow):
     # Left panel: scan results
     # ------------------------------------------------------------------
     def _build_results_panel(self):
-        box = QGroupBox("Scan-Ergebnisse")
+        box = QGroupBox(self.translations["results.title"])
         layout = QVBoxLayout(box)
         layout.setSpacing(6)
 
         # Control bar above the list
         ctrl = QHBoxLayout()
-        self.lbl_result_count = QLabel("0 Treffer")
+        self.lbl_result_count = QLabel(self.translations["results.count"].format(count=0))
         self.lbl_result_count.setStyleSheet("color:#8b949e; font-size:11px;")
         ctrl.addWidget(self.lbl_result_count)
         ctrl.addStretch()
 
-        btn_add = QPushButton("+ Merken")
-        btn_add.setToolTip("Markierte Adresse in die untere Tabelle übernehmen")
+        btn_add = QPushButton(self.translations["results.add"])
+        btn_add.setToolTip(self.translations["results.add_tooltip"])
         btn_add.clicked.connect(self._add_selected_to_table)
         ctrl.addWidget(btn_add)
 
@@ -176,45 +184,49 @@ class MainWindow(QMainWindow):
     # Right panel: search
     # ------------------------------------------------------------------
     def _build_search_panel(self):
-        box = QGroupBox("Wertsuche")
+        box = QGroupBox(self.translations["search.title"])
         layout = QVBoxLayout(box)
         layout.setSpacing(10)
 
         # Data type selector
-        layout.addWidget(QLabel("Datentyp"))
+        layout.addWidget(QLabel(self.translations["search.datatype"]))
         self.combo_type = QComboBox()
         self.combo_type.addItems(["int32", "int64", "float", "double"])
         layout.addWidget(self.combo_type)
 
         # Scan mode
-        layout.addWidget(QLabel("Scan-Art"))
+        layout.addWidget(QLabel(self.translations["search.scan_type"]))
         self.combo_scan_type = QComboBox()
-        self.combo_scan_type.addItems([
-            "Exakter Wert",
-            "Größer als",
-            "Kleiner als",
-            "Zwischen",
-            "Unbekannter Startwert",
-            "Unveränderter Wert",
-            "Veränderter Wert",
-        ])
+        scan_modes = [
+            ("search.exact", "exact"),
+            ("search.greater_than", "greater_than"),
+            ("search.less_than", "less_than"),
+            ("search.between", "between"),
+            ("search.unknown_start", "unknown_start"),
+            ("search.unchanged", "unchanged"),
+            ("search.changed", "changed"),
+        ]
+        for text_key, mode in scan_modes:
+            self.combo_scan_type.addItem(self.translations[text_key], mode)
         layout.addWidget(self.combo_scan_type)
 
         # Value input
-        layout.addWidget(QLabel("Suchwert"))
+        layout.addWidget(QLabel(self.translations["search.value"]))
         self.input_value = QLineEdit()
-        self.input_value.setPlaceholderText("z. B. 1500")
+        self.input_value.setPlaceholderText(self.translations["search.value_placeholder"])
         layout.addWidget(self.input_value)
 
         # Second value (for "between" range scan)
-        self.lbl_value2 = QLabel("Bis-Wert")
+        self.lbl_value2 = QLabel(self.translations["search.upper_bound"])
         self.lbl_value2.setVisible(False)
         layout.addWidget(self.lbl_value2)
         self.input_value2 = QLineEdit()
-        self.input_value2.setPlaceholderText("z. B. 2000")
+        self.input_value2.setPlaceholderText(
+            self.translations["search.upper_bound_placeholder"]
+        )
         self.input_value2.setVisible(False)
         layout.addWidget(self.input_value2)
-        self.combo_scan_type.currentTextChanged.connect(self._toggle_second_value)
+        self.combo_scan_type.currentIndexChanged.connect(self._toggle_second_value)
 
         # Divider
         divider = QFrame()
@@ -223,17 +235,17 @@ class MainWindow(QMainWindow):
         layout.addWidget(divider)
 
         # Scan buttons
-        self.btn_first_scan = QPushButton("Erster Scan")
+        self.btn_first_scan = QPushButton(self.translations["search.first_scan"])
         self.btn_first_scan.setObjectName("btn_primary")
         self.btn_first_scan.clicked.connect(self._first_scan)
         layout.addWidget(self.btn_first_scan)
 
-        self.btn_next_scan = QPushButton("Nächster Scan")
+        self.btn_next_scan = QPushButton(self.translations["search.next_scan"])
         self.btn_next_scan.setEnabled(False)
         self.btn_next_scan.clicked.connect(self._next_scan)
         layout.addWidget(self.btn_next_scan)
 
-        self.btn_reset = QPushButton("Zurücksetzen")
+        self.btn_reset = QPushButton(self.translations["search.reset"])
         self.btn_reset.setObjectName("btn_danger")
         self.btn_reset.setEnabled(False)
         self.btn_reset.clicked.connect(self._reset_scan)
@@ -242,15 +254,15 @@ class MainWindow(QMainWindow):
         layout.addStretch()
 
         # Status label
-        self.lbl_scan_status = QLabel("Bereit.")
+        self.lbl_scan_status = QLabel(self.translations["search.ready"])
         self.lbl_scan_status.setStyleSheet("color:#8b949e; font-size:11px;")
         self.lbl_scan_status.setWordWrap(True)
         layout.addWidget(self.lbl_scan_status)
 
         return box
 
-    def _toggle_second_value(self, text):
-        visible = text == "Zwischen"
+    def _toggle_second_value(self, index):
+        visible = self.combo_scan_type.itemData(index) == "between"
         self.lbl_value2.setVisible(visible)
         self.input_value2.setVisible(visible)
 
@@ -258,17 +270,17 @@ class MainWindow(QMainWindow):
     # Bottom panel: tracked addresses
     # ------------------------------------------------------------------
     def _build_address_table(self):
-        box = QGroupBox("Gemerkte Adressen")
+        box = QGroupBox(self.translations["address_table.title"])
         layout = QVBoxLayout(box)
         layout.setSpacing(6)
 
         # Table toolbar
         ctrl = QHBoxLayout()
-        btn_write = QPushButton("✎  Wert schreiben")
+        btn_write = QPushButton(self.translations["address_table.write"])
         btn_write.clicked.connect(self._write_value)
-        btn_freeze = QPushButton("❄  Einfrieren")
+        btn_freeze = QPushButton(self.translations["address_table.freeze"])
         btn_freeze.clicked.connect(self._toggle_freeze)
-        btn_remove = QPushButton("✕  Entfernen")
+        btn_remove = QPushButton(self.translations["address_table.remove"])
         btn_remove.setObjectName("btn_danger")
         btn_remove.clicked.connect(self._remove_address)
         ctrl.addWidget(btn_write)
@@ -280,7 +292,13 @@ class MainWindow(QMainWindow):
         # Table
         self.addr_table = QTableWidget(0, 5)
         self.addr_table.setHorizontalHeaderLabels(
-            ["Beschreibung", "Adresse", "Typ", "Wert", "Eingefroren"]
+            [
+                self.translations["address_table.description"],
+                self.translations["address_table.address"],
+                self.translations["address_table.type"],
+                self.translations["address_table.value"],
+                self.translations["address_table.frozen"],
+            ]
         )
         hdr = self.addr_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -318,7 +336,11 @@ class MainWindow(QMainWindow):
         val_item.setFlags(val_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.addr_table.setItem(row, 3, val_item)
 
-        freeze_item = QTableWidgetItem("Ja" if frozen else "Nein")
+        freeze_item = QTableWidgetItem(
+            self.translations["address_table.yes"]
+            if frozen else self.translations["address_table.no"]
+        )
+        freeze_item.setData(Qt.ItemDataRole.UserRole, frozen)
         freeze_item.setForeground(QColor("#58a6ff") if frozen else QColor("#8b949e"))
         freeze_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         freeze_item.setFlags(freeze_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -330,30 +352,42 @@ class MainWindow(QMainWindow):
     def _build_statusbar(self):
         sb = QStatusBar()
         self.setStatusBar(sb)
-        self.lbl_status = QLabel("Kein Prozess angehängt")
+        self.lbl_status = QLabel(self.translations["status.no_process_attached"])
         sb.addWidget(self.lbl_status)
-        sb.addPermanentWidget(QLabel("hermes-hook v0.1.0  |  Linux x86-64"))
+        sb.addPermanentWidget(QLabel(self.translations["app.version_status"]))
 
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
     def _open_process_dialog(self):
-        dlg = ProcessSelectDialog(self)
+        dlg = ProcessSelectDialog(self, self.translations)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._current_pid = dlg.selected_pid
-            self._current_proc = f"{dlg.selected_name}  (PID {dlg.selected_pid})"
+            self._current_proc = self.translations["app.process_display"].format(
+                name=dlg.selected_name, pid=dlg.selected_pid
+            )
             self.lbl_proc_info.setText(f"  ⬢  {self._current_proc}")
-            self.lbl_status.setText(f"Angehängt: {self._current_proc}")
+            self.lbl_status.setText(
+                self.translations["app.process_attached"].format(process=self._current_proc)
+            )
             self.btn_first_scan.setEnabled(True)
 
     def _first_scan(self):
         if not self._current_pid:
-            QMessageBox.warning(self, "Kein Prozess", "Bitte zuerst einen Prozess auswählen.")
+            QMessageBox.warning(
+                self,
+                self.translations["warning.no_process_title"],
+                self.translations["warning.select_process"],
+            )
             return
         value = self.input_value.text().strip()
         vtype = self.combo_type.currentText()
         scan_mode = self.combo_scan_type.currentText()
-        self.lbl_scan_status.setText(f"Scanne … [{vtype}] {scan_mode} = {value}")
+        self.lbl_scan_status.setText(
+            self.translations["search.scanning"].format(
+                type=vtype, mode=scan_mode, value=value
+            )
+        )
         self.btn_next_scan.setEnabled(True)
         self.btn_reset.setEnabled(True)
         self.btn_first_scan.setEnabled(False)
@@ -361,13 +395,15 @@ class MainWindow(QMainWindow):
 
     def _next_scan(self):
         value = self.input_value.text().strip()
-        self.lbl_scan_status.setText(f"Verfeinere Suche … Wert = {value}")
+        self.lbl_scan_status.setText(
+            self.translations["search.refining"].format(value=value)
+        )
         # TODO: run follow-up scan on existing addresses.
 
     def _reset_scan(self):
         self.result_list.clear()
-        self.lbl_result_count.setText("0 Treffer")
-        self.lbl_scan_status.setText("Bereit.")
+        self.lbl_result_count.setText(self.translations["results.count"].format(count=0))
+        self.lbl_scan_status.setText(self.translations["search.ready"])
         self.btn_first_scan.setEnabled(True)
         self.btn_next_scan.setEnabled(False)
         self.btn_reset.setEnabled(False)
@@ -378,7 +414,7 @@ class MainWindow(QMainWindow):
             data = item.data(Qt.ItemDataRole.UserRole)
             if data:
                 self._add_address_row(
-                    "Neu",
+                    self.translations["address_table.new_address"],
                     data["address"],
                     data["type"],
                     data["value"],
@@ -392,10 +428,14 @@ class MainWindow(QMainWindow):
         addr = self.addr_table.item(row, 1).text()
         vtype = self.addr_table.item(row, 2).text()
         cur = self.addr_table.item(row, 3).text()
-        dlg = ValueInputDialog(addr, cur, vtype, self)
+        dlg = ValueInputDialog(addr, cur, vtype, self, self.translations)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.new_value:
             self.addr_table.item(row, 3).setText(dlg.new_value)
-            self.lbl_status.setText(f"Geschrieben: {addr} = {dlg.new_value}")
+            self.lbl_status.setText(
+                self.translations["status.written"].format(
+                    address=addr, value=dlg.new_value
+                )
+            )
             # TODO: memory.write(pid, addr, dlg.new_value, vtype)
 
     def _toggle_freeze(self):
@@ -403,8 +443,12 @@ class MainWindow(QMainWindow):
         if row < 0:
             return
         item = self.addr_table.item(row, 4)
-        frozen = item.text() == "Ja"
-        item.setText("Nein" if frozen else "Ja")
+        frozen = bool(item.data(Qt.ItemDataRole.UserRole))
+        item.setData(Qt.ItemDataRole.UserRole, not frozen)
+        item.setText(
+            self.translations["address_table.no"]
+            if frozen else self.translations["address_table.yes"]
+        )
         item.setForeground(QColor("#8b949e") if frozen else QColor("#58a6ff"))
         # TODO: start/stop FreezeWorker thread.
 

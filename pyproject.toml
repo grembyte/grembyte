@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-hook"
@@ -21,6 +21,12 @@ dependencies = [
 
 [project.scripts]
 hermes = "hermes.main:main"
+
+[tool.setuptools.packages.find]
+include = ["hermes*"]
+
+[tool.setuptools.package-data]
+"hermes.ui" = ["localization/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
