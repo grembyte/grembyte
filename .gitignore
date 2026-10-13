@@ -20,3 +20,5 @@ Thumbs.db
 logs/
 data/
 build/
+dist/
+*.egg-info/

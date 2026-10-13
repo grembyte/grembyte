@@ -32,3 +32,5 @@ hermes_hook.egg-info/dependency_links.txt
 hermes_hook.egg-info/entry_points.txt
 hermes_hook.egg-info/requires.txt
 hermes_hook.egg-info/top_level.txt
+tests/test_memory.py
+tests/test_scanner.py
