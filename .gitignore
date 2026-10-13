@@ -19,3 +19,4 @@ Thumbs.db
 .env*
 logs/
 data/
+build/
