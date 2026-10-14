@@ -637,7 +637,12 @@ class MainWindow(QMainWindow):
         first_row = self.result_table.rowAt(0)
         if first_row < 0:
             return range(0)
-        last_row = self.result_table.rowAt(self.result_table.viewport().height() - 1)
+        viewport = self.result_table.viewport()
+        last_row = 0
+        if viewport is None:
+            last_row = 0
+        else:
+            last_row = self.result_table.rowAt(viewport.height() - 1)
         if last_row < first_row:
             last_row = self.result_table.rowCount() - 1
         return range(first_row, last_row + 1)
@@ -783,9 +788,13 @@ class MainWindow(QMainWindow):
         if self.result_table is None:
             return
 
+        selection_model = self.result_table.selectionModel()
+        if selection_model is None:
+            return
+
         selected_rows = {
             index.row()
-            for index in self.result_table.selectionModel().selectedRows()
+            for index in selection_model.selectedRows()
         }
         for row in selected_rows:
             item = self.result_table.item(row, 0)
@@ -803,12 +812,19 @@ class MainWindow(QMainWindow):
 
     def _write_value(self):
         """Prompt for and write a replacement value to process memory."""
+        if self.addr_table is None:
+            return
         row = self.addr_table.currentRow()
         if row < 0:
             return
-        addr = self.addr_table.item(row, 1).text()
-        vtype = self.addr_table.item(row, 2).text()
-        cur = self.addr_table.item(row, 3).text()
+        item1 = self.addr_table.item(row, 1)
+        item2 = self.addr_table.item(row, 2)
+        item3 = self.addr_table.item(row, 3)
+        if item1 is None or item2 is None or item3 is None:
+            return
+        addr = item1.text()
+        vtype = item2.text()
+        cur = item3.text()
         dlg = ValueInputDialog(addr, cur, vtype, self, self.translations)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.new_value:
             try:
@@ -828,7 +844,9 @@ class MainWindow(QMainWindow):
                 )
                 return
 
-            self.addr_table.item(row, 3).setText(str(written_value))
+            item = self.addr_table.item(row, 3)
+            if item is not None:
+                item.setText(str(written_value))
             self.lbl_status.setText(
                 self.translations["status.written"].format(
                     address=addr, value=written_value
@@ -837,21 +855,28 @@ class MainWindow(QMainWindow):
 
     def _toggle_freeze(self):
         """Toggle the displayed frozen state of the selected address."""
+        if self.addr_table is None:
+            return
+
         row = self.addr_table.currentRow()
         if row < 0:
             return
         item = self.addr_table.item(row, 4)
-        frozen = bool(item.data(Qt.ItemDataRole.UserRole))
-        item.setData(Qt.ItemDataRole.UserRole, not frozen)
-        item.setText(
-            self.translations["address_table.no"]
-            if frozen else self.translations["address_table.yes"]
-        )
-        item.setForeground(QColor("#8b949e") if frozen else QColor("#58a6ff"))
+        if item is not None:
+            frozen = bool(item.data(Qt.ItemDataRole.UserRole))
+            item.setData(Qt.ItemDataRole.UserRole, not frozen)
+            item.setText(
+                self.translations["address_table.no"]
+                if frozen else self.translations["address_table.yes"]
+            )
+            item.setForeground(QColor("#8b949e") if frozen else QColor("#58a6ff"))
         # Pending: start or stop a FreezeWorker thread.
 
     def _remove_address(self):
         """Remove the selected address from the tracking table."""
+        if self.addr_table is None:
+            return
+
         row = self.addr_table.currentRow()
         if row >= 0:
             self.addr_table.removeRow(row)
