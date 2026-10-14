@@ -2,7 +2,6 @@ alembic==1.20.0
 capstone==5.0.9
 frida==17.23.3
 greenlet==3.5.6
--e git+https://github.com/winterhafen/hermes-hook@edf74a9a93a74abbcea7a577435697500f29c060#egg=hermes_hook
 iniconfig==2.3.1
 Mako==1.4.3
 markdown-it-py==4.2.0
