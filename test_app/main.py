@@ -220,6 +220,9 @@ class Character:
         self.gesundheit        = 14   # Einfluss auf max_hp
         self.mana              = 12   # Einfluss auf max_mana
 
+        self.hp = self.max_hp
+        self.mana_cur = self.max_mana
+
         self.level = 1
         self.xp    = 0
         self.xp_next = 100
@@ -687,6 +690,8 @@ class GameWindow(QMainWindow):
             self._sync_rat()
 
     def _sync_rat(self):
+        if self.rat is None:
+            return
         self.rat_hp_bar.setMaximum(self.rat.max_hp)
         self.rat_hp_bar.setValue(self.rat.hp)
         self.lbl_rat_name.setText(self.rat.name)
@@ -743,6 +748,9 @@ class GameWindow(QMainWindow):
         self.btn_rest.setEnabled(enabled)
 
     def _check_combat_end(self) -> bool:
+        if self.rat is None:
+            return False
+
         if self.rat.hp <= 0:
             self._log(f"Die {self.rat.name} wurde besiegt!", GREEN)
             xp = self.rat.xp_reward
@@ -765,6 +773,8 @@ class GameWindow(QMainWindow):
     def _rat_turn(self):
         if not self.combat_active:
             return
+        if self.rat is None:
+            return
         self._log(f"  [{self.rat.name} greift an]", RAT_COL)
         dmg, msg = self.rat.attack(self.char)
         if dmg == 0:
@@ -779,6 +789,8 @@ class GameWindow(QMainWindow):
 
     def _player_attack(self):
         if not self.combat_active or not self.player_turn:
+            return
+        if self.rat is None:
             return
         self._set_combat_buttons(False)
         self.player_turn = False
@@ -802,6 +814,8 @@ class GameWindow(QMainWindow):
 
     def _player_spell(self):
         if not self.combat_active or not self.player_turn:
+            return
+        if self.rat is None:
             return
         if self.char.mana_cur < 8:
             self._log("Nicht genug Mana für einen Feuerball!", RED)
