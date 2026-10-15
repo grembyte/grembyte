@@ -1,9 +1,0 @@
-frida
-capstone
-pyelftools
-psutil
-numpy
-rich
-PyQt6
-sqlalchemy
-alembic
