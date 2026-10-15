@@ -1,14 +1,13 @@
 """hermes-hook – Main Window: application main UI (PyQt6)."""
 
 from dataclasses import dataclass
-
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QLabel,
     QPushButton, QLineEdit, QComboBox, QGroupBox,
     QHeaderView, QStatusBar, QToolBar, QDialog,
     QAbstractItemView,
-    QMessageBox, QFrame, QProgressBar,
+    QMessageBox, QFrame, QProgressBar, QMenu,
 )
 from PyQt6.QtCore import Qt, QSize, QTimer  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
@@ -19,6 +18,12 @@ from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.core.scanner import ScanWorker, ValueRefreshWorker
 from hermes.core.memory import write_process_value
+from hermes.core.write_watch import WriteWatchWorker, watch_size_for_type
+from hermes.ui.widgets.write_watch import WriteWatchDialog
+
+
+# Upper bound for joining a write monitor from the GUI thread.
+WRITE_WATCH_STOP_TIMEOUT_MS = 3000
 
 
 @dataclass(frozen=True)
@@ -103,6 +108,9 @@ class MainWindow(QMainWindow):
         self._scan_worker = None
         self._scan_failed = False
         self._refresh_worker = None
+        self._write_watch_worker = None
+        self._write_watch_dialog = None
+        self._write_watch_stopping = False
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(1000)
         self._refresh_timer.timeout.connect(self._refresh_memory_values)
@@ -203,21 +211,34 @@ class MainWindow(QMainWindow):
         layout.addLayout(ctrl)
 
         self.result_table = QTableWidget(0, 3)
+
         self.result_table.setHorizontalHeaderLabels([
             self.translations["address_table.address"],
             self.translations["address_table.type"],
             self.translations["address_table.value"],
         ])
+
+        self._style_table(self.result_table)
+        self.result_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.result_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        self.result_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.result_table.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.result_table.customContextMenuRequested.connect(
+            self._show_result_context_menu
+        )
         header = self.result_table.horizontalHeader()
         if header is not None:
-            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
             header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-
-        self.result_table.setAlternatingRowColors(True)
-        self.result_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.result_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.result_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
 
         header = self.result_table.verticalHeader()
         if header is not None:
@@ -294,7 +315,6 @@ class MainWindow(QMainWindow):
     def _build_scan_actions(self, layout):
         """Add scan buttons, progress display, and status text."""
         self.btn_first_scan = QPushButton(self.translations["search.first_scan"])
-        self.btn_first_scan.setObjectName("btn_primary")
         self.btn_first_scan.clicked.connect(self._first_scan)
         layout.addWidget(self.btn_first_scan)
 
@@ -322,6 +342,8 @@ class MainWindow(QMainWindow):
         self.lbl_scan_status.setStyleSheet("color:#8b949e; font-size:11px;")
         self.lbl_scan_status.setWordWrap(True)
         layout.addWidget(self.lbl_scan_status)
+
+        self._set_primary(self.btn_first_scan, True)
 
     def _toggle_second_value(self, index):
         """Show the upper-bound input only for range scans."""
@@ -367,16 +389,24 @@ class MainWindow(QMainWindow):
                 self.translations["address_table.frozen"],
             ]
         )
+
+        self._style_table(self.addr_table)
+        self.addr_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.addr_table.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.addr_table.customContextMenuRequested.connect(
+            self._show_tracked_context_menu
+        )
         header = self.addr_table.horizontalHeader()
         if header is not None:
-            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-
-        self.addr_table.setAlternatingRowColors(True)
-        self.addr_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+            self.addr_table.setColumnWidth(0, 260)
+            for col in (1, 2, 3):
+                header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
 
         header = self.addr_table.verticalHeader()
         if header is not None:
@@ -423,6 +453,169 @@ class MainWindow(QMainWindow):
         freeze_item.setFlags(freeze_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.addr_table.setItem(row, 4, freeze_item)
 
+    def _show_result_context_menu(self, position):
+        """Show address actions for the scan result under the pointer."""
+        self._show_address_context_menu(self.result_table, position, 0)
+
+    def _show_tracked_context_menu(self, position):
+        """Show address actions for the tracked address under the pointer."""
+        self._show_address_context_menu(self.addr_table, position, 1)
+
+    def _show_address_context_menu(self, table, position, address_column):
+        """Select the clicked address row and display its context menu."""
+        if table is None:
+            return
+        row = table.rowAt(position.y())
+        if row < 0:
+            return
+
+        table.clearSelection()
+        table.selectRow(row)
+        table.setCurrentCell(row, address_column)
+        item = table.item(row, address_column)
+        if item is None:
+            return
+
+        if table is self.result_table:
+            metadata = item.data(Qt.ItemDataRole.UserRole)
+            address = metadata["address"] if metadata else item.text()
+            type_item = table.item(row, 1)
+            value_type = (
+                metadata["type"]
+                if metadata
+                else type_item.text() if type_item is not None else ""
+            )
+        else:
+            address = item.text()
+            type_item = table.item(row, 2)
+            value_type = type_item.text() if type_item is not None else ""
+
+        menu = QMenu(self)
+        menu.addAction(
+            self.translations["address_table.watch"],
+            lambda: self._start_write_monitor(address, value_type),
+        )
+        menu.exec(table.viewport().mapToGlobal(position))
+
+    def _start_write_monitor(self, address, value_type):
+        """Start a live hardware-watchpoint monitor for one address."""
+        if self._current_pid is None:
+            QMessageBox.warning(
+                self,
+                self.translations["warning.no_process_title"],
+                self.translations["warning.select_process"],
+            )
+            return
+
+        try:
+            address_value = int(address, 0)
+            size = watch_size_for_type(value_type)
+            if address_value % size:
+                raise ValueError(
+                    self.translations["watch.misaligned"].format(size=size)
+                )
+        except (TypeError, ValueError) as error:
+            QMessageBox.warning(
+                self,
+                self.translations["watch.title"].format(address=address),
+                self.translations["watch.failed"].format(message=error),
+            )
+            return
+
+        worker = self._write_watch_worker
+        if worker is not None and worker.isRunning():
+            dialog = self._write_watch_dialog
+            if dialog is not None:
+                if worker.address != address_value:
+                    dialog.show_warning(
+                        self.translations["watch.already_active"]
+                    )
+                dialog.show()
+                dialog.raise_()
+                dialog.activateWindow()
+                return
+            # The previous monitor's window is closed but its teardown is
+            # still running; give it a moment before starting a new one.
+            if not worker.wait(WRITE_WATCH_STOP_TIMEOUT_MS):
+                QMessageBox.information(
+                    self,
+                    self.translations["watch.title"].format(address=address),
+                    self.translations["watch.still_stopping"],
+                )
+                return
+
+        worker = WriteWatchWorker(
+            self._current_pid,
+            address_value,
+            size,
+            self,
+        )
+        dialog = WriteWatchDialog(
+            f"0x{address_value:X}",
+            size,
+            self.translations,
+            self,
+        )
+        dialog.stop_requested.connect(worker.requestInterruption)
+        dialog.finished.connect(
+              lambda: self._on_write_watch_dialog_finished(dialog, worker)
+        )
+        worker.monitor_ready.connect(dialog.set_monitoring)
+        worker.hits_ready.connect(
+            lambda hits: self._on_write_watch_hits(dialog, hits)
+        )
+        worker.monitor_warning.connect(dialog.show_warning)
+        worker.monitor_failed.connect(dialog.show_error)
+        worker.monitor_stopped.connect(dialog.set_stopped)
+        worker.finished.connect(
+            lambda: self._on_write_watch_worker_finished(worker)
+        )
+
+        self._write_watch_worker = worker
+        self._write_watch_dialog = dialog
+        self._write_watch_stopping = False
+        worker.start()
+        dialog.show()
+
+    def _on_write_watch_hits(self, dialog, hits):
+        """Ignore hit batches already queued when monitoring was stopped."""
+        if dialog is self._write_watch_dialog and not self._write_watch_stopping:
+            dialog.add_hits(hits)
+
+    def _on_write_watch_dialog_finished(self, dialog, worker):
+        """Stop the monitor when its results window is closed."""
+        self._write_watch_stopping = True
+        worker.requestInterruption()
+        if self._write_watch_dialog is dialog:
+            self._write_watch_dialog = None
+
+    def _on_write_watch_worker_finished(self, worker):
+        """Release the completed monitor worker."""
+        worker.deleteLater()
+        if self._write_watch_worker is worker:
+            self._write_watch_worker = None
+            self._write_watch_stopping = False
+
+    def _stop_write_monitor(self, timeout_ms=WRITE_WATCH_STOP_TIMEOUT_MS):
+        """Stop the active monitor and wait for it to finish.
+
+        A ``timeout_ms`` of ``None`` waits until the worker has finished.
+        Otherwise the wait is bounded so an unresponsive target cannot
+        freeze the UI; the worker then finishes in the background.
+        """
+        worker = self._write_watch_worker
+        if worker is not None and worker.isRunning():
+            self._write_watch_stopping = True
+            worker.requestInterruption()
+            if timeout_ms is None:
+                worker.wait()
+            else:
+                worker.wait(timeout_ms)
+        dialog = self._write_watch_dialog
+        if dialog is not None:
+            dialog.close()
+            self._write_watch_dialog = None
+
     # ------------------------------------------------------------------
     # Status bar
     # ------------------------------------------------------------------
@@ -433,6 +626,7 @@ class MainWindow(QMainWindow):
         self.lbl_status = QLabel(self.translations["status.no_process_attached"])
         sb.addWidget(self.lbl_status)
         sb.addPermanentWidget(QLabel(self.translations["app.version_status"]))
+        sb.setSizeGripEnabled(False)
 
     # ------------------------------------------------------------------
     # Actions
@@ -441,6 +635,8 @@ class MainWindow(QMainWindow):
         """Open process selection and update the attached-process state."""
         dlg = ProcessSelectDialog(self, self.translations)
         if dlg.exec() == QDialog.DialogCode.Accepted:
+            if dlg.selected_pid != self._current_pid:
+                self._stop_write_monitor()
             self._current_pid = dlg.selected_pid
             self._current_proc = self.translations["app.process_display"].format(
                 name=dlg.selected_name, pid=dlg.selected_pid
@@ -624,6 +820,9 @@ class MainWindow(QMainWindow):
         if self._current_pid is not None and self._has_refresh_targets():
             self._refresh_timer.start()
 
+        self._set_primary(self.btn_next_scan, has_results)
+        self._set_primary(self.btn_first_scan, not has_results)
+
     def _has_refresh_targets(self) -> bool:
         """Return whether either table contains values to refresh."""
         if self.result_table is None or self.addr_table is None:
@@ -755,6 +954,8 @@ class MainWindow(QMainWindow):
                 )
             worker.requestInterruption()
 
+        # A running QThread must not be destroyed, so join it fully here.
+        self._stop_write_monitor(timeout_ms=None)
         refresh_worker = self._refresh_worker
         if refresh_worker is not None and refresh_worker.isRunning():
             refresh_worker.requestInterruption()
@@ -782,6 +983,10 @@ class MainWindow(QMainWindow):
             self.btn_next_scan.setEnabled(False)
         if self.btn_reset is not None:
             self.btn_reset.setEnabled(False)
+
+        has_results = False
+        self._set_primary(self.btn_next_scan, has_results)
+        self._set_primary(self.btn_first_scan, not has_results)
 
     def _add_selected_to_table(self):
         """Add selected scan result entries to the address table."""
@@ -880,3 +1085,20 @@ class MainWindow(QMainWindow):
         row = self.addr_table.currentRow()
         if row >= 0:
             self.addr_table.removeRow(row)
+
+    def _style_table(self, table):
+        """Apply the shared look and feel to a table widget."""
+        table.setShowGrid(False)
+        table.verticalHeader().setDefaultSectionSize(30)
+        header = table.horizontalHeader()
+        # Prevent bold header text for columns containing selected cells
+        header.setHighlightSections(False)
+        header.setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+
+    def _set_primary(self, button, primary):
+        """Mark a button as the primary action and re-apply its style."""
+        button.setProperty("primary", primary)
+        button.style().unpolish(button)
+        button.style().polish(button)

@@ -1,7 +1,9 @@
 """Application entry point for the Hermes Hook desktop application."""
 
+import signal
 import sys
 
+from PyQt6.QtCore import QTimer  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
 from hermes.db.engine import init_db
@@ -16,7 +18,23 @@ def main() -> int:
     app.setStyle("Fusion")
     window = MainWindow()
     window.show()
-    return app.exec()
+
+    previous_sigint_handler = signal.getsignal(signal.SIGINT)
+    signal.signal(
+        signal.SIGINT,
+        lambda _signum, _frame: QTimer.singleShot(0, window.close),
+    )
+
+    signal_check_timer = QTimer(app)
+    signal_check_timer.setInterval(100)
+    # Let Python process SIGINT while Qt's event loop is waiting in C++.
+    signal_check_timer.timeout.connect(lambda: None)
+    signal_check_timer.start()
+    try:
+        return app.exec()
+    finally:
+        signal_check_timer.stop()
+        signal.signal(signal.SIGINT, previous_sigint_handler)
 
 
 if __name__ == "__main__":

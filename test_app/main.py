@@ -220,6 +220,8 @@ class Character:
         self.gesundheit        = 14   # Einfluss auf max_hp
         self.mana              = 12   # Einfluss auf max_mana
 
+        self.max_hp = 0
+        self.max_mana = 0
         self.hp = self.max_hp
         self.mana_cur = self.max_mana
 
