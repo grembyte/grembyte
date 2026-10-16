@@ -22,3 +22,12 @@ data/
 build/
 dist/
 *.egg-info/
+
+# Compiled C/C++ files
+*.o
+*.obj
+*.exe
+*.out
+*.so
+*.a
+*.dll
