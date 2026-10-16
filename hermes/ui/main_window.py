@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QPushButton, QLineEdit, QComboBox, QGroupBox,
     QHeaderView, QStatusBar, QToolBar, QDialog,
     QAbstractItemView,
-    QMessageBox, QFrame, QProgressBar, QMenu,
+    QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox,
 )
 from PyQt6.QtCore import Qt, QSize, QTimer  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
@@ -16,7 +16,7 @@ from hermes.ui.localization import load_translations
 from hermes.ui.styles.styles import STYLE
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.process_list import ProcessSelectDialog
-from hermes.core.scanner import ScanWorker, ValueRefreshWorker
+from hermes.core.scanner import MemorySnapshot, ScanWorker, ValueRefreshWorker
 from hermes.core.memory import write_process_value
 from hermes.core.write_watch import WriteWatchWorker, watch_size_for_type
 from hermes.ui.widgets.write_watch import WriteWatchDialog
@@ -24,6 +24,8 @@ from hermes.ui.widgets.write_watch import WriteWatchDialog
 
 # Upper bound for joining a write monitor from the GUI thread.
 WRITE_WATCH_STOP_TIMEOUT_MS = 3000
+# Scan results beyond this many rows are kept but not shown in the table.
+RESULT_DISPLAY_LIMIT = 1000
 
 
 @dataclass(frozen=True)
@@ -35,7 +37,8 @@ class ScanRequest:
     scan_mode: str
     value: str
     value2: str = ""
-    previous_results: list[dict[str, int | float | str]] | None = None
+    previous_results: list[dict[str, int | float | str]] | MemorySnapshot | None = None
+    aligned: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +123,7 @@ class MainWindow(QMainWindow):
         self.result_table = None
         self.combo_type = None
         self.combo_scan_type = None
+        self.chk_aligned = None
         self.input_value = None
         self.lbl_value2 = None
         self.input_value2 = None
@@ -198,7 +202,9 @@ class MainWindow(QMainWindow):
 
         # Control bar above the list
         ctrl = QHBoxLayout()
-        self.lbl_result_count = QLabel(self.translations["results.count"].format(count=0))
+        self.lbl_result_count = QLabel(
+            self.translations["results.count"].format(count=0, shown=0)
+        )
         self.lbl_result_count.setStyleSheet("color:#8b949e; font-size:11px;")
         ctrl.addWidget(self.lbl_result_count)
         ctrl.addStretch()
@@ -279,10 +285,18 @@ class MainWindow(QMainWindow):
             ("search.unknown_start", "unknown_start"),
             ("search.unchanged", "unchanged"),
             ("search.changed", "changed"),
+            ("search.increased", "increased"),
+            ("search.decreased", "decreased"),
         ]
         for text_key, mode in scan_modes:
             self.combo_scan_type.addItem(self.translations[text_key], mode)
         layout.addWidget(self.combo_scan_type)
+
+        # Only addresses that are a multiple of the value size (first scan)
+        self.chk_aligned = QCheckBox(self.translations["search.aligned"])
+        self.chk_aligned.setToolTip(self.translations["search.aligned_tooltip"])
+        self.chk_aligned.setChecked(True)
+        layout.addWidget(self.chk_aligned)
 
         # Value input
         layout.addWidget(QLabel(self.translations["search.value"]))
@@ -584,8 +598,11 @@ class MainWindow(QMainWindow):
 
     def _on_write_watch_dialog_finished(self, dialog, worker):
         """Stop the monitor when its results window is closed."""
-        self._write_watch_stopping = True
-        worker.requestInterruption()
+        # A worker that already finished (e.g. stopped via the dialog's stop
+        # button) has been released with deleteLater() and must not be touched.
+        if self._write_watch_worker is worker:
+            self._write_watch_stopping = True
+            worker.requestInterruption()
         if self._write_watch_dialog is dialog:
             self._write_watch_dialog = None
 
@@ -698,6 +715,7 @@ class MainWindow(QMainWindow):
                 scan_mode=scan_mode,
                 value=value,
                 value2=value2,
+                aligned=self.chk_aligned is None or self.chk_aligned.isChecked(),
             )
         )
 
@@ -745,6 +763,8 @@ class MainWindow(QMainWindow):
         self.btn_first_scan.setEnabled(False)
         self.btn_next_scan.setEnabled(False)
         self.btn_reset.setEnabled(False)
+        if self.chk_aligned is not None:
+            self.chk_aligned.setEnabled(False)
         self.progress_scan.setValue(0)
         self.progress_scan.setVisible(True)
         self._scan_worker = ScanWorker(
@@ -754,7 +774,8 @@ class MainWindow(QMainWindow):
             request.value,
             request.value2,
             request.previous_results,
-            self,
+            aligned=request.aligned,
+            parent=self,
         )
         self._scan_worker.results_ready.connect(self._on_scan_results)
         self._scan_worker.scan_failed.connect(self._on_scan_failed)
@@ -768,9 +789,10 @@ class MainWindow(QMainWindow):
         if self.result_table is None or self.lbl_result_count is None:
             return
         self._scan_results = results
+        shown_results = results[:RESULT_DISPLAY_LIMIT]
         self.result_table.setUpdatesEnabled(False)
-        self.result_table.setRowCount(len(results))
-        for row, result in enumerate(results):
+        self.result_table.setRowCount(len(shown_results))
+        for row, result in enumerate(shown_results):
             address_item = QTableWidgetItem(f"0x{result['address']:X}")
             address_item.setData(Qt.ItemDataRole.UserRole, {
                 "address": f"0x{result['address']:X}",
@@ -783,7 +805,9 @@ class MainWindow(QMainWindow):
             self.result_table.setItem(row, 2, QTableWidgetItem(str(result["value"])))
         self.result_table.setUpdatesEnabled(True)
         self.lbl_result_count.setText(
-            self.translations["results.count"].format(count=len(results))
+            self.translations["results.count"].format(
+                count=len(results), shown=len(shown_results)
+            )
         )
 
     def _on_scan_failed(self, message):
@@ -809,6 +833,8 @@ class MainWindow(QMainWindow):
             self.btn_next_scan.setEnabled(has_results)
         if self.btn_reset is not None:
             self.btn_reset.setEnabled(has_results)
+        if self.chk_aligned is not None:
+            self.chk_aligned.setEnabled(not has_results)
         if self.progress_scan is not None:
             self.progress_scan.setVisible(False)
         if not self._scan_failed:
@@ -974,7 +1000,9 @@ class MainWindow(QMainWindow):
             self.result_table.setRowCount(0)
         self._scan_results = []
         if self.lbl_result_count is not None:
-            self.lbl_result_count.setText(self.translations["results.count"].format(count=0))
+            self.lbl_result_count.setText(
+                self.translations["results.count"].format(count=0, shown=0)
+            )
         if self.lbl_scan_status is not None:
             self.lbl_scan_status.setText(self.translations["search.ready"])
         if self.btn_first_scan is not None:
@@ -983,6 +1011,8 @@ class MainWindow(QMainWindow):
             self.btn_next_scan.setEnabled(False)
         if self.btn_reset is not None:
             self.btn_reset.setEnabled(False)
+        if self.chk_aligned is not None:
+            self.chk_aligned.setEnabled(True)
 
         has_results = False
         self._set_primary(self.btn_next_scan, has_results)

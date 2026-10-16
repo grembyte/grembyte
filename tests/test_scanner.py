@@ -9,7 +9,7 @@ import struct
 import pytest
 import numpy as np
 
-from hermes.core.scanner import ScanWorker, ValueRefreshWorker
+from hermes.core.scanner import MemorySnapshot, ScanWorker, ValueRefreshWorker
 
 
 class FakeMemory:
@@ -60,6 +60,10 @@ def install_fake_process(monkeypatch, maps, base_address, contents):
         ("between", 5, 2, 7, None, True),
         ("changed", 8, None, None, 7, True),
         ("unchanged", 7, None, None, 7, True),
+        ("increased", 8, None, None, 7, True),
+        ("decreased", 6, None, None, 7, True),
+        ("increased", 7, None, None, 7, False),
+        ("decreased", 8, None, None, 7, False),
         ("exact", 6, 7, None, None, False),
         ("changed", 7, None, None, 7, False),
     ],
@@ -125,7 +129,7 @@ def test_first_scan_finds_values_crossing_chunk_boundary(monkeypatch):
     contents = b"\0" * 3 + struct.pack("<i", 42) + b"\0" * 4
     maps = "1000-100b rw-p 00000000 00:00 0\n"
     install_fake_process(monkeypatch, maps, base_address, contents)
-    worker = ScanWorker(123, "int32", "exact", "42")
+    worker = ScanWorker(123, "int32", "exact", "42", aligned=False)
     worker._CHUNK_SIZE = 4
 
     assert worker._first_scan() == [
@@ -146,7 +150,7 @@ def test_first_scan_does_not_duplicate_candidates_at_chunk_boundary(monkeypatch)
     assert [result["address"] for result in results] == [0x1000, 0x1004, 0x1008]
 
 
-def test_first_scan_keeps_only_writable_anonymous_mappings():
+def test_first_scan_keeps_private_writable_mappings():
     maps = io.StringIO(
         "1000-1004 rw-p 00000000 00:00 0\n"
         "2000-2004 rw-p 00000000 00:00 0 [heap]\n"
@@ -154,13 +158,16 @@ def test_first_scan_keeps_only_writable_anonymous_mappings():
         "4000-4004 rw-p 00000000 00:00 0 [anon:runtime]\n"
         "5000-5004 r--p 00000000 00:00 0\n"
         "6000-6004 rw-p 00000000 00:00 0 /usr/lib/example.so\n"
+        "7000-7004 rw-s 00000000 00:00 0 /memfd:shared\n"
+        "8000-8004 rw-p 00000000 00:00 0 /dev/dri/card0\n"
     )
 
-    assert ScanWorker._anonymous_mappings(maps) == [
+    assert ScanWorker._writable_mappings(maps) == [
         (0x1000, 0x1004),
         (0x2000, 0x2004),
         (0x3000, 0x3004),
         (0x4000, 0x4004),
+        (0x6000, 0x6004),
     ]
 
 
@@ -205,6 +212,8 @@ def test_first_scan_discards_non_finite_float_candidates(monkeypatch):
     [
         ("changed", [0x1004]),
         ("unchanged", [0x1000, 0x1008]),
+        ("increased", [0x1004]),
+        ("decreased", []),
     ],
 )
 def test_refine_scan_compares_current_and_previous_values(
@@ -226,6 +235,72 @@ def test_refine_scan_compares_current_and_previous_values(
 
     assert [result["address"] for result in results] == expected_addresses
     assert progress[-1] == 100
+
+
+def test_aligned_first_scan_skips_unaligned_addresses(monkeypatch):
+    contents = b"\0" * 3 + struct.pack("<i", 42) + struct.pack("<i", 42)
+    maps = "1000-100b rw-p 00000000 00:00 0\n"
+    install_fake_process(monkeypatch, maps, 0x1000, contents)
+
+    aligned = ScanWorker(123, "int32", "exact", "42")._first_scan()
+    unaligned = ScanWorker(123, "int32", "exact", "42", aligned=False)._first_scan()
+
+    assert [result["address"] for result in aligned] == []
+    assert [result["address"] for result in unaligned] == [0x1003, 0x1007]
+
+
+def test_unknown_start_scan_returns_snapshot_instead_of_result_list(monkeypatch):
+    contents = struct.pack("<iii", 10, 15, 25)
+    maps = "1000-100c rw-p 00000000 00:00 0\n"
+    install_fake_process(monkeypatch, maps, 0x1000, contents)
+
+    snapshot = ScanWorker(123, "int32", "unknown_start")._first_scan()
+
+    assert isinstance(snapshot, MemorySnapshot)
+    assert len(snapshot) == 3
+    assert snapshot[:2] == [
+        {"address": 0x1000, "type": "int32", "value": 10},
+        {"address": 0x1004, "type": "int32", "value": 15},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mode", "value", "expected_addresses"),
+    [
+        ("changed", "", [0x1004, 0x1008]),
+        ("unchanged", "", [0x1000]),
+        ("increased", "", [0x1004]),
+        ("decreased", "", [0x1008]),
+        ("exact", "16", [0x1004]),
+        ("greater_than", "11", [0x1004, 0x1008]),
+    ],
+)
+def test_refine_snapshot_compares_with_current_memory(
+    monkeypatch, mode, value, expected_addresses
+):
+    previous = struct.pack("<iii", 10, 15, 25)
+    current = struct.pack("<iii", 10, 16, 24)
+    snapshot = MemorySnapshot("int32", 4, [(0x1000, previous, None)])
+    install_fake_process(monkeypatch, "", 0x1000, current)
+    worker = ScanWorker(123, "int32", mode, value, previous_results=snapshot)
+
+    results = worker._refine_scan()
+
+    assert [result["address"] for result in results] == expected_addresses
+    assert all(result["value"] in {10, 16, 24} for result in results)
+
+
+def test_refine_snapshot_keeps_snapshot_for_large_candidate_sets(monkeypatch):
+    contents = struct.pack("<iiii", 1, 2, 3, 4)
+    snapshot = MemorySnapshot("int32", 4, [(0x1000, contents, None)])
+    install_fake_process(monkeypatch, "", 0x1000, contents)
+    worker = ScanWorker(123, "int32", "unchanged", previous_results=snapshot)
+    worker._LIST_THRESHOLD = 2
+
+    results = worker._refine_scan()
+
+    assert isinstance(results, MemorySnapshot)
+    assert len(results) == 4
 
 
 def test_run_emits_scan_error_signal_for_invalid_input():
