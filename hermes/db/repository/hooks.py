@@ -69,7 +69,7 @@ class HookRepository:
 
     def add_hook(self, process_id, *, label, module, module_offset,
                  instruction_bytes, instruction_text, value_type, transform,
-                 enabled=True, caller_depth=1, callers=(), pointer=None):
+                 enabled=True, caller_depth=1, callers=(), pointer=None, signature=None):
         # pylint: disable=too-many-arguments
         """Save a hook and return its id."""
         with self._sessions() as session:
@@ -85,6 +85,7 @@ class HookRepository:
                 caller_depth=caller_depth,
                 callers=[list(map(list, frames)) for frames in callers],
                 pointer=None if pointer is None else pointer.to_json(),
+                signature=signature,
             )
             _store_transform(hook, transform)
             session.add(hook)

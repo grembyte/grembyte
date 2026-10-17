@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from hermes.core.pointer import PointerChain
+
 from hermes.hooks.engine import HookSpec, build_agent_source
 from hermes.hooks.transforms import (
     ClampTransform,
@@ -69,8 +71,15 @@ def test_custom_transforms_can_be_registered():
 
 
 def test_hook_spec_requires_a_code_location():
-    with pytest.raises(ValueError, match="needs a trap_pc, a write_pc or a module"):
+    with pytest.raises(ValueError, match="needs a trap_pc, a write_pc, a module or a signature"):
         HookSpec(0x1000, "int32", MultiplyTransform(2))
+    with pytest.raises(ValueError, match="training needs a pointer"):
+        HookSpec(None, "int32", MultiplyTransform(2), signature={"before": "", "after": ""},
+                 instruction_bytes="0137")
+    chain = PointerChain("game", 0x10, (0x8,))
+    spec = HookSpec(None, "int32", MultiplyTransform(2), signature={"before": "", "after": ""},
+                    instruction_bytes="0137", pointer=chain)
+    assert spec.training and spec.to_agent(1)["signature"] == {"before": "", "after": ""}
     with pytest.raises(ValueError, match="given together"):
         HookSpec(None, "int32", MultiplyTransform(2), module="game")
     with pytest.raises(ValueError, match="only be resolved with an address"):
@@ -312,6 +321,50 @@ def test_hook_worker_rewrites_values(tmp_path, qt_app, optimization):
         worker.remove_hook(add_id)
         _wait_for(qt_app, lambda: removed)
     finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_hook_works_while_its_target_is_write_watched(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    import frida
+
+    from hermes.core.write_watch import _build_agent_source
+    from hermes.hooks.engine import HookWorker
+
+    target = _Target(_build_target(tmp_path))
+    worker = HookWorker(target.pid)
+    installed, errors = {}, {}
+    worker.hook_installed.connect(lambda hook_id, info: installed.update({hook_id: info}))
+    worker.transform_error.connect(lambda hook_id, message: errors.update({hook_id: message}))
+    session = None
+    try:
+        trap_pcs = _trap_pcs(target)
+        worker.start()
+        hook_id = worker.add_hook(HookSpec(
+            target.address, "int32", MultiplyTransform(10), trap_pc=trap_pcs["add"]
+        ))
+        _wait_for(qt_app, lambda: hook_id in installed)
+
+        # The write watch arms a hardware watchpoint on the hook's target, so
+        # the hook's own write of the new value traps as well.
+        session = frida.attach(target.pid)
+        script = session.create_script(_build_agent_source(target.address, 4))
+        script.load()
+
+        assert target.send("add", 10) == (100 + 100, 999)
+        assert target.send("add", 1) == (200 + 10, 999)
+        qt_app.processEvents()
+        time.sleep(0.2)
+        qt_app.processEvents()
+        assert not errors
+        script.exports_sync.stop()
+        script.unload()
+    finally:
+        if session is not None:
+            session.detach()
         worker.requestInterruption()
         worker.wait(5000)
         target.close()
@@ -716,3 +769,161 @@ def test_debug_mode_reports_calls_and_skipped_writes(tmp_path, qt_app, translati
     finally:
         panel.shutdown(timeout_ms=None)
         target.close()
+
+
+# --- Training: hooks on JIT code -------------------------------------------
+
+_JIT_TARGET_SOURCE = r"""
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
+typedef struct { int32_t hp; int32_t gold; } Player;
+typedef struct { char pad[0x10]; Player *player; } Game;
+Game *g_game;
+
+typedef void (*change_fn)(int32_t *gold, int32_t amount);
+
+/* Like a JIT: the code lands somewhere else on every start and embeds
+   constants (think absolute addresses) that differ between runs. */
+static change_fn emit(uint8_t *region, size_t offset, uint8_t opcode) {
+    uint8_t *code = region + offset;
+    uint64_t a = ((uint64_t)rand() << 32) ^ (uint64_t)rand();
+    uint64_t b = ((uint64_t)rand() << 32) ^ (uint64_t)rand();
+    size_t n = 0;
+    code[n++] = 0x55;                                       /* push rbp */
+    code[n++] = 0x48; code[n++] = 0x89; code[n++] = 0xe5;   /* mov rbp, rsp */
+    code[n++] = 0x48; code[n++] = 0xb8;                     /* movabs rax, a */
+    memcpy(code + n, &a, 8); n += 8;
+    code[n++] = opcode; code[n++] = 0x37;                   /* add/sub [rdi], esi */
+    code[n++] = 0x8b; code[n++] = 0x07;                     /* mov eax, [rdi] */
+    code[n++] = 0x48; code[n++] = 0xb9;                     /* movabs rcx, b */
+    memcpy(code + n, &b, 8); n += 8;
+    for (int i = 0; i < 4; i++)
+        code[n++] = 0x90;                                   /* nop */
+    code[n++] = 0x5d;                                       /* pop rbp */
+    code[n++] = 0xc3;                                       /* ret */
+    return (change_fn)code;
+}
+
+int main(void) {
+    srand(getpid());
+    size_t size = 0x10000;
+    uint8_t *region = mmap(NULL, size, PROT_READ | PROT_WRITE | PROT_EXEC,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    memset(region, 0xcc, size);
+    size_t offset = 0x100 + (size_t)(rand() % 64) * 0x40;
+    change_fn add = emit(region, offset, 0x01);
+    change_fn sub = emit(region, offset + 0x2000, 0x29);
+
+    g_game = calloc(1, sizeof(Game));
+    g_game->player = calloc(1, sizeof(Player));
+    g_game->player->gold = 100;
+    printf("%d %p %p\n", getpid(), (void *)&g_game->player->gold, (void *)add);
+    fflush(stdout);
+    char cmd[16];
+    int value;
+    while (scanf("%15s %d", cmd, &value) == 2) {
+        if (strcmp(cmd, "add") == 0)
+            add(&g_game->player->gold, value);
+        else if (strcmp(cmd, "sub") == 0)
+            sub(&g_game->player->gold, value);
+        printf("%d 0\n", g_game->player->gold);
+        fflush(stdout);
+    }
+    return 0;
+}
+"""
+
+
+class _JitTarget(_Target):
+    def __init__(self, binary):  # pylint: disable=super-init-not-called
+        self.process = subprocess.Popen(
+            [str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+        )
+        pid, address, add = self.process.stdout.readline().split()
+        self.pid = int(pid)
+        self.address = int(address, 16)
+        self.add_code = int(add, 16)
+
+
+def _jit_gold_chain(binary):
+    """g_game -> player (+0x10) -> gold (+4)."""
+    nm = subprocess.run(["nm", str(binary)], check=True, capture_output=True, text=True)
+    g_game = next(int(line.split()[0], 16) for line in nm.stdout.splitlines()
+                  if line.endswith(" g_game"))
+    return PointerChain("target", g_game, (0x10, 0x4))
+
+
+@requires_target
+def test_hook_on_jit_code_is_trained_again_after_a_restart(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access,too-many-locals,too-many-statements
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
+    from hermes.db.base import Base
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui.widgets.hooks import HookPanel
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    Base.metadata.create_all(engine)
+    repository = HookRepository(sessionmaker(bind=engine))
+    source = tmp_path / "target.c"
+    source.write_text(_JIT_TARGET_SOURCE)
+    binary = tmp_path / "target"
+    subprocess.run(["gcc", "-O1", "-fPIE", "-pie", str(source), "-o", str(binary)], check=True)
+    chain = _jit_gold_chain(binary)
+    process_id = repository.get_or_create_process("target", str(binary))
+    status = lambda panel: panel.table.item(0, 4).text()  # pylint: disable=unnecessary-lambda-assignment
+
+    target = _JitTarget(binary)
+    panel = HookPanel(translations, repository=repository)
+    try:
+        trap_pcs = _trap_pcs(target)
+        panel.set_process(target.pid, process_id)
+        panel.add_hook(
+            HookSpec(target.address, "int32", MultiplyTransform(10),
+                     trap_pc=trap_pcs["add"], pointer=chain, label="Gold"),
+            "jit",
+        )
+        _wait_for(qt_app, lambda: status(panel) != "Wird installiert …")
+        assert status(panel) == "Aktiv"
+        assert "Training" in panel.status_label.text()
+        [saved] = repository.list_hooks(process_id)
+        assert saved.module == "" and saved.pointer == chain.to_json()
+        assert saved.instruction_bytes == "0137"
+        assert len(saved.signature["before"]) == len(saved.signature["after"]) == 64
+        first_code = target.add_code
+    finally:
+        panel.shutdown(timeout_ms=None)
+        target.close()
+
+    target = _JitTarget(binary)
+    panel = HookPanel(translations, repository=repository)
+    try:
+        assert target.add_code != first_code
+        panel.set_process(target.pid, process_id)
+        _wait_for(qt_app, lambda: status(panel) == "Training")
+
+        # A write from other code (sub) does not train the hook.
+        assert target.send("sub", 5) == (95, 0)
+        _wait_for(qt_app, lambda: "1 davon aus anderem Code" in
+                  panel.table.item(0, 4).toolTip())
+        assert status(panel) == "Training"
+
+        # The first write from the saved code reveals the site ...
+        assert target.send("add", 10) == (105, 0)
+        _wait_for(qt_app, lambda: status(panel) == "Aktiv")
+        assert f"{target.add_code + 14:#x}" in panel.table.item(0, 2).toolTip()
+        # ... from then on the hook applies.
+        assert target.send("add", 10) == (105 + 100, 0)
+        assert target.send("sub", 5) == (200, 0)
+        assert len(repository.list_hooks(process_id)) == 1
+    finally:
+        panel.shutdown(timeout_ms=None)
+        target.close()
+        engine.dispose()

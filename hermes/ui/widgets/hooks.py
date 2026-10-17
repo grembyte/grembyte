@@ -45,6 +45,7 @@ TRAMPOLINE_SIZE = 0x1000
 
 _STATUS_COLORS = {
     "installing": "#d29922",
+    "training": "#a371f7",
     "active": "#3fb950",
     "paused": "#8b949e",
     "failed": "#f85149",
@@ -357,13 +358,18 @@ def describe_callers(callers):
 
 
 def spec_from_saved(saved):
-    """Build the HookSpec that reinstalls a hook saved in the database."""
+    """Build the HookSpec that reinstalls a hook saved in the database.
+
+    A hook on JIT code (no module) is trained again via its signature.
+    """
+    jit = not saved.module
     return HookSpec(
         None,
         saved.value_type,
         hook_transform(saved),
-        module=saved.module,
-        module_offset=saved.module_offset,
+        module=None if jit else saved.module,
+        module_offset=None if jit else saved.module_offset,
+        signature=saved.signature if jit else None,
         instruction_bytes=saved.instruction_bytes,
         enabled=saved.enabled,
         caller_depth=saved.caller_depth,
@@ -503,7 +509,9 @@ class HookPanel(QGroupBox):
 
     def _update_buttons(self):
         state = self._hooks.get(self._selected_hook_id())
-        live = state is not None and state["status"] in {"active", "paused", "error"}
+        live = state is not None and state["status"] in {
+            "active", "paused", "error", "training"
+        }
         self.btn_edit.setEnabled(live)
         self.btn_toggle.setEnabled(live)
         self.btn_debug.setEnabled(live)
@@ -721,9 +729,9 @@ class HookPanel(QGroupBox):
                     )
                 )
                 continue
-            self.add_hook(
-                spec, f"{saved.module}+0x{saved.module_offset:x}", saved_id=saved.id
-            )
+            site = (f"{saved.module}+0x{saved.module_offset:x}" if saved.module
+                    else saved.instruction_text)
+            self.add_hook(spec, site, saved_id=saved.id)
         if saved_hooks:
             self.status_label.setText(
                 self.translations["hooks.restored"].format(count=len(saved_hooks))
@@ -733,16 +741,19 @@ class HookPanel(QGroupBox):
         """Save a newly created hook as module + offset of its write site."""
         if self._repository is None or self._process_id is None:
             return
-        if write.get("module") is None:
+        spec = state["spec"]
+        jit = write.get("module") is None
+        if jit and (spec.pointer is None or not write.get("context")):
             self.status_label.setText(self.translations["hooks.not_saved"])
             return
-        spec = state["spec"]
         state["saved_id"] = self._store(
             self._repository.add_hook,
             self._process_id,
             label=spec.label,
-            module=write["module"],
-            module_offset=int(write["moduleOffset"], 0),
+            # JIT code: saved with the code around it and trained after a restart.
+            module="" if jit else write["module"],
+            module_offset=0 if jit else int(write["moduleOffset"], 0),
+            signature=write["context"] if jit else None,
             instruction_bytes=write["bytes"],
             instruction_text=write.get("text", ""),
             value_type=spec.value_type,
@@ -752,6 +763,8 @@ class HookPanel(QGroupBox):
             callers=spec.callers,
             pointer=spec.pointer,
         )
+        if jit and state["saved_id"] is not None:
+            self.status_label.setText(self.translations["hooks.saved_for_training"])
 
     # ------------------------------------------------------------------
     # Worker management
@@ -765,6 +778,9 @@ class HookPanel(QGroupBox):
         )
         worker.hook_failed.connect(
             lambda hook_id, message: self._on_failed(worker, hook_id, message)
+        )
+        worker.hook_training.connect(
+            lambda hook_id, state: self._on_training(worker, hook_id, state)
         )
         worker.hook_removed.connect(
             lambda hook_id: self._on_removed(worker, hook_id)
@@ -802,6 +818,8 @@ class HookPanel(QGroupBox):
         if worker is not self._worker or hook_id not in self._hooks:
             return
         write = info.get("writeInstruction", {})
+        state = self._hooks[hook_id]
+        state["training"] = False
         self._remember_trampoline(info, write)
         self._set_cell(
             hook_id,
@@ -866,6 +884,26 @@ class HookPanel(QGroupBox):
             translated.append(hit)
         return translated
 
+    def _on_training(self, worker, hook_id, training):
+        """Show that a hook waits for a write from its code (or its progress)."""
+        if worker is not self._worker:
+            return
+        state = self._hooks.get(hook_id)
+        if state is None or state["status"] not in {"installing", "training", "paused"}:
+            return
+        state["training"] = True
+        if state["status"] == "paused":
+            return
+        if not training.get("resolved", False):
+            key = "hooks.training_waiting_slot" if training.get("waiting") \
+                else "hooks.training_unresolved"
+            tooltip = self.translations[key]
+        else:
+            tooltip = self.translations["hooks.training_tooltip"].format(
+                seen=training.get("seen", 0), rejected=training.get("rejected", 0)
+            )
+        self._set_status(hook_id, "training", tooltip)
+
     def _on_failed(self, worker, hook_id, message):
         if worker is not self._worker:
             return
@@ -873,7 +911,7 @@ class HookPanel(QGroupBox):
         if state is None:
             return
         message = message.splitlines()[0] if message else message
-        if state["status"] == "installing":
+        if state["status"] in {"installing", "training"}:
             self._set_status(hook_id, "failed", message)
         self.status_label.setText(
             self.translations["hooks.action_failed"].format(message=message)
@@ -971,7 +1009,7 @@ class HookPanel(QGroupBox):
     def _edit_selected(self):
         hook_id = self._selected_hook_id()
         state = self._hooks.get(hook_id)
-        if state is None or state["status"] not in {"active", "paused", "error"}:
+        if state is None or state["status"] not in {"active", "paused", "error", "training"}:
             return
         spec = state["spec"]
         site_item = self.table.item(self._row_of(hook_id), 2)
@@ -1017,7 +1055,8 @@ class HookPanel(QGroupBox):
         state["spec"] = dataclasses.replace(state["spec"], enabled=enable)
         if state["saved_id"] is not None:
             self._store(self._repository.update_hook, state["saved_id"], enabled=enable)
-        self._set_status(hook_id, "active" if enable else "paused")
+        resumed = "training" if state.get("training") else "active"
+        self._set_status(hook_id, resumed if enable else "paused")
 
     def _remove_selected(self):
         hook_id = self._selected_hook_id()
@@ -1029,7 +1068,9 @@ class HookPanel(QGroupBox):
             self._store(self._repository.delete_hook, state["saved_id"])
             state["saved_id"] = None
         if (self._worker is not None
-                and state["status"] in {"installing", "active", "paused", "error"}):
+                and state["status"] in {
+                    "installing", "active", "paused", "error", "training"
+                }):
             self._worker.remove_hook(hook_id)
         else:
             self._drop_row(hook_id)

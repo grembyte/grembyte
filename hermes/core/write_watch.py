@@ -60,6 +60,7 @@ function recordHit(threadId, context) {
     hit.count += 1;
     hit.value = readTargetBytes();
     hit.threadId = threadId;
+    hit.time = Date.now();
     return;
   }
   pendingHits.set(key, {
@@ -67,7 +68,8 @@ function recordHit(threadId, context) {
     site,
     value: readTargetBytes(),
     threadId,
-    count: 1
+    count: 1,
+    time: Date.now()
   });
 }
 

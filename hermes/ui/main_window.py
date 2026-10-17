@@ -397,6 +397,8 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(box)
         layout.setSpacing(10)
 
+        self._build_scan_buttons(layout)
+
         # Data type selector
         layout.addWidget(QLabel(self.translations["search.datatype"]))
         self.combo_type = QComboBox()
@@ -485,33 +487,48 @@ class MainWindow(QMainWindow):
         self.combo_type.currentIndexChanged.connect(self._update_value_inputs)
         self._update_value_inputs()
 
+        # Enter in a value field starts the highlighted scan.
+        for field in (self.input_value, self.input_value2, self.input_tolerance):
+            field.returnPressed.connect(self._start_default_scan)
+
+        self._build_scan_progress(layout)
+
+        return box
+
+    def _build_scan_buttons(self, layout):
+        """Add the scan buttons side by side."""
+        row = QHBoxLayout()
+        self.btn_first_scan = QPushButton(self.translations["search.first_scan"])
+        self.btn_first_scan.clicked.connect(self._first_scan)
+        row.addWidget(self.btn_first_scan)
+
+        self.btn_next_scan = QPushButton(self.translations["search.next_scan"])
+        self.btn_next_scan.setEnabled(False)
+        self.btn_next_scan.clicked.connect(self._next_scan)
+        row.addWidget(self.btn_next_scan)
+
+        self.btn_reset = QPushButton(self.translations["search.reset"])
+        self.btn_reset.setObjectName("btn_danger")
+        self.btn_reset.setEnabled(False)
+        self.btn_reset.clicked.connect(self._reset_scan)
+        row.addWidget(self.btn_reset)
+        layout.addLayout(row)
+
         # Divider
         divider = QFrame()
         divider.setObjectName("divider")
         divider.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(divider)
 
-        self._build_scan_actions(layout)
+    def _start_default_scan(self):
+        """Run the next scan if there are results, otherwise the first scan."""
+        if self.btn_next_scan is not None and self.btn_next_scan.isEnabled():
+            self._next_scan()
+        elif self.btn_first_scan is not None and self.btn_first_scan.isEnabled():
+            self._first_scan()
 
-        return box
-
-    def _build_scan_actions(self, layout):
-        """Add scan buttons, progress display, and status text."""
-        self.btn_first_scan = QPushButton(self.translations["search.first_scan"])
-        self.btn_first_scan.clicked.connect(self._first_scan)
-        layout.addWidget(self.btn_first_scan)
-
-        self.btn_next_scan = QPushButton(self.translations["search.next_scan"])
-        self.btn_next_scan.setEnabled(False)
-        self.btn_next_scan.clicked.connect(self._next_scan)
-        layout.addWidget(self.btn_next_scan)
-
-        self.btn_reset = QPushButton(self.translations["search.reset"])
-        self.btn_reset.setObjectName("btn_danger")
-        self.btn_reset.setEnabled(False)
-        self.btn_reset.clicked.connect(self._reset_scan)
-        layout.addWidget(self.btn_reset)
-
+    def _build_scan_progress(self, layout):
+        """Add the progress display and status text below the scan options."""
         layout.addStretch()
 
         self.progress_scan = QProgressBar()

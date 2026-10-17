@@ -1,5 +1,7 @@
 """Live results dialog for a process-memory write watch."""
 
+from datetime import datetime
+
 from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QDialog,
@@ -48,7 +50,7 @@ class WriteWatchDialog(QDialog):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
-        self.results_table = QTableWidget(0, 5)
+        self.results_table = QTableWidget(0, 6)
         self.results_table.setHorizontalHeaderLabels(
             [
                 self.translations["watch.column_count"],
@@ -56,6 +58,7 @@ class WriteWatchDialog(QDialog):
                 self.translations["watch.column_site"],
                 self.translations["watch.column_value"],
                 self.translations["watch.column_thread"],
+                self.translations["watch.column_time"],
             ]
         )
         self.results_table.setSelectionBehavior(
@@ -71,6 +74,7 @@ class WriteWatchDialog(QDialog):
             header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
             header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
             header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.results_table.verticalHeader().setVisible(False)
         set_row_height(self.results_table)
         self.results_table.itemSelectionChanged.connect(self._update_hook_button)
@@ -109,6 +113,7 @@ class WriteWatchDialog(QDialog):
                 )
                 self.results_table.setItem(row, 3, QTableWidgetItem(""))
                 self.results_table.setItem(row, 4, QTableWidgetItem(""))
+                self.results_table.setItem(row, 5, QTableWidgetItem(""))
 
             count_item = self.results_table.item(row, 0)
             value_item = self.results_table.item(row, 3)
@@ -120,6 +125,17 @@ class WriteWatchDialog(QDialog):
                 value_item.setText(hit.get("value", ""))
             if thread_item is not None:
                 thread_item.setText(str(hit.get("threadId", "")))
+            time_item = self.results_table.item(row, 5)
+            if time_item is not None:
+                time_item.setText(self._hit_time(hit))
+
+    @staticmethod
+    def _hit_time(hit):
+        """Return the local time of a hit's last write, e.g. ``14:03:27.418``."""
+        milliseconds = hit.get("time")
+        moment = datetime.now() if milliseconds is None \
+            else datetime.fromtimestamp(milliseconds / 1000)
+        return moment.strftime("%H:%M:%S.%f")[:-3]
 
     def set_monitoring(self, thread_count, details=""):
         text = self.translations["watch.running"].format(

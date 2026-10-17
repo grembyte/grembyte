@@ -113,7 +113,10 @@ Das Spiel zeigt Mana (`float`) mit einer und Erfahrung (`double`) ohne Nachkomma
 
 ### Hooks nach einem Neustart
 
-Hooks werden pro Programm gespeichert, und zwar als Modul + Offset der Schreibinstruktion. Wählt man das Programm nach einem Neustart erneut aus, installiert Hermes die gespeicherten Hooks automatisch. Haben sich die Bytes an dieser Stelle geändert, etwa nach einem Update des Programms, wird der Hook nicht installiert. Liegt die Schreibinstruktion in keinem Modul (z. B. JIT-Code), kann der Hook nicht gespeichert werden.
+Hooks werden pro Programm gespeichert, und zwar als Modul + Offset der Schreibinstruktion. Wählt man das Programm nach einem Neustart erneut aus, installiert Hermes die gespeicherten Hooks automatisch. Haben sich die Bytes an dieser Stelle geändert, etwa nach einem Update des Programms, wird der Hook nicht installiert. Liegt die Schreibinstruktion in keinem Modul, etwa im JIT-Code von Mono/Unity, der bei jedem Start neu und an anderer Stelle erzeugt wird, hängt es vom Ziel ab:
+
+- **Mit Pointer-Chain** wird der Hook mit den Bytes der Schreibinstruktion und des umgebenden Codes gespeichert. Nach einem Neustart steht er auf **Training**: Hermes überwacht das Ziel der Chain mit einem eigenen Hardware-Watchpoint und installiert den Hook beim ersten Schreibzugriff aus passendem Code. Ab dem nächsten Schreibzugriff greift er. Der Tooltip der Statusspalte zeigt, wie viele Schreibzugriffe aus anderem Code verworfen wurden. Es können höchstens drei Hooks gleichzeitig trainieren.
+- **Ohne Pointer-Chain** kann der Hook nicht gespeichert werden, weil sein Ziel nach einem Neustart unbekannt ist.
 
 Nach einem Neustart ist die ursprüngliche Zieladresse nicht mehr gültig. Woran der Hook die richtigen Schreibzugriffe erkennt, hängt davon ab, wie er angelegt wurde:
 

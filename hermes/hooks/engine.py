@@ -31,6 +31,12 @@ add each offset) resolves it on every write and only applies to writes of the
 address it leads to. That works the same after a restart, follows objects the
 game allocates anew and tells player and enemy apart in shared code.
 
+A write instruction in JIT code has no module + offset that survives a
+restart. A hook on it with a pointer target is restored by training instead:
+it is saved with the bytes of its write instruction and of the code around
+it (``signature``), and after a restart a hardware watchpoint on the target
+waits for a write from matching code and installs the hook there.
+
 In debug mode a hook reports every call (values, caller, ``ctx.log()``
 output, errors with stack) and every write it skipped, with the reason.
 At most ``MAX_DEBUG_EVENTS`` events are sent per 100 ms; the rest is counted.
@@ -141,6 +147,19 @@ const debugDropped = new Map();
 const hooks = new Map();
 const sites = new Map();
 const retiredSites = [];
+// Code bytes kept on each side of a write instruction to recognize it in
+// JIT code, which is generated anew (elsewhere) on every start.
+const CONTEXT_SIZE = 32;
+// Hardware watchpoint slots for training; slot 0 is used by the write watch.
+const TRAINING_SLOTS = [1, 2, 3];
+// Share of context bytes that must match; JIT code embeds absolute
+// addresses that differ between runs.
+const TRAINING_MIN_SIMILARITY = 0.6;
+const trainings = new Map();
+const trainingThreads = new Set();
+const trainingHits = [];
+let trainingTimer = null;
+let trainingScheduled = false;
 
 function toBigInt(value) {
   return BigInt(ptr(value).toString()) & MASK64;
@@ -230,9 +249,29 @@ function describeInstruction(site) {
     module: module ? module.name : null,
     moduleOffset: module ? offset.toString() : null,
     bytes: site.bytes,
+    context: site.context,
     text: ins.toString(),
     size: ins.size
   };
+}
+
+function readHex(address, size) {
+  try {
+    return hexBytes(address.readByteArray(size));
+  } catch (_error) {
+    return null;
+  }
+}
+
+function codeContext(ins) {
+  // Shorter at the start or end of mapped code.
+  let before = '';
+  let after = '';
+  for (let size = CONTEXT_SIZE; size > 0 && before === ''; size -= 8)
+    before = readHex(ins.address.sub(size), size) || '';
+  for (let size = CONTEXT_SIZE; size > 0 && after === ''; size -= 8)
+    after = readHex(ins.next, size) || '';
+  return { before, after };
 }
 
 function describeFrame(address) {
@@ -438,6 +477,27 @@ function reportError(hook, error) {
   send({ kind: 'transform-error', hookId: hook.id, error: String(error) });
 }
 
+// Holds the bytes a hook is about to write, to compare them with the target.
+const scratch = Memory.alloc(8);
+
+function writeValue(io, target, value) {
+  try {
+    io.write(target, value);
+  } catch (error) {
+    // A data watchpoint on the target (write watch) traps right after the
+    // write, and Frida reports that as an error although the value is stored.
+    io.write(scratch, value);
+    const expected = new Uint8Array(scratch.readByteArray(io.size));
+    let stored = null;
+    try {
+      stored = new Uint8Array(target.readByteArray(io.size));
+    } catch (_readError) {
+    }
+    if (stored === null || stored.some((byte, i) => byte !== expected[i]))
+      throw error;
+  }
+}
+
 function applyTransform(hook, threadId, pending) {
   const { target, old: oldValue } = pending;
   const current = hook.io.read(target);
@@ -473,7 +533,7 @@ function applyTransform(hook, threadId, pending) {
     } else {
       result = normalize(result, hook.io);
       if (result !== current)
-        hook.io.write(target, result);
+        writeValue(hook.io, target, result);
     }
     hook.errorReported = false;
   } catch (error) {
@@ -704,6 +764,7 @@ function installSite(writeIns, writeOp) {
 
   const site = { writeIns, writeOp, hooks: new Map() };
   site.bytes = hexBytes(writeIns.address.readByteArray(writeIns.size));
+  site.context = codeContext(writeIns);
   site.before = new NativeCallback(block => onBefore(site, block), 'void', ['pointer']);
   site.after = new NativeCallback(block => onAfter(site, block), 'void', ['pointer']);
   const { code, patchSize } = buildTrampoline(site);
@@ -739,8 +800,11 @@ function uninstallSite(site) {
 }
 
 function addHook(spec) {
-  if (hooks.has(spec.id))
+  if (hooks.has(spec.id) || trainings.has(spec.id))
     throw new Error(`Hook ${spec.id} already exists`);
+  if (spec.signature !== null && spec.module === null && spec.writePc === null
+      && spec.trapPc === null)
+    return startTraining(spec);
   const io = VALUE_IO[spec.valueType];
   if (io === undefined)
     throw new Error(`Unsupported value type: ${spec.valueType}`);
@@ -808,7 +872,216 @@ function addHook(spec) {
   };
 }
 
+// --- Training -------------------------------------------------------------
+// A hook on JIT code with a pointer target is saved with the bytes of its
+// write instruction and of the code around it. After a restart, a hardware
+// watchpoint on the target finds the instruction again: the hook is
+// installed at the first write whose code matches.
+
+function startTraining(spec) {
+  const io = VALUE_IO[spec.valueType];
+  if (io === undefined)
+    throw new Error(`Unsupported value type: ${spec.valueType}`);
+  if (spec.pointer === null)
+    throw new Error('Training needs a pointer chain to the target');
+  compileTransform(spec.transform);
+  const training = {
+    id: spec.id,
+    spec,
+    io,
+    pointer: { ...spec.pointer, base: null },
+    target: null,
+    slot: null,
+    debug: false,
+    seen: 0,
+    rejected: 0,
+    reported: null
+  };
+  trainings.set(spec.id, training);
+  if (trainingTimer === null) {
+    Process.setExceptionHandler(onTrainingException);
+    // No thread observer: setting a watchpoint starts a helper thread, and
+    // reporting it to the observer while the agent sets one deadlocks.
+    // New threads are armed by this timer instead.
+    trainingTimer = setInterval(updateTrainings, 500);
+  }
+  updateTrainings();
+  return { id: spec.id, training: true };
+}
+
+function armThreadForTrainings(thread) {
+  for (const training of trainings.values()) {
+    if (training.target !== null)
+      armTraining(thread, training);
+  }
+}
+
+function armTraining(thread, training) {
+  if (training.slot === null)
+    return;
+  try {
+    if (training.target === null) {
+      thread.unsetHardwareWatchpoint(training.slot);
+    } else {
+      thread.setHardwareWatchpoint(training.slot, training.target, training.io.size, 'w');
+      trainingThreads.add(thread.id);
+    }
+  } catch (_error) {
+    // The thread exited, or it is the agent's own.
+  }
+}
+
+function freeTrainingSlot() {
+  const used = new Set(Array.from(trainings.values(), t => t.slot));
+  return TRAINING_SLOTS.find(slot => !used.has(slot)) ?? null;
+}
+
+function updateTrainings() {
+  for (const training of trainings.values()) {
+    if (training.slot === null)
+      training.slot = freeTrainingSlot();
+    if (training.slot === null)
+      continue;
+    // The chain leads elsewhere e.g. after loading a game, or nowhere yet.
+    const target = resolvePointer(training.pointer);
+    const unchanged = target === null ? training.target === null
+      : training.target !== null && target.equals(training.target);
+    if (unchanged)
+      continue;
+    training.target = target;
+    for (const thread of Process.enumerateThreads())
+      armTraining(thread, training);
+  }
+  // Threads started since the last update.
+  for (const thread of Process.enumerateThreads()) {
+    if (!trainingThreads.has(thread.id))
+      armThreadForTrainings(thread);
+  }
+}
+
+function stopTraining(training) {
+  trainings.delete(training.id);
+  if (training.slot !== null && training.target !== null) {
+    training.target = null;
+    for (const thread of Process.enumerateThreads())
+      armTraining(thread, training);
+  }
+  if (trainings.size === 0 && trainingTimer !== null) {
+    clearInterval(trainingTimer);
+    trainingTimer = null;
+    trainingThreads.clear();
+  }
+}
+
+function onTrainingException(details) {
+  // Linux reports hardware data watchpoint traps as 'single-step'.
+  if (details.type !== 'breakpoint' && details.type !== 'single-step')
+    return false;
+  if (trainings.size === 0 || !trainingThreads.has(Process.getCurrentThreadId()))
+    return false;
+  trainingHits.push(details.context.pc);
+  if (!trainingScheduled) {
+    // Hooks are installed outside the exception handler.
+    trainingScheduled = true;
+    setTimeout(processTrainingHits, 0);
+  }
+  return true;
+}
+
+function processTrainingHits() {
+  trainingScheduled = false;
+  for (const pc of trainingHits.splice(0)) {
+    for (const training of Array.from(trainings.values())) {
+      if (training.target !== null)
+        tryTraining(training, pc);
+    }
+  }
+}
+
+function trainingCandidate(training, pc) {
+  // A write that is hooked already runs relocated in its trampoline.
+  for (const site of sites.values()) {
+    if (pc.compare(site.code) >= 0 && pc.compare(site.code.add(Process.pageSize)) < 0)
+      return { ins: site.writeIns, bytes: site.bytes, context: site.context };
+  }
+  const { ins } = resolveWriteInstruction(pc, training.target, training.io.size);
+  const site = sites.get(ins.address.toString());
+  if (site !== undefined)
+    return { ins, bytes: site.bytes, context: site.context };
+  return { ins, bytes: hexBytes(ins.address.readByteArray(ins.size)), context: codeContext(ins) };
+}
+
+function matchingBytes(expected, actual, fromEnd) {
+  const count = Math.min(expected.length, actual.length) / 2;
+  let same = 0;
+  for (let i = 0; i < count; i++) {
+    const a = fromEnd ? expected.length - 2 * (i + 1) : 2 * i;
+    const b = fromEnd ? actual.length - 2 * (i + 1) : 2 * i;
+    if (expected.substr(a, 2) === actual.substr(b, 2))
+      same++;
+  }
+  return [same, count];
+}
+
+function contextSimilarity(expected, actual) {
+  const [sameBefore, before] = matchingBytes(expected.before || '', actual.before, true);
+  const [sameAfter, after] = matchingBytes(expected.after || '', actual.after, false);
+  return before + after === 0 ? 1 : (sameBefore + sameAfter) / (before + after);
+}
+
+function tryTraining(training, pc) {
+  let candidate;
+  try {
+    candidate = trainingCandidate(training, pc);
+  } catch (_error) {
+    training.rejected++;
+    return;
+  }
+  training.seen++;
+  const similarity = contextSimilarity(training.spec.signature, candidate.context);
+  if (candidate.bytes !== training.spec.instructionBytes
+      || similarity < TRAINING_MIN_SIMILARITY) {
+    training.rejected++;
+    return;
+  }
+  stopTraining(training);
+  try {
+    const info = addHook({
+      ...training.spec, writePc: candidate.ins.address.toString(), signature: null
+    });
+    hooks.get(training.id).debug = training.debug;
+    info.similarity = similarity;
+    send({ kind: 'trained', hookId: training.id, info });
+  } catch (error) {
+    send({ kind: 'training-failed', hookId: training.id, error: String(error) });
+  }
+}
+
+function trainingEvents() {
+  const events = [];
+  for (const training of trainings.values()) {
+    const state = {
+      hookId: training.id,
+      resolved: training.target !== null,
+      waiting: training.slot === null,
+      seen: training.seen,
+      rejected: training.rejected
+    };
+    const key = JSON.stringify(state);
+    if (key !== training.reported) {
+      training.reported = key;
+      events.push(state);
+    }
+  }
+  return events;
+}
+
 function removeHook(id) {
+  const training = trainings.get(id);
+  if (training !== undefined) {
+    stopTraining(training);
+    return true;
+  }
   const hook = hooks.get(id);
   if (hook === undefined)
     return false;
@@ -836,6 +1109,9 @@ function flushStats() {
   }
   if (events.length > 0)
     send({ kind: 'events', events });
+  const training = trainingEvents();
+  if (training.length > 0)
+    send({ kind: 'training', events: training });
   if (debugEvents.length > 0 || debugDropped.size > 0) {
     send({
       kind: 'debug',
@@ -853,16 +1129,32 @@ rpc.exports = {
   addHook,
   removeHook,
   setTransform(id, spec) {
+    const training = trainings.get(id);
+    if (training !== undefined) {
+      compileTransform(spec);
+      training.spec.transform = spec;
+      return true;
+    }
     const hook = requireHook(id);
     hook.transform = compileTransform(spec);
     hook.errorReported = false;
     return true;
   },
   setDebug(id, enabled) {
+    const training = trainings.get(id);
+    if (training !== undefined) {
+      training.debug = enabled;
+      return true;
+    }
     requireHook(id).debug = enabled;
     return true;
   },
   setEnabled(id, enabled) {
+    const training = trainings.get(id);
+    if (training !== undefined) {
+      training.spec.enabled = enabled;
+      return true;
+    }
     const hook = requireHook(id);
     hook.enabled = enabled;
     if (!enabled)
@@ -871,6 +1163,8 @@ rpc.exports = {
   },
   dispose() {
     clearInterval(flushTimer);
+    for (const training of Array.from(trainings.values()))
+      stopTraining(training);
     for (const id of Array.from(hooks.keys()))
       removeHook(id);
     flushStats();
@@ -902,6 +1196,11 @@ class HookSpec:
 
     With a ``pointer`` (PointerChain) the hook targets whatever address the
     chain leads to at each write; caller learning is not needed then.
+
+    Instead of a code location, a ``signature`` (``{"before", "after"}``: hex
+    code bytes around the write instruction ``instruction_bytes``) together
+    with a ``pointer`` lets the agent train: it installs the hook at the first
+    write to the target from matching code.
     """
 
     # pylint: disable=too-many-instance-attributes
@@ -918,17 +1217,28 @@ class HookSpec:
     caller_depth: int = 1
     callers: list = field(default_factory=list)
     pointer: PointerChain | None = None
+    signature: dict | None = None
     label: str = field(default="", compare=False)
+
+    @property
+    def training(self):
+        """Whether the agent has to find the write instruction first."""
+        return (self.signature is not None and self.trap_pc is None
+                and self.write_pc is None and self.module is None)
 
     def __post_init__(self):
         watch_size_for_type(self.value_type)
         if not isinstance(self.transform, ValueTransform):
             raise ValueError("transform must be a ValueTransform instance")
-        if self.trap_pc is None and self.write_pc is None and self.module is None:
-            raise ValueError("HookSpec needs a trap_pc, a write_pc or a module")
+        if self.training:
+            if self.pointer is None or not self.instruction_bytes:
+                raise ValueError("training needs a pointer and the instruction bytes")
+        elif self.trap_pc is None and self.write_pc is None and self.module is None:
+            raise ValueError("HookSpec needs a trap_pc, a write_pc, a module or a signature")
         if (self.module is None) != (self.module_offset is None):
             raise ValueError("module and module_offset must be given together")
-        if self.address is None and self.write_pc is None and self.module is None:
+        if (self.address is None and self.write_pc is None and self.module is None
+                and not self.training):
             raise ValueError("a trap_pc can only be resolved with an address")
         if not 0 <= self.caller_depth <= MAX_CALLER_DEPTH:
             raise ValueError(f"caller_depth must be between 0 and {MAX_CALLER_DEPTH}")
@@ -954,6 +1264,7 @@ class HookSpec:
                 "baseOffset": self.pointer.base_offset,
                 "offsets": list(self.pointer.offsets),
             },
+            "signature": self.signature,
             "transform": self.transform.to_agent(),
         }
 
@@ -972,6 +1283,9 @@ class HookWorker(QThread):
 
     session_ready = pyqtSignal(str)
     hook_installed = pyqtSignal(int, dict)
+    # hook id, training state: resolved (target found), waiting (for a free
+    # watchpoint), seen and rejected writes; empty when the training starts
+    hook_training = pyqtSignal(int, dict)
     hook_failed = pyqtSignal(int, str)
     hook_removed = pyqtSignal(int)
     hook_updated = pyqtSignal(int)
@@ -1078,9 +1392,12 @@ class HookWorker(QThread):
         try:
             if action == "add":
                 info = api.add_hook(argument.to_agent(hook_id))
-                info["label"] = argument.label
-                info["transformDescription"] = argument.transform.describe()
-                self.hook_installed.emit(hook_id, info)
+                if info.get("training"):
+                    self.hook_training.emit(hook_id, {})
+                else:
+                    info["label"] = argument.label
+                    info["transformDescription"] = argument.transform.describe()
+                    self.hook_installed.emit(hook_id, info)
             elif action == "remove":
                 if api.remove_hook(hook_id):
                     self.hook_removed.emit(hook_id)
@@ -1111,6 +1428,13 @@ class HookWorker(QThread):
             self._ready_event.set()
         elif kind == "events":
             self.hook_events.emit(payload.get("events", []))
+        elif kind == "training":
+            for event in payload.get("events", []):
+                self.hook_training.emit(event.get("hookId", 0), event)
+        elif kind == "trained":
+            self.hook_installed.emit(payload.get("hookId", 0), payload.get("info", {}))
+        elif kind == "training-failed":
+            self.hook_failed.emit(payload.get("hookId", 0), payload.get("error", ""))
         elif kind == "agent-error":
             self.agent_warning.emit(payload.get("error", ""))
         elif kind == "debug":

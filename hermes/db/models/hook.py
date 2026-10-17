@@ -14,6 +14,11 @@ class Hook(Base):  # pylint: disable=too-few-public-methods
     Absolute addresses change on every start (ASLR), the offset of an
     instruction inside its module does not as long as the binary is unchanged.
     ``instruction_bytes`` guards against patching a changed binary.
+
+    A write instruction in JIT code has no module (``module`` is ""); such a
+    hook is found again by training: ``signature`` holds the code bytes around
+    the instruction (``{"before": hex, "after": hex}``) and ``pointer`` the
+    target the agent watches for a write from matching code.
     ``callers`` holds the learned caller signatures, each a list of
     ``caller_depth`` ``[module, offset]`` return addresses.
 
@@ -44,6 +49,7 @@ class Hook(Base):  # pylint: disable=too-few-public-methods
     caller_depth = Column(Integer, nullable=False, default=1)
     callers = Column(JSON, nullable=False, default=list)
     pointer = Column(JSON, nullable=True)                # PointerChain.to_json() of the target
+    signature = Column(JSON, nullable=True)              # code around a JIT write instruction
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     process = relationship("Process", back_populates="hooks")
