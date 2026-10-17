@@ -66,8 +66,41 @@ def test_custom_transforms_can_be_registered():
 
 
 def test_hook_spec_requires_a_code_location():
-    with pytest.raises(ValueError, match="trap_pc or a write_pc"):
+    with pytest.raises(ValueError, match="needs a trap_pc, a write_pc or a module"):
         HookSpec(0x1000, "int32", MultiplyTransform(2))
+    with pytest.raises(ValueError, match="given together"):
+        HookSpec(None, "int32", MultiplyTransform(2), module="game")
+    with pytest.raises(ValueError, match="only be resolved with an address"):
+        HookSpec(None, "int32", MultiplyTransform(2), trap_pc=0x401006)
+
+
+def test_hook_spec_validates_callers():
+    with pytest.raises(ValueError, match="caller_depth must be between"):
+        HookSpec(0x1000, "int32", MultiplyTransform(2), write_pc=0x401000, caller_depth=5)
+    with pytest.raises(ValueError, match="needs caller_depth frames"):
+        HookSpec(0x1000, "int32", MultiplyTransform(2), write_pc=0x401000,
+                 caller_depth=2, callers=[[("game", 0x10)]])
+
+    payload = HookSpec(
+        None, "int32", MultiplyTransform(2), module="game", module_offset=0x10,
+        callers=[[("game", 0x20)]],
+    ).to_agent(1)
+
+    assert (payload["callerDepth"], payload["callers"]) == (1, [[["game", 0x20]]])
+
+
+def test_hook_spec_serializes_module_location():
+    spec = HookSpec(
+        None, "int32", FreezeTransform(5),
+        module="game", module_offset=0x1139, instruction_bytes="0137", enabled=False,
+    )
+
+    payload = spec.to_agent(3)
+
+    assert payload["address"] is None
+    assert (payload["module"], payload["moduleOffset"]) == ("game", 0x1139)
+    assert payload["instructionBytes"] == "0137"
+    assert payload["enabled"] is False
 
 
 def test_hook_spec_serializes_for_agent():
@@ -100,9 +133,14 @@ _TARGET_SOURCE = r"""
 typedef struct { int32_t gold; int32_t hp; } Character;
 Character g_player = { 100, 50 };
 Character g_enemy = { 999, 80 };
+volatile int g_events;
 
 __attribute__((noinline)) void add_gold(Character *c, int32_t amount) { c->gold += amount; }
 __attribute__((noinline)) void remove_gold(int32_t amount) { g_player.gold -= amount; }
+/* Shared helper with two callers; g_events keeps the calls from becoming jumps. */
+__attribute__((noinline)) void give(Character *c, int32_t amount) { add_gold(c, amount); g_events++; }
+__attribute__((noinline)) void loot(int32_t amount) { give(&g_player, amount); g_events++; }
+__attribute__((noinline)) void bounty(int32_t amount) { give(&g_enemy, amount); g_events++; }
 
 int main(void) {
     char cmd[16];
@@ -113,6 +151,8 @@ int main(void) {
         if (strcmp(cmd, "add") == 0) add_gold(&g_player, value);
         else if (strcmp(cmd, "enemy") == 0) add_gold(&g_enemy, value);
         else if (strcmp(cmd, "sub") == 0) remove_gold(value);
+        else if (strcmp(cmd, "loot") == 0) loot(value);
+        else if (strcmp(cmd, "bounty") == 0) bounty(value);
         printf("%d %d\n", g_player.gold, g_enemy.gold);
         fflush(stdout);
     }
@@ -210,11 +250,13 @@ def fixture_translations():
     return load_translations("de")
 
 
-def _build_target(tmp_path, optimization="-O2"):
+def _build_target(tmp_path, optimization="-O2", *flags):
     source = tmp_path / "target.c"
     source.write_text(_TARGET_SOURCE)
     binary = tmp_path / "target"
-    subprocess.run(["gcc", optimization, str(source), "-o", str(binary)], check=True)
+    subprocess.run(
+        ["gcc", optimization, *flags, str(source), "-o", str(binary)], check=True
+    )
     return binary
 
 
@@ -302,6 +344,21 @@ def test_hook_dialog_builds_transform_from_form(qt_app, translations):
     assert dialog.label == "Gold"
 
 
+def test_hook_dialog_sets_caller_depth_only_when_creating(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from hermes.ui.widgets.hooks import HookDialog
+
+    dialog = HookDialog(translations, "0x1000", "int32", "game+0x10")
+    dialog.caller_depth_input.setValue(3)
+    dialog._accept()
+    assert dialog.caller_depth == 3
+
+    editing = HookDialog(
+        translations, "0x1000", "int32", "game+0x10", transform=FreezeTransform(1)
+    )
+    assert not hasattr(editing, "caller_depth_input")
+
+
 def test_hook_dialog_reports_invalid_input(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from hermes.ui.widgets.hooks import HookDialog
@@ -367,3 +424,128 @@ def test_hook_panel_installs_and_removes_hooks(tmp_path, qt_app, translations):
     finally:
         panel.shutdown(timeout_ms=None)
         target.close()
+
+
+@requires_target
+def test_saved_hooks_survive_a_restart(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access,too-many-locals,too-many-statements
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
+    from hermes.db.base import Base
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui.widgets.hooks import HookPanel
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    Base.metadata.create_all(engine)
+    repository = HookRepository(sessionmaker(bind=engine))
+    binary = _build_target(tmp_path, "-O2", "-fPIE", "-pie")
+    process_id = repository.get_or_create_process("target", str(binary))
+    status = lambda panel: panel.table.item(0, 4).text()  # pylint: disable=unnecessary-lambda-assignment
+
+    target = _Target(binary)
+    panel = HookPanel(translations, repository=repository)
+    try:
+        trap_pcs = _trap_pcs(target)
+        panel.set_process(target.pid, process_id)
+        panel.add_hook(
+            HookSpec(target.address, "int32", MultiplyTransform(3),
+                     trap_pc=trap_pcs["add"], caller_depth=2, label="Gold"),
+            "target+?",
+        )
+        _wait_for(qt_app, lambda: status(panel) != "Wird installiert …")
+        assert status(panel) == "Aktiv"
+        [saved] = repository.list_hooks(process_id)
+        assert saved.module == "target"
+        assert saved.label == "Gold"
+        assert saved.callers == []
+
+        # loot() and bounty() share give(); two levels tell them apart.
+        assert target.send("loot", 10) == (130, 999)
+        assert target.send("bounty", 1) == (130, 1000)
+        _wait_for(qt_app, lambda: repository.list_hooks(process_id)[0].callers)
+        [[give_frame, loot_frame]] = repository.list_hooks(process_id)[0].callers
+        assert give_frame[0] == loot_frame[0] == "target"
+        assert "ambiguous" not in next(iter(panel._hooks.values()))
+        first_address = target.address
+    finally:
+        panel.shutdown(timeout_ms=None)
+        target.close()
+
+    target = _Target(binary)
+    panel = HookPanel(translations, repository=repository)
+    try:
+        if Path("/proc/sys/kernel/randomize_va_space").read_text().strip() != "0":
+            assert target.address != first_address  # ASLR moved the module
+        panel.set_process(target.pid, process_id)
+        assert panel.table.rowCount() == 1
+        _wait_for(qt_app, lambda: status(panel) != "Wird installiert …")
+        assert status(panel) == "Aktiv"
+        assert panel.table.item(0, 1).text() == "dynamisch · 1 Aufrufer"
+
+        assert target.send("loot", 10) == (130, 999)
+        assert target.send("bounty", 1) == (130, 1000)
+        # Unknown callers of add_gold are left alone as well.
+        assert target.send("add", 1) == (131, 1000)
+
+        panel.table.selectRow(0)
+        panel._toggle_selected()
+        assert not repository.list_hooks(process_id)[0].enabled
+        panel._remove_selected()
+        assert repository.list_hooks(process_id) == []
+    finally:
+        panel.shutdown(timeout_ms=None)
+        target.close()
+        engine.dispose()
+
+
+@requires_target
+def test_changed_code_is_not_patched(tmp_path, qt_app):
+    from hermes.hooks.engine import HookWorker  # pylint: disable=import-outside-toplevel
+
+    target = _Target(_build_target(tmp_path))
+    worker = HookWorker(target.pid)
+    failed = {}
+    worker.hook_failed.connect(lambda hook_id, message: failed.update({hook_id: message}))
+    try:
+        worker.start()
+        hook_id = worker.add_hook(HookSpec(
+            None, "int32", MultiplyTransform(3),
+            module="target", module_offset=0x1000, instruction_bytes="deadbeef",
+        ))
+        _wait_for(qt_app, lambda: hook_id in failed)
+        assert "has changed" in failed[hook_id]
+        assert target.send("add", 10) == (110, 999)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_shared_callers_are_reported_as_ambiguous(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.ui.widgets.hooks import HookPanel
+
+    target = _Target(_build_target(tmp_path))
+    panel = HookPanel(translations)
+    try:
+        trap_pcs = _trap_pcs(target)
+        panel.set_process(target.pid)
+        hook_id = panel.add_hook(
+            HookSpec(target.address, "int32", MultiplyTransform(3),
+                     trap_pc=trap_pcs["add"], caller_depth=1, label="Gold"),
+            "target+?",
+        )
+        _wait_for(qt_app, lambda: panel.table.item(0, 4).text() == "Aktiv")
+
+        assert target.send("loot", 10) == (130, 999)
+        assert target.send("bounty", 1) == (130, 1000)
+        _wait_for(qt_app, lambda: panel._hooks[hook_id].get("ambiguous"))
+        assert "Gold" in panel.status_label.text()
+        assert len(panel._hooks[hook_id]["spec"].callers) == 1
+    finally:
+        panel.shutdown(timeout_ms=None)
+        target.close()
+

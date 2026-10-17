@@ -13,6 +13,18 @@ agent replaces it with a jump into a trampoline (code cave)::
 This works independently of how the write is encoded (``add [mem], reg``,
 ``mov [mem], reg``, ``sub``, ...). Several hooks may share one write site;
 they run in the order they were added. Only x86-64 targets are supported.
+
+A hook either targets one fixed address or, when no address is given (e.g. a
+hook restored from module + offset after the game was restarted), whatever
+address the hooked instruction writes on each call.
+
+Shared code (``add_gold(&player)`` and ``add_gold(&enemy)``) is told apart by
+the caller: a fixed-address hook learns the first ``caller_depth`` return
+addresses on the stack of every write that hits its address. After a restart
+the address-less hook only runs for writes with one of those learned callers.
+Return addresses are found by scanning the stack for values that follow a
+call instruction, so the same caller signature can show up for other
+addresses; the agent reports that as ambiguous.
 """
 
 import itertools
@@ -25,6 +37,9 @@ from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-
 
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS, watch_size_for_type
 from hermes.hooks.transforms import ValueTransform
+
+
+MAX_CALLER_DEPTH = 4
 
 
 _AGENT_SOURCE = r"""
@@ -68,6 +83,11 @@ const SAVED_REGS = [
   'rax', 'rcx', 'rdx', 'rbx', 'rsi', 'rdi', 'rbp',
   'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15'
 ];
+const MAX_CALLER_DEPTH = 4;
+const CALLER_SCAN_SLOTS = 256;
+const MAX_CALLERS = 64;
+const CALL_SIZES = [5, 2, 3, 6, 7, 4];
+const returnAddressCache = new Map();
 const hooks = new Map();
 const sites = new Map();
 const retiredSites = [];
@@ -142,10 +162,134 @@ function syncVotes(start) {
   return votes;
 }
 
-function describeInstruction(ins) {
+function toPointer(value) {
+  return ptr('0x' + value.toString(16));
+}
+
+function hexBytes(buffer) {
+  return Array.from(new Uint8Array(buffer), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function describeInstruction(site) {
+  const ins = site.writeIns;
   const module = Process.findModuleByAddress(ins.address);
-  const site = module ? `${module.name}+${ins.address.sub(module.base)}` : ins.address.toString();
-  return { address: ins.address.toString(), site, text: ins.toString(), size: ins.size };
+  const offset = module ? ins.address.sub(module.base) : null;
+  return {
+    address: ins.address.toString(),
+    site: module ? `${module.name}+${offset}` : ins.address.toString(),
+    module: module ? module.name : null,
+    moduleOffset: module ? offset.toString() : null,
+    bytes: site.bytes,
+    text: ins.toString(),
+    size: ins.size
+  };
+}
+
+function describeFrame(address) {
+  const module = Process.findModuleByAddress(address);
+  return module ? [module.name, parseInt(address.sub(module.base).toString(), 16)] : null;
+}
+
+function isReturnAddress(address) {
+  const key = address.toString();
+  let result = returnAddressCache.get(key);
+  if (result !== undefined)
+    return result;
+  result = false;
+  const range = Process.findRangeByAddress(address);
+  if (range !== null && range.protection.includes('x')) {
+    for (const size of CALL_SIZES) {
+      try {
+        const ins = Instruction.parse(address.sub(size));
+        if (ins.mnemonic === 'call' && ins.next.equals(address)) {
+          result = true;
+          break;
+        }
+      } catch (_error) {
+      }
+    }
+  }
+  if (returnAddressCache.size >= 4096)
+    returnAddressCache.clear();
+  returnAddressCache.set(key, result);
+  return result;
+}
+
+function callerSignature(rsp, depth) {
+  const frames = [];
+  let cursor = rsp;
+  for (let slot = 0; slot < CALLER_SCAN_SLOTS && frames.length < depth; slot++) {
+    let value;
+    try {
+      value = cursor.readPointer();
+    } catch (_error) {
+      break;
+    }
+    if (isReturnAddress(value))
+      frames.push(value.toString());
+    cursor = cursor.add(Process.pointerSize);
+  }
+  return frames.length === depth ? frames.join(',') : null;
+}
+
+function resolveCallers(callers) {
+  const keys = new Map();
+  for (const frames of callers || []) {
+    const addresses = [];
+    for (const [name, offset] of frames) {
+      const module = Process.findModuleByName(name);
+      if (module === null)
+        break;
+      addresses.push(module.base.add(offset).toString());
+    }
+    if (addresses.length === frames.length)
+      keys.set(addresses.join(','), frames);
+  }
+  return keys;
+}
+
+function reportCallers(hook) {
+  send({ kind: 'callers', hookId: hook.id, callers: Array.from(hook.callers.values()) });
+}
+
+function reportAmbiguous(hook) {
+  if (hook.ambiguousReported)
+    return;
+  hook.ambiguousReported = true;
+  send({ kind: 'callers-ambiguous', hookId: hook.id });
+}
+
+function learnCaller(hook, key, hit) {
+  if (key === null)
+    return;
+  if (!hit) {
+    if (hook.callers.has(key))
+      reportAmbiguous(hook);
+    else if (hook.foreignCallers.size < MAX_CALLERS)
+      hook.foreignCallers.add(key);
+    return;
+  }
+  if (hook.callers.has(key) || hook.callers.size >= MAX_CALLERS)
+    return;
+  hook.callers.set(key, key.split(',').map(address => describeFrame(ptr(address))));
+  if (hook.foreignCallers.has(key))
+    reportAmbiguous(hook);
+  reportCallers(hook);
+}
+
+function moduleAddress(spec) {
+  const module = Process.findModuleByName(spec.module);
+  if (module === null)
+    throw new Error(`Module ${spec.module} is not loaded`);
+  const address = module.base.add(spec.moduleOffset);
+  if (spec.instructionBytes !== null && !sites.has(address.toString())) {
+    const found = hexBytes(address.readByteArray(spec.instructionBytes.length / 2));
+    if (found !== spec.instructionBytes)
+      throw new Error(
+        `Code at ${spec.module}+0x${spec.moduleOffset.toString(16)} has changed `
+        + `(expected ${spec.instructionBytes}, found ${found}); the program was probably updated`);
+  }
+  return address;
 }
 
 function resolveWriteInstruction(trapPc, target, size) {
@@ -206,8 +350,9 @@ function reportError(hook, error) {
   send({ kind: 'transform-error', hookId: hook.id, error: String(error) });
 }
 
-function applyTransform(hook, threadId, oldValue) {
-  const current = hook.io.read(hook.target);
+function applyTransform(hook, threadId, pending) {
+  const { target, old: oldValue } = pending;
+  const current = hook.io.read(target);
   const ctx = {
     old: oldValue,
     new: current,
@@ -215,7 +360,7 @@ function applyTransform(hook, threadId, oldValue) {
     params: hook.transform.params,
     state: hook.transform.state,
     valueType: hook.valueType,
-    address: hook.target.toString(),
+    address: target.toString(),
     writePc: hook.site.writeIns.address.toString(),
     threadId,
     hookId: hook.id
@@ -228,7 +373,7 @@ function applyTransform(hook, threadId, oldValue) {
     } else {
       result = normalize(result, hook.io);
       if (result !== current)
-        hook.io.write(hook.target, result);
+        hook.io.write(target, result);
     }
     hook.errorReported = false;
   } catch (error) {
@@ -272,22 +417,61 @@ function reportAgentError(where, error) {
   send({ kind: 'agent-error', error: `${where}: ${error}` });
 }
 
+function fixedTarget(hook, write) {
+  if (!hook.filterAddress)
+    return hook.target;
+  const address = write.address();
+  if (address === null)
+    return hook.target;
+  const hit = overlaps(address, write.site.writeOp.size, hook.targetValue, hook.io.size);
+  if (hook.callerDepth > 0)
+    learnCaller(hook, write.signature(hook.callerDepth), hit);
+  return hit ? hook.target : null;
+}
+
+function dynamicTarget(hook, write) {
+  if (hook.callerDepth > 0 && hook.callers.size > 0
+      && !hook.callers.has(write.signature(hook.callerDepth)))
+    return null;
+  const address = write.address();
+  if (address === null) {
+    reportError(hook, new Error(`Cannot compute the address written by ${write.site.writeIns}`));
+    return null;
+  }
+  return toPointer(address);
+}
+
+function pendingWrite(site, block) {
+  // Registers, address and caller signatures are computed at most once per write.
+  let regs = null;
+  let address;
+  const signatures = new Map();
+  const registers = () => (regs === null ? (regs = readRegisters(block)) : regs);
+  return {
+    site,
+    address() {
+      if (address === undefined)
+        address = effectiveAddress(site.writeIns, site.writeOp, registers());
+      return address;
+    },
+    signature(depth) {
+      if (!signatures.has(depth))
+        signatures.set(depth, callerSignature(registers().rsp, depth));
+      return signatures.get(depth);
+    }
+  };
+}
+
 function onBefore(site, block) {
   try {
     const threadId = Process.getCurrentThreadId();
-    let regs = null;
+    const write = pendingWrite(site, block);
     for (const hook of site.hooks.values()) {
       if (!hook.enabled)
         continue;
-      if (hook.filterAddress) {
-        if (regs === null)
-          regs = readRegisters(block);
-        const address = effectiveAddress(site.writeIns, site.writeOp, regs);
-        if (address !== null
-            && !overlaps(address, site.writeOp.size, hook.targetValue, hook.io.size))
-          continue;
-      }
-      hook.pending.set(threadId, hook.io.read(hook.target));
+      const target = hook.target === null ? dynamicTarget(hook, write) : fixedTarget(hook, write);
+      if (target !== null)
+        hook.pending.set(threadId, { target, old: hook.io.read(target) });
     }
   } catch (error) {
     reportAgentError(`before ${site.writeIns.address}`, error);
@@ -298,11 +482,11 @@ function onAfter(site, _block) {
   try {
     const threadId = Process.getCurrentThreadId();
     for (const hook of site.hooks.values()) {
-      const oldValue = hook.pending.get(threadId);
-      if (oldValue === undefined)
+      const pending = hook.pending.get(threadId);
+      if (pending === undefined)
         continue;
       hook.pending.delete(threadId);
-      applyTransform(hook, threadId, oldValue);
+      applyTransform(hook, threadId, pending);
     }
   } catch (error) {
     reportAgentError(`after ${site.writeIns.address}`, error);
@@ -364,6 +548,7 @@ function installSite(writeIns, writeOp) {
     throw new Error(`Write hooks are only implemented for x64, not ${Process.arch}`);
 
   const site = { writeIns, writeOp, hooks: new Map() };
+  site.bytes = hexBytes(writeIns.address.readByteArray(writeIns.size));
   site.before = new NativeCallback(block => onBefore(site, block), 'void', ['pointer']);
   site.after = new NativeCallback(block => onAfter(site, block), 'void', ['pointer']);
   const { code, patchSize } = buildTrampoline(site);
@@ -404,16 +589,20 @@ function addHook(spec) {
   const io = VALUE_IO[spec.valueType];
   if (io === undefined)
     throw new Error(`Unsupported value type: ${spec.valueType}`);
-  const target = ptr(spec.address);
+  if (spec.callerDepth < 0 || spec.callerDepth > MAX_CALLER_DEPTH)
+    throw new Error(`Caller depth must be between 0 and ${MAX_CALLER_DEPTH}`);
+  const target = spec.address === null ? null : ptr(spec.address);
   const transform = compileTransform(spec.transform);
 
   let writeIns, writeOp;
-  const existingSite = spec.writePc === null ? undefined : sites.get(ptr(spec.writePc).toString());
+  const writePc = spec.module !== null ? moduleAddress(spec)
+    : spec.writePc !== null ? ptr(spec.writePc) : null;
+  const existingSite = writePc === null ? undefined : sites.get(writePc.toString());
   if (existingSite !== undefined) {
     writeIns = existingSite.writeIns;
     writeOp = existingSite.writeOp;
-  } else if (spec.writePc !== null) {
-    writeIns = Instruction.parse(ptr(spec.writePc));
+  } else if (writePc !== null) {
+    writeIns = Instruction.parse(writePc);
     writeOp = writeOperand(writeIns);
     if (writeOp === null)
       throw new Error(`${writeIns} at ${writeIns.address} does not write memory`);
@@ -428,12 +617,16 @@ function addHook(spec) {
     id: spec.id,
     site,
     target,
-    targetValue: toBigInt(target),
+    targetValue: target === null ? null : toBigInt(target),
     valueType: spec.valueType,
     io,
     filterAddress: spec.filterAddress,
+    callerDepth: spec.callerDepth,
+    callers: resolveCallers(spec.callers),
+    foreignCallers: new Set(),
+    ambiguousReported: false,
     transform,
-    enabled: true,
+    enabled: spec.enabled,
     pending: new Map(),
     stats: { count: 0, last: null },
     errorReported: false
@@ -443,11 +636,12 @@ function addHook(spec) {
 
   return {
     id: spec.id,
-    writeInstruction: describeInstruction(site.writeIns),
+    writeInstruction: describeInstruction(site),
     resumePc: site.writeIns.next.toString(),
     trampoline: site.code.toString(),
     patchSize: site.patchSize,
     operandSize: site.writeOp.size,
+    callers: hook.callers.size,
     transform: spec.transform.kind
   };
 }
@@ -516,36 +710,67 @@ rpc.exports = {
 class HookSpec:
     """Where to hook and how to transform the written value.
 
-    Pass either ``trap_pc`` (the PC reported by a write watch, i.e. the
-    instruction after the write) or ``write_pc`` (the write instruction itself).
+    Pass ``trap_pc`` (the PC reported by a write watch, i.e. the instruction
+    after the write), ``write_pc`` (the write instruction itself) or
+    ``module`` and ``module_offset`` (the write instruction relative to its
+    module, which stays valid across restarts). ``instruction_bytes`` (hex)
+    makes the agent refuse to patch a module whose code has changed.
+
     With ``filter_address`` the transform only runs when the hooked instruction
     actually writes ``address``; disable it only when the effective address
-    cannot be computed reliably.
+    cannot be computed reliably. Without an ``address`` the transform applies
+    to every address the instruction writes, restricted to the learned
+    ``callers`` if there are any.
+
+    ``caller_depth`` is the number of return addresses that identify a caller
+    (0 disables caller learning); ``callers`` holds the learned signatures as
+    lists of ``(module, offset)`` frames.
     """
 
-    address: int
+    # pylint: disable=too-many-instance-attributes
+    address: int | None
     value_type: str
     transform: ValueTransform
     trap_pc: int | None = None
     write_pc: int | None = None
+    module: str | None = None
+    module_offset: int | None = None
+    instruction_bytes: str | None = None
     filter_address: bool = True
+    enabled: bool = True
+    caller_depth: int = 1
+    callers: list = field(default_factory=list)
     label: str = field(default="", compare=False)
 
     def __post_init__(self):
         watch_size_for_type(self.value_type)
         if not isinstance(self.transform, ValueTransform):
             raise ValueError("transform must be a ValueTransform instance")
-        if self.trap_pc is None and self.write_pc is None:
-            raise ValueError("HookSpec needs a trap_pc or a write_pc")
+        if self.trap_pc is None and self.write_pc is None and self.module is None:
+            raise ValueError("HookSpec needs a trap_pc, a write_pc or a module")
+        if (self.module is None) != (self.module_offset is None):
+            raise ValueError("module and module_offset must be given together")
+        if self.address is None and self.write_pc is None and self.module is None:
+            raise ValueError("a trap_pc can only be resolved with an address")
+        if not 0 <= self.caller_depth <= MAX_CALLER_DEPTH:
+            raise ValueError(f"caller_depth must be between 0 and {MAX_CALLER_DEPTH}")
+        if any(len(frames) != self.caller_depth for frames in self.callers):
+            raise ValueError("every caller signature needs caller_depth frames")
 
     def to_agent(self, hook_id):
         return {
             "id": hook_id,
-            "address": hex(self.address),
+            "address": None if self.address is None else hex(self.address),
             "valueType": self.value_type,
             "trapPc": None if self.trap_pc is None else hex(self.trap_pc),
             "writePc": None if self.write_pc is None else hex(self.write_pc),
+            "module": self.module,
+            "moduleOffset": self.module_offset,
+            "instructionBytes": self.instruction_bytes,
             "filterAddress": self.filter_address,
+            "enabled": self.enabled,
+            "callerDepth": self.caller_depth,
+            "callers": [[list(frame) for frame in frames] for frames in self.callers],
             "transform": self.transform.to_agent(),
         }
 
@@ -569,6 +794,9 @@ class HookWorker(QThread):
     hook_updated = pyqtSignal(int)
     hook_events = pyqtSignal(list)
     transform_error = pyqtSignal(int, str)
+    # hook id, learned caller signatures (frames are [module, offset] or None)
+    callers_learned = pyqtSignal(int, list)
+    callers_ambiguous = pyqtSignal(int)
     agent_warning = pyqtSignal(str)
     worker_failed = pyqtSignal(str)
     worker_stopped = pyqtSignal()
@@ -690,6 +918,12 @@ class HookWorker(QThread):
             self.hook_events.emit(payload.get("events", []))
         elif kind == "agent-error":
             self.agent_warning.emit(payload.get("error", ""))
+        elif kind == "callers":
+            self.callers_learned.emit(
+                payload.get("hookId", 0), payload.get("callers", [])
+            )
+        elif kind == "callers-ambiguous":
+            self.callers_ambiguous.emit(payload.get("hookId", 0))
         elif kind == "transform-error":
             self.transform_error.emit(
                 payload.get("hookId", 0), payload.get("error", "")

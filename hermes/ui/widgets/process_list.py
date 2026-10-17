@@ -58,6 +58,7 @@ class ProcessSelectDialog(QDialog):
         self.setMinimumSize(480, 400)
         self.selected_pid = None
         self.selected_name = None
+        self.selected_path = None
         self._build_ui()
         self._load_processes()
 
@@ -143,4 +144,5 @@ class ProcessSelectDialog(QDialog):
         if row >= 0:
             self.selected_pid = int(self.list.item(row, 0).text())
             self.selected_name = self.list.item(row, 1).text()
+            self.selected_path = self.list.item(row, 2).text()
             self.accept()

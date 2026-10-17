@@ -1,6 +1,8 @@
 """hermes-hook – Main Window: application main UI (PyQt6)."""
 
 from dataclasses import dataclass
+
+from sqlalchemy.exc import SQLAlchemyError
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QLabel,
@@ -20,6 +22,7 @@ from hermes.ui.widgets.table import set_row_height
 from hermes.core.scanner import MemorySnapshot, ScanWorker, ValueRefreshWorker
 from hermes.core.memory import write_process_value
 from hermes.core.write_watch import WriteWatchWorker, watch_size_for_type
+from hermes.db.repository.hooks import HookRepository
 from hermes.hooks.engine import HookSpec
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.write_watch import WriteWatchDialog
@@ -109,6 +112,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(STYLE)
 
         self._current_pid = None
+        self._hook_repository = HookRepository()
         self._current_proc = self.translations["app.no_process"]
         self._scan_results = []
         self._scan_worker = None
@@ -204,7 +208,9 @@ class MainWindow(QMainWindow):
         address_box.setObjectName("tab_page")
         self.bottom_tabs.addTab(address_box, self.translations["address_table.title"])
 
-        self.hook_panel = HookPanel(self.translations, self)
+        self.hook_panel = HookPanel(
+            self.translations, self, repository=self._hook_repository
+        )
         self.hook_panel.setTitle("")
         self.hook_panel.setObjectName("tab_page")
         self.hook_panel.count_changed.connect(self._on_hook_count_changed)
@@ -645,6 +651,7 @@ class MainWindow(QMainWindow):
             value_type,
             dialog.transform,
             trap_pc=trap_pc,
+            caller_depth=dialog.caller_depth,
             label=dialog.label,
         )
         self.hook_panel.add_hook(spec, site)
@@ -739,7 +746,9 @@ class MainWindow(QMainWindow):
             if dlg.selected_pid != self._current_pid:
                 self._stop_write_monitor()
             if self.hook_panel is not None:
-                self.hook_panel.set_process(dlg.selected_pid)
+                self.hook_panel.set_process(
+                    dlg.selected_pid, self._known_process_id(dlg)
+                )
             self._current_pid = dlg.selected_pid
             self._current_proc = self.translations["app.process_display"].format(
                 name=dlg.selected_name, pid=dlg.selected_pid
@@ -750,6 +759,18 @@ class MainWindow(QMainWindow):
             )
             if self.btn_first_scan is not None:
                 self.btn_first_scan.setEnabled(True)
+
+    def _known_process_id(self, dlg):
+        """Return the database id of the selected program, saving it if new."""
+        try:
+            return self._hook_repository.get_or_create_process(
+                dlg.selected_name, dlg.selected_path
+            )
+        except SQLAlchemyError as error:
+            self.lbl_status.setText(
+                self.translations["hooks.db_failed"].format(message=error)
+            )
+            return None
 
     def _first_scan(self):
         """Validate the selected scan options and start the first scan."""

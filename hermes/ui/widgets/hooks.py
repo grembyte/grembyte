@@ -4,6 +4,7 @@ import dataclasses
 
 from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
+from sqlalchemy.exc import SQLAlchemyError
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QComboBox,
@@ -16,6 +17,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -23,8 +25,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
-from hermes.hooks.engine import HookWorker
-from hermes.hooks.transforms import available_transforms
+from hermes.hooks.engine import MAX_CALLER_DEPTH, HookSpec, HookWorker
+from hermes.hooks.transforms import available_transforms, create_transform
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.table import set_row_height
 
@@ -158,6 +160,7 @@ class HookDialog(QDialog):
         self.translations = translations
         self.transform = None
         self.label = label
+        self.caller_depth = 1
         self._editing = transform is not None
         self.setWindowTitle(
             translations["hooks.edit_title" if self._editing else "hooks.create_title"]
@@ -182,6 +185,15 @@ class HookDialog(QDialog):
         self.label_input = QLineEdit(label)
         self.label_input.setPlaceholderText(self.translations["hooks.label_placeholder"])
         form.addRow(self.translations["hooks.label"], self.label_input)
+        if not self._editing:
+            self.caller_depth_input = QSpinBox()
+            self.caller_depth_input.setRange(0, MAX_CALLER_DEPTH)
+            self.caller_depth_input.setValue(self.caller_depth)
+            self.caller_depth_input.setSpecialValueText(
+                self.translations["hooks.caller_depth_off"]
+            )
+            self.caller_depth_input.setToolTip(self.translations["hooks.caller_depth_hint"])
+            form.addRow(self.translations["hooks.caller_depth"], self.caller_depth_input)
         self.kind_combo = QComboBox()
         form.addRow(self.translations["hooks.transform"], self.kind_combo)
         layout.addLayout(form)
@@ -226,11 +238,50 @@ class HookDialog(QDialog):
             self.error_label.setText(str(error))
             return
         self.label = self.label_input.text().strip()
+        if not self._editing:
+            self.caller_depth = self.caller_depth_input.value()
         self.accept()
 
 
+def persistable_callers(callers):
+    """Keep the caller signatures whose frames all lie inside a module."""
+    return [
+        [tuple(frame) for frame in frames]
+        for frames in callers
+        if all(frame is not None for frame in frames)
+    ]
+
+
+def describe_callers(callers):
+    """Return a readable list of caller signatures."""
+    return "\n".join(
+        " ← ".join(f"{module}+0x{offset:x}" for module, offset in frames)
+        for frames in callers
+    )
+
+
+def spec_from_saved(saved):
+    """Build the HookSpec that reinstalls a hook saved in the database."""
+    return HookSpec(
+        None,
+        saved.value_type,
+        create_transform(saved.transform_kind, **saved.transform_params),
+        module=saved.module,
+        module_offset=saved.module_offset,
+        instruction_bytes=saved.instruction_bytes,
+        enabled=saved.enabled,
+        caller_depth=saved.caller_depth,
+        callers=persistable_callers(saved.callers),
+        label=saved.label,
+    )
+
+
 class HookPanel(QGroupBox):
-    """Table of active hooks; owns the HookWorker of the attached process."""
+    """Table of active hooks; owns the HookWorker of the attached process.
+
+    With a ``repository`` new hooks are saved as module + offset and the saved
+    hooks of a process are reinstalled whenever it is attached again.
+    """
 
     # pylint: disable=too-many-instance-attributes
 
@@ -246,10 +297,12 @@ class HookPanel(QGroupBox):
         "hooks.column_last",
     )
 
-    def __init__(self, translations, parent=None):
+    def __init__(self, translations, parent=None, *, repository=None):
         super().__init__(translations["hooks.title"], parent)
         self.translations = translations
+        self._repository = repository
         self._pid = None
+        self._process_id = None
         self._worker = None
         self._hooks = {}
         self._build_ui()
@@ -358,30 +411,43 @@ class HookPanel(QGroupBox):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def set_process(self, pid):
-        """Switch to another process; hooks of the previous one are removed."""
+    def set_process(self, pid, process_id=None):
+        """Switch to another process; hooks of the previous one are removed.
+
+        ``process_id`` is the database id of the program; its saved hooks are
+        installed right away.
+        """
         if pid == self._pid:
             return
         self.shutdown()
         self._pid = pid
+        self._process_id = process_id
         self._hooks.clear()
         self.table.setRowCount(0)
         self.status_label.setText(self.translations["hooks.hint"])
         self._update_buttons()
         self.count_changed.emit(0)
+        self._restore_saved_hooks()
 
-    def add_hook(self, spec, site):
-        """Install a hook described by ``spec`` in the current process."""
+    def add_hook(self, spec, site, saved_id=None):
+        """Install a hook described by ``spec`` in the current process.
+
+        ``saved_id`` is the database id of a restored hook; hooks without one
+        are saved once they are installed.
+        """
         worker = self._ensure_worker()
         hook_id = worker.add_hook(spec)
-        self._hooks[hook_id] = {"spec": spec, "status": "installing", "count": 0}
+        self._hooks[hook_id] = {
+            "spec": spec, "status": "installing", "count": 0, "saved_id": saved_id,
+        }
 
         row = self.table.rowCount()
         self.table.insertRow(row)
         label_item = QTableWidgetItem(spec.label or "—")
         label_item.setData(Qt.ItemDataRole.UserRole, hook_id)
         self.table.setItem(row, 0, label_item)
-        self._set_cell(hook_id, 1, f"0x{spec.address:X}", "#3fb950")
+        self._set_cell(hook_id, 1, self._address_text(spec), "#3fb950")
+        self._show_callers(hook_id)
         self._set_cell(hook_id, 2, site)
         self._set_cell(hook_id, 3, spec.transform.describe(), "#f0883e")
         self._set_cell(hook_id, 5, "0")
@@ -412,6 +478,85 @@ class HookPanel(QGroupBox):
                 self._set_status(hook_id, "disconnected")
 
     # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+    def _address_text(self, spec):
+        if spec.address is not None:
+            return f"0x{spec.address:X}"
+        if spec.caller_depth > 0 and spec.callers:
+            return self.translations["hooks.address_callers"].format(count=len(spec.callers))
+        return self.translations["hooks.address_dynamic"]
+
+    def _show_callers(self, hook_id):
+        spec = self._hooks[hook_id]["spec"]
+        if spec.caller_depth == 0:
+            tooltip = self.translations["hooks.callers_off"]
+        elif spec.callers:
+            tooltip = self.translations["hooks.callers_tooltip"].format(
+                callers=describe_callers(spec.callers)
+            )
+        else:
+            tooltip = self.translations["hooks.callers_none"]
+        self._set_cell(hook_id, 1, self._address_text(spec), tooltip=tooltip)
+
+    def _store(self, action, *args, **kwargs):
+        """Run a repository call; report failures instead of raising."""
+        if self._repository is None:
+            return None
+        try:
+            return action(*args, **kwargs)
+        except SQLAlchemyError as error:
+            self.status_label.setText(
+                self.translations["hooks.db_failed"].format(message=error)
+            )
+            return None
+
+    def _restore_saved_hooks(self):
+        if self._repository is None or self._process_id is None:
+            return
+        saved_hooks = self._store(self._repository.list_hooks, self._process_id) or []
+        for saved in saved_hooks:
+            try:
+                spec = spec_from_saved(saved)
+            except (TypeError, ValueError) as error:
+                self.status_label.setText(
+                    self.translations["hooks.restore_failed"].format(
+                        label=saved.label or saved.id, message=error
+                    )
+                )
+                continue
+            self.add_hook(
+                spec, f"{saved.module}+0x{saved.module_offset:x}", saved_id=saved.id
+            )
+        if saved_hooks:
+            self.status_label.setText(
+                self.translations["hooks.restored"].format(count=len(saved_hooks))
+            )
+
+    def _save_installed_hook(self, state, write):
+        """Save a newly created hook as module + offset of its write site."""
+        if self._repository is None or self._process_id is None:
+            return
+        if write.get("module") is None:
+            self.status_label.setText(self.translations["hooks.not_saved"])
+            return
+        spec = state["spec"]
+        state["saved_id"] = self._store(
+            self._repository.add_hook,
+            self._process_id,
+            label=spec.label,
+            module=write["module"],
+            module_offset=int(write["moduleOffset"], 0),
+            instruction_bytes=write["bytes"],
+            instruction_text=write.get("text", ""),
+            value_type=spec.value_type,
+            transform=spec.transform,
+            enabled=spec.enabled,
+            caller_depth=spec.caller_depth,
+            callers=spec.callers,
+        )
+
+    # ------------------------------------------------------------------
     # Worker management
     # ------------------------------------------------------------------
     def _ensure_worker(self):
@@ -429,6 +574,12 @@ class HookPanel(QGroupBox):
         )
         worker.hook_events.connect(
             lambda events: self._on_events(worker, events)
+        )
+        worker.callers_learned.connect(
+            lambda hook_id, callers: self._on_callers_learned(worker, hook_id, callers)
+        )
+        worker.callers_ambiguous.connect(
+            lambda hook_id: self._on_callers_ambiguous(worker, hook_id)
         )
         worker.transform_error.connect(
             lambda hook_id, message: self._on_transform_error(worker, hook_id, message)
@@ -458,7 +609,10 @@ class HookPanel(QGroupBox):
                 size=info.get("patchSize", ""),
             ),
         )
-        self._set_status(hook_id, "active")
+        state = self._hooks[hook_id]
+        if state["saved_id"] is None and not state.get("removing"):
+            self._save_installed_hook(state, write)
+        self._set_status(hook_id, "active" if state["spec"].enabled else "paused")
 
     def _on_failed(self, worker, hook_id, message):
         if worker is not self._worker:
@@ -499,6 +653,33 @@ class HookPanel(QGroupBox):
                 )
             if state["status"] == "error":
                 self._set_status(hook_id, "active")
+
+    def _on_callers_learned(self, worker, hook_id, callers):
+        if worker is not self._worker:
+            return
+        state = self._hooks.get(hook_id)
+        if state is None:
+            return
+        callers = persistable_callers(callers)
+        if callers == state["spec"].callers:
+            return
+        state["spec"] = dataclasses.replace(state["spec"], callers=callers)
+        self._show_callers(hook_id)
+        if state["saved_id"] is not None:
+            self._store(self._repository.update_hook, state["saved_id"], callers=callers)
+
+    def _on_callers_ambiguous(self, worker, hook_id):
+        if worker is not self._worker:
+            return
+        state = self._hooks.get(hook_id)
+        if state is None:
+            return
+        state["ambiguous"] = True
+        self.status_label.setText(
+            self.translations["hooks.callers_ambiguous"].format(
+                label=state["spec"].label or hook_id
+            )
+        )
 
     def _on_transform_error(self, worker, hook_id, message):
         if worker is not self._worker:
@@ -542,7 +723,7 @@ class HookPanel(QGroupBox):
         site_item = self.table.item(self._row_of(hook_id), 2)
         dialog = HookDialog(
             self.translations,
-            f"0x{spec.address:X}",
+            self._address_text(spec),
             spec.value_type,
             site_item.text() if site_item is not None else "",
             transform=spec.transform,
@@ -555,6 +736,13 @@ class HookPanel(QGroupBox):
             spec, transform=dialog.transform, label=dialog.label
         )
         self._worker.set_transform(hook_id, dialog.transform)
+        if state["saved_id"] is not None:
+            self._store(
+                self._repository.update_hook,
+                state["saved_id"],
+                label=dialog.label,
+                transform=dialog.transform,
+            )
         self._set_cell(hook_id, 0, dialog.label or "—")
         self._set_cell(hook_id, 3, dialog.transform.describe())
         if state["status"] == "error":
@@ -567,6 +755,9 @@ class HookPanel(QGroupBox):
             return
         enable = state["status"] == "paused"
         self._worker.set_enabled(hook_id, enable)
+        state["spec"] = dataclasses.replace(state["spec"], enabled=enable)
+        if state["saved_id"] is not None:
+            self._store(self._repository.update_hook, state["saved_id"], enabled=enable)
         self._set_status(hook_id, "active" if enable else "paused")
 
     def _remove_selected(self):
@@ -574,6 +765,10 @@ class HookPanel(QGroupBox):
         state = self._hooks.get(hook_id)
         if state is None:
             return
+        state["removing"] = True
+        if state["saved_id"] is not None:
+            self._store(self._repository.delete_hook, state["saved_id"])
+            state["saved_id"] = None
         if (self._worker is not None
                 and state["status"] in {"installing", "active", "paused", "error"}):
             self._worker.remove_hook(hook_id)
