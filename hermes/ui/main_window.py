@@ -28,7 +28,14 @@ from hermes.core.pointer import (
     resolve_chain,
 )
 from hermes.core.freeze import FreezeWorker, FrozenValue
-from hermes.core.scanner import MemorySnapshot, ScanWorker, ValueRefreshWorker
+from hermes.core.scanner import (
+    FLOAT_ROUNDING_MODES,
+    FUZZY_MODES,
+    PREVIOUS_VALUE_MODES,
+    MemorySnapshot,
+    ScanWorker,
+    ValueRefreshWorker,
+)
 from hermes.core.memory import write_process_value
 from hermes.core.process import process_start_time
 from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES, value_type as get_value_type
@@ -62,6 +69,8 @@ class ScanRequest:
     value2: str = ""
     previous_results: list[dict[str, int | float | str]] | MemorySnapshot | None = None
     aligned: bool = True
+    tolerance: str = ""
+    float_rounding: str = "exact"
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +171,10 @@ class MainWindow(QMainWindow):
         self.input_value = None
         self.lbl_value2 = None
         self.input_value2 = None
+        self.lbl_tolerance = None
+        self.input_tolerance = None
+        self.lbl_float_rounding = None
+        self.combo_float_rounding = None
         self.btn_first_scan = None
         self.btn_next_scan = None
         self.btn_reset = None
@@ -364,6 +377,9 @@ class MainWindow(QMainWindow):
             ("search.changed", "changed"),
             ("search.increased", "increased"),
             ("search.decreased", "decreased"),
+            ("search.increased_by", "increased_by"),
+            ("search.decreased_by", "decreased_by"),
+            ("search.changed_by", "changed_by"),
         ]
         for text_key, mode in scan_modes:
             self.combo_scan_type.addItem(self.translations[text_key], mode)
@@ -391,7 +407,34 @@ class MainWindow(QMainWindow):
         )
         self.input_value2.setVisible(False)
         layout.addWidget(self.input_value2)
-        self.combo_scan_type.currentIndexChanged.connect(self._toggle_second_value)
+
+        # Tolerance and float comparison (for exact and "changed by" scans)
+        self.lbl_tolerance = QLabel(self.translations["search.tolerance"])
+        layout.addWidget(self.lbl_tolerance)
+        self.input_tolerance = QLineEdit()
+        self.input_tolerance.setPlaceholderText(
+            self.translations["search.tolerance_placeholder"]
+        )
+        self.input_tolerance.setToolTip(self.translations["search.tolerance_tooltip"])
+        layout.addWidget(self.input_tolerance)
+        self.lbl_float_rounding = QLabel(self.translations["search.float_rounding"])
+        layout.addWidget(self.lbl_float_rounding)
+        self.combo_float_rounding = QComboBox()
+        for mode in FLOAT_ROUNDING_MODES:
+            self.combo_float_rounding.addItem(
+                self.translations[f"search.float_{mode}"], mode
+            )
+        self.combo_float_rounding.setToolTip(
+            self.translations["search.float_rounding_tooltip"]
+        )
+        self.combo_float_rounding.setCurrentIndex(
+            self.combo_float_rounding.findData("rounded")
+        )
+        layout.addWidget(self.combo_float_rounding)
+
+        self.combo_scan_type.currentIndexChanged.connect(self._update_value_inputs)
+        self.combo_type.currentIndexChanged.connect(self._update_value_inputs)
+        self._update_value_inputs()
 
         # Divider
         divider = QFrame()
@@ -436,14 +479,36 @@ class MainWindow(QMainWindow):
 
         self._set_primary(self.btn_first_scan, True)
 
-    def _toggle_second_value(self, index):
-        """Show the upper-bound input only for range scans."""
-        if (self.combo_scan_type is None or self.lbl_value2 is None or
-            self.input_value2 is None):
+    def _update_value_inputs(self, _index=None):
+        """Show only the value inputs that the selected scan type uses."""
+        if (self.combo_scan_type is None or self.combo_type is None or
+            self.lbl_value2 is None or self.input_value2 is None or
+            self.lbl_tolerance is None or self.input_tolerance is None or
+            self.lbl_float_rounding is None or self.combo_float_rounding is None):
             return
-        visible = self.combo_scan_type.itemData(index) == "between"
-        self.lbl_value2.setVisible(visible)
-        self.input_value2.setVisible(visible)
+        scan_mode = self.combo_scan_type.currentData()
+        between = scan_mode == "between"
+        self.lbl_value2.setVisible(between)
+        self.input_value2.setVisible(between)
+        fuzzy = scan_mode in FUZZY_MODES
+        self.lbl_tolerance.setVisible(fuzzy)
+        self.input_tolerance.setVisible(fuzzy)
+        value_type = self.combo_type.currentData()
+        floats = value_type == "auto" or not VALUE_TYPES[value_type].is_integer
+        self.lbl_float_rounding.setVisible(fuzzy and floats)
+        self.combo_float_rounding.setVisible(fuzzy and floats)
+
+    def _fuzzy_options(self):
+        """Return the tolerance and float rounding entered for a scan."""
+        tolerance = (
+            self.input_tolerance.text().strip()
+            if self.input_tolerance is not None else ""
+        )
+        float_rounding = (
+            self.combo_float_rounding.currentData()
+            if self.combo_float_rounding is not None else "exact"
+        )
+        return {"tolerance": tolerance, "float_rounding": float_rounding}
 
     # ------------------------------------------------------------------
     # Bottom panel: tracked addresses
@@ -1155,6 +1220,13 @@ class MainWindow(QMainWindow):
                 self.translations["search.auto_type_requires_value"],
             )
             return
+        if scan_mode in PREVIOUS_VALUE_MODES:
+            QMessageBox.warning(
+                self,
+                self.translations["search.first_scan"],
+                self.translations["search.requires_previous_scan"],
+            )
+            return
         self.lbl_scan_status.setText(
             self.translations["search.scanning"].format(
                 type=self.combo_type.currentText(),
@@ -1172,6 +1244,7 @@ class MainWindow(QMainWindow):
                 value=value,
                 value2=value2,
                 aligned=self.chk_aligned is None or self.chk_aligned.isChecked(),
+                **self._fuzzy_options(),
             )
         )
 
@@ -1203,6 +1276,7 @@ class MainWindow(QMainWindow):
                 value=value,
                 value2=value2,
                 previous_results=self._scan_results,
+                **self._fuzzy_options(),
             )
         )
 
@@ -1231,6 +1305,8 @@ class MainWindow(QMainWindow):
             request.value2,
             request.previous_results,
             aligned=request.aligned,
+            tolerance=request.tolerance,
+            float_rounding=request.float_rounding,
             parent=self,
         )
         self._scan_worker.results_ready.connect(self._on_scan_results)

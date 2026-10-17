@@ -9,7 +9,8 @@ import struct
 import pytest
 import numpy as np
 
-from hermes.core.scanner import MemorySnapshot, ScanWorker, ValueRefreshWorker
+from hermes.core.scanner import MemorySnapshot, ScanWorker, ValueRange, ValueRefreshWorker
+from hermes.core.value_types import VALUE_TYPES
 
 
 class FakeMemory:
@@ -54,7 +55,7 @@ def install_fake_process(monkeypatch, maps, base_address, contents):
     ("mode", "current", "target", "upper", "previous", "expected"),
     [
         ("unknown_start", 5, None, None, None, True),
-        ("exact", 7, 7, None, None, True),
+        ("exact", 7, ValueRange(7, 7), None, None, True),
         ("greater_than", 8, 7, None, None, True),
         ("less_than", 6, 7, None, None, True),
         ("between", 5, 2, 7, None, True),
@@ -64,7 +65,15 @@ def install_fake_process(monkeypatch, maps, base_address, contents):
         ("decreased", 6, None, None, 7, True),
         ("increased", 7, None, None, 7, False),
         ("decreased", 8, None, None, 7, False),
-        ("exact", 6, 7, None, None, False),
+        ("exact", 6, ValueRange(7, 7), None, None, False),
+        ("exact", 6, ValueRange(5, 9), None, None, True),
+        ("increased_by", 107, ValueRange(100, 100), None, 7, True),
+        ("increased_by", 106, ValueRange(98, 102), None, 7, True),
+        ("increased_by", 7, ValueRange(100, 100), None, 107, False),
+        ("decreased_by", 7, ValueRange(100, 100), None, 107, True),
+        ("changed_by", 7, ValueRange(100, 100), None, 107, True),
+        ("changed_by", 107, ValueRange(100, 100), None, 7, True),
+        ("changed_by", 108, ValueRange(100, 100), None, 7, False),
         ("changed", 7, None, None, 7, False),
     ],
 )
@@ -77,7 +86,8 @@ def test_matches_scan_modes(mode, current, target, upper, previous, expected):
 @pytest.mark.parametrize(
     ("mode", "target", "upper", "expected"),
     [
-        ("exact", 7, None, [False, True, False]),
+        ("exact", ValueRange(7, 7), None, [False, True, False]),
+        ("exact", ValueRange(2, 7), None, [True, True, False]),
         ("greater_than", 7, None, [False, False, True]),
         ("less_than", 7, None, [True, False, False]),
         ("between", 4, 8, [False, True, False]),
@@ -380,3 +390,134 @@ def test_auto_first_scan_ignores_small_types(monkeypatch):
     results = ScanWorker(123, "auto", "exact", "7")._first_scan()
 
     assert {result["type"] for result in results} == {"int32"}
+
+
+def scan_range(text, value_type, tolerance="", rounding="exact", delta=False):
+    return ValueRange.parse(text, VALUE_TYPES[value_type], tolerance, rounding, delta)
+
+
+@pytest.mark.parametrize(
+    ("text", "rounding", "tolerance", "inside", "outside"),
+    [
+        ("12.3", "exact", "", [np.float32(12.3)], [12.31, 12.29]),
+        ("12.3", "exact", "0.1", [12.2, 12.4], [12.19, 12.41]),
+        ("12.3", "rounded", "", [12.25, 12.3, 12.349], [12.35, 12.249]),
+        ("12", "rounded", "", [11.5, 12.49], [12.5, 11.49]),
+        ("12.3", "truncated", "", [12.3, 12.399], [12.4, 12.299]),
+        ("-12.3", "truncated", "", [-12.3, -12.399], [-12.4, -12.299]),
+        ("12.3", "rounded", "1", [11.25, 13.349], [11.249, 13.35]),
+        ("1.25e1", "rounded", "", [12.45, 12.54], [12.55, 12.44]),
+    ],
+)
+def test_float_ranges_round_and_widen_by_tolerance(text, rounding, tolerance, inside, outside):
+    value_range = scan_range(text, "float", tolerance, rounding)
+
+    assert value_range.contains(np.array(inside, dtype=np.float32)).all()
+    assert not value_range.contains(np.array(outside, dtype=np.float32)).any()
+
+
+def test_integer_ranges_ignore_float_rounding():
+    value_range = scan_range("100", "int32", "5", "rounded")
+
+    assert value_range == ValueRange(95, 105)
+
+
+@pytest.mark.parametrize(
+    ("text", "value_type", "tolerance", "message"),
+    [
+        ("12", "int32", "-1", "Invalid tolerance"),
+        ("12", "int32", "0.5", "Invalid tolerance"),
+        ("12", "float", "abc", "Invalid tolerance"),
+        ("2147483648", "int32", "", "Invalid scan value"),
+        ("abc", "float", "", "Invalid scan value"),
+    ],
+)
+def test_value_range_rejects_invalid_input(text, value_type, tolerance, message):
+    with pytest.raises(ValueError, match=message):
+        scan_range(text, value_type, tolerance)
+
+
+def test_value_range_change_may_exceed_the_type_range():
+    value_range = scan_range("200", "int8", delta=True)
+
+    assert value_range == ValueRange(200, 200)
+
+
+@pytest.mark.parametrize("dtype", [np.int8, np.int32, np.int64, np.uint8, np.uint64])
+def test_integer_change_matches_scalars_and_arrays_alike(dtype):
+    info = np.iinfo(dtype)
+    previous = np.array([0, 5, info.max - 10, info.min + 10, 3], dtype=dtype)
+    current = np.array([10, 15, info.max, info.min + 20, 3], dtype=dtype)
+    value_range = ValueRange(9, 11)
+
+    array_result = value_range.contains_change(current, previous)
+    scalar_result = [
+        value_range.contains_change(int(now), int(before))
+        for now, before in zip(current, previous)
+    ]
+
+    assert array_result.tolist() == scalar_result == [True, True, True, True, False]
+
+
+def test_float_change_uses_rounding_of_the_entered_value():
+    value_range = scan_range("7.5", "float", rounding="rounded", delta=True)
+    previous = np.array([20.0, 20.0, 20.0], dtype=np.float32)
+    current = np.array([12.5, 12.47, 12.6], dtype=np.float32)
+
+    assert value_range.contains_change(previous, current).tolist() == [True, True, False]
+
+
+def test_first_scan_finds_rounded_float_values(monkeypatch):
+    contents = struct.pack("<fff", 12.34, 12.26, 12.4)
+    install_fake_process(monkeypatch, "1000-100c rw-p 00000000 00:00 0\n", 0x1000, contents)
+    worker = ScanWorker(123, "float", "exact", "12.3", float_rounding="rounded")
+
+    assert [result["address"] for result in worker._first_scan()] == [0x1000, 0x1004]
+
+
+def test_first_scan_with_tolerance_finds_nearby_integers(monkeypatch):
+    contents = struct.pack("<iii", 95, 100, 106)
+    install_fake_process(monkeypatch, "1000-100c rw-p 00000000 00:00 0\n", 0x1000, contents)
+    worker = ScanWorker(123, "int32", "exact", "100", tolerance="5")
+
+    assert [result["value"] for result in worker._first_scan()] == [95, 100]
+
+
+@pytest.mark.parametrize("mode", ["changed", "increased_by"])
+def test_first_scan_requires_previous_scan_for_comparing_modes(mode):
+    with pytest.raises(ValueError, match="requires a previous scan"):
+        ScanWorker(123, "int32", mode, "100")._first_scan()
+
+
+def test_refine_scan_finds_values_increased_by_amount(monkeypatch):
+    install_fake_process(
+        monkeypatch, "1000-100c rw-p 00000000 00:00 0\n", 0x1000,
+        struct.pack("<iii", 200, 205, 300),
+    )
+    previous = [
+        {"address": 0x1000 + offset, "type": "int32", "value": 100}
+        for offset in (0, 4, 8)
+    ]
+    worker = ScanWorker(
+        123, "int32", "increased_by", "100", previous_results=previous, tolerance="5"
+    )
+
+    assert [result["value"] for result in worker._refine_scan()] == [200, 205]
+
+
+def test_refine_snapshot_finds_floats_decreased_by_amount(monkeypatch):
+    install_fake_process(
+        monkeypatch, "1000-100c rw-p 00000000 00:00 0\n", 0x1000,
+        struct.pack("<fff", 20.0, 22.0, 30.0),
+    )
+    snapshot = ScanWorker(123, "float", "unknown_start")._first_scan()
+    install_fake_process(
+        monkeypatch, "1000-100c rw-p 00000000 00:00 0\n", 0x1000,
+        struct.pack("<fff", 12.6, 14.0, 29.0),
+    )
+    worker = ScanWorker(
+        123, "float", "decreased_by", "7.5", previous_results=snapshot,
+        tolerance="0.5", float_rounding="rounded",
+    )
+
+    assert [result["address"] for result in worker._refine_scan()] == [0x1000, 0x1004]

@@ -5,7 +5,7 @@ Hermes Hook ist eine Linux-Desktopanwendung auf Basis von Python und PyQt6 zum U
 ## Funktionen
 
 - **Prozessauswahl** mit Kommandozeile und Arbeitsverzeichnis.
-- **Speicher-Scan** nach `int8`, `int16`, `int32`, `int64`, deren vorzeichenlosen Varianten `uint8` bis `uint64` sowie `float` und `double`: exakter Wert, größer/kleiner, Bereich, unbekannter Startwert sowie Folge-Scans auf verändert, unverändert, vergrößert oder verkleinert. „Automatisch raten“ probiert `int32`, `int64`, `float` und `double`; kleinere Typen passen fast überall und müssen ausdrücklich gewählt werden.
+- **Speicher-Scan** nach `int8`, `int16`, `int32`, `int64`, deren vorzeichenlosen Varianten `uint8` bis `uint64` sowie `float` und `double`: exakter Wert, größer/kleiner, Bereich, unbekannter Startwert sowie Folge-Scans auf verändert, unverändert, vergrößert oder verkleinert und auf „vergrößert/verkleinert/verändert um X“. Exakte und Um-X-Scans akzeptieren eine Toleranz (±); `float`- und `double`-Werte lassen sich exakt, gerundet oder abgeschnitten auf die eingegebenen Nachkommastellen vergleichen (`12.3` gerundet findet 12,25 bis 12,35). „Automatisch raten“ probiert `int32`, `int64`, `float` und `double`; kleinere Typen passen fast überall und müssen ausdrücklich gewählt werden.
 - **Gemerkte Adressen** mit Live-Werten; Werte lassen sich direkt in den Prozess schreiben oder einfrieren.
 - **Schreibüberwachung**: Ein Hardware-Watchpoint zeigt, welche Codestellen eine Adresse beschreiben.
 - **Pointer-Suche**: Findet Pointer-Chains, über die gemerkte Adressen und Hooks den Wert auch nach einem Neustart des Programms wiederfinden.
@@ -84,7 +84,7 @@ sudo sysctl kernel.yama.ptrace_scope=0
 
 ## Beispiel: Gold-Multiplikator für das Test-Spiel
 
-`test_app/dummy_game.c` ist ein minimales GTK-Spiel mit Buttons für „Gold +100“, „Gold -100“ und „New game“. Wie in echten Spielen liegt der Spieler auf dem Heap hinter Zeigern (`g_game → player → gold`), seine Adresse ändert sich also bei jedem Start und bei jedem „New game“. Das Spiel gibt seine PID, die Pointer-Chain und die aktuelle Adresse des Golds aus, sodass sich die Ergebnisse von Scanner und Pointer-Suche prüfen lassen. Es dürfen mehrere Instanzen gleichzeitig laufen.
+`test_app/dummy_game.c` ist ein minimales GTK-Spiel mit Buttons für „Gold +100“, „Gold -100“, „New game“ sowie Mana, Erfahrung und Schatzsuche zum Testen unscharfer Scans (siehe [unten](#unscharfe-scans-toleranz-und-gerundete-floats)). Wie in echten Spielen liegt der Spieler auf dem Heap hinter Zeigern (`g_game → player → gold`), seine Adresse ändert sich also bei jedem Start und bei jedem „New game“. Das Spiel gibt seine PID, die Pointer-Chain und die aktuelle Adresse des Golds aus, sodass sich die Ergebnisse von Scanner und Pointer-Suche prüfen lassen. Es dürfen mehrere Instanzen gleichzeitig laufen.
 
 ```bash
 mkdir -p build
@@ -102,6 +102,14 @@ Benötigt werden `gcc` und die GTK-3-Entwicklerpakete (`gtk3-devel` unter Fedora
 6. Der Hook erscheint im Tab **Hooks**. Jeder Klick auf „Gold +100“ bringt jetzt 1000 Gold; die Spalte „Letzte“ zeigt alt → vom Spiel geschrieben ⇒ gespeichert.
 
 Über den Tab **Hooks** lassen sich Hooks bearbeiten, pausieren, debuggen und entfernen. Beim Entfernen, beim Prozesswechsel und beim Beenden von Hermes werden die ursprünglichen Bytes wiederhergestellt.
+
+### Unscharfe Scans: Toleranz und gerundete Floats
+
+Das Spiel zeigt Mana (`float`) mit einer und Erfahrung (`double`) ohne Nachkommastelle an. Mana regeneriert jede Sekunde um 0,13, ein Zauber kostet 7,5; ein Kampf bringt 10–15 XP mit Nachkommastellen, eine Schatzsuche 20–30 Gold. Die Adressen gibt das Spiel bei jeder Runde aus.
+
+- **Mana**: Datentyp `float`, **Exakter Wert** mit dem angezeigten Wert (z. B. `20.1`) und Float-Vergleich **Gerundet**; mit „Exakt“ findet sich die Adresse kaum, weil der gespeicherte Wert z. B. 20,13 ist. Dann **Cast spell** klicken und **Verkleinert um …** `7.5` mit Toleranz `0.5` scannen – die Regeneration zwischen den Scans würde einen Vergleich ohne Toleranz scheitern lassen.
+- **Erfahrung**: Datentyp `double`, **Exakter Wert** mit der angezeigten Zahl und **Gerundet**, nach **Fight** **Vergrößert um …** `12` mit Toleranz `3`.
+- **Gold**: Nach **Find treasure** **Vergrößert um …** `25` mit Toleranz `5` (`int32`).
 
 ### Hooks nach einem Neustart
 

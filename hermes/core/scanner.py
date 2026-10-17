@@ -2,20 +2,125 @@
 
 import itertools
 import struct
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core.pointer import ProcessMemory, module_bases, read_mappings, resolve_chain
 from hermes.core.value_types import AUTO_VALUE_TYPES, VALUE_TYPES
+from hermes.core.value_types import value_type as lookup_value_type
 
 # struct format characters without byte order, e.g. "i" for int32.
 _VALUE_FORMATS = {name: kind.struct_format[1:] for name, kind in VALUE_TYPES.items()}
 
+# Scan modes that compare the change since the previous scan with a value.
+_DELTA_MODES = {"increased_by", "decreased_by", "changed_by"}
 # Scan modes that compare against the value from the previous scan.
-_PREVIOUS_VALUE_MODES = {"changed", "unchanged", "increased", "decreased"}
+PREVIOUS_VALUE_MODES = {"changed", "unchanged", "increased", "decreased"} | _DELTA_MODES
+# Scan modes whose value may be matched with a tolerance or rounded.
+FUZZY_MODES = {"exact"} | _DELTA_MODES
+# How a float search value is compared: as entered, rounded or truncated to
+# the decimal places entered ("12.3" matches 12.25..12.35 or 12.3..12.4).
+FLOAT_ROUNDING_MODES = ("exact", "rounded", "truncated")
 
 _NUMPY_DTYPES = {name: kind.dtype for name, kind in VALUE_TYPES.items()}
+
+
+@dataclass(frozen=True)
+class ValueRange:
+    """Values a fuzzy scan accepts: ``low`` to ``high`` with optional open ends.
+
+    Works on scalars and NumPy arrays alike. Float ranges are compared in the
+    precision of ``float_type``, so ``12.4`` means the float stored for 12.4.
+    Integer changes are compared modulo 2**64 and never overflow the type.
+    """
+
+    low: int | float
+    high: int | float
+    float_type: type | None = None  # np.float32 / np.float64, None for integers
+    include_low: bool = True
+    include_high: bool = True
+
+    @classmethod
+    def parse(cls, text, kind, tolerance="", rounding="exact", delta=False):
+        """Build the range for search ``text`` of ValueType ``kind``.
+
+        ``delta`` ranges describe a change, which may exceed the type's range.
+        Raises ValueError for invalid input.
+        """
+        tolerance = cls._parse_tolerance(tolerance, kind)
+        try:
+            center = (
+                (int(text, 0) if delta else kind.parse(text))
+                if kind.is_integer else float(text)
+            )
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ValueError(f"Invalid scan value: {text!r}") from error
+        if kind.is_integer:
+            return cls(center - tolerance, center + tolerance)
+
+        float_type = kind.dtype.type
+        if rounding == "exact":
+            bounds = (center - tolerance, center + tolerance, True, True)
+        elif rounding == "rounded":
+            step = 10.0 ** -cls._decimal_places(text)
+            bounds = (center - step / 2 - tolerance, center + step / 2 + tolerance, True, False)
+        elif rounding == "truncated":
+            step = 10.0 ** -cls._decimal_places(text)
+            # Truncation cuts towards zero, so negative values lie below.
+            if text.strip().startswith("-"):
+                bounds = (center - step - tolerance, center + tolerance, False, True)
+            else:
+                bounds = (center - tolerance, center + step + tolerance, True, False)
+        else:
+            raise ValueError(f"Unsupported float rounding: {rounding}")
+        low, high, include_low, include_high = bounds
+        with np.errstate(over="ignore"):
+            low, high = float(float_type(low)), float(float_type(high))
+        return cls(low, high, float_type, include_low, include_high)
+
+    @staticmethod
+    def _parse_tolerance(text, kind):
+        if not text or not text.strip():
+            return 0
+        try:
+            tolerance = int(text, 0) if kind.is_integer else float(text)
+        except ValueError as error:
+            raise ValueError(f"Invalid tolerance: {text!r}") from error
+        if not tolerance >= 0:
+            raise ValueError(f"Invalid tolerance: {text!r}")
+        return tolerance
+
+    @staticmethod
+    def _decimal_places(text):
+        try:
+            exponent = Decimal(text.strip()).as_tuple().exponent
+        except InvalidOperation:
+            return 0
+        return max(0, -exponent) if isinstance(exponent, int) else 0
+
+    def contains(self, values):
+        """Return whether ``values`` (scalar or array) lie in the range."""
+        above = values >= self.low if self.include_low else values > self.low
+        below = values <= self.high if self.include_high else values < self.high
+        return above & below
+
+    def contains_change(self, current, previous):
+        """Return whether ``current - previous`` lies in the range."""
+        if self.float_type is not None:
+            with np.errstate(over="ignore", invalid="ignore"):
+                if isinstance(current, np.ndarray):
+                    return self.contains(current - previous)
+                return self.contains(
+                    float(self.float_type(current) - self.float_type(previous))
+                )
+        span = min(self.high - self.low, 2**64 - 1)
+        if isinstance(current, np.ndarray):
+            change = current.astype(np.uint64) - previous.astype(np.uint64)
+            return change - np.uint64(self.low % 2**64) <= np.uint64(span)
+        return (current - previous - self.low) % 2**64 <= span
 
 
 class MemorySnapshot:
@@ -97,6 +202,8 @@ class ScanWorker(QThread):
         value2="",
         previous_results=None,
         aligned=True,
+        tolerance="",
+        float_rounding="exact",
         parent=None,
     ):
         super().__init__(parent)
@@ -107,6 +214,8 @@ class ScanWorker(QThread):
         self.value2 = value2
         self.previous_results = previous_results or []
         self.aligned = aligned
+        self.tolerance = tolerance
+        self.float_rounding = float_rounding
 
     def run(self):
         try:
@@ -131,22 +240,15 @@ class ScanWorker(QThread):
             "exact", "greater_than", "less_than", "between"
         }:
             raise ValueError("Auto data type requires a value-based first scan")
+        if self.scan_mode in PREVIOUS_VALUE_MODES:
+            raise ValueError("This scan type requires a previous scan")
 
         value_types = AUTO_VALUE_TYPES if auto_types else (self.value_type,)
         formats = {
             value_type: self._get_value_format_for(value_type)
             for value_type in value_types
         }
-        targets = {
-            value_type: self._parse_scan_value(self.value, value_format)
-            for value_type, value_format in formats.items()
-            if self.scan_mode not in {"unknown_start"}
-        }
-        uppers = {
-            value_type: self._parse_scan_value(self.value2, value_format)
-            for value_type, value_format in formats.items()
-            if self.scan_mode == "between"
-        }
+        targets = {value_type: self._scan_targets(value_type) for value_type in value_types}
         results = []
         if self.isInterruptionRequested():
             return None
@@ -203,11 +305,7 @@ class ScanWorker(QThread):
                             offset=first_offset,
                             strides=(stride,),
                         )
-                        matches = self._matches_array(
-                            values,
-                            targets.get(value_type),
-                            uppers.get(value_type),
-                        )
+                        matches = self._matches_array(values, *targets[value_type])
                         if values.dtype.kind == "f":
                             matches &= np.isfinite(values)
                         offsets = np.flatnonzero(matches)
@@ -286,14 +384,7 @@ class ScanWorker(QThread):
 
     def _refine_snapshot(self, snapshot):
         """Filter a snapshot by comparing it with the current memory."""
-        value_format = self._get_value_format_for(snapshot.value_type)
-        targets = (None, None)
-        if self.scan_mode not in _PREVIOUS_VALUE_MODES | {"unknown_start"}:
-            targets = (
-                self._parse_scan_value(self.value, value_format),
-                self._parse_scan_value(self.value2, value_format)
-                if self.scan_mode == "between" else None,
-            )
+        targets = self._scan_targets(snapshot.value_type)
         blocks = []
         total_bytes = sum(len(data) for _start, data, _mask in snapshot.blocks)
         processed_bytes = 0
@@ -338,16 +429,7 @@ class ScanWorker(QThread):
             value_type: self._get_value_format_for(value_type)
             for value_type in value_types
         }
-        targets = {
-            value_type: self._parse_scan_value(self.value, value_format)
-            for value_type, value_format in formats.items()
-            if self.scan_mode not in _PREVIOUS_VALUE_MODES | {"unknown_start"}
-        }
-        uppers = {
-            value_type: self._parse_scan_value(self.value2, value_format)
-            for value_type, value_format in formats.items()
-            if self.scan_mode == "between"
-        }
+        targets = {value_type: self._scan_targets(value_type) for value_type in value_types}
         results = []
 
         with open(f"/proc/{self.pid}/mem", "rb", buffering=0) as memory:
@@ -374,12 +456,7 @@ class ScanWorker(QThread):
                 if value_format[-1] in "fd" and not np.isfinite(current):
                     continue
                 previous_value = previous["value"]
-                if self._matches(
-                    current,
-                    targets.get(value_type),
-                    uppers.get(value_type),
-                    previous_value,
-                ):
+                if self._matches(current, *targets[value_type], previous_value):
                     results.append({
                         "address": address,
                         "type": value_type,
@@ -394,6 +471,30 @@ class ScanWorker(QThread):
             self.progress_changed.emit(100)
 
         return results
+
+    def _scan_targets(self, value_type):
+        """Return ``(target, upper)`` of the search value(s) for a value type.
+
+        Exact and change scans use a ValueRange as target, other value scans
+        plain numbers; scans against the previous value need neither.
+        """
+        if self.scan_mode in FUZZY_MODES:
+            return ValueRange.parse(
+                self.value,
+                lookup_value_type(value_type),
+                self.tolerance,
+                self.float_rounding,
+                delta=self.scan_mode in _DELTA_MODES,
+            ), None
+        if self.scan_mode in PREVIOUS_VALUE_MODES | {"unknown_start"}:
+            return None, None
+        value_format = self._get_value_format_for(value_type)
+        target = self._parse_scan_value(self.value, value_format)
+        upper = (
+            self._parse_scan_value(self.value2, value_format)
+            if self.scan_mode == "between" else None
+        )
+        return target, upper
 
     def _get_value_format(self):
         return self._get_value_format_for(self.value_type)
@@ -458,8 +559,17 @@ class ScanWorker(QThread):
             return current > previous
         if self.scan_mode == "decreased":
             return current < previous
+        if self.scan_mode == "increased_by":
+            return bool(target.contains_change(current, previous))
+        if self.scan_mode == "decreased_by":
+            return bool(target.contains_change(previous, current))
+        if self.scan_mode == "changed_by":
+            return bool(
+                target.contains_change(current, previous)
+                or target.contains_change(previous, current)
+            )
         if self.scan_mode == "exact":
-            return current == target
+            return bool(target.contains(current))
         if self.scan_mode == "greater_than":
             return current > target
         if self.scan_mode == "less_than":
@@ -479,8 +589,17 @@ class ScanWorker(QThread):
             return values > previous
         if self.scan_mode == "decreased":
             return values < previous
+        if self.scan_mode == "increased_by":
+            return target.contains_change(values, previous)
+        if self.scan_mode == "decreased_by":
+            return target.contains_change(previous, values)
+        if self.scan_mode == "changed_by":
+            return (
+                target.contains_change(values, previous)
+                | target.contains_change(previous, values)
+            )
         if self.scan_mode == "exact":
-            return values == target
+            return target.contains(values)
         if self.scan_mode == "greater_than":
             return values > target
         if self.scan_mode == "less_than":
