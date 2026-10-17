@@ -630,3 +630,56 @@ def test_shared_callers_are_reported_as_ambiguous(tmp_path, qt_app, translations
         panel.shutdown(timeout_ms=None)
         target.close()
 
+
+@requires_target
+def test_debug_mode_reports_calls_and_skipped_writes(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.ui.widgets.hooks import HookPanel
+
+    target = _Target(_build_target(tmp_path))
+    panel = HookPanel(translations)
+    try:
+        trap_pcs = _trap_pcs(target)
+        panel.set_process(target.pid)
+        hook_id = panel.add_hook(
+            HookSpec(target.address, "int32",
+                     ScriptTransform("ctx => { ctx.log('delta', ctx.delta); "
+                                     "return ctx.old + ctx.delta * 3; }"),
+                     trap_pc=trap_pcs["add"], caller_depth=2, label="Gold"),
+            "target+?",
+        )
+        _wait_for(qt_app, lambda: panel.table.item(0, 4).text() == "Aktiv")
+        updated = []
+        panel._worker.hook_updated.connect(updated.append)
+        panel.table.selectRow(0)
+        panel._toggle_debug_selected()
+        _wait_for(qt_app, lambda: updated)
+        window = panel._debug_window
+        assert window.isVisible()
+        assert panel.btn_debug.isChecked()
+        assert panel.table.item(0, 0).text() == "🐞 Gold"
+
+        assert target.send("loot", 10) == (130, 999)
+        assert target.send("bounty", 1) == (130, 1000)
+        _wait_for(qt_app, lambda: len(window.entries()) >= 2)
+
+        applied, skipped = window.entries()[:2]
+        assert (applied["old"], applied["new"], applied["result"]) == (100, 110, 130)
+        assert applied["logs"] == ["delta 10"]
+        assert applied["address"] == hex(target.address)
+        assert applied["caller"].count("target+0x") == 2
+        assert skipped["skipped"] == "address"
+        assert skipped["caller"] != applied["caller"]
+
+        window.close()
+        assert not panel.btn_debug.isChecked()
+        assert panel.table.item(0, 0).text() == "Gold"
+        updated.clear()
+        _wait_for(qt_app, lambda: updated)
+        target.send("loot", 1)
+        time.sleep(0.3)
+        qt_app.processEvents()
+        assert len(window.entries()) == 2
+    finally:
+        panel.shutdown(timeout_ms=None)
+        target.close()

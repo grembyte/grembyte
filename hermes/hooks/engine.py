@@ -25,10 +25,15 @@ the address-less hook only runs for writes with one of those learned callers.
 Return addresses are found by scanning the stack for values that follow a
 call instruction, so the same caller signature can show up for other
 addresses; the agent reports that as ambiguous.
+
+In debug mode a hook reports every call (values, caller, ``ctx.log()``
+output, errors with stack) and every write it skipped, with the reason.
+At most ``MAX_DEBUG_EVENTS`` events are sent per 100 ms; the rest is counted.
 """
 
 import itertools
 import queue
+import sys
 import threading
 from dataclasses import dataclass, field
 
@@ -87,7 +92,10 @@ const MAX_CALLER_DEPTH = 4;
 const CALLER_SCAN_SLOTS = 256;
 const MAX_CALLERS = 64;
 const CALL_SIZES = [5, 2, 3, 6, 7, 4];
+const MAX_DEBUG_EVENTS = 200;
 const returnAddressCache = new Map();
+const debugEvents = [];
+const debugDropped = new Map();
 const hooks = new Map();
 const sites = new Map();
 const retiredSites = [];
@@ -343,6 +351,44 @@ function normalize(value, io) {
   return Math.min(io.limits[1], Math.max(io.limits[0], Math.trunc(value)));
 }
 
+function errorText(error) {
+  return error && error.stack ? `${error}\n${error.stack}` : String(error);
+}
+
+function formatLog(args) {
+  return args.map(arg => {
+    if (typeof arg === 'string')
+      return arg;
+    try {
+      return JSON.stringify(arg);
+    } catch (_error) {
+      return String(arg);
+    }
+  }).join(' ');
+}
+
+function frameText(address) {
+  const frame = describeFrame(address);
+  return frame ? `${frame[0]}+0x${frame[1].toString(16)}` : address.toString();
+}
+
+function callerText(hook, write) {
+  if (hook.callerDepth === 0)
+    return null;
+  const key = write.signature(hook.callerDepth);
+  return key === null ? null : key.split(',').map(a => frameText(ptr(a))).join(' ← ');
+}
+
+function pushDebug(hook, entry) {
+  if (debugEvents.length >= MAX_DEBUG_EVENTS) {
+    debugDropped.set(hook.id, (debugDropped.get(hook.id) || 0) + 1);
+    return;
+  }
+  entry.hookId = hook.id;
+  entry.time = Date.now();
+  debugEvents.push(entry);
+}
+
 function reportError(hook, error) {
   if (hook.errorReported)
     return;
@@ -353,6 +399,7 @@ function reportError(hook, error) {
 function applyTransform(hook, threadId, pending) {
   const { target, old: oldValue } = pending;
   const current = hook.io.read(target);
+  const logs = hook.debug ? [] : null;
   const ctx = {
     old: oldValue,
     new: current,
@@ -363,11 +410,22 @@ function applyTransform(hook, threadId, pending) {
     address: target.toString(),
     writePc: hook.site.writeIns.address.toString(),
     threadId,
-    hookId: hook.id
+    hookId: hook.id,
+    log: logs === null ? () => {} : (...args) => { logs.push(formatLog(args)); }
+  };
+  const entry = logs === null ? null : {
+    threadId,
+    address: target.toString(),
+    caller: pending.caller,
+    old: oldValue,
+    new: current,
+    logs
   };
   let result;
   try {
     result = hook.transform.fn(ctx);
+    if (entry !== null)
+      entry.kept = result === undefined || result === null;
     if (result === undefined || result === null) {
       result = current;
     } else {
@@ -377,8 +435,16 @@ function applyTransform(hook, threadId, pending) {
     }
     hook.errorReported = false;
   } catch (error) {
+    if (entry !== null) {
+      entry.error = errorText(error);
+      pushDebug(hook, entry);
+    }
     reportError(hook, error);
     return;
+  }
+  if (entry !== null) {
+    entry.result = result;
+    pushDebug(hook, entry);
   }
   hook.stats.count += 1;
   hook.stats.last = { old: oldValue, new: current, result, threadId };
@@ -417,28 +483,29 @@ function reportAgentError(where, error) {
   send({ kind: 'agent-error', error: `${where}: ${error}` });
 }
 
+// Both return { target } for writes the hook handles, else { skip: reason }.
 function fixedTarget(hook, write) {
   if (!hook.filterAddress)
-    return hook.target;
+    return { target: hook.target };
   const address = write.address();
   if (address === null)
-    return hook.target;
+    return { target: hook.target };
   const hit = overlaps(address, write.site.writeOp.size, hook.targetValue, hook.io.size);
   if (hook.callerDepth > 0)
     learnCaller(hook, write.signature(hook.callerDepth), hit);
-  return hit ? hook.target : null;
+  return hit ? { target: hook.target } : { skip: 'address' };
 }
 
 function dynamicTarget(hook, write) {
   if (hook.callerDepth > 0 && hook.callers.size > 0
       && !hook.callers.has(write.signature(hook.callerDepth)))
-    return null;
+    return { skip: 'caller' };
   const address = write.address();
   if (address === null) {
     reportError(hook, new Error(`Cannot compute the address written by ${write.site.writeIns}`));
-    return null;
+    return { skip: 'no-address' };
   }
-  return toPointer(address);
+  return { target: toPointer(address) };
 }
 
 function pendingWrite(site, block) {
@@ -469,9 +536,23 @@ function onBefore(site, block) {
     for (const hook of site.hooks.values()) {
       if (!hook.enabled)
         continue;
-      const target = hook.target === null ? dynamicTarget(hook, write) : fixedTarget(hook, write);
-      if (target !== null)
-        hook.pending.set(threadId, { target, old: hook.io.read(target) });
+      const { target, skip } = hook.target === null
+        ? dynamicTarget(hook, write) : fixedTarget(hook, write);
+      if (target !== undefined) {
+        hook.pending.set(threadId, {
+          target,
+          old: hook.io.read(target),
+          caller: hook.debug ? callerText(hook, write) : null
+        });
+      } else if (hook.debug) {
+        const address = write.address();
+        pushDebug(hook, {
+          threadId,
+          skipped: skip,
+          address: address === null ? null : toPointer(address).toString(),
+          caller: callerText(hook, write)
+        });
+      }
     }
   } catch (error) {
     reportAgentError(`before ${site.writeIns.address}`, error);
@@ -627,6 +708,7 @@ function addHook(spec) {
     ambiguousReported: false,
     transform,
     enabled: spec.enabled,
+    debug: false,
     pending: new Map(),
     stats: { count: 0, last: null },
     errorReported: false
@@ -674,6 +756,14 @@ function flushStats() {
   }
   if (events.length > 0)
     send({ kind: 'events', events });
+  if (debugEvents.length > 0 || debugDropped.size > 0) {
+    send({
+      kind: 'debug',
+      events: debugEvents.splice(0),
+      dropped: Object.fromEntries(debugDropped)
+    });
+    debugDropped.clear();
+  }
 }
 
 const flushTimer = setInterval(flushStats, 100);
@@ -686,6 +776,10 @@ rpc.exports = {
     const hook = requireHook(id);
     hook.transform = compileTransform(spec);
     hook.errorReported = false;
+    return true;
+  },
+  setDebug(id, enabled) {
+    requireHook(id).debug = enabled;
     return true;
   },
   setEnabled(id, enabled) {
@@ -797,6 +891,10 @@ class HookWorker(QThread):
     # hook id, learned caller signatures (frames are [module, offset] or None)
     callers_learned = pyqtSignal(int, list)
     callers_ambiguous = pyqtSignal(int)
+    # debug events of hooks in debug mode, events dropped per hook id
+    hook_debug = pyqtSignal(list, dict)
+    # console.log output of the agent and its transforms: level, text
+    agent_log = pyqtSignal(str, str)
     agent_warning = pyqtSignal(str)
     worker_failed = pyqtSignal(str)
     worker_stopped = pyqtSignal()
@@ -830,6 +928,10 @@ class HookWorker(QThread):
     def set_enabled(self, hook_id, enabled):
         self._commands.put(("enabled", hook_id, bool(enabled)))
 
+    def set_debug(self, hook_id, enabled):
+        """Report every call and skipped write of a hook via hook_debug."""
+        self._commands.put(("debug", hook_id, bool(enabled)))
+
     def run(self):
         session = None
         script = None
@@ -838,6 +940,7 @@ class HookWorker(QThread):
             session.on("detached", self._on_session_detached)
             script = session.create_script(build_agent_source())
             script.on("message", self._on_message)
+            script.set_log_handler(self._on_log)
             script.load()
 
             if not self._ready_event.wait(5):
@@ -898,6 +1001,9 @@ class HookWorker(QThread):
             elif action == "enabled":
                 api.set_enabled(hook_id, argument)
                 self.hook_updated.emit(hook_id)
+            elif action == "debug":
+                api.set_debug(hook_id, argument)
+                self.hook_updated.emit(hook_id)
         except frida.RPCException as error:
             self.hook_failed.emit(hook_id, str(error))
 
@@ -918,6 +1024,11 @@ class HookWorker(QThread):
             self.hook_events.emit(payload.get("events", []))
         elif kind == "agent-error":
             self.agent_warning.emit(payload.get("error", ""))
+        elif kind == "debug":
+            self.hook_debug.emit(
+                payload.get("events", []),
+                {int(hook_id): count for hook_id, count in payload.get("dropped", {}).items()},
+            )
         elif kind == "callers":
             self.callers_learned.emit(
                 payload.get("hookId", 0), payload.get("callers", [])
@@ -928,6 +1039,10 @@ class HookWorker(QThread):
             self.transform_error.emit(
                 payload.get("hookId", 0), payload.get("error", "")
             )
+
+    def _on_log(self, level, text):
+        print(f"[hook agent] {text}", file=sys.stderr)
+        self.agent_log.emit(level, text)
 
     def _on_session_detached(self, reason, _crash):
         self._detach_reason = reason

@@ -151,3 +151,68 @@ def test_wrapped_label_reserves_height_for_its_width(qt_app):  # pylint: disable
     label.setText("")
     assert label.minimumHeight() == 0
 
+
+def test_template_test_dialog_runs_definition(dialog, translations):
+    # pylint: disable=import-outside-toplevel
+    from hermes.ui.widgets.templates import TemplateTestDialog
+
+    row = next(
+        i for i in range(dialog.template_list.count())
+        if dialog.template_list.item(i).text() == "Multiplikator"
+    )
+    dialog.template_list.setCurrentRow(row)
+    test = TemplateTestDialog(translations, dialog.editor_definition(), dialog)
+    test.params_form._editors["factor"][1].setText("3")  # pylint: disable=protected-access
+
+    result = test.run()
+
+    assert result.value == 130
+    assert "130" in test.result_label.text()
+
+    test.new_input.setText("90")
+    assert test.run().kept
+    assert "90" in test.result_label.text()
+
+    test.old_input.setText("viel")
+    assert test.run() is None
+    assert "Fehler" in test.result_label.text()
+
+
+def test_debug_window_lists_filters_and_pauses(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.widgets import hook_debug
+    from hermes.ui.widgets.hook_debug import HookDebugWindow
+
+    window = HookDebugWindow(translations)
+    window.set_hooks({1: "#1 Gold", 2: "#2 Mana"})
+    window.add_events([
+        {"hookId": 1, "time": 0, "old": 100, "new": 110, "result": 130.0, "logs": ["x"]},
+        {"hookId": 2, "time": 0, "skipped": "caller", "address": "0x10"},
+        {"hookId": 1, "time": 0, "old": 1, "new": 2, "error": "Error: boom\nstack"},
+    ], {1: 5})
+    window.add_console("info", "hello")
+
+    assert window.table.rowCount() == 4
+    assert window.table.item(0, 7).text() == "130"
+    assert "1 Ausgaben: x" in window.table.item(0, 8).text()
+    assert "Aufrufer nicht gelernt" in window.table.item(1, 8).text()
+    assert window.table.item(2, 8).text() == "Fehler: Error: boom"
+    assert window.table.item(3, 1).text() == "Konsole"
+    assert "5 vom Agenten verworfen" in window.count_label.text()
+
+    window.table.selectRow(2)
+    assert "stack" in window.details.toPlainText()
+
+    window.filter_combo.setCurrentIndex(window.filter_combo.findData(1))
+    assert window.table.rowCount() == 2
+
+    window.btn_pause.setChecked(True)
+    window.add_events([{"hookId": 1, "time": 0}])
+    assert len(window.entries()) == 4
+    assert "1 während der Pause" in window.count_label.text()
+
+    window.btn_pause.setChecked(False)
+    window.filter_combo.setCurrentIndex(0)
+    window.add_events([{"hookId": 1, "time": 0}] * hook_debug.MAX_ENTRIES)
+    assert len(window.entries()) == hook_debug.MAX_ENTRIES
+    assert window.table.rowCount() == hook_debug.MAX_ENTRIES

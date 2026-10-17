@@ -26,7 +26,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy.exc import SQLAlchemyError
 
 from hermes.hooks.transforms import PARAMETER_NAME, TransformDefinition, TransformParameter
-from hermes.ui.widgets.hooks import format_number, parse_number
+from hermes.hooks.sandbox import TransformSandbox
+from hermes.ui.widgets.hooks import TransformForm, format_number, parse_number
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.table import set_row_height
 
@@ -189,6 +190,10 @@ class TemplateDialog(QDialog):
 
         save_row = QHBoxLayout()
         save_row.addStretch()
+        self.btn_test = QPushButton(self.translations["templates.test"])
+        self.btn_test.setToolTip(self.translations["templates.test_tooltip"])
+        self.btn_test.clicked.connect(self._test_template)
+        save_row.addWidget(self.btn_test)
         self.btn_save = QPushButton(self.translations["templates.save"])
         self.btn_save.setObjectName("btn_primary")
         self.btn_save.clicked.connect(self.save)
@@ -445,6 +450,16 @@ class TemplateDialog(QDialog):
             template_id=self._current_id,
         )
 
+    def _test_template(self):
+        """Try the edited (possibly unsaved) template in the sandbox."""
+        try:
+            definition = self.editor_definition()
+        except ValueError as error:
+            self.error_label.setText(str(error))
+            return
+        self.error_label.setText("")
+        TemplateTestDialog(self.translations, definition, self).exec()
+
     def save(self):
         """Save the edited template; returns True on success."""
         try:
@@ -468,3 +483,130 @@ class TemplateDialog(QDialog):
         )
         return True
 
+
+class TemplateTestDialog(QDialog):
+    """Run a template with sample values outside the target process.
+
+    ``ctx.state`` is kept between runs until it is reset or the dialog closes.
+    """
+
+    # Widgets are created by _build_ui called from __init__.
+    # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
+
+    VALUE_TYPES = ("int32", "int64", "float", "double")
+
+    def __init__(self, translations, definition, parent=None):
+        super().__init__(parent)
+        self.translations = translations
+        self.definition = definition
+        self.sandbox = TransformSandbox()
+        self.setWindowTitle(
+            translations["templates.test_title"].format(name=definition.name)
+        )
+        self.resize(560, 560)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+        self.value_type_combo = QComboBox()
+        for value_type in self.VALUE_TYPES:
+            self.value_type_combo.addItem(value_type, value_type)
+        form.addRow(self.translations["templates.test_value_type"], self.value_type_combo)
+        self.old_input = QLineEdit("100")
+        form.addRow(self.translations["templates.test_old"], self.old_input)
+        self.new_input = QLineEdit("110")
+        form.addRow(self.translations["templates.test_new"], self.new_input)
+        layout.addLayout(form)
+
+        if self.definition.parameters:
+            params_box = QGroupBox(self.translations["templates.parameters"])
+            params_layout = QVBoxLayout(params_box)
+            self.params_form = TransformForm(self.definition, self.translations)
+            params_layout.addWidget(self.params_form)
+            layout.addWidget(params_box)
+        else:
+            self.params_form = TransformForm(self.definition, self.translations)
+
+        buttons = QHBoxLayout()
+        reset = QPushButton(self.translations["templates.test_reset"])
+        reset.setToolTip(self.translations["templates.test_reset_tooltip"])
+        reset.clicked.connect(self.reset_state)
+        buttons.addWidget(reset)
+        buttons.addStretch()
+        self.btn_run = QPushButton(self.translations["templates.test_run"])
+        self.btn_run.setObjectName("btn_primary")
+        self.btn_run.clicked.connect(self.run)
+        buttons.addWidget(self.btn_run)
+        layout.addLayout(buttons)
+
+        self.result_label = WrappedLabel("")
+        layout.addWidget(self.result_label)
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        layout.addWidget(self.output, 1)
+
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_button = QPushButton(self.translations["templates.close"])
+        close_button.clicked.connect(self.accept)
+        close_row.addWidget(close_button)
+        layout.addLayout(close_row)
+
+    def _number(self, editor, key):
+        try:
+            return parse_number(editor.text().strip())
+        except ValueError as error:
+            raise ValueError(
+                self.translations["hooks.invalid_number"].format(
+                    name=self.translations[key]
+                )
+            ) from error
+
+    def reset_state(self):
+        """Forget ctx.state."""
+        self.sandbox.reset_state()
+        self.output.setPlainText("")
+        self.result_label.setText(self.translations["templates.test_state_reset"])
+        self.result_label.setStyleSheet("")
+
+    def run(self):
+        """Call the template once with the entered values and show the outcome."""
+        try:
+            old = self._number(self.old_input, "templates.test_old")
+            new = self._number(self.new_input, "templates.test_new")
+            params = self.params_form.create_transform().params
+        except (TypeError, ValueError) as error:
+            self._show(self.translations["templates.test_error"].format(message=error), True)
+            return None
+        value_type = self.value_type_combo.currentData()
+        result = self.sandbox.run(self.definition.source, params, old, new, value_type)
+        if result.error is not None:
+            self._show(
+                self.translations["templates.test_error"].format(message=result.error), True
+            )
+        elif result.kept:
+            self._show(self.translations["templates.test_kept"].format(
+                value=format_number(normalize_for_display(new, value_type))
+            ), False)
+        else:
+            self._show(self.translations["templates.test_result"].format(
+                old=format_number(old), new=format_number(new),
+                value=format_number(result.value),
+            ), False)
+        lines = [f"{self.translations['templates.test_logs']}:"]
+        lines += [f"  {line}" for line in result.logs] or ["  —"]
+        lines += ["", f"ctx.state = {result.state}"]
+        self.output.setPlainText("\n".join(lines))
+        return result
+
+    def _show(self, text, error):
+        self.result_label.setText(text)
+        self.result_label.setStyleSheet("color: #f85149;" if error else "color: #3fb950;")
+
+
+def normalize_for_display(value, value_type):
+    """Show an entered value the way the game would store it."""
+    return int(value) if value_type.startswith("int") else float(value)

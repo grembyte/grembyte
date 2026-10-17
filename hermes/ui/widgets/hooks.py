@@ -33,6 +33,7 @@ from hermes.hooks.transforms import (
     example_templates,
 )
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.widgets.hook_debug import HookDebugWindow
 from hermes.ui.widgets.table import set_row_height
 
 
@@ -64,7 +65,7 @@ def format_number(value):
     return str(value)
 
 
-class _TransformForm(QWidget):
+class TransformForm(QWidget):
     """Input form generated from a transform definition's parameters."""
 
     def __init__(self, definition, translations, values=None, parent=None):
@@ -235,7 +236,7 @@ class HookDialog(QDialog):
         for index, definition in enumerate(self._options):
             self.template_combo.addItem(definition.name, index)
             values = self._values if index == self._copy_index else None
-            self.forms.addWidget(_TransformForm(definition, self.translations, values))
+            self.forms.addWidget(TransformForm(definition, self.translations, values))
         self.template_combo.currentIndexChanged.connect(self._on_template_selected)
         if self._copy_index is not None:
             self.template_combo.setCurrentIndex(self._copy_index)
@@ -306,7 +307,7 @@ class HookDialog(QDialog):
         names = {parameter.name for parameter in self._template.parameters}
         values = {name: value for name, value in values.items() if name in names}
         self._options[index] = self._template
-        new_form = _TransformForm(self._template, self.translations, values)
+        new_form = TransformForm(self._template, self.translations, values)
         self.forms.insertWidget(index, new_form)
         self.forms.removeWidget(old_form)
         old_form.deleteLater()
@@ -386,6 +387,7 @@ class HookPanel(QGroupBox):
         self._repository = repository
         self._pid = None
         self._process_id = None
+        self._debug_window = None
         self._worker = None
         self._hooks = {}
         self._build_ui()
@@ -402,11 +404,16 @@ class HookPanel(QGroupBox):
         self.btn_edit.clicked.connect(self._edit_selected)
         self.btn_toggle = QPushButton(self.translations["hooks.pause"])
         self.btn_toggle.clicked.connect(self._toggle_selected)
+        self.btn_debug = QPushButton(self.translations["hooks.debug"])
+        self.btn_debug.setCheckable(True)
+        self.btn_debug.setToolTip(self.translations["hooks.debug_tooltip"])
+        self.btn_debug.clicked.connect(self._toggle_debug_selected)
         self.btn_remove = QPushButton(self.translations["hooks.remove"])
         self.btn_remove.setObjectName("btn_danger")
         self.btn_remove.clicked.connect(self._remove_selected)
         controls.addWidget(self.btn_edit)
         controls.addWidget(self.btn_toggle)
+        controls.addWidget(self.btn_debug)
         self.status_label = QLabel(self.translations["hooks.hint"])
         self.status_label.setWordWrap(True)
         controls.addWidget(self.status_label, 1)
@@ -483,6 +490,8 @@ class HookPanel(QGroupBox):
         live = state is not None and state["status"] in {"active", "paused", "error"}
         self.btn_edit.setEnabled(live)
         self.btn_toggle.setEnabled(live)
+        self.btn_debug.setEnabled(live)
+        self.btn_debug.setChecked(state is not None and state.get("debug", False))
         self.btn_remove.setEnabled(state is not None)
         self.btn_toggle.setText(
             self.translations[
@@ -510,6 +519,7 @@ class HookPanel(QGroupBox):
         self.status_label.setText(self.translations["hooks.hint"])
         self._update_buttons()
         self.count_changed.emit(0)
+        self._update_debug_hooks()
         self._restore_saved_hooks()
 
     def add_hook(self, spec, site, saved_id=None):
@@ -526,7 +536,7 @@ class HookPanel(QGroupBox):
 
         row = self.table.rowCount()
         self.table.insertRow(row)
-        label_item = QTableWidgetItem(spec.label or "—")
+        label_item = QTableWidgetItem(self._label_text(spec, False))
         label_item.setData(Qt.ItemDataRole.UserRole, hook_id)
         self.table.setItem(row, 0, label_item)
         self._set_cell(hook_id, 1, self._address_text(spec), "#3fb950")
@@ -538,6 +548,7 @@ class HookPanel(QGroupBox):
         self._set_status(hook_id, "installing")
         self.table.selectRow(row)
         self.count_changed.emit(len(self._hooks))
+        self._update_debug_hooks()
         return hook_id
 
     def shutdown(self, timeout_ms=HOOK_STOP_TIMEOUT_MS):
@@ -557,8 +568,80 @@ class HookPanel(QGroupBox):
             else:
                 worker.wait(timeout_ms)
         for hook_id, state in self._hooks.items():
+            self._set_debug_flag(hook_id, False)
             if state["status"] != "failed":
                 self._set_status(hook_id, "disconnected")
+
+    # ------------------------------------------------------------------
+    # Debugging
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _label_text(spec, debug):
+        label = spec.label or "—"
+        return f"🐞 {label}" if debug else label
+
+    def _hook_name(self, hook_id):
+        state = self._hooks.get(hook_id)
+        label = state["spec"].label if state is not None else ""
+        return f"#{hook_id} {label}".strip()
+
+    def _set_debug_flag(self, hook_id, debug):
+        state = self._hooks.get(hook_id)
+        if state is None:
+            return
+        state["debug"] = debug
+        self._set_cell(hook_id, 0, self._label_text(state["spec"], debug))
+
+    def debug_window(self):
+        """Return the debug window, creating it on first use."""
+        if self._debug_window is None:
+            self._debug_window = HookDebugWindow(self.translations, self)
+            self._debug_window.closed.connect(self._on_debug_window_closed)
+        self._update_debug_hooks()
+        return self._debug_window
+
+    def _update_debug_hooks(self):
+        if self._debug_window is not None:
+            self._debug_window.set_hooks(
+                {hook_id: self._hook_name(hook_id) for hook_id in self._hooks}
+            )
+
+    def set_debug(self, hook_id, enabled):
+        """Switch debug mode of a hook; opens the debug window when enabled."""
+        state = self._hooks.get(hook_id)
+        if state is None or self._worker is None:
+            return
+        self._worker.set_debug(hook_id, enabled)
+        self._set_debug_flag(hook_id, enabled)
+        if enabled:
+            window = self.debug_window()
+            window.show()
+            window.raise_()
+        self._update_buttons()
+
+    def _toggle_debug_selected(self):
+        hook_id = self._selected_hook_id()
+        state = self._hooks.get(hook_id)
+        if state is None:
+            return
+        self.set_debug(hook_id, not state.get("debug", False))
+
+    def _on_debug_window_closed(self):
+        """Closing the window ends debug mode: it costs time in the game."""
+        for hook_id, state in self._hooks.items():
+            if state.get("debug"):
+                if self._worker is not None:
+                    self._worker.set_debug(hook_id, False)
+                self._set_debug_flag(hook_id, False)
+        self._update_buttons()
+
+    def _on_debug_events(self, worker, events, dropped):
+        if worker is self._worker and self._debug_window is not None:
+            self._debug_window.add_events(events, dropped)
+
+    def _on_agent_log(self, worker, level, text):
+        if worker is self._worker and self._debug_window is not None:
+            self._debug_window.add_console(level, text)
 
     # ------------------------------------------------------------------
     # Persistence
@@ -672,6 +755,12 @@ class HookPanel(QGroupBox):
         )
         worker.callers_ambiguous.connect(
             lambda hook_id: self._on_callers_ambiguous(worker, hook_id)
+        )
+        worker.hook_debug.connect(
+            lambda events, dropped: self._on_debug_events(worker, events, dropped)
+        )
+        worker.agent_log.connect(
+            lambda level, text: self._on_agent_log(worker, level, text)
         )
         worker.transform_error.connect(
             lambda hook_id, message: self._on_transform_error(worker, hook_id, message)
@@ -792,6 +881,7 @@ class HookPanel(QGroupBox):
             return
         self._worker = None
         for hook_id, state in self._hooks.items():
+            self._set_debug_flag(hook_id, False)
             if state["status"] != "failed":
                 self._set_status(hook_id, "disconnected")
 
@@ -805,6 +895,7 @@ class HookPanel(QGroupBox):
         self._hooks.pop(hook_id, None)
         self._update_buttons()
         self.count_changed.emit(len(self._hooks))
+        self._update_debug_hooks()
 
     def _edit_selected(self):
         hook_id = self._selected_hook_id()
@@ -836,7 +927,10 @@ class HookPanel(QGroupBox):
                 label=dialog.label,
                 transform=dialog.transform,
             )
-        self._set_cell(hook_id, 0, dialog.label or "—")
+        self._set_cell(
+            hook_id, 0, self._label_text(state["spec"], state.get("debug", False))
+        )
+        self._update_debug_hooks()
         self._set_cell(hook_id, 3, dialog.transform.describe())
         if state["status"] == "error":
             self._set_status(hook_id, "active")

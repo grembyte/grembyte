@@ -15,6 +15,7 @@ a single ``ctx`` object and returns the value to store, or ``undefined`` /
     ctx.writePc    address of the hooked write instruction as hex string
     ctx.threadId   id of the writing thread
     ctx.hookId     id of the hook
+    ctx.log(...)   output shown in the hook debug window (no-op otherwise)
 
 Integer results are truncated and clamped to the value type's range; int64
 values are passed as JavaScript numbers and are only exact up to 2**53.
