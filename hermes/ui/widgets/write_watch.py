@@ -17,6 +17,8 @@ class WriteWatchDialog(QDialog):
     """Display grouped write-watch hits and let the user stop monitoring."""
 
     stop_requested = pyqtSignal()
+    # trap PC (instruction after the write), module/offset description
+    hook_requested = pyqtSignal(int, str)
 
     def __init__(self, address, size, translations, parent=None):
         super().__init__(parent)
@@ -68,9 +70,17 @@ class WriteWatchDialog(QDialog):
             header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
             header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.results_table.verticalHeader().setVisible(False)
+        self.results_table.itemSelectionChanged.connect(self._update_hook_button)
+        self.results_table.doubleClicked.connect(self._request_hook)
         layout.addWidget(self.results_table)
 
         buttons = QHBoxLayout()
+        self.hook_button = QPushButton(self.translations["watch.create_hook"])
+        self.hook_button.setObjectName("btn_primary")
+        self.hook_button.setToolTip(self.translations["watch.create_hook_tooltip"])
+        self.hook_button.setEnabled(False)
+        self.hook_button.clicked.connect(self._request_hook)
+        buttons.addWidget(self.hook_button)
         buttons.addStretch()
         self.stop_button = QPushButton(self.translations["watch.stop"])
         self.stop_button.clicked.connect(self._request_stop)
@@ -131,6 +141,24 @@ class WriteWatchDialog(QDialog):
         self.stop_button.setEnabled(False)
         if not self._failed:
             self.status_label.setText(self.translations["watch.stopped"])
+
+    def _update_hook_button(self):
+        self.hook_button.setEnabled(
+            self.results_table.selectionModel().hasSelection()
+        )
+
+    def _request_hook(self):
+        row = self.results_table.currentRow()
+        if row < 0:
+            return
+        pc_item = self.results_table.item(row, 1)
+        site_item = self.results_table.item(row, 2)
+        if pc_item is None:
+            return
+        self.hook_requested.emit(
+            int(pc_item.text(), 16),
+            site_item.text() if site_item is not None else pc_item.text(),
+        )
 
     def _request_stop(self):
         self.stop_button.setEnabled(False)

@@ -152,7 +152,7 @@ STYLE = """
     /* ------------------------------------------------------------------
        Inputs
        ------------------------------------------------------------------ */
-    QLineEdit, QComboBox {
+    QLineEdit, QComboBox, QPlainTextEdit {
         background-color: #161b22;
         border: 1px solid #30363d;
         border-radius: 6px;
@@ -161,7 +161,7 @@ STYLE = """
         font-family: __MONO__;
         font-size: 13px;
     }
-    QLineEdit:focus, QComboBox:focus {
+    QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {
         border-color: #58a6ff;
     }
     QComboBox QAbstractItemView {
@@ -316,6 +316,37 @@ STYLE = """
     QLabel#lbl_process {
         color: #f0883e;
         font-size: 12px;
+    }
+    /* Group boxes used as tab pages: the tab pane already draws the frame */
+    QGroupBox#tab_page {
+        border: none;
+        margin-top: 0;
+        padding: 8px 2px 2px 2px;
+    }
+
+    QTabWidget::pane {
+        border: 1px solid #21262d;
+        border-radius: 8px;
+        top: -1px;
+        padding: 4px 8px 8px 8px;
+    }
+    QTabBar::tab {
+        background: transparent;
+        color: #8b949e;
+        border: none;
+        border-bottom: 2px solid transparent;
+        padding: 6px 14px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    QTabBar::tab:selected {
+        color: #c9d1d9;
+        border-bottom-color: #58a6ff;
+    }
+    QTabBar::tab:hover:!selected {
+        color: #c9d1d9;
     }
     QFrame#divider {
         background-color: #21262d;

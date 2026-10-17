@@ -13,7 +13,7 @@ _VALUE_SIZES = {
     "double": 8,
 }
 
-_FRIDA_ERRORS = (
+FRIDA_ERRORS = (
   frida.AddressInUseError,
   frida.ExecutableNotFoundError,
   frida.ExecutableNotSupportedError,
@@ -31,7 +31,7 @@ _FRIDA_ERRORS = (
 )
 
 # Raised by exports_sync calls when the agent-side RPC handler throws.
-_CLEANUP_ERRORS = _FRIDA_ERRORS + (frida.RPCException, RuntimeError)
+CLEANUP_ERRORS = FRIDA_ERRORS + (frida.RPCException, RuntimeError)
 
 _AGENT_SOURCE = r"""
 const targetAddress = ptr('__ADDRESS__');
@@ -232,23 +232,23 @@ class WriteWatchWorker(QThread):
                 raise RuntimeError(
                     f"Target process detached: {self._detach_reason}"
                 )
-        except _FRIDA_ERRORS + (ImportError, OSError, RuntimeError, ValueError) as error:
+        except FRIDA_ERRORS + (ImportError, OSError, RuntimeError, ValueError) as error:
             if not self.isInterruptionRequested():
                 self.monitor_failed.emit(str(error))
         finally:
             if script is not None:
                 try:
                     script.exports_sync.stop()
-                except _CLEANUP_ERRORS:
+                except CLEANUP_ERRORS:
                     pass
                 try:
                     script.unload()
-                except _CLEANUP_ERRORS:
+                except CLEANUP_ERRORS:
                     pass
             if session is not None:
                 try:
                     session.detach()
-                except _CLEANUP_ERRORS:
+                except CLEANUP_ERRORS:
                     pass
             self.monitor_stopped.emit()
 

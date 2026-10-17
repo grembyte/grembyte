@@ -1,6 +1,16 @@
 # Hermes Hook
 
-Hermes Hook ist eine Linux-Desktopanwendung auf Basis von Python und PyQt6. Das Projekt ist derzeit in Entwicklung: Die grafische Oberfläche und die Prozessauswahl starten, aber Speicher-Scans, Speicheränderungen, Freeze und Hooks sind noch nicht implementiert.
+Hermes Hook ist eine Linux-Desktopanwendung auf Basis von Python und PyQt6 zum Untersuchen und Manipulieren des Speichers laufender Prozesse, etwa von Spielen. Das Projekt ist in Entwicklung.
+
+## Funktionen
+
+- **Prozessauswahl** mit Kommandozeile und Arbeitsverzeichnis.
+- **Speicher-Scan** nach `int32`, `int64`, `float` und `double`: exakter Wert, größer/kleiner, Bereich, unbekannter Startwert sowie Folge-Scans auf verändert, unverändert, vergrößert oder verkleinert.
+- **Gemerkte Adressen** mit Live-Werten; Werte lassen sich direkt in den Prozess schreiben.
+- **Schreibüberwachung**: Ein Hardware-Watchpoint zeigt, welche Codestellen eine Adresse beschreiben.
+- **Hooks**: An einer gefundenen Codestelle wird jeder Schreibzugriff abgefangen und der geschriebene Wert manipuliert, z. B. mit einem Multiplikator, einem festen Wert, Grenzen oder einer eigenen JavaScript-Funktion.
+
+Noch nicht umgesetzt ist das Einfrieren gemerkter Adressen über die Schaltfläche „Einfrieren“; ein Hook mit „Fester Wert“ erfüllt denselben Zweck an der Codestelle.
 
 ## Voraussetzungen
 
@@ -54,6 +64,103 @@ HERMES_LANGUAGE=de hermes
 
 Beim ersten Start wird die SQLite-Datenbank unter `data/hermes.db` angelegt. Für die Prozessliste werden nur Prozesse angezeigt, auf deren Informationen der aktuelle Benutzer zugreifen darf.
 
-## Linux-Rechte für spätere Speicherzugriffe
+## Linux-Rechte für Speicherzugriffe
 
-Derzeit liest oder verändert die Anwendung keinen Prozessspeicher. Sobald diese Funktionen implementiert sind, können Linux-Schutzmechanismen wie Yama (`kernel.yama.ptrace_scope`) den Zugriff auf andere Prozesse einschränken. Dafür sind in der Regel passende Benutzerrechte und Zugriff auf den Zielprozess nötig. Starte die Anwendung nicht vorsorglich als root und lockere `ptrace_scope` nicht systemweit; passe Berechtigungen erst gezielt an den tatsächlichen Anwendungsfall an.
+Scans und Schreibzugriffe nutzen `/proc/<pid>/mem`, Schreibüberwachung und Hooks hängen sich über [Frida](https://frida.re) an den Zielprozess. Beides unterliegt den Linux-Schutzmechanismen, insbesondere Yama (`kernel.yama.ptrace_scope`):
+
+- `0`: Prozesse desselben Benutzers dürfen untersucht werden.
+- `1` (Standard vieler Distributionen): nur eigene Kindprozesse. Hermes kann dann auf ein separat gestartetes Spiel nicht zugreifen.
+
+Starte die Anwendung nicht vorsorglich als root und lockere `ptrace_scope` nicht dauerhaft systemweit. Für eine Testsitzung genügt eine vorübergehende Änderung, die beim nächsten Neustart verfällt:
+
+```bash
+sudo sysctl kernel.yama.ptrace_scope=0
+```
+
+## Beispiel: Gold-Multiplikator für das Test-Spiel
+
+`test_app/dummy_game.c` ist ein minimales GTK-Spiel mit Buttons für „Gold +100“ und „Gold -100“. Es gibt beim Start seine PID und die Adresse des Golds aus, sodass sich die Ergebnisse des Scanners prüfen lassen.
+
+```bash
+mkdir -p build
+gcc -O2 test_app/dummy_game.c -o build/dummy_game $(pkg-config --cflags --libs gtk+-3.0)
+./build/dummy_game
+```
+
+Benötigt werden `gcc` und die GTK-3-Entwicklerpakete (`gtk3-devel` unter Fedora, `libgtk-3-dev` unter Debian/Ubuntu).
+
+1. In Hermes **Prozess auswählen** → `dummy_game`.
+2. **Erster Scan** nach dem angezeigten Goldwert (`int32`), im Spiel Gold ändern, **Nächster Scan** mit dem neuen Wert, bis eine Adresse übrig bleibt. Mit **+ Merken** in die gemerkten Adressen übernehmen und eine Beschreibung wie „Gold“ vergeben.
+3. Rechtsklick auf die Adresse → **Schreibzugriffe auf diese Adresse überwachen …**
+4. Im Spiel **Gold +100** klicken. Im Überwachungsfenster erscheint die Codestelle, die das Gold erhöht (z. B. `dummy_game+0x…`). „Gold -100“ erzeugt eine zweite, eigene Zeile.
+5. Die Zeile der Erhöhung markieren → **Hook erstellen …**, Manipulation **Multiplikator**, Faktor `10`, „Nur Erhöhungen“.
+6. Der Hook erscheint im Tab **Hooks**. Jeder Klick auf „Gold +100“ bringt jetzt 1000 Gold; die Spalte „Letzte“ zeigt alt → vom Spiel geschrieben ⇒ gespeichert.
+
+Über den Tab **Hooks** lassen sich Hooks bearbeiten, pausieren und entfernen. Beim Entfernen, beim Prozesswechsel und beim Beenden von Hermes werden die ursprünglichen Bytes wiederhergestellt.
+
+### Wie ein Hook funktioniert
+
+Die Schreibüberwachung meldet die Instruktion *nach* dem Schreibzugriff (Hardware-Watchpoints lösen erst danach aus). Hermes bestimmt daraus die eigentliche Schreibinstruktion und ersetzt sie durch einen Sprung in eine Code-Cave:
+
+```
+before(regs)       alten Wert sichern, falls die Instruktion wirklich die Zieladresse beschreibt
+<Schreibinstruktion, relokiert>
+after(regs)        Manipulation aufrufen und das Ergebnis speichern
+<restliche relokierte Bytes>
+jmp zurück
+```
+
+Weil Hermes nur mit altem und neuem Wert rechnet, ist egal, ob das Spiel `add [mem], reg`, `mov [mem], reg` oder `sub` verwendet. Wird dieselbe Instruktion auch für andere Objekte genutzt (z. B. das Gold von Gegnern), greift der Hook nur bei der überwachten Adresse.
+
+Einschränkungen:
+
+- Nur x86-64-Prozesse.
+- Die Schreibinstruktion und die Bytes bis zur Länge eines Sprungs (5 Bytes) werden überschrieben. Springt anderer Code mitten in diesen Bereich, stürzt das Ziel ab; dasselbe Risiko haben Frida-Hooks und die Code-Injection von Cheat Engine.
+- Bricht die Verbindung zu Hermes unerwartet ab, während ein Hook aktiv ist, kann das Ziel abstürzen.
+- `int64`-Werte sind in Manipulationen nur bis 2^53 exakt.
+
+## Eigene Manipulationen
+
+Eine Manipulation ist eine JavaScript-Funktion, die im Zielprozess nach jedem Schreibzugriff läuft. Sie erhält ein `ctx`-Objekt und gibt den zu speichernden Wert zurück; `undefined` behält den Wert des Spiels.
+
+| Feld | Bedeutung |
+| --- | --- |
+| `ctx.old`, `ctx.new`, `ctx.delta` | Wert vor und nach dem Schreibzugriff, Differenz |
+| `ctx.params` | Parameter der Manipulation |
+| `ctx.state` | Objekt, das zwischen Aufrufen erhalten bleibt (z. B. für Zähler) |
+| `ctx.valueType`, `ctx.address`, `ctx.writePc`, `ctx.threadId`, `ctx.hookId` | Kontext des Schreibzugriffs |
+
+Für einmalige Experimente gibt es in der Oberfläche **Eigenes Skript (JavaScript)**, etwa:
+
+```js
+ctx => ctx.delta > 0 ? ctx.old + ctx.delta * 3 : undefined
+```
+
+Wiederverwendbare Manipulationen werden in Python als Unterklasse von `ValueTransform` in `hermes/hooks/transforms.py` (oder einem eigenen, beim Start importierten Modul) registriert. Über `parameters` erzeugt die Oberfläche das Eingabeformular automatisch:
+
+```python
+from hermes.hooks.transforms import TransformParameter, ValueTransform, register_transform
+
+
+@register_transform
+class OnlyBigGains(ValueTransform):
+    """Gewinne unterhalb einer Schwelle verwerfen."""
+
+    kind = "only-big-gains"
+    title = "Only big gains"
+    source = "ctx => ctx.delta >= ctx.params.threshold ? ctx.new : ctx.old"
+    parameters = (TransformParameter("threshold", default=50),)
+
+    def __init__(self, threshold):
+        super().__init__(threshold=threshold)
+```
+
+Übersetzte Beschriftungen kommen aus `hermes/ui/localization/*.json` unter `transform.<kind>` und `transform.<kind>.<parameter>`; fehlen sie, werden `title` und der Parametername verwendet.
+
+## Tests
+
+```bash
+./.venv/bin/python -m pytest
+```
+
+Die Hook-Tests kompilieren ein kleines C-Programm und hängen sich mit Frida daran. Sie werden übersprungen, wenn `gcc` fehlt oder `kernel.yama.ptrace_scope` nicht `0` ist.

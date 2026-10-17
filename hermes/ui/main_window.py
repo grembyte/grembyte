@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QPushButton, QLineEdit, QComboBox, QGroupBox,
     QHeaderView, QStatusBar, QToolBar, QDialog,
     QAbstractItemView,
-    QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox,
+    QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox, QTabWidget,
 )
 from PyQt6.QtCore import Qt, QSize, QTimer  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
@@ -19,6 +19,8 @@ from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.core.scanner import MemorySnapshot, ScanWorker, ValueRefreshWorker
 from hermes.core.memory import write_process_value
 from hermes.core.write_watch import WriteWatchWorker, watch_size_for_type
+from hermes.hooks.engine import HookSpec
+from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.write_watch import WriteWatchDialog
 
 
@@ -133,6 +135,8 @@ class MainWindow(QMainWindow):
         self.lbl_scan_status = None
         self.progress_scan = None
         self.addr_table = None
+        self.hook_panel = None
+        self.bottom_tabs = None
 
         self._build_toolbar()
         self._build_central()
@@ -188,8 +192,33 @@ class MainWindow(QMainWindow):
         top_splitter.setSizes([520, 340])
 
         main_splitter.addWidget(top_splitter)
-        main_splitter.addWidget(self._build_address_table())
+        main_splitter.addWidget(self._build_bottom_tabs())
         main_splitter.setSizes([420, 220])
+
+    def _build_bottom_tabs(self):
+        """Put tracked addresses and hooks into tabs below the scan area."""
+        self.bottom_tabs = QTabWidget()
+        address_box = self._build_address_table()
+        address_box.setTitle("")
+        address_box.setObjectName("tab_page")
+        self.bottom_tabs.addTab(address_box, self.translations["address_table.title"])
+
+        self.hook_panel = HookPanel(self.translations, self)
+        self.hook_panel.setTitle("")
+        self.hook_panel.setObjectName("tab_page")
+        self.hook_panel.count_changed.connect(self._on_hook_count_changed)
+        self.bottom_tabs.addTab(self.hook_panel, self.translations["hooks.title"])
+        return self.bottom_tabs
+
+    def _on_hook_count_changed(self, count):
+        """Show the number of hooks in the tab title."""
+        if self.bottom_tabs is None or self.hook_panel is None:
+            return
+        title = self.translations["hooks.title"]
+        self.bottom_tabs.setTabText(
+            self.bottom_tabs.indexOf(self.hook_panel),
+            f"{title} ({count})" if count else title,
+        )
 
     # ------------------------------------------------------------------
     # Left panel: scan results
@@ -571,6 +600,11 @@ class MainWindow(QMainWindow):
             self,
         )
         dialog.stop_requested.connect(worker.requestInterruption)
+        dialog.hook_requested.connect(
+            lambda trap_pc, site: self._create_hook(
+                address_value, value_type, trap_pc, site
+            )
+        )
         dialog.finished.connect(
               lambda: self._on_write_watch_dialog_finished(dialog, worker)
         )
@@ -590,6 +624,55 @@ class MainWindow(QMainWindow):
         self._write_watch_stopping = False
         worker.start()
         dialog.show()
+
+    def _create_hook(self, address_value, value_type, trap_pc, site):
+        """Ask for a transform and hook the write instruction before trap_pc."""
+        if self._current_pid is None or self.hook_panel is None:
+            return
+        dialog = HookDialog(
+            self.translations,
+            f"0x{address_value:X}",
+            value_type,
+            site,
+            label=self._tracked_description(address_value),
+            parent=self._write_watch_dialog or self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        spec = HookSpec(
+            address_value,
+            value_type,
+            dialog.transform,
+            trap_pc=trap_pc,
+            label=dialog.label,
+        )
+        self.hook_panel.add_hook(spec, site)
+        if self.bottom_tabs is not None:
+            self.bottom_tabs.setCurrentWidget(self.hook_panel)
+        self.lbl_status.setText(
+            self.translations["hooks.status_created"].format(
+                address=f"0x{address_value:X}",
+                transform=dialog.transform.describe(),
+            )
+        )
+
+    def _tracked_description(self, address_value):
+        """Return the description of a tracked address, if it is in the table."""
+        if self.addr_table is None:
+            return ""
+        for row in range(self.addr_table.rowCount()):
+            address_item = self.addr_table.item(row, 1)
+            description_item = self.addr_table.item(row, 0)
+            try:
+                matches = (
+                    address_item is not None
+                    and int(address_item.text(), 0) == address_value
+                )
+            except ValueError:
+                continue
+            if matches and description_item is not None:
+                return description_item.text()
+        return ""
 
     def _on_write_watch_hits(self, dialog, hits):
         """Ignore hit batches already queued when monitoring was stopped."""
@@ -654,6 +737,8 @@ class MainWindow(QMainWindow):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             if dlg.selected_pid != self._current_pid:
                 self._stop_write_monitor()
+            if self.hook_panel is not None:
+                self.hook_panel.set_process(dlg.selected_pid)
             self._current_pid = dlg.selected_pid
             self._current_proc = self.translations["app.process_display"].format(
                 name=dlg.selected_name, pid=dlg.selected_pid
@@ -982,6 +1067,8 @@ class MainWindow(QMainWindow):
 
         # A running QThread must not be destroyed, so join it fully here.
         self._stop_write_monitor(timeout_ms=None)
+        if self.hook_panel is not None:
+            self.hook_panel.shutdown(timeout_ms=None)
         refresh_worker = self._refresh_worker
         if refresh_worker is not None and refresh_worker.isRunning():
             refresh_worker.requestInterruption()

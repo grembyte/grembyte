@@ -1,0 +1,579 @@
+"""Dialogs and panel for creating and managing value hooks."""
+
+import dataclasses
+
+from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+    QAbstractItemView,
+    QComboBox,
+    QDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QPushButton,
+    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from hermes.hooks.engine import HookWorker
+from hermes.hooks.transforms import available_transforms
+from hermes.ui.widgets.dialog_buttons import dialog_button_row
+
+
+# Upper bound for joining a hook worker from the GUI thread.
+HOOK_STOP_TIMEOUT_MS = 3000
+
+_STATUS_COLORS = {
+    "installing": "#d29922",
+    "active": "#3fb950",
+    "paused": "#8b949e",
+    "failed": "#f85149",
+    "error": "#f85149",
+    "disconnected": "#8b949e",
+}
+
+
+def _tr(translations, key, fallback):
+    return translations.get(key, fallback)
+
+
+def transform_title(translations, transform_class):
+    """Return the display name of a transform class."""
+    return _tr(
+        translations,
+        f"transform.{transform_class.kind}",
+        transform_class.title or transform_class.kind,
+    )
+
+
+def _parse_number(text):
+    try:
+        return int(text, 0)
+    except ValueError:
+        return float(text)
+
+
+def _format_number(value):
+    if isinstance(value, float):
+        return f"{value:g}"
+    return str(value)
+
+
+class _TransformForm(QWidget):
+    """Input form generated from a transform's parameter declarations."""
+
+    def __init__(self, transform_class, translations, values=None, parent=None):
+        super().__init__(parent)
+        self.transform_class = transform_class
+        self.translations = translations
+        self._editors = {}
+        values = values or {}
+
+        layout = QFormLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        for parameter in transform_class.parameters:
+            label = _tr(
+                translations,
+                f"transform.{transform_class.kind}.{parameter.name}",
+                parameter.name,
+            )
+            value = values.get(parameter.name, parameter.default)
+            editor = self._create_editor(parameter, value)
+            self._editors[parameter.name] = (parameter, editor)
+            layout.addRow(label, editor)
+
+        if transform_class.kind == "script":
+            hint = QLabel(translations["hooks.script_hint"])
+            hint.setWordWrap(True)
+            layout.addRow(hint)
+
+    def _create_editor(self, parameter, value):
+        if parameter.kind == "choice":
+            editor = QComboBox()
+            for choice in parameter.choices:
+                editor.addItem(
+                    _tr(self.translations, f"transform.choice.{choice}", str(choice)),
+                    choice,
+                )
+            index = editor.findData(value)
+            editor.setCurrentIndex(max(index, 0))
+            return editor
+        if parameter.kind == "code":
+            editor = QPlainTextEdit("" if value is None else str(value))
+            editor.setMinimumHeight(120)
+            return editor
+        editor = QLineEdit("" if value is None else _format_number(value))
+        if parameter.optional:
+            editor.setPlaceholderText(self.translations["hooks.optional"])
+        return editor
+
+    def create_transform(self):
+        """Build the transform; raises ValueError with a readable message."""
+        values = {}
+        for name, (parameter, editor) in self._editors.items():
+            label = _tr(
+                self.translations,
+                f"transform.{self.transform_class.kind}.{name}",
+                name,
+            )
+            if parameter.kind == "choice":
+                values[name] = editor.currentData()
+            elif parameter.kind == "code":
+                values[name] = editor.toPlainText()
+            else:
+                text = editor.text().strip()
+                if not text:
+                    if not parameter.optional:
+                        raise ValueError(
+                            self.translations["hooks.required"].format(name=label)
+                        )
+                    values[name] = None
+                    continue
+                try:
+                    values[name] = _parse_number(text)
+                except ValueError as error:
+                    raise ValueError(
+                        self.translations["hooks.invalid_number"].format(name=label)
+                    ) from error
+        return self.transform_class(**values)
+
+
+class HookDialog(QDialog):
+    # Dialogs expose their result through attributes after exec().
+    # pylint: disable=too-few-public-methods
+    """Choose a transform and its parameters for a write hook."""
+
+    def __init__(self, translations, address, value_type, site,
+                 transform=None, label="", parent=None):
+        super().__init__(parent)
+        self.translations = translations
+        self.transform = None
+        self.label = label
+        self._editing = transform is not None
+        self.setWindowTitle(
+            translations["hooks.edit_title" if self._editing else "hooks.create_title"]
+        )
+        self.resize(520, 380)
+        self._build_ui(address, value_type, site, transform, label)
+
+    def _build_ui(self, address, value_type, site, transform, label):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        info = QLabel(
+            self.translations["hooks.dialog_target"].format(
+                address=address, type=value_type, site=site
+            )
+        )
+        info.setWordWrap(True)
+        info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(info)
+
+        form = QFormLayout()
+        self.label_input = QLineEdit(label)
+        self.label_input.setPlaceholderText(self.translations["hooks.label_placeholder"])
+        form.addRow(self.translations["hooks.label"], self.label_input)
+        self.kind_combo = QComboBox()
+        form.addRow(self.translations["hooks.transform"], self.kind_combo)
+        layout.addLayout(form)
+
+        self.forms = QStackedWidget()
+        for kind, transform_class in available_transforms().items():
+            values = (
+                transform.form_values()
+                if transform is not None and transform.kind == kind
+                else None
+            )
+            self.kind_combo.addItem(
+                transform_title(self.translations, transform_class), kind
+            )
+            self.forms.addWidget(
+                _TransformForm(transform_class, self.translations, values)
+            )
+        self.kind_combo.currentIndexChanged.connect(self.forms.setCurrentIndex)
+        if transform is not None:
+            self.kind_combo.setCurrentIndex(
+                max(self.kind_combo.findData(transform.kind), 0)
+            )
+        layout.addWidget(self.forms)
+        layout.addStretch()
+
+        self.error_label = QLabel("")
+        self.error_label.setWordWrap(True)
+        self.error_label.setStyleSheet("color: #f85149;")
+        layout.addWidget(self.error_label)
+
+        layout.addLayout(dialog_button_row(
+            self.translations,
+            "hooks.apply" if self._editing else "hooks.create",
+            self._accept,
+            self.reject,
+        ))
+
+    def _accept(self):
+        try:
+            self.transform = self.forms.currentWidget().create_transform()
+        except (TypeError, ValueError) as error:
+            self.error_label.setText(str(error))
+            return
+        self.label = self.label_input.text().strip()
+        self.accept()
+
+
+class HookPanel(QGroupBox):
+    """Table of active hooks; owns the HookWorker of the attached process."""
+
+    # pylint: disable=too-many-instance-attributes
+
+    count_changed = pyqtSignal(int)
+
+    _COLUMNS = (
+        "hooks.column_label",
+        "hooks.column_address",
+        "hooks.column_site",
+        "hooks.column_transform",
+        "hooks.column_status",
+        "hooks.column_count",
+        "hooks.column_last",
+    )
+
+    def __init__(self, translations, parent=None):
+        super().__init__(translations["hooks.title"], parent)
+        self.translations = translations
+        self._pid = None
+        self._worker = None
+        self._hooks = {}
+        self._build_ui()
+
+    # ------------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------------
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(6)
+
+        controls = QHBoxLayout()
+        self.btn_edit = QPushButton(self.translations["hooks.edit"])
+        self.btn_edit.clicked.connect(self._edit_selected)
+        self.btn_toggle = QPushButton(self.translations["hooks.pause"])
+        self.btn_toggle.clicked.connect(self._toggle_selected)
+        self.btn_remove = QPushButton(self.translations["hooks.remove"])
+        self.btn_remove.setObjectName("btn_danger")
+        self.btn_remove.clicked.connect(self._remove_selected)
+        controls.addWidget(self.btn_edit)
+        controls.addWidget(self.btn_toggle)
+        self.status_label = QLabel(self.translations["hooks.hint"])
+        self.status_label.setWordWrap(True)
+        controls.addWidget(self.status_label, 1)
+        controls.addWidget(self.btn_remove)
+        layout.addLayout(controls)
+
+        self.table = QTableWidget(0, len(self._COLUMNS))
+        self.table.setHorizontalHeaderLabels(
+            [self.translations[key] for key in self._COLUMNS]
+        )
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        header = self.table.horizontalHeader()
+        if header is not None:
+            for column in range(len(self._COLUMNS)):
+                header.setSectionResizeMode(
+                    column, QHeaderView.ResizeMode.ResizeToContents
+                )
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.itemSelectionChanged.connect(self._update_buttons)
+        self.table.doubleClicked.connect(self._edit_selected)
+        layout.addWidget(self.table)
+        self._update_buttons()
+
+    def _row_of(self, hook_id):
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == hook_id:
+                return row
+        return -1
+
+    def _selected_hook_id(self):
+        row = self.table.currentRow()
+        if row < 0 or not self.table.selectionModel().hasSelection():
+            return None
+        item = self.table.item(row, 0)
+        return None if item is None else item.data(Qt.ItemDataRole.UserRole)
+
+    def _set_cell(self, hook_id, column, text, color=None, tooltip=None):
+        row = self._row_of(hook_id)
+        if row < 0:
+            return
+        item = self.table.item(row, column)
+        if item is None:
+            item = QTableWidgetItem()
+            self.table.setItem(row, column, item)
+        item.setText(text)
+        if color is not None:
+            item.setForeground(QColor(color))
+        if tooltip is not None:
+            item.setToolTip(tooltip)
+
+    def _set_status(self, hook_id, status, tooltip=""):
+        state = self._hooks.get(hook_id)
+        if state is None:
+            return
+        state["status"] = status
+        self._set_cell(
+            hook_id,
+            4,
+            self.translations[f"hooks.status_{status}"],
+            _STATUS_COLORS[status],
+            tooltip,
+        )
+        self._update_buttons()
+
+    def _update_buttons(self):
+        state = self._hooks.get(self._selected_hook_id())
+        live = state is not None and state["status"] in {"active", "paused", "error"}
+        self.btn_edit.setEnabled(live)
+        self.btn_toggle.setEnabled(live)
+        self.btn_remove.setEnabled(state is not None)
+        self.btn_toggle.setText(
+            self.translations[
+                "hooks.resume" if state is not None and state["status"] == "paused"
+                else "hooks.pause"
+            ]
+        )
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def set_process(self, pid):
+        """Switch to another process; hooks of the previous one are removed."""
+        if pid == self._pid:
+            return
+        self.shutdown()
+        self._pid = pid
+        self._hooks.clear()
+        self.table.setRowCount(0)
+        self.status_label.setText(self.translations["hooks.hint"])
+        self._update_buttons()
+        self.count_changed.emit(0)
+
+    def add_hook(self, spec, site):
+        """Install a hook described by ``spec`` in the current process."""
+        worker = self._ensure_worker()
+        hook_id = worker.add_hook(spec)
+        self._hooks[hook_id] = {"spec": spec, "status": "installing", "count": 0}
+
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        label_item = QTableWidgetItem(spec.label or "—")
+        label_item.setData(Qt.ItemDataRole.UserRole, hook_id)
+        self.table.setItem(row, 0, label_item)
+        self._set_cell(hook_id, 1, f"0x{spec.address:X}", "#3fb950")
+        self._set_cell(hook_id, 2, site)
+        self._set_cell(hook_id, 3, spec.transform.describe(), "#f0883e")
+        self._set_cell(hook_id, 5, "0")
+        self._set_cell(hook_id, 6, "")
+        self._set_status(hook_id, "installing")
+        self.table.selectRow(row)
+        self.count_changed.emit(len(self._hooks))
+        return hook_id
+
+    def shutdown(self, timeout_ms=HOOK_STOP_TIMEOUT_MS):
+        """Remove all hooks and stop the worker.
+
+        A ``timeout_ms`` of ``None`` waits until the worker has finished;
+        otherwise it finishes in the background after the bounded wait.
+        """
+        worker = self._worker
+        if worker is None:
+            return
+        self._worker = None
+        if worker.isRunning():
+            worker.requestInterruption()
+            if timeout_ms is None:
+                worker.wait()
+            else:
+                worker.wait(timeout_ms)
+        for hook_id, state in self._hooks.items():
+            if state["status"] != "failed":
+                self._set_status(hook_id, "disconnected")
+
+    # ------------------------------------------------------------------
+    # Worker management
+    # ------------------------------------------------------------------
+    def _ensure_worker(self):
+        if self._worker is not None and self._worker.isRunning():
+            return self._worker
+        worker = HookWorker(self._pid, self)
+        worker.hook_installed.connect(
+            lambda hook_id, info: self._on_installed(worker, hook_id, info)
+        )
+        worker.hook_failed.connect(
+            lambda hook_id, message: self._on_failed(worker, hook_id, message)
+        )
+        worker.hook_removed.connect(
+            lambda hook_id: self._on_removed(worker, hook_id)
+        )
+        worker.hook_events.connect(
+            lambda events: self._on_events(worker, events)
+        )
+        worker.transform_error.connect(
+            lambda hook_id, message: self._on_transform_error(worker, hook_id, message)
+        )
+        worker.agent_warning.connect(
+            lambda message: self._on_worker_message(worker, "hooks.agent_warning", message)
+        )
+        worker.worker_failed.connect(
+            lambda message: self._on_worker_message(worker, "hooks.worker_failed", message)
+        )
+        worker.finished.connect(lambda: self._on_worker_finished(worker))
+        self._worker = worker
+        worker.start()
+        return worker
+
+    def _on_installed(self, worker, hook_id, info):
+        if worker is not self._worker or hook_id not in self._hooks:
+            return
+        write = info.get("writeInstruction", {})
+        self._set_cell(
+            hook_id,
+            2,
+            f"{write.get('site', '')}   {write.get('text', '')}",
+            tooltip=self.translations["hooks.site_tooltip"].format(
+                address=write.get("address", ""),
+                trampoline=info.get("trampoline", ""),
+                size=info.get("patchSize", ""),
+            ),
+        )
+        self._set_status(hook_id, "active")
+
+    def _on_failed(self, worker, hook_id, message):
+        if worker is not self._worker:
+            return
+        state = self._hooks.get(hook_id)
+        if state is None:
+            return
+        message = message.splitlines()[0] if message else message
+        if state["status"] == "installing":
+            self._set_status(hook_id, "failed", message)
+        self.status_label.setText(
+            self.translations["hooks.action_failed"].format(message=message)
+        )
+
+    def _on_removed(self, worker, hook_id):
+        if worker is not self._worker:
+            return
+        self._drop_row(hook_id)
+
+    def _on_events(self, worker, events):
+        if worker is not self._worker:
+            return
+        for event in events:
+            hook_id = event.get("hookId")
+            state = self._hooks.get(hook_id)
+            if state is None:
+                continue
+            state["count"] += event.get("count", 0)
+            self._set_cell(hook_id, 5, str(state["count"]))
+            last = event.get("last") or {}
+            if last:
+                self._set_cell(
+                    hook_id,
+                    6,
+                    f"{_format_number(last.get('old'))} → "
+                    f"{_format_number(last.get('new'))} ⇒ "
+                    f"{_format_number(last.get('result'))}",
+                )
+            if state["status"] == "error":
+                self._set_status(hook_id, "active")
+
+    def _on_transform_error(self, worker, hook_id, message):
+        if worker is not self._worker:
+            return
+        self._set_status(hook_id, "error", message)
+        self.status_label.setText(
+            self.translations["hooks.transform_error"].format(message=message)
+        )
+
+    def _on_worker_message(self, worker, key, message):
+        if worker is not self._worker:
+            return
+        self.status_label.setText(self.translations[key].format(message=message))
+
+    def _on_worker_finished(self, worker):
+        worker.deleteLater()
+        if worker is not self._worker:
+            return
+        self._worker = None
+        for hook_id, state in self._hooks.items():
+            if state["status"] != "failed":
+                self._set_status(hook_id, "disconnected")
+
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
+    def _drop_row(self, hook_id):
+        row = self._row_of(hook_id)
+        if row >= 0:
+            self.table.removeRow(row)
+        self._hooks.pop(hook_id, None)
+        self._update_buttons()
+        self.count_changed.emit(len(self._hooks))
+
+    def _edit_selected(self):
+        hook_id = self._selected_hook_id()
+        state = self._hooks.get(hook_id)
+        if state is None or state["status"] not in {"active", "paused", "error"}:
+            return
+        spec = state["spec"]
+        site_item = self.table.item(self._row_of(hook_id), 2)
+        dialog = HookDialog(
+            self.translations,
+            f"0x{spec.address:X}",
+            spec.value_type,
+            site_item.text() if site_item is not None else "",
+            transform=spec.transform,
+            label=spec.label,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        state["spec"] = dataclasses.replace(
+            spec, transform=dialog.transform, label=dialog.label
+        )
+        self._worker.set_transform(hook_id, dialog.transform)
+        self._set_cell(hook_id, 0, dialog.label or "—")
+        self._set_cell(hook_id, 3, dialog.transform.describe())
+        if state["status"] == "error":
+            self._set_status(hook_id, "active")
+
+    def _toggle_selected(self):
+        hook_id = self._selected_hook_id()
+        state = self._hooks.get(hook_id)
+        if state is None or self._worker is None:
+            return
+        enable = state["status"] == "paused"
+        self._worker.set_enabled(hook_id, enable)
+        self._set_status(hook_id, "active" if enable else "paused")
+
+    def _remove_selected(self):
+        hook_id = self._selected_hook_id()
+        state = self._hooks.get(hook_id)
+        if state is None:
+            return
+        if (self._worker is not None
+                and state["status"] in {"installing", "active", "paused", "error"}):
+            self._worker.remove_hook(hook_id)
+        else:
+            self._drop_row(hook_id)
