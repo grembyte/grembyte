@@ -657,7 +657,7 @@ def test_debug_mode_reports_calls_and_skipped_writes(tmp_path, qt_app, translati
         window = panel._debug_window
         assert window.isVisible()
         assert panel.btn_debug.isChecked()
-        assert panel.table.item(0, 0).text() == "🐞 Gold"
+        assert panel.table.item(0, 0).text() == "◉ Gold"
 
         assert target.send("loot", 10) == (130, 999)
         assert target.send("bounty", 1) == (130, 1000)

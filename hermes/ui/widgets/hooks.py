@@ -578,7 +578,7 @@ class HookPanel(QGroupBox):
     @staticmethod
     def _label_text(spec, debug):
         label = spec.label or "—"
-        return f"🐞 {label}" if debug else label
+        return f"◉ {label}" if debug else label
 
     def _hook_name(self, hook_id):
         state = self._hooks.get(hook_id)
