@@ -13,6 +13,9 @@ def dialog_button_row(translations, accept_key, on_accept, on_cancel):
     accept_button = QPushButton(translations[accept_key])
     accept_button.setObjectName("btn_primary")
     accept_button.clicked.connect(on_accept)
+    # Enter confirms the dialog instead of pressing the first button (cancel).
+    cancel_button.setAutoDefault(False)
+    accept_button.setDefault(True)
 
     row.addWidget(cancel_button)
     row.addWidget(accept_button)

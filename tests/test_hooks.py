@@ -508,6 +508,39 @@ def test_hook_panel_installs_and_removes_hooks(tmp_path, qt_app, translations):
 
 
 @requires_target
+def test_write_watch_hits_in_trampolines_count_for_the_hooked_write(
+        tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.ui.widgets.hooks import HookPanel
+
+    target = _Target(_build_target(tmp_path))
+    panel = HookPanel(translations)
+    try:
+        original = _trap_pcs(target)
+        panel.set_process(target.pid)
+        panel.add_hook(
+            HookSpec(target.address, "int32", MultiplyTransform(3),
+                     trap_pc=original["add"], label="Gold"),
+            "target+0x580",
+        )
+        _wait_for(qt_app, lambda: panel.table.item(0, 4).text() == "Aktiv")
+
+        hooked = _trap_pcs(target)
+        # The hooked write runs relocated in the trampoline, the other one not.
+        assert hooked["add"] != original["add"]
+        assert hooked["sub"] == original["sub"]
+
+        hits = [{"pc": f"{pc:#x}", "site": "?", "count": 1} for pc in hooked.values()]
+        translated = panel.translate_watch_hits(hits)
+        assert [int(hit["pc"], 16) for hit in translated] == [original["add"], original["sub"]]
+        assert translated[0]["site"].startswith("target+0x")
+        assert translated[1] == hits[1]
+    finally:
+        panel.shutdown(timeout_ms=None)
+        target.close()
+
+
+@requires_target
 def test_saved_hooks_survive_a_restart(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access,too-many-locals,too-many-statements
     from sqlalchemy import create_engine

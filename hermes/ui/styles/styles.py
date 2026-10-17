@@ -248,6 +248,11 @@ STYLE = """
         background-color: #1f6feb;
         color: #ffffff;
     }
+    QMenu::separator {
+        height: 1px;
+        background-color: #30363d;
+        margin: 4px 8px;
+    }
     QToolTip {
         background-color: #161b22;
         color: #c9d1d9;

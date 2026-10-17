@@ -121,6 +121,53 @@ class ValueInputDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Dialog: edit description
+# ---------------------------------------------------------------------------
+class DescriptionInputDialog(QDialog):
+    # Dialogs expose behavior through Qt signals rather than public methods.
+    # pylint: disable=too-few-public-methods
+    """Simple dialog for entering a new description for a tracked address."""
+
+    def __init__(self, address: str, current_description: str,
+                 parent=None, translations=None):
+        """Initialize the dialog and build its description editor."""
+        super().__init__(parent)
+        self.translations = translations or load_translations()
+        self.setWindowTitle(self.translations["description_dialog.title"])
+        self.setFixedSize(340, 160)
+        self.new_description = None
+        self._build_ui(address, current_description)
+
+    def _build_ui(self, address, current):
+        """Build the address details, input field, and dialog buttons."""
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        info = QLabel(
+            f"{self.translations['value_dialog.address']}: "
+            f"<span style='color:#3fb950'>{address}</span>"
+        )
+        info.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(info)
+
+        self.input = QLineEdit(current)
+        self.input.selectAll()
+        self.input.setPlaceholderText(
+            self.translations["description_dialog.placeholder"]
+        )
+        layout.addWidget(self.input)
+
+        layout.addLayout(dialog_button_row(
+            self.translations, "button.save", self._accept, self.reject
+        ))
+
+    def _accept(self):
+        """Store the entered description and accept the dialog."""
+        self.new_description = self.input.text().strip()
+        self.accept()
+
+
+# ---------------------------------------------------------------------------
 # Main Window
 # ---------------------------------------------------------------------------
 class MainWindow(QMainWindow):
@@ -145,6 +192,8 @@ class MainWindow(QMainWindow):
         self._address_keys = itertools.count(1)
         self._filling_addresses = False
         self._pointer_dialogs = {}
+        # Database id of the program the open pointer dialogs belong to.
+        self._pointer_program = None
         self._ensure_example_templates()
         self._current_proc = self.translations["app.no_process"]
         self._scan_results = []
@@ -779,7 +828,11 @@ class MainWindow(QMainWindow):
         )
         entry_id = meta["id"]
         self._pointer_dialogs[entry_id] = dialog
+        self._pointer_program = self._process_id
         dialog.chain_chosen.connect(lambda chain: self._set_pointer_for(entry_id, chain))
+        dialog.chains_adopted.connect(
+            lambda chains: dialog.show_adopted(self._add_pointer_entries(entry_id, chains))
+        )
         dialog.finished.connect(lambda _result: self._pointer_dialogs.pop(entry_id, None))
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.show()
@@ -802,11 +855,67 @@ class MainWindow(QMainWindow):
                 self._set_pointer(row, chain)
                 return
 
+    def _add_pointer_entries(self, entry_id, chains):
+        """Add pointer candidates of an entry as entries of their own.
+
+        After a restart the address list then shows which of them still lead
+        to a sensible value. Chains already in the list are skipped; returns
+        the number of entries added, or None if the entry is gone.
+        """
+        source = next(
+            (row for row in range(self.addr_table.rowCount())
+             if self._address_meta(row)["id"] == entry_id),
+            None,
+        )
+        if source is None or self._current_pid is None or self._process_id is None:
+            return None
+        label = self.addr_table.item(source, 0).text()
+        value_type = self.addr_table.item(source, 2).text()
+        existing = {
+            self._address_meta(row)["pointer"] for row in range(self.addr_table.rowCount())
+        }
+        chains = [chain for chain in chains if chain not in existing]
+        try:
+            bases = module_bases(read_mappings(self._current_pid))
+            with ProcessMemory(self._current_pid) as memory:
+                addresses = [resolve_chain(memory, bases, chain) for chain in chains]
+        except OSError:
+            addresses = [None] * len(chains)
+        for index, (chain, address) in enumerate(zip(chains, addresses), start=1):
+            entry_label = self.translations["address_table.pointer_candidate"].format(
+                label=label, index=index
+            )
+            saved_id = self._store_address(
+                self._address_repository.add_address, self._process_id,
+                label=entry_label, value_type=value_type, address=address or 0,
+                pointer=chain,
+            )
+            self._add_address_row(
+                entry_label, address, value_type, "?", saved_id=saved_id, pointer=chain,
+            )
+        if chains:
+            self._refresh_timer.start()
+        return len(chains)
+
     def _close_pointer_dialogs(self):
-        """Close open pointer scans; they belong to the previous process."""
+        """Close open pointer scans; they belong to another program."""
         for dialog in list(self._pointer_dialogs.values()):
             dialog.reject()
         self._pointer_dialogs.clear()
+        self._pointer_program = None
+
+    def _switch_pointer_dialogs(self, pid, process_id):
+        """Keep pointer scans open for a restarted program, close them otherwise.
+
+        Their candidates belong to an address-list entry of the program, so
+        they are filtered in the new process. ``pid`` None means the program
+        is not running at the moment.
+        """
+        if pid is not None and process_id != self._pointer_program:
+            self._close_pointer_dialogs()
+            return
+        for dialog in self._pointer_dialogs.values():
+            dialog.set_process(pid)
 
     def _set_pointer(self, row, chain):
         """Use ``chain`` (or None) to locate an address-list entry."""
@@ -872,11 +981,21 @@ class MainWindow(QMainWindow):
 
         pointer = self._address_meta(row)["pointer"] if table is self.addr_table else None
         menu = QMenu(self)
+        if table is self.addr_table:
+            menu.addAction(
+                self.translations["address_table.edit_description"],
+                self._edit_description,
+            )
+            menu.addAction(
+                self.translations["address_table.edit_value"], self._write_value
+            ).setEnabled(self._current_pid is not None)
+            menu.addSeparator()
         menu.addAction(
             self.translations["address_table.watch"],
             lambda: self._start_write_monitor(address, value_type, pointer),
         )
         if table is self.addr_table:
+            menu.addSeparator()
             meta = self._address_meta(row)
             scan = menu.addAction(
                 self.translations["address_table.pointer_scan"],
@@ -1036,6 +1155,8 @@ class MainWindow(QMainWindow):
     def _on_write_watch_hits(self, dialog, hits):
         """Ignore hit batches already queued when monitoring was stopped."""
         if dialog is self._write_watch_dialog and not self._write_watch_stopping:
+            if self.hook_panel is not None:
+                hits = self.hook_panel.translate_watch_hits(hits)
             dialog.add_hits(hits)
 
     def _on_write_watch_dialog_finished(self, dialog, worker):
@@ -1095,11 +1216,11 @@ class MainWindow(QMainWindow):
         dlg = ProcessSelectDialog(self, self.translations)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             changed = dlg.selected_pid != self._current_pid
+            process_id = self._known_process_id(dlg) if changed else self._process_id
             if changed:
                 self._stop_write_monitor()
                 self._stop_freeze_worker()
-                self._close_pointer_dialogs()
-            process_id = self._known_process_id(dlg) if changed else self._process_id
+                self._switch_pointer_dialogs(dlg.selected_pid, process_id)
             if self.hook_panel is not None:
                 self.hook_panel.set_process(dlg.selected_pid, process_id)
             self._current_pid = dlg.selected_pid
@@ -1149,7 +1270,7 @@ class MainWindow(QMainWindow):
             refresh_worker.wait()
         self._stop_write_monitor()
         self._stop_freeze_worker()
-        self._close_pointer_dialogs()
+        self._switch_pointer_dialogs(None, None)
         if self.hook_panel is not None:
             self.hook_panel.set_process(None)
 
@@ -1609,6 +1730,24 @@ class MainWindow(QMainWindow):
             saved_id=saved_id, pointer=pointer,
         )
 
+    def _edit_description(self):
+        """Prompt for a new description of the selected tracked address."""
+        if self.addr_table is None:
+            return
+        row = self.addr_table.currentRow()
+        if row < 0:
+            return
+        description_item = self.addr_table.item(row, 0)
+        address_item = self.addr_table.item(row, 1)
+        if description_item is None or address_item is None:
+            return
+        dlg = DescriptionInputDialog(
+            address_item.text(), description_item.text(), self, self.translations
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.new_description:
+            # Saved by _on_address_item_changed like an inline edit.
+            description_item.setText(dlg.new_description)
+
     def _write_value(self):
         """Prompt for and write a replacement value to process memory."""
         if self.addr_table is None:
@@ -1775,18 +1914,52 @@ class MainWindow(QMainWindow):
             self._freeze_worker = None
 
     def _remove_address(self):
-        """Remove the selected address from the tracking table."""
+        """Remove the selected addresses from the tracking table."""
         if self.addr_table is None:
             return
 
-        row = self.addr_table.currentRow()
-        if row >= 0:
+        rows = sorted({index.row() for index in self.addr_table.selectedIndexes()},
+                      reverse=True)
+        if not rows and self.addr_table.currentRow() >= 0:
+            rows = [self.addr_table.currentRow()]
+        candidates = sum(self._pointer_candidate_count(row) for row in rows)
+        question = None
+        if candidates:
+            question = self.translations["address_table.remove_candidates_confirm"].format(
+                count=len(rows), candidates=candidates
+            )
+        elif len(rows) > 1:
+            question = self.translations["address_table.remove_confirm"].format(count=len(rows))
+        if question is not None and QMessageBox.question(
+            self, self.translations["address_table.title"], question,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        for row in rows:
             meta = self._address_meta(row)
             if self._freeze_worker is not None:
                 self._freeze_worker.remove_entry(meta["key"])
             if meta["id"] is not None:
+                # Its pointer scan is deleted with it; an open dialog must not
+                # save the candidates again.
+                dialog = self._pointer_dialogs.pop(meta["id"], None)
+                if dialog is not None:
+                    dialog.reject()
                 self._store_address(self._address_repository.delete_address, meta["id"])
             self.addr_table.removeRow(row)
+
+    def _pointer_candidate_count(self, row):
+        """Return how many pointer candidates are saved for an address-list row."""
+        entry_id = self._address_meta(row)["id"]
+        if entry_id is None:
+            return 0
+        dialog = self._pointer_dialogs.get(entry_id)
+        if dialog is not None:
+            return len(dialog.candidates())
+        try:
+            scan = self._address_repository.get_pointer_scan(entry_id)
+        except SQLAlchemyError:
+            return 0
+        return 0 if scan is None else len(scan.chains)
 
     def _style_table(self, table):
         """Apply the shared look and feel to a table widget."""

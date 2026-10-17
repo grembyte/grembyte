@@ -1,9 +1,13 @@
 """Tests for the pointer scan."""
 
+import builtins
+import io
+import struct
 import subprocess
 
 import pytest
 
+from hermes.core import pointer as pointer_module
 from hermes.core.pointer import (
     Mapping,
     PointerChain,
@@ -11,6 +15,7 @@ from hermes.core.pointer import (
     ProcessMemory,
     chain_for_static_address,
     filter_chains,
+    main_module,
     module_bases,
     read_mappings,
     resolve_chain,
@@ -148,6 +153,23 @@ def test_static_regions_include_bss_behind_a_module():
     assert chain_for_static_address(mappings, 0x8010) is None
 
 
+def test_memory_behind_mapped_files_that_are_no_modules_is_not_static():
+    # Unity maps the GPU device right in front of anonymous (managed) heap.
+    mappings = [
+        Mapping(0x1000, 0x2000, "r-xp", "/opt/game/game"),
+        Mapping(0x2000, 0x3000, "rw-p", "/opt/game/game"),
+        Mapping(0x10000, 0x11000, "rw-s", "/dev/dri/renderD128"),
+        Mapping(0x11000, 0x20000, "rw-p", ""),
+        Mapping(0x20000, 0x21000, "r--p", "/opt/game/Data/level0"),
+        Mapping(0x21000, 0x22000, "rw-p", ""),
+    ]
+
+    assert static_regions(mappings) == [(0x2000, 0x3000, "game")]
+    assert module_bases(mappings) == {"game": 0x1000}
+    assert chain_for_static_address(mappings, 0x11010) is None
+    assert chain_for_static_address(mappings, 0x21010) is None
+
+
 @requires_target
 def test_static_address_survives_a_restart(binary):
     first = _Target(binary)
@@ -212,6 +234,77 @@ def test_scan_limits(binary):
         assert pointer_map.find_chains(target.gold, max_depth=4, max_offset=0x3) == []
         assert len(pointer_map.find_chains(target.gold, max_depth=4, max_offset=0x1000,
                                            max_results=1)) == 1
+    finally:
+        target.close()
+
+
+@requires_target
+def test_result_limit_drops_the_longest_chains(binary):
+    target = _Target(binary)
+    try:
+        pointer_map = PointerMap.build(target.pid)
+        everything = pointer_map.find_chains(target.gold, max_depth=4, max_offset=0x100)
+        shorter = [chain for chain in everything if len(chain.offsets) <= 3]
+        assert len(shorter) < len(everything), "the test needs chains of depth 4"
+
+        limited = pointer_map.find_chains(target.gold, max_depth=4, max_offset=0x100,
+                                          max_results=len(shorter))
+
+        assert limited == shorter
+        assert _gold_chain(binary) in limited
+    finally:
+        target.close()
+
+
+@requires_target
+def test_chains_can_be_limited_to_the_main_module(binary):
+    target = _Target(binary)
+    try:
+        assert main_module(target.pid) == "target"
+        pointer_map = PointerMap.build(target.pid)
+        everything = pointer_map.find_chains(target.gold, max_depth=4, max_offset=0x100)
+        own = pointer_map.find_chains(target.gold, max_depth=4, max_offset=0x100,
+                                      base_modules={"target"})
+
+        assert own == [chain for chain in everything if chain.module == "target"]
+        assert _gold_chain(binary) in own
+    finally:
+        target.close()
+
+
+def test_pointer_map_ignores_unaligned_values_by_default(monkeypatch):
+    mappings = [Mapping(0x1000, 0x1020, "rw-p", "")]
+    memory = struct.pack("<4Q", 0x1008, 0x1004, 0x2000, 0)
+
+    def fake_open(path, mode="r", **_kwargs):
+        assert path == "/proc/123/mem" and mode == "rb"
+        image = io.BytesIO(b"\0" * 0x1000 + memory)
+        return image
+
+    monkeypatch.setattr(pointer_module, "read_mappings", lambda _pid: mappings)
+    monkeypatch.setattr(builtins, "open", fake_open)
+
+    assert PointerMap.build(123).values.tolist() == [0x1008]
+    assert PointerMap.build(123, aligned_values=False).values.tolist() == [0x1004, 0x1008]
+
+
+@requires_target
+def test_search_stops_at_its_memory_limit(binary):
+    target = _Target(binary)
+    try:
+        pointer_map = PointerMap.build(target.pid)
+        everything = pointer_map.find_chains(target.gold, max_depth=5, max_offset=0x1000)
+        assert not pointer_map.truncated
+
+        limited = pointer_map.find_chains(target.gold, max_depth=5, max_offset=0x1000,
+                                          max_edges=50)
+
+        assert pointer_map.truncated
+        complete = pointer_map.complete_depth
+        assert set(limited) < set(everything)
+        assert {chain for chain in everything if len(chain.offsets) <= complete} <= set(limited)
+        # The search goes level by level, so the limit costs the longest chains.
+        assert max(len(chain.offsets) for chain in limited) < 5
     finally:
         target.close()
 
@@ -533,3 +626,173 @@ def test_pointer_dialog_stays_open_while_scanning(binary, qt_app, sessions, monk
     finally:
         target.close()
         window.close()
+
+
+@requires_target
+def test_pointer_dialog_survives_a_restart_of_the_program(binary, qt_app, sessions,
+                                                         monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access,too-many-locals
+    from PyQt6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui import main_window
+
+    monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
+    monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
+
+    def select(pid, name):
+        """Answer the next "Select process" with this process."""
+        class FakeSelection:  # pylint: disable=too-few-public-methods
+            selected_pid, selected_name, selected_path = pid, name, f"/opt/{name}"
+
+            def __init__(self, *_args):
+                pass
+
+            @staticmethod
+            def exec():
+                return QDialog.DialogCode.Accepted
+
+        monkeypatch.setattr(main_window, "ProcessSelectDialog", FakeSelection)
+        window._open_process_dialog()
+
+    window = main_window.MainWindow("de")
+    first = _Target(binary)
+    second = None
+    try:
+        select(first.pid, "target")
+        window._refresh_timer.stop()
+        window._add_tracked_address({"address": hex(first.gold), "address_value": first.gold,
+                                     "type": "int32", "value": "1234"})
+        window._open_pointer_scan(0)
+        entry_id = window._address_meta(0)["id"]
+        dialog = window._pointer_dialogs[entry_id]
+        dialog.depth_input.setValue(4)
+        dialog.offset_input.setText("0x100")
+        dialog.start_scan()
+        dialog.wait_for_worker()
+        _wait(qt_app, lambda: dialog._worker is None)
+        assert _gold_chain(binary) in dialog.candidates()
+
+        # The game is closed while a scan is running: the dialog stays open.
+        from hermes.ui.widgets import pointer_scan
+        monkeypatch.setattr(pointer_scan.QMessageBox, "question",
+                            lambda *_args: pointer_scan.QMessageBox.StandardButton.Yes)
+        monkeypatch.setattr(main_window.QMessageBox, "question",
+                            lambda *_args: main_window.QMessageBox.StandardButton.Yes)
+        dialog.start_scan()
+        first.close()
+        assert not window._check_process_alive()
+        assert dialog.isVisible() and window._pointer_dialogs[entry_id] is dialog
+        assert "beendet" in dialog.status_label.text()
+        dialog.wait_for_worker()
+        _wait(qt_app, lambda: dialog._worker is None)
+        assert not dialog.btn_scan.isEnabled() and not dialog.btn_filter.isEnabled()
+
+        # Restarted and attached again: filter with the new address.
+        second = _Target(binary)
+        select(second.pid, "target")
+        assert dialog.pid == second.pid and dialog.btn_filter.isEnabled()
+        # All candidates go to the address list, each with its pointer.
+        candidates = dialog.candidates()
+        dialog.adopt_candidates()
+        assert window.addr_table.rowCount() == 1 + len(candidates)
+        adopted = {window._address_meta(row)["pointer"]: window.addr_table.item(row, 1).text()
+                   for row in range(1, window.addr_table.rowCount())}
+        assert adopted[_gold_chain(binary)] == f"0x{second.gold:X}"
+        assert str(len(candidates)) in dialog.status_label.text()
+        dialog.adopt_candidates()  # nothing twice
+        assert window.addr_table.rowCount() == 1 + len(candidates)
+        # Several selected entries are removed at once.
+        window.addr_table.clearSelection()
+        for row in range(1, window.addr_table.rowCount()):
+            window.addr_table.selectionModel().select(
+                window.addr_table.model().index(row, 0),
+                window.addr_table.selectionModel().SelectionFlag.Select
+                | window.addr_table.selectionModel().SelectionFlag.Rows,
+            )
+        window._remove_address()
+        assert window.addr_table.rowCount() == 1
+        assert len(AddressRepository(sessions).list_addresses(window._process_id)) == 1
+
+        dialog.address_input.setText(f"0x{second.gold:X}")
+        dialog.start_filter()
+        dialog.wait_for_worker()
+        _wait(qt_app, lambda: dialog._worker is None)
+        assert _gold_chain(binary) in dialog.candidates()
+
+        # The chain is taken over by the reloaded address-list entry.
+        dialog._choose(_gold_chain(binary))
+        qt_app.processEvents()
+        assert window._address_meta(0)["pointer"] == _gold_chain(binary)
+        assert window.addr_table.item(0, 1).text() == f"0x{second.gold:X}"
+        window._open_pointer_scan(0)
+        dialog = window._pointer_dialogs[entry_id]
+
+        # Removing the entry removes its candidates and closes its dialog, so
+        # they are not saved again for an entry that is gone.
+        asked = []
+        monkeypatch.setattr(main_window.QMessageBox, "question",
+                            lambda *args: asked.append(args[2])
+                            or main_window.QMessageBox.StandardButton.Yes)
+        window.addr_table.selectRow(0)
+        window._remove_address()
+        assert str(len(dialog.candidates())) in asked[0]
+        assert not dialog.isVisible() and not window._pointer_dialogs
+        assert AddressRepository(sessions).get_pointer_scan(entry_id) is None
+        window._add_tracked_address({"address": hex(second.gold), "address_value": second.gold,
+                                     "type": "int32", "value": "1234"})
+        window._open_pointer_scan(0)
+        dialog = next(iter(window._pointer_dialogs.values()))
+
+        # Another program: its address list has no such entry.
+        select(second.pid + 1_000_000, "other")
+        assert not dialog.isVisible() and not window._pointer_dialogs
+    finally:
+        first.close()
+        if second is not None:
+            second.close()
+        window.close()
+
+
+def test_worker_finishing_after_its_dialog_was_deleted_is_harmless(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import threading
+
+    from hermes.ui.widgets import pointer_scan
+
+    release = threading.Event()
+
+    class SlowWorker(pointer_scan.PointerScanWorker):
+        """Ignores cancellation until released, like a long search step."""
+
+        def _scan(self):
+            release.wait(10)
+            self.progress.emit("searching", 1)
+            return [PointerChain("target", 0x10, (0x8,))]
+
+    class Repository:  # pylint: disable=too-few-public-methods
+        @staticmethod
+        def get_pointer_scan(_entry_id):
+            return None
+
+    monkeypatch.setattr(pointer_scan, "PointerScanWorker", SlowWorker)
+    monkeypatch.setattr(pointer_scan, "STOP_TIMEOUT_MS", 0)
+    translations = __import__("hermes.ui.localization", fromlist=["x"]).load_translations("de")
+    dialog = pointer_scan.PointerScanDialog(
+        translations, Repository(), 1, {"id": 1, "label": "Gold", "address": 0x1000}
+    )
+    dialog.setAttribute(pointer_scan.Qt.WidgetAttribute.WA_DeleteOnClose)
+    dialog.show()
+    dialog.start_scan()
+    worker = dialog._worker
+    dialog.reject()
+    from PyQt6.QtCore import QCoreApplication, QEvent  # pylint: disable=import-error,no-name-in-module
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert pointer_scan.sip.isdeleted(dialog)
+
+    # The worker finishes now; its callbacks must not touch the deleted dialog.
+    release.set()
+    worker.wait(5000)
+    _wait(qt_app, lambda: not pointer_scan._RUNNING_WORKERS)
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

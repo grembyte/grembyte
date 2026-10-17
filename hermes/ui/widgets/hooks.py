@@ -40,6 +40,8 @@ from hermes.ui.widgets.table import set_row_height
 
 # Upper bound for joining a hook worker from the GUI thread.
 HOOK_STOP_TIMEOUT_MS = 3000
+# The agent allocates one page per trampoline (x86-64 Linux).
+TRAMPOLINE_SIZE = 0x1000
 
 _STATUS_COLORS = {
     "installing": "#d29922",
@@ -401,6 +403,9 @@ class HookPanel(QGroupBox):
         self._debug_window = None
         self._worker = None
         self._hooks = {}
+        # Hook trampolines of this process, also of removed hooks:
+        # start address -> (trap pc, site) of the hooked write instruction.
+        self._trampolines = {}
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -526,6 +531,7 @@ class HookPanel(QGroupBox):
         self._pid = pid
         self._process_id = process_id
         self._hooks.clear()
+        self._trampolines.clear()
         self.table.setRowCount(0)
         self.status_label.setText(self.translations["hooks.hint"])
         self._update_buttons()
@@ -796,6 +802,7 @@ class HookPanel(QGroupBox):
         if worker is not self._worker or hook_id not in self._hooks:
             return
         write = info.get("writeInstruction", {})
+        self._remember_trampoline(info, write)
         self._set_cell(
             hook_id,
             2,
@@ -810,6 +817,54 @@ class HookPanel(QGroupBox):
         if state["saved_id"] is None and not state.get("removing"):
             self._save_installed_hook(state, write)
         self._set_status(hook_id, "active" if state["spec"].enabled else "paused")
+
+    def _remember_trampoline(self, info, write):
+        try:
+            start = int(info["trampoline"], 16)
+            trap_pc = int(info["resumePc"], 16)
+            length = trap_pc - int(write["address"], 16)
+        except (KeyError, TypeError, ValueError):
+            return
+        site = write.get("site", "")
+        module, separator, offset = site.rpartition("+")
+        try:
+            site = f"{module}+{int(offset, 16) + length:#x}" if separator else f"{trap_pc:#x}"
+        except ValueError:
+            site = f"{trap_pc:#x}"
+        self._trampolines[start] = (trap_pc, site)
+
+    def _original_write(self, pc):
+        """Return (trap pc, site) of the hooked write if ``pc`` is in a trampoline."""
+        original = None
+        # A hook created from a trampoline hit hooks that trampoline in turn.
+        for _ in range(len(self._trampolines)):
+            start = next(
+                (start for start in self._trampolines
+                 if start <= pc < start + TRAMPOLINE_SIZE),
+                None,
+            )
+            if start is None:
+                break
+            original = self._trampolines[start]
+            pc = original[0]
+        return original
+
+    def translate_watch_hits(self, hits):
+        """Report write-watch hits in hook trampolines at the hooked write.
+
+        A hooked write runs relocated in its trampoline, so a watchpoint
+        reports a PC there instead of in the game's code.
+        """
+        translated = []
+        for hit in hits:
+            try:
+                original = self._original_write(int(hit["pc"], 16))
+            except (KeyError, TypeError, ValueError):
+                original = None
+            if original is not None:
+                hit = {**hit, "pc": f"{original[0]:#x}", "site": original[1]}
+            translated.append(hit)
+        return translated
 
     def _on_failed(self, worker, hook_id, message):
         if worker is not self._worker:
