@@ -151,3 +151,43 @@ def test_hooks_keep_their_copy_of_a_template(repository):
     assert hook_transform(saved).source == "ctx => ctx.new * ctx.params.factor"
     # The id of the deleted template is not handed out again.
     assert repository.save_template(TransformDefinition("Neu", "ctx => 1")) != template_id
+
+
+def test_addresses_with_pointer_scan(tmp_path):
+    # pylint: disable=import-outside-toplevel
+    from hermes.core.pointer import PointerChain
+    from hermes.db.repository.addresses import (
+        AddressRepository,
+        SavedPointerScan,
+        address_pointer,
+    )
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'addresses.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+    process_id = HookRepository(sessions).get_or_create_process("game", "/opt/game")
+    repository = AddressRepository(sessions)
+    chain = PointerChain("game", 0x3070, (0x18, 0x40, 0x4))
+
+    gold = repository.add_address(process_id, label="Gold", value_type="int32",
+                                  address=0x5000)
+    score = repository.add_address(process_id, label="Score", value_type="int32",
+                                   address=0x4010, pointer=PointerChain("game", 0x10))
+    repository.update_address(gold, label="Gold!", address=0x6000, pointer=chain, frozen=True)
+    repository.save_pointer_scan(gold, SavedPointerScan([chain], 5, 0x1000, 0))
+    repository.save_pointer_scan(gold, SavedPointerScan([chain, chain], 5, 0x1000, 2))
+
+    saved_gold, saved_score = repository.list_addresses(process_id)
+    assert (saved_gold.label, saved_gold.address, saved_gold.frozen) == ("Gold!", 0x6000, True)
+    assert address_pointer(saved_gold) == chain
+    assert address_pointer(saved_score) == PointerChain("game", 0x10)
+    scan = repository.get_pointer_scan(gold)
+    assert (scan.chains, scan.rounds) == ([chain, chain], 2)
+    assert repository.get_pointer_scan(score) is None
+
+    repository.update_address(score, pointer=None)
+    assert address_pointer(repository.list_addresses(process_id)[1]) is None
+    repository.delete_address(gold)
+    assert [a.label for a in repository.list_addresses(process_id)] == ["Score"]
+    assert repository.get_pointer_scan(gold) is None
+    engine.dispose()

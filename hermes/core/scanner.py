@@ -6,6 +6,8 @@ import struct
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core.pointer import ProcessMemory, module_bases, read_mappings, resolve_chain
+
 _VALUE_FORMATS = {
     "int32": "i",
     "int64": "q",
@@ -497,9 +499,15 @@ class ScanWorker(QThread):
 
 
 class ValueRefreshWorker(QThread):
-    """Read current values for a small set of known process addresses."""
+    """Read current values for a small set of known process addresses.
+
+    An entry with a ``pointer`` (PointerChain) is resolved first; its
+    address is reported via ``addresses_resolved`` under the entry's ``key``
+    (None if the chain does not resolve right now).
+    """
 
     values_ready = pyqtSignal(dict)
+    addresses_resolved = pyqtSignal(dict)
     refresh_failed = pyqtSignal(str)
 
     def __init__(self, pid, entries, parent=None):
@@ -509,20 +517,27 @@ class ValueRefreshWorker(QThread):
 
     def run(self):
         values = {}
+        resolved = {}
         try:
-            with open(f"/proc/{self.pid}/mem", "rb", buffering=0) as memory:
+            bases = None
+            if any(entry.get("pointer") is not None for entry in self.entries):
+                bases = module_bases(read_mappings(self.pid))
+            with ProcessMemory(self.pid) as memory:
                 for entry in self.entries:
                     if self.isInterruptionRequested():
                         return
                     value_format = self._get_value_format(entry["type"])
-                    address = entry["address"]
-                    try:
-                        memory.seek(address)
-                        block = memory.read(struct.calcsize(value_format))
-                    except OSError:
+                    address = entry.get("address")
+                    if entry.get("pointer") is not None:
+                        address = resolve_chain(memory, bases, entry["pointer"])
+                        resolved[entry["key"]] = address
+                    if address is None:
                         continue
-                    if len(block) == struct.calcsize(value_format):
+                    block = memory.read(address, struct.calcsize(value_format))
+                    if block is not None:
                         values[address] = struct.unpack(value_format, block)[0]
+            if resolved:
+                self.addresses_resolved.emit(resolved)
             self.values_ready.emit(values)
         except (OSError, ValueError, struct.error) as error:
             if not self.isInterruptionRequested():

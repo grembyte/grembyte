@@ -1,5 +1,6 @@
 """hermes-hook – Main Window: application main UI (PyQt6)."""
 
+import itertools
 from dataclasses import dataclass
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -19,13 +20,22 @@ from hermes.ui.styles.styles import STYLE
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.ui.widgets.table import set_row_height
+from hermes.core.pointer import (
+    ProcessMemory,
+    chain_for_static_address,
+    module_bases,
+    read_mappings,
+    resolve_chain,
+)
 from hermes.core.scanner import MemorySnapshot, ScanWorker, ValueRefreshWorker
 from hermes.core.memory import write_process_value
 from hermes.core.write_watch import WriteWatchWorker, watch_size_for_type
+from hermes.db.repository.addresses import AddressRepository, address_pointer
 from hermes.db.repository.hooks import HookRepository
 from hermes.hooks.engine import HookSpec
 from hermes.hooks.transforms import example_templates
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
+from hermes.ui.widgets.pointer_scan import PointerScanDialog
 from hermes.ui.widgets.templates import TemplateDialog
 from hermes.ui.widgets.write_watch import WriteWatchDialog
 
@@ -115,6 +125,10 @@ class MainWindow(QMainWindow):
 
         self._current_pid = None
         self._hook_repository = HookRepository()
+        self._address_repository = AddressRepository()
+        self._process_id = None
+        self._address_keys = itertools.count(1)
+        self._filling_addresses = False
         self._ensure_example_templates()
         self._current_proc = self.translations["app.no_process"]
         self._scan_results = []
@@ -439,7 +453,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(ctrl)
 
         # Table
-        self.addr_table = QTableWidget(0, 5)
+        self.addr_table = QTableWidget(0, 6)
         self.addr_table.setHorizontalHeaderLabels(
             [
                 self.translations["address_table.description"],
@@ -447,6 +461,7 @@ class MainWindow(QMainWindow):
                 self.translations["address_table.type"],
                 self.translations["address_table.value"],
                 self.translations["address_table.frozen"],
+                self.translations["address_table.pointer"],
             ]
         )
 
@@ -464,35 +479,45 @@ class MainWindow(QMainWindow):
         if header is not None:
             header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
             self.addr_table.setColumnWidth(0, 260)
-            for col in (1, 2, 3):
+            for col in (1, 2, 3, 4):
                 header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
 
         header = self.addr_table.verticalHeader()
         if header is not None:
             header.setVisible(False)
 
         self.addr_table.doubleClicked.connect(self._write_value)
+        self.addr_table.itemChanged.connect(self._on_address_item_changed)
         layout.addWidget(self.addr_table)
 
         return box
 
-    def _add_address_row(self, desc, addr, vtype, value, frozen):
-        """Append an address and its current state to the tracking table."""
+    def _add_address_row(self, desc, addr, vtype, value, frozen, saved_id=None, pointer=None):
+        # pylint: disable=too-many-arguments
+        """Append an address and its current state to the tracking table.
+
+        ``saved_id`` is the entry's database id, ``pointer`` its PointerChain;
+        ``addr`` may be None when the pointer does not resolve right now.
+        """
         if self.addr_table is None:
             return
 
+        self._filling_addresses = True
         row = self.addr_table.rowCount()
         self.addr_table.insertRow(row)
 
         desc_item = QTableWidgetItem(desc)
         desc_item.setFlags(desc_item.flags() | Qt.ItemFlag.ItemIsEditable)
+        desc_item.setData(Qt.ItemDataRole.UserRole, {
+            "key": next(self._address_keys), "id": saved_id, "pointer": pointer,
+        })
         self.addr_table.setItem(row, 0, desc_item)
 
-        addr_item = QTableWidgetItem(addr)
-        addr_item.setForeground(QColor("#3fb950"))
+        addr_item = QTableWidgetItem()
         addr_item.setFlags(addr_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.addr_table.setItem(row, 1, addr_item)
+        self._set_row_address(row, addr)
 
         type_item = QTableWidgetItem(vtype)
         type_item.setForeground(QColor("#f0883e"))
@@ -512,6 +537,174 @@ class MainWindow(QMainWindow):
         freeze_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         freeze_item.setFlags(freeze_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.addr_table.setItem(row, 4, freeze_item)
+
+        pointer_item = QTableWidgetItem()
+        pointer_item.setFlags(pointer_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.addr_table.setItem(row, 5, pointer_item)
+        self._set_row_pointer(row, pointer)
+        self._filling_addresses = False
+
+    # ------------------------------------------------------------------
+    # Saved address list and pointers
+    # ------------------------------------------------------------------
+    def _address_meta(self, row):
+        """Return ``{"key", "id", "pointer"}`` of an address-list row."""
+        item = self.addr_table.item(row, 0) if self.addr_table is not None else None
+        meta = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        return meta or {"key": None, "id": None, "pointer": None}
+
+    def _set_row_address(self, row, address):
+        """Show an address; None marks a pointer that does not resolve now."""
+        item = self.addr_table.item(row, 1)
+        if item is None:
+            return
+        self._filling_addresses = True
+        if address is None:
+            item.setText(self.translations["address_table.unresolved"])
+            item.setForeground(QColor("#8b949e"))
+            item.setToolTip(self.translations["address_table.unresolved_tooltip"])
+        else:
+            item.setText(address if isinstance(address, str) else f"0x{address:X}")
+            item.setForeground(QColor("#3fb950"))
+            item.setToolTip("")
+        self._filling_addresses = False
+
+    def _set_row_pointer(self, row, pointer):
+        """Store and show the PointerChain of a row."""
+        desc_item = self.addr_table.item(row, 0)
+        item = self.addr_table.item(row, 5)
+        if desc_item is None or item is None:
+            return
+        self._filling_addresses = True
+        meta = dict(self._address_meta(row))
+        meta["pointer"] = pointer
+        desc_item.setData(Qt.ItemDataRole.UserRole, meta)
+        if pointer is None:
+            item.setText("—")
+            item.setForeground(QColor("#8b949e"))
+            item.setToolTip(self.translations["address_table.pointer_none"])
+        else:
+            item.setText(pointer.text())
+            item.setForeground(QColor("#d2a8ff"))
+            item.setToolTip(self.translations["address_table.pointer_tooltip"])
+        self._filling_addresses = False
+
+    def _store_address(self, action, *args, **kwargs):
+        """Run an address repository call; report failures instead of raising."""
+        try:
+            return action(*args, **kwargs)
+        except SQLAlchemyError as error:
+            self.lbl_status.setText(self.translations["hooks.db_failed"].format(message=error))
+            return None
+
+    def _load_saved_addresses(self):
+        """Show the saved address list of the attached program."""
+        if self.addr_table is None or self._process_id is None:
+            return
+        saved = self._store_address(self._address_repository.list_addresses, self._process_id)
+        if saved is None:
+            return
+        self.addr_table.setRowCount(0)
+        bases, memory = None, None
+        try:
+            if any(entry.pointer is not None for entry in saved):
+                bases = module_bases(read_mappings(self._current_pid))
+                memory = ProcessMemory(self._current_pid)
+            for entry in saved:
+                pointer = address_pointer(entry)
+                address = entry.address
+                if pointer is not None:
+                    address = resolve_chain(memory, bases, pointer) if memory else None
+                self._add_address_row(
+                    entry.label, address, entry.value_type, "?", entry.frozen,
+                    saved_id=entry.id, pointer=pointer,
+                )
+        except OSError as error:
+            self.lbl_status.setText(
+                self.translations["address_table.load_failed"].format(message=error)
+            )
+        finally:
+            if memory is not None:
+                memory.close()
+        if self.addr_table.rowCount():
+            self._refresh_timer.start()
+
+    def _on_address_item_changed(self, item):
+        """Save an edited description."""
+        if self._filling_addresses or item.column() != 0:
+            return
+        meta = self._address_meta(item.row())
+        if meta["id"] is not None:
+            self._store_address(
+                self._address_repository.update_address, meta["id"], label=item.text()
+            )
+
+    def _on_addresses_resolved(self, resolved):
+        """Show where pointer entries point now; remember changed addresses."""
+        if self.addr_table is None:
+            return
+        for row in range(self.addr_table.rowCount()):
+            meta = self._address_meta(row)
+            if meta["key"] not in resolved:
+                continue
+            address = resolved[meta["key"]]
+            item = self.addr_table.item(row, 1)
+            shown = item.text() if item is not None else ""
+            new_text = self.translations["address_table.unresolved"] if address is None \
+                else f"0x{address:X}"
+            if shown == new_text:
+                continue
+            self._set_row_address(row, address)
+            if address is not None and meta["id"] is not None:
+                self._store_address(
+                    self._address_repository.update_address, meta["id"], address=address
+                )
+
+    def _open_pointer_scan(self, row):
+        """Search pointer chains for an address-list entry."""
+        meta = self._address_meta(row)
+        if self._current_pid is None or meta["id"] is None:
+            return
+        try:
+            address = int(self.addr_table.item(row, 1).text(), 0)
+        except (AttributeError, ValueError):
+            address = 0
+        entry = {
+            "id": meta["id"],
+            "label": self.addr_table.item(row, 0).text(),
+            "address": address,
+            "type": self.addr_table.item(row, 2).text(),
+        }
+        dialog = PointerScanDialog(
+            self.translations, self._address_repository, self._current_pid, entry, self
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.chain is None:
+            return
+        self._set_pointer(row, dialog.chain)
+
+    def _set_pointer(self, row, chain):
+        """Use ``chain`` (or None) to locate an address-list entry."""
+        meta = self._address_meta(row)
+        self._set_row_pointer(row, chain)
+        address = None
+        if chain is not None:
+            try:
+                with ProcessMemory(self._current_pid) as memory:
+                    address = resolve_chain(
+                        memory, module_bases(read_mappings(self._current_pid)), chain
+                    )
+            except OSError:
+                address = None
+            self._set_row_address(row, address)
+        if meta["id"] is not None:
+            self._store_address(
+                self._address_repository.update_address, meta["id"],
+                pointer=chain, address=address,
+            )
+        if chain is not None:
+            self.lbl_status.setText(
+                self.translations["address_table.pointer_set"].format(chain=chain.text())
+            )
 
     def _show_result_context_menu(self, position):
         """Show address actions for the scan result under the pointer."""
@@ -555,6 +748,18 @@ class MainWindow(QMainWindow):
             self.translations["address_table.watch"],
             lambda: self._start_write_monitor(address, value_type),
         )
+        if table is self.addr_table:
+            meta = self._address_meta(row)
+            scan = menu.addAction(
+                self.translations["address_table.pointer_scan"],
+                lambda: self._open_pointer_scan(row),
+            )
+            scan.setEnabled(self._current_pid is not None and meta["id"] is not None)
+            if meta["pointer"] is not None:
+                menu.addAction(
+                    self.translations["address_table.pointer_remove"],
+                    lambda: self._set_pointer(row, None),
+                )
         menu.exec(table.viewport().mapToGlobal(position))
 
     def _start_write_monitor(self, address, value_type):
@@ -754,13 +959,16 @@ class MainWindow(QMainWindow):
         """Open process selection and update the attached-process state."""
         dlg = ProcessSelectDialog(self, self.translations)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            if dlg.selected_pid != self._current_pid:
+            changed = dlg.selected_pid != self._current_pid
+            if changed:
                 self._stop_write_monitor()
+            process_id = self._known_process_id(dlg) if changed else self._process_id
             if self.hook_panel is not None:
-                self.hook_panel.set_process(
-                    dlg.selected_pid, self._known_process_id(dlg)
-                )
+                self.hook_panel.set_process(dlg.selected_pid, process_id)
             self._current_pid = dlg.selected_pid
+            if changed:
+                self._process_id = process_id
+                self._load_saved_addresses()
             self._current_proc = self.translations["app.process_display"].format(
                 name=dlg.selected_name, pid=dlg.selected_pid
             )
@@ -1017,16 +1225,23 @@ class MainWindow(QMainWindow):
                 entries[address] = {"address": address, "type": metadata["type"]}
 
         for row in range(self.addr_table.rowCount()):
+            meta = self._address_meta(row)
+            item2 = self.addr_table.item(row, 2)
+            if item2 is None:
+                continue
+            if meta["pointer"] is not None:
+                entries[("pointer", meta["key"])] = {
+                    "key": meta["key"], "pointer": meta["pointer"], "type": item2.text(),
+                }
+                continue
             try:
                 item1 = self.addr_table.item(row, 1)
-                item2 = self.addr_table.item(row, 2)
-                if item1 is None or item2 is None:
+                if item1 is None:
                     continue
                 address = int(item1.text(), 0)
-                value_type = item2.text()
             except (AttributeError, ValueError):
                 continue
-            entries[address] = {"address": address, "type": value_type}
+            entries[address] = {"address": address, "type": item2.text()}
 
         if not entries:
             return
@@ -1036,6 +1251,7 @@ class MainWindow(QMainWindow):
             list(entries.values()),
             self,
         )
+        self._refresh_worker.addresses_resolved.connect(self._on_addresses_resolved)
         self._refresh_worker.values_ready.connect(self._on_refreshed_values)
         self._refresh_worker.refresh_failed.connect(self._on_refresh_failed)
         self._refresh_worker.finished.connect(self._on_refresh_worker_finished)
@@ -1169,13 +1385,31 @@ class MainWindow(QMainWindow):
                 continue
             data = item.data(Qt.ItemDataRole.UserRole)
             if data:
-                self._add_address_row(
-                    self.translations["address_table.new_address"],
-                    data["address"],
-                    data["type"],
-                    data["value"],
-                    False
-                )
+                self._add_tracked_address(data)
+
+    def _add_tracked_address(self, data):
+        """Add a scan result to the address list and save it for the program.
+
+        An address inside a module's static data is saved as module + offset,
+        so it is found again after a restart without a pointer scan.
+        """
+        label = self.translations["address_table.new_address"]
+        address = data["address_value"]
+        pointer = None
+        try:
+            pointer = chain_for_static_address(read_mappings(self._current_pid), address)
+        except (OSError, TypeError):
+            pointer = None
+        saved_id = None
+        if self._process_id is not None:
+            saved_id = self._store_address(
+                self._address_repository.add_address, self._process_id,
+                label=label, value_type=data["type"], address=address, pointer=pointer,
+            )
+        self._add_address_row(
+            label, data["address"], data["type"], data["value"], False,
+            saved_id=saved_id, pointer=pointer,
+        )
 
     def _write_value(self):
         """Prompt for and write a replacement value to process memory."""
@@ -1237,6 +1471,11 @@ class MainWindow(QMainWindow):
                 if frozen else self.translations["address_table.yes"]
             )
             item.setForeground(QColor("#8b949e") if frozen else QColor("#58a6ff"))
+            meta = self._address_meta(row)
+            if meta["id"] is not None:
+                self._store_address(
+                    self._address_repository.update_address, meta["id"], frozen=not frozen
+                )
         # Pending: start or stop a FreezeWorker thread.
 
     def _remove_address(self):
@@ -1246,6 +1485,9 @@ class MainWindow(QMainWindow):
 
         row = self.addr_table.currentRow()
         if row >= 0:
+            meta = self._address_meta(row)
+            if meta["id"] is not None:
+                self._store_address(self._address_repository.delete_address, meta["id"])
             self.addr_table.removeRow(row)
 
     def _style_table(self, table):
