@@ -1,4 +1,9 @@
-"""Frida-backed hardware watchpoints for writes to process memory."""
+"""Frida-backed hardware watchpoints for writes (and reads) of process memory.
+
+x86 watchpoints trap on writes or on any access; there is no read-only
+mode. So the agent decodes the instruction before each new trap PC to tell
+whether it reads and/or writes the target.
+"""
 
 import threading
 
@@ -31,7 +36,16 @@ CLEANUP_ERRORS = FRIDA_ERRORS + (frida.RPCException, RuntimeError)
 _AGENT_SOURCE = r"""
 const targetAddress = ptr('__ADDRESS__');
 const targetSize = __SIZE__;
+const conditions = '__CONDITIONS__';  // 'w' or 'rw'
 const watchpointId = 0;
+const MAX_INSTRUCTION_SIZE = 15;
+const SYNC_WINDOW = 48;
+// Read/write per trap PC; decoding is too slow for every frequent read.
+const accessByPc = new Map();
+// An access watchpoint traps reads, too, so reading the target from a
+// trapping thread fails. Its value is read when the hits are sent instead,
+// by the agent's own thread, which has no watchpoint.
+const readInHandler = conditions === 'w';
 const armedThreads = new Map();
 const pendingHits = new Map();
 const threadErrors = [];
@@ -48,8 +62,64 @@ function readTargetBytes() {
   }
 }
 
+function syncVotes(start) {
+  // x86 decoding self-synchronizes: count how many earlier decode chains land
+  // exactly on this candidate's start instead of jumping over it.
+  let votes = 0;
+  for (let offset = SYNC_WINDOW; offset > 0; offset--) {
+    let cursor = start.sub(offset);
+    try {
+      while (cursor.compare(start) < 0)
+        cursor = Instruction.parse(cursor).next;
+    } catch (_error) {
+      continue;
+    }
+    if (cursor.equals(start))
+      votes += 1;
+  }
+  return votes;
+}
+
+function decodeAccess(pc) {
+  // The trap PC is the instruction after the access.
+  let best = null;
+  for (let back = 1; back <= MAX_INSTRUCTION_SIZE; back++) {
+    let ins;
+    try {
+      ins = Instruction.parse(pc.sub(back));
+    } catch (_error) {
+      continue;
+    }
+    if (!ins.next.equals(pc))
+      continue;
+    const op = (ins.operands || []).find(
+      operand => operand.type === 'mem' && typeof operand.access === 'string');
+    if (op === undefined)
+      continue;
+    const votes = syncVotes(ins.address);
+    if (best === null || votes > best.votes)
+      best = { votes, read: op.access.includes('r'), write: op.access.includes('w') };
+  }
+  return best;
+}
+
+function accessOf(pc) {
+  const key = pc.toString();
+  let access = accessByPc.get(key);
+  if (access === undefined) {
+    // Without a decodable memory operand (e.g. movs) it may do either.
+    access = decodeAccess(pc) || { read: conditions !== 'w', write: true };
+    if (conditions === 'w')
+      access.write = true;  // a write watchpoint only traps on writes
+    accessByPc.set(key, access);
+  }
+  return access;
+}
+
 function recordHit(threadId, context) {
   const pc = context.pc;
+  const value = readInHandler ? readTargetBytes() : null;
+  const access = accessOf(pc);
   const module = Process.findModuleByAddress(pc);
   const site = module
     ? `${module.name}+${pc.sub(module.base)}`
@@ -58,7 +128,9 @@ function recordHit(threadId, context) {
   const hit = pendingHits.get(key);
   if (hit) {
     hit.count += 1;
-    hit.value = readTargetBytes();
+    hit.value = value;
+    hit.read = hit.read || access.read;
+    hit.write = hit.write || access.write;
     hit.threadId = threadId;
     hit.time = Date.now();
     return;
@@ -66,7 +138,9 @@ function recordHit(threadId, context) {
   pendingHits.set(key, {
     pc: key,
     site,
-    value: readTargetBytes(),
+    value,
+    read: access.read,
+    write: access.write,
     threadId,
     count: 1,
     time: Date.now()
@@ -90,7 +164,7 @@ function armThread(thread) {
   if (armedThreads.has(thread.id))
     return;
   try {
-    thread.setHardwareWatchpoint(watchpointId, targetAddress, targetSize, 'w');
+    thread.setHardwareWatchpoint(watchpointId, targetAddress, targetSize, conditions);
     armedThreads.set(thread.id, thread);
   } catch (error) {
     const warning = {
@@ -123,6 +197,11 @@ function flushHits() {
     return;
   const hits = Array.from(pendingHits.values());
   pendingHits.clear();
+  if (!readInHandler) {
+    const value = readTargetBytes();
+    for (const hit of hits)
+      hit.value = value;
+  }
   send({ kind: 'hits', hits });
 }
 
@@ -145,6 +224,9 @@ rpc.exports = {
       }
     }
     armedThreads.clear();
+    // A trap raised just before the watchpoints were removed may still be
+    // on its way; without the handler it would reach the program.
+    Thread.sleep(0.1);
     Process.setExceptionHandler(null);
     flushHits();
     return true;
@@ -161,16 +243,21 @@ def watch_size_for_type(value_type):
         raise ValueError(f"Unsupported watch data type: {value_type}") from error
 
 
-def _build_agent_source(address, size):
+def _build_agent_source(address, size, reads=False):
     return (
         _AGENT_SOURCE
         .replace("__ADDRESS__", hex(address))
         .replace("__SIZE__", str(size))
+        .replace("__CONDITIONS__", "rw" if reads else "w")
     )
 
 
 class WriteWatchWorker(QThread):
-    """Attach to a process and report writes observed by hardware watchpoints."""
+    """Attach to a process and report writes observed by hardware watchpoints.
+
+    With ``reads`` reads are reported as well. Each hit tells whether its
+    instruction ``read`` and/or ``write``-s the target.
+    """
 
     monitor_ready = pyqtSignal(int, str)
     hits_ready = pyqtSignal(list)
@@ -178,11 +265,13 @@ class WriteWatchWorker(QThread):
     monitor_failed = pyqtSignal(str)
     monitor_stopped = pyqtSignal()
 
-    def __init__(self, pid, address, size, parent=None):
+    def __init__(self, pid, address, size, parent=None, reads=False):
+        # pylint: disable=too-many-arguments
         super().__init__(parent)
         self.pid = pid
         self.address = address
         self.size = size
+        self.reads = reads
         self._ready_event = threading.Event()
         self._ready_payload = None
         self._agent_error = None
@@ -195,7 +284,7 @@ class WriteWatchWorker(QThread):
             session = frida.attach(self.pid)
             session.on("detached", self._on_session_detached)
             script = session.create_script(
-                _build_agent_source(self.address, self.size)
+                _build_agent_source(self.address, self.size, self.reads)
             )
             script.on("message", self._on_message)
             script.load()

@@ -160,6 +160,10 @@ const trainingThreads = new Set();
 const trainingHits = [];
 let trainingTimer = null;
 let trainingScheduled = false;
+// While a write watch runs, trainings rest: enumerating threads while one of
+// them handles the watch's trap deadlocks Frida (and the game).
+let trainingPaused = false;
+let trainingHandlerInstalled = false;
 
 function toBigInt(value) {
   return BigInt(ptr(value).toString()) & MASK64;
@@ -479,28 +483,64 @@ function reportError(hook, error) {
 
 // Holds the bytes a hook is about to write, to compare them with the target.
 const scratch = Memory.alloc(8);
+const readBuffer = Memory.alloc(8);
+
+// A watchpoint on the target (write or access watch) also traps the hook's
+// own accesses. Frida reports a trap inside its guarded memory access as an
+// error, although the access has happened. Native copies run outside that
+// guard, where the watch agent handles the trap; its hits in this code are
+// dropped by the UI (see 'ready').
+const ACCESS_STUB_CODE = {
+  1: [0x8a, 0x06, 0x88, 0x07, 0xc3],                  // mov al, [rsi]; mov [rdi], al
+  2: [0x66, 0x8b, 0x06, 0x66, 0x89, 0x07, 0xc3],
+  4: [0x8b, 0x06, 0x89, 0x07, 0xc3],
+  8: [0x48, 0x8b, 0x06, 0x48, 0x89, 0x07, 0xc3]
+};
+const accessStub = Memory.alloc(Process.pageSize);
+const nativeCopy = {};
+Object.entries(ACCESS_STUB_CODE).forEach(([size, code], index) => {
+  const at = accessStub.add(16 * index);
+  at.writeByteArray(code);
+  nativeCopy[size] = new NativeFunction(at, 'void', ['pointer', 'pointer'],
+    { exceptions: 'propagate' });
+});
+Memory.protect(accessStub, Process.pageSize, 'r-x');
+
+function isWatchTrap(error) {
+  return /breakpoint|single.?step/i.test(String(error));
+}
+
+function readTarget(io, target) {
+  try {
+    return io.read(target);
+  } catch (error) {
+    if (!isWatchTrap(error))
+      throw error;
+    // The trap proves the address is mapped, so the native read is safe.
+    nativeCopy[io.size](readBuffer, target);
+    return io.read(readBuffer);
+  }
+}
 
 function writeValue(io, target, value) {
   try {
     io.write(target, value);
   } catch (error) {
-    // A data watchpoint on the target (write watch) traps right after the
-    // write, and Frida reports that as an error although the value is stored.
+    // A watchpoint traps right after the write: check the value is stored.
+    if (!isWatchTrap(error))
+      throw error;
     io.write(scratch, value);
     const expected = new Uint8Array(scratch.readByteArray(io.size));
-    let stored = null;
-    try {
-      stored = new Uint8Array(target.readByteArray(io.size));
-    } catch (_readError) {
-    }
-    if (stored === null || stored.some((byte, i) => byte !== expected[i]))
+    nativeCopy[io.size](readBuffer, target);
+    const stored = new Uint8Array(readBuffer.readByteArray(io.size));
+    if (stored.some((byte, i) => byte !== expected[i]))
       throw error;
   }
 }
 
 function applyTransform(hook, threadId, pending) {
   const { target, old: oldValue } = pending;
-  const current = hook.io.read(target);
+  const current = readTarget(hook.io, target);
   const logs = hook.debug ? [] : null;
   const ctx = {
     old: oldValue,
@@ -675,7 +715,7 @@ function onBefore(site, block) {
       if (target !== undefined) {
         hook.pending.set(threadId, {
           target,
-          old: hook.io.read(target),
+          old: readTarget(hook.io, target),
           caller: hook.debug ? callerText(hook, write) : null
         });
       } else if (hook.debug) {
@@ -898,15 +938,55 @@ function startTraining(spec) {
     reported: null
   };
   trainings.set(spec.id, training);
-  if (trainingTimer === null) {
-    Process.setExceptionHandler(onTrainingException);
-    // No thread observer: setting a watchpoint starts a helper thread, and
-    // reporting it to the observer while the agent sets one deadlocks.
-    // New threads are armed by this timer instead.
-    trainingTimer = setInterval(updateTrainings, 500);
+  if (!trainingPaused) {
+    startTrainingWatch();
+    updateTrainings();
   }
-  updateTrainings();
   return { id: spec.id, training: true };
+}
+
+function startTrainingWatch() {
+  if (trainingTimer !== null)
+    return;
+  // Installed once and kept: removing it could let a late trap through.
+  if (!trainingHandlerInstalled) {
+    Process.setExceptionHandler(onTrainingException);
+    trainingHandlerInstalled = true;
+  }
+  // No thread observer: setting a watchpoint starts a helper thread, and
+  // reporting it to the observer while the agent sets one deadlocks.
+  // New threads are armed by this timer instead.
+  trainingTimer = setInterval(updateTrainings, 500);
+}
+
+function stopTrainingWatch() {
+  if (trainingTimer === null)
+    return;
+  clearInterval(trainingTimer);
+  trainingTimer = null;
+  for (const training of trainings.values()) {
+    if (training.slot !== null && training.target !== null) {
+      training.target = null;
+      for (const thread of Process.enumerateThreads())
+        armTraining(thread, training);
+    }
+  }
+  // A trap raised just before the watchpoints were removed may still be on
+  // its way; let it reach the handler before its threads are forgotten.
+  // Keeping them longer would swallow the traps of a write watch.
+  Thread.sleep(0.1);
+  trainingThreads.clear();
+}
+
+function setTrainingPaused(paused) {
+  trainingPaused = paused;
+  if (paused) {
+    stopTrainingWatch();
+  } else if (trainings.size > 0) {
+    startTrainingWatch();
+    updateTrainings();
+  }
+  return trainings.size;
 }
 
 function armThreadForTrainings(thread) {
@@ -966,19 +1046,18 @@ function stopTraining(training) {
     for (const thread of Process.enumerateThreads())
       armTraining(thread, training);
   }
-  if (trainings.size === 0 && trainingTimer !== null) {
-    clearInterval(trainingTimer);
-    trainingTimer = null;
-    trainingThreads.clear();
-  }
+  if (trainings.size === 0)
+    stopTrainingWatch();
 }
 
 function onTrainingException(details) {
   // Linux reports hardware data watchpoint traps as 'single-step'.
   if (details.type !== 'breakpoint' && details.type !== 'single-step')
     return false;
-  if (trainings.size === 0 || !trainingThreads.has(Process.getCurrentThreadId()))
+  if (!trainingThreads.has(Process.getCurrentThreadId()))
     return false;
+  if (trainingTimer === null)
+    return true;  // a late trap after the training watch stopped
   trainingHits.push(details.context.pc);
   if (!trainingScheduled) {
     // Hooks are installed outside the exception handler.
@@ -1062,6 +1141,7 @@ function trainingEvents() {
   for (const training of trainings.values()) {
     const state = {
       hookId: training.id,
+      paused: trainingPaused,
       resolved: training.target !== null,
       waiting: training.slot === null,
       seen: training.seen,
@@ -1123,11 +1203,17 @@ function flushStats() {
 }
 
 const flushTimer = setInterval(flushStats, 100);
-send({ kind: 'ready', arch: Process.arch });
+send({
+  kind: 'ready',
+  arch: Process.arch,
+  accessStub: accessStub.toString(),
+  accessStubSize: Process.pageSize
+});
 
 rpc.exports = {
   addHook,
   removeHook,
+  setTrainingPaused,
   setTransform(id, spec) {
     const training = trainings.get(id);
     if (training !== undefined) {
@@ -1165,6 +1251,8 @@ rpc.exports = {
     clearInterval(flushTimer);
     for (const training of Array.from(trainings.values()))
       stopTraining(training);
+    if (trainingHandlerInstalled)
+      Thread.sleep(0.1);  // let late traps reach the handler before unloading
     for (const id of Array.from(hooks.keys()))
       removeHook(id);
     flushStats();
@@ -1311,6 +1399,8 @@ class HookWorker(QThread):
         self._commands = queue.Queue()
         self._ready_event = threading.Event()
         self._ready_payload = None
+        # (start, end) of the agent's own memory-access code, once it is ready
+        self.access_stub = None
         self._agent_error = None
         self._detach_reason = None
 
@@ -1331,6 +1421,17 @@ class HookWorker(QThread):
     def set_enabled(self, hook_id, enabled):
         self._commands.put(("enabled", hook_id, bool(enabled)))
 
+    def set_trainings_paused(self, paused, timeout=2.0):
+        """Pause or resume all trainings; wait until the agent did it.
+
+        Trainings must rest while a write watch runs in the process.
+        Returns False if the agent did not answer in time; with a
+        ``timeout`` of None the command is only queued.
+        """
+        done = threading.Event()
+        self._commands.put(("training-paused", 0, (bool(paused), done)))
+        return True if timeout is None else done.wait(timeout)
+
     def set_debug(self, hook_id, enabled):
         """Report every call and skipped write of a hook via hook_debug."""
         self._commands.put(("debug", hook_id, bool(enabled)))
@@ -1350,7 +1451,11 @@ class HookWorker(QThread):
                 raise RuntimeError("Timed out while loading the hook agent")
             if self._agent_error:
                 raise RuntimeError(self._agent_error)
-            self.session_ready.emit((self._ready_payload or {}).get("arch", ""))
+            ready = self._ready_payload or {}
+            if ready.get("accessStub"):
+                start = int(ready["accessStub"], 16)
+                self.access_stub = (start, start + ready.get("accessStubSize", 0x1000))
+            self.session_ready.emit(ready.get("arch", ""))
 
             while (not self.isInterruptionRequested()
                    and self._detach_reason is None
@@ -1407,6 +1512,12 @@ class HookWorker(QThread):
             elif action == "enabled":
                 api.set_enabled(hook_id, argument)
                 self.hook_updated.emit(hook_id)
+            elif action == "training-paused":
+                paused, done = argument
+                try:
+                    api.set_training_paused(paused)
+                finally:
+                    done.set()
             elif action == "debug":
                 api.set_debug(hook_id, argument)
                 self.hook_updated.emit(hook_id)

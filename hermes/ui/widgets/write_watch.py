@@ -1,4 +1,4 @@
-"""Live results dialog for a process-memory write watch."""
+"""Live results dialog for a process-memory write (or access) watch."""
 
 from datetime import datetime
 
@@ -17,20 +17,31 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from hermes.ui.widgets.table import set_row_height
 
 
+# Result table columns.
+_COUNT, _PC, _SITE, _READ, _WRITE, _VALUE, _THREAD, _TIME = range(8)
+
+
 class WriteWatchDialog(QDialog):
-    """Display grouped write-watch hits and let the user stop monitoring."""
+    """Display grouped write-watch hits and let the user stop monitoring.
+
+    With ``reads`` the watch reports reads as well; the "read" and "write"
+    columns tell what each instruction does with the target.
+    """
 
     stop_requested = pyqtSignal()
     # trap PC (instruction after the write), module/offset description
     hook_requested = pyqtSignal(int, str)
 
-    def __init__(self, address, size, translations, parent=None):
+    def __init__(self, address, size, translations, parent=None, reads=False):
+        # pylint: disable=too-many-arguments
         super().__init__(parent)
         self.translations = translations
         self._rows_by_pc = {}
         self._failed = False
         self.setWindowTitle(
-            translations["watch.title"].format(address=address)
+            translations["watch.title_access" if reads else "watch.title"].format(
+                address=address
+            )
         )
         self.resize(900, 460)
         self._build_ui(address, size)
@@ -50,12 +61,14 @@ class WriteWatchDialog(QDialog):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
-        self.results_table = QTableWidget(0, 6)
+        self.results_table = QTableWidget(0, 8)
         self.results_table.setHorizontalHeaderLabels(
             [
                 self.translations["watch.column_count"],
                 self.translations["watch.column_trap_pc"],
                 self.translations["watch.column_site"],
+                self.translations["watch.column_read"],
+                self.translations["watch.column_write"],
                 self.translations["watch.column_value"],
                 self.translations["watch.column_thread"],
                 self.translations["watch.column_time"],
@@ -69,12 +82,12 @@ class WriteWatchDialog(QDialog):
         )
         header = self.results_table.horizontalHeader()
         if header is not None:
-            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-            header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+            for column in range(self.results_table.columnCount()):
+                header.setSectionResizeMode(
+                    column,
+                    QHeaderView.ResizeMode.Stretch if column == _SITE
+                    else QHeaderView.ResizeMode.ResizeToContents,
+                )
         self.results_table.verticalHeader().setVisible(False)
         set_row_height(self.results_table)
         self.results_table.itemSelectionChanged.connect(self._update_hook_button)
@@ -106,28 +119,27 @@ class WriteWatchDialog(QDialog):
                 row = self.results_table.rowCount()
                 self.results_table.insertRow(row)
                 self._rows_by_pc[pc] = row
-                self.results_table.setItem(row, 0, QTableWidgetItem("0"))
-                self.results_table.setItem(row, 1, QTableWidgetItem(pc))
-                self.results_table.setItem(
-                    row, 2, QTableWidgetItem(hit.get("site", pc))
-                )
-                self.results_table.setItem(row, 3, QTableWidgetItem(""))
-                self.results_table.setItem(row, 4, QTableWidgetItem(""))
-                self.results_table.setItem(row, 5, QTableWidgetItem(""))
+                for column in range(self.results_table.columnCount()):
+                    self.results_table.setItem(row, column, QTableWidgetItem(""))
+                self.results_table.item(row, _COUNT).setText("0")
+                self.results_table.item(row, _PC).setText(pc)
+                self.results_table.item(row, _SITE).setText(hit.get("site", pc))
+                for column in (_READ, _WRITE):
+                    item = self.results_table.item(row, column)
+                    # A check box the user cannot change.
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(Qt.CheckState.Unchecked)
 
-            count_item = self.results_table.item(row, 0)
-            value_item = self.results_table.item(row, 3)
-            thread_item = self.results_table.item(row, 4)
-            if count_item is not None:
-                count = int(count_item.text()) + hit.get("count", 1)
-                count_item.setText(str(count))
-            if value_item is not None:
-                value_item.setText(hit.get("value", ""))
-            if thread_item is not None:
-                thread_item.setText(str(hit.get("threadId", "")))
-            time_item = self.results_table.item(row, 5)
-            if time_item is not None:
-                time_item.setText(self._hit_time(hit))
+            count_item = self.results_table.item(row, _COUNT)
+            count_item.setText(str(int(count_item.text()) + hit.get("count", 1)))
+            # Older agents report writes only.
+            for column, key, default in ((_READ, "read", False), (_WRITE, "write", True)):
+                if hit.get(key, default):
+                    self.results_table.item(row, column).setCheckState(Qt.CheckState.Checked)
+            self.results_table.item(row, _VALUE).setText(hit.get("value", ""))
+            self.results_table.item(row, _THREAD).setText(str(hit.get("threadId", "")))
+            self.results_table.item(row, _TIME).setText(self._hit_time(hit))
+        self._update_hook_button()
 
     @staticmethod
     def _hit_time(hit):
@@ -161,14 +173,20 @@ class WriteWatchDialog(QDialog):
         if not self._failed:
             self.status_label.setText(self.translations["watch.stopped"])
 
+    def _selected_writes(self):
+        """Return whether the selected row's instruction writes the target."""
+        row = self.results_table.currentRow()
+        item = self.results_table.item(row, _WRITE) if row >= 0 else None
+        return (self.results_table.selectionModel().hasSelection() and item is not None
+                and item.checkState() == Qt.CheckState.Checked)
+
     def _update_hook_button(self):
-        self.hook_button.setEnabled(
-            self.results_table.selectionModel().hasSelection()
-        )
+        # Only writes can be hooked: the hook rewrites the written value.
+        self.hook_button.setEnabled(self._selected_writes())
 
     def _request_hook(self):
         row = self.results_table.currentRow()
-        if row < 0:
+        if row < 0 or not self._selected_writes():
             return
         pc_item = self.results_table.item(row, 1)
         site_item = self.results_table.item(row, 2)

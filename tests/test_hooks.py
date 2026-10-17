@@ -370,6 +370,78 @@ def test_hook_works_while_its_target_is_write_watched(tmp_path, qt_app):
         target.close()
 
 
+def _watch_hits(target, command, reads):
+    """Run the watch agent around one command and return its hits."""
+    import frida  # pylint: disable=import-outside-toplevel
+    from hermes.core.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
+
+    hits = []
+    session = frida.attach(target.pid)
+    script = session.create_script(_build_agent_source(target.address, 4, reads))
+    script.on("message", lambda message, _data: hits.extend(
+        message.get("payload", {}).get("hits", [])))
+    script.load()
+    try:
+        result = target.send(command, 1)
+        time.sleep(0.3)
+        return result, hits
+    finally:
+        script.exports_sync.stop()
+        script.unload()
+        session.detach()
+
+
+@requires_target
+def test_access_watch_tells_reads_from_writes(tmp_path):
+    target = _Target(_build_target(tmp_path))
+    try:
+        _result, hits = _watch_hits(target, "add", reads=True)
+        # add [gold], amount reads and writes; printing the gold only reads it.
+        assert any(hit["read"] and hit["write"] for hit in hits)
+        assert any(hit["read"] and not hit["write"] for hit in hits)
+        # The value can be read although every read of it traps.
+        assert {hit["value"] for hit in hits} == {"65 00 00 00"}
+        _result, hits = _watch_hits(target, "add", reads=False)
+        assert hits and all(hit["write"] for hit in hits)
+    finally:
+        target.close()
+
+
+@requires_target
+def test_hook_works_while_its_target_is_access_watched(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.ui.widgets.hooks import HookPanel
+
+    target = _Target(_build_target(tmp_path))
+    panel = HookPanel(translations)
+    errors = []
+    try:
+        trap_pcs = _trap_pcs(target)
+        panel.set_process(target.pid)
+        panel.add_hook(
+            HookSpec(target.address, "int32", MultiplyTransform(10),
+                     trap_pc=trap_pcs["add"], label="Gold"),
+            "target+?",
+        )
+        _wait_for(qt_app, lambda: panel.table.item(0, 4).text() == "Aktiv")
+        panel._worker.transform_error.connect(lambda _id, message: errors.append(message))
+
+        result, hits = _watch_hits(target, "add", reads=True)
+        qt_app.processEvents()
+
+        # The hook still reads the old value and writes the multiplied one.
+        assert result == (100 + 10, 999)
+        assert not errors and panel.table.item(0, 4).text() == "Aktiv"
+        # Its own reads of the target are not shown as accesses of the game.
+        start, end = panel._worker.access_stub
+        assert any(start <= int(hit["pc"], 16) < end for hit in hits)
+        assert not any(start <= int(hit["pc"], 16) < end
+                       for hit in panel.translate_watch_hits(hits))
+    finally:
+        panel.shutdown(timeout_ms=None)
+        target.close()
+
+
 # --- UI --------------------------------------------------------------------
 
 def _template(template_id=1, source="ctx => ctx.new * ctx.params.factor", default=2):
@@ -909,8 +981,18 @@ def test_hook_on_jit_code_is_trained_again_after_a_restart(tmp_path, qt_app, tra
         panel.set_process(target.pid, process_id)
         _wait_for(qt_app, lambda: status(panel) == "Training")
 
+        # A write or access watch pauses the training; running both at once
+        # deadlocked Frida and crashed the game.
+        panel.pause_trainings(True)
+        _wait_for(qt_app, lambda: "pausiert" in panel.table.item(0, 4).toolTip())
+        for reads in (False, True):
+            result, hits = _watch_hits(target, "add", reads=reads)
+            assert hits
+        assert result == (102, 0) and status(panel) == "Training"
+        panel.pause_trainings(False)
+
         # A write from other code (sub) does not train the hook.
-        assert target.send("sub", 5) == (95, 0)
+        assert target.send("sub", 7) == (95, 0)
         _wait_for(qt_app, lambda: "1 davon aus anderem Code" in
                   panel.table.item(0, 4).toolTip())
         assert status(panel) == "Training"
@@ -923,6 +1005,12 @@ def test_hook_on_jit_code_is_trained_again_after_a_restart(tmp_path, qt_app, tra
         assert target.send("add", 10) == (105 + 100, 0)
         assert target.send("sub", 5) == (200, 0)
         assert len(repository.list_hooks(process_id)) == 1
+
+        # Writes keep coming while the training ends and its watchpoints are
+        # removed; the program must survive the stray traps of that moment.
+        for _ in range(20):
+            assert target.send("sub", 1)[0] > 0
+        assert target.process.poll() is None
     finally:
         panel.shutdown(timeout_ms=None)
         target.close()

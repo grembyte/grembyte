@@ -45,6 +45,7 @@ from hermes.db.repository.hooks import HookRepository
 from hermes.hooks.engine import HookSpec
 from hermes.hooks.transforms import example_templates
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
+from hermes.ui.widgets.memory_view import MemoryViewerDialog
 from hermes.ui.widgets.pointer_scan import PointerScanDialog
 from hermes.ui.widgets.templates import TemplateDialog
 from hermes.ui.widgets.write_watch import WriteWatchDialog
@@ -192,6 +193,7 @@ class MainWindow(QMainWindow):
         self._address_keys = itertools.count(1)
         self._filling_addresses = False
         self._pointer_dialogs = {}
+        self._memory_viewer = None
         # Database id of the program the open pointer dialogs belong to.
         self._pointer_program = None
         self._ensure_example_templates()
@@ -270,6 +272,11 @@ class MainWindow(QMainWindow):
         self.btn_templates.setToolTip(self.translations["templates.button_tooltip"])
         self.btn_templates.clicked.connect(self._open_template_dialog)
         tb.addWidget(self.btn_templates)
+
+        self.btn_memory = QPushButton(self.translations["memview.button"])
+        self.btn_memory.setToolTip(self.translations["memview.button_tooltip"])
+        self.btn_memory.clicked.connect(lambda: self._open_memory_viewer())
+        tb.addWidget(self.btn_memory)
 
     # ------------------------------------------------------------------
     # Central layout
@@ -914,6 +921,27 @@ class MainWindow(QMainWindow):
             self._refresh_timer.start()
         return len(chains)
 
+    def _open_memory_viewer(self, address=None):
+        """Show the memory viewer, at ``address`` if given."""
+        if self._current_pid is None:
+            QMessageBox.warning(
+                self,
+                self.translations["warning.no_process_title"],
+                self.translations["warning.select_process"],
+            )
+            return
+        viewer = self._memory_viewer
+        if viewer is None:
+            viewer = MemoryViewerDialog(self.translations, self._current_pid, parent=self)
+            viewer.finished.connect(lambda _result: setattr(self, "_memory_viewer", None))
+            viewer.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._memory_viewer = viewer
+        if address is not None:
+            viewer.go_to(address)
+        viewer.show()
+        viewer.raise_()
+        viewer.activateWindow()
+
     def _close_pointer_dialogs(self):
         """Close open pointer scans; they belong to another program."""
         for dialog in list(self._pointer_dialogs.values()):
@@ -998,6 +1026,15 @@ class MainWindow(QMainWindow):
 
         pointer = self._address_meta(row)["pointer"] if table is self.addr_table else None
         menu = QMenu(self)
+        try:
+            address_value = int(address, 0)
+        except (TypeError, ValueError):
+            address_value = None  # e.g. a pointer that does not resolve now
+        menu.addAction(
+            self.translations["memview.show"],
+            lambda: self._open_memory_viewer(address_value),
+        ).setEnabled(address_value is not None and self._current_pid is not None)
+        menu.addSeparator()
         if table is self.addr_table:
             menu.addAction(
                 self.translations["address_table.edit_description"],
@@ -1010,6 +1047,10 @@ class MainWindow(QMainWindow):
         menu.addAction(
             self.translations["address_table.watch"],
             lambda: self._start_write_monitor(address, value_type, pointer),
+        )
+        menu.addAction(
+            self.translations["address_table.watch_access"],
+            lambda: self._start_write_monitor(address, value_type, pointer, reads=True),
         )
         if table is self.addr_table:
             menu.addSeparator()
@@ -1026,8 +1067,10 @@ class MainWindow(QMainWindow):
                 )
         menu.exec(table.viewport().mapToGlobal(position))
 
-    def _start_write_monitor(self, address, value_type, pointer=None):
+    def _start_write_monitor(self, address, value_type, pointer=None, reads=False):
         """Start a live hardware-watchpoint monitor for one address.
+
+        With ``reads`` it reports reads as well as writes.
 
         Hooks created from the monitor target ``pointer`` (a PointerChain of
         the address-list entry) if there is one.
@@ -1077,17 +1120,22 @@ class MainWindow(QMainWindow):
                 )
                 return
 
+        # Hooks in training watch the process too; they rest meanwhile.
+        if self.hook_panel is not None:
+            self.hook_panel.pause_trainings(True)
         worker = WriteWatchWorker(
             self._current_pid,
             address_value,
             size,
             self,
+            reads=reads,
         )
         dialog = WriteWatchDialog(
             f"0x{address_value:X}",
             size,
             self.translations,
             self,
+            reads=reads,
         )
         dialog.stop_requested.connect(worker.requestInterruption)
         dialog.hook_requested.connect(
@@ -1192,6 +1240,8 @@ class MainWindow(QMainWindow):
         if self._write_watch_worker is worker:
             self._write_watch_worker = None
             self._write_watch_stopping = False
+            if self.hook_panel is not None:
+                self.hook_panel.pause_trainings(False)
 
     def _stop_write_monitor(self, timeout_ms=WRITE_WATCH_STOP_TIMEOUT_MS):
         """Stop the active monitor and wait for it to finish.
@@ -1238,6 +1288,8 @@ class MainWindow(QMainWindow):
                 self._stop_write_monitor()
                 self._stop_freeze_worker()
                 self._switch_pointer_dialogs(dlg.selected_pid, process_id)
+                if self._memory_viewer is not None:
+                    self._memory_viewer.set_process(dlg.selected_pid)
             if self.hook_panel is not None:
                 self.hook_panel.set_process(dlg.selected_pid, process_id)
             self._current_pid = dlg.selected_pid
@@ -1288,6 +1340,8 @@ class MainWindow(QMainWindow):
         self._stop_write_monitor()
         self._stop_freeze_worker()
         self._switch_pointer_dialogs(None, None)
+        if self._memory_viewer is not None:
+            self._memory_viewer.set_process(None)
         if self.hook_panel is not None:
             self.hook_panel.set_process(None)
 

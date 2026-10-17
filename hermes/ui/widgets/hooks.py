@@ -412,6 +412,7 @@ class HookPanel(QGroupBox):
         # Hook trampolines of this process, also of removed hooks:
         # start address -> (trap pc, site) of the hooked write instruction.
         self._trampolines = {}
+        self._trainings_paused = False
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -812,6 +813,8 @@ class HookPanel(QGroupBox):
         worker.finished.connect(lambda: self._on_worker_finished(worker))
         self._worker = worker
         worker.start()
+        if self._trainings_paused:
+            worker.set_trainings_paused(True, timeout=None)  # before any hook
         return worker
 
     def _on_installed(self, worker, hook_id, info):
@@ -867,14 +870,34 @@ class HookPanel(QGroupBox):
             pc = original[0]
         return original
 
+    def pause_trainings(self, paused):
+        """Pause hooks in training while a write watch runs, or resume them.
+
+        Both watch the process with hardware watchpoints; running at the same
+        time they can deadlock Frida and crash the program.
+        """
+        self._trainings_paused = paused
+        worker = self._worker
+        if worker is not None and worker.isRunning():
+            # The agent remembers the pause for trainings that start later.
+            worker.set_trainings_paused(paused)
+
     def translate_watch_hits(self, hits):
         """Report write-watch hits in hook trampolines at the hooked write.
 
         A hooked write runs relocated in its trampoline, so a watchpoint
-        reports a PC there instead of in the game's code.
+        reports a PC there instead of in the game's code. Hits of the hooks'
+        own accesses to the target are dropped.
         """
         translated = []
+        stub = self._worker.access_stub if self._worker is not None else None
         for hit in hits:
+            try:
+                pc = int(hit["pc"], 16)
+            except (KeyError, TypeError, ValueError):
+                pc = None
+            if stub is not None and pc is not None and stub[0] <= pc < stub[1]:
+                continue  # a hook's own read of the target
             try:
                 original = self._original_write(int(hit["pc"], 16))
             except (KeyError, TypeError, ValueError):
@@ -894,7 +917,9 @@ class HookPanel(QGroupBox):
         state["training"] = True
         if state["status"] == "paused":
             return
-        if not training.get("resolved", False):
+        if training.get("paused"):
+            tooltip = self.translations["hooks.training_paused"]
+        elif not training.get("resolved", False):
             key = "hooks.training_waiting_slot" if training.get("waiting") \
                 else "hooks.training_unresolved"
             tooltip = self.translations[key]
