@@ -71,6 +71,10 @@ def test_reports_errors(sandbox, source, message):
         (-2.7, "int32", -2),
         (2**60, "int64", 2**53 - 1),
         (1.5, "float", 1.5),
+        (300, "uint8", 255),
+        (-5, "uint16", 0),
+        (-200, "int8", -128),
+        (2**60, "uint64", 2**53 - 1),
     ],
 )
 def test_normalizes_like_the_agent(sandbox, value, value_type, expected):

@@ -5,13 +5,8 @@ import threading
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core.value_types import VALUE_TYPES
 
-_VALUE_SIZES = {
-    "int32": 4,
-    "int64": 8,
-    "float": 4,
-    "double": 8,
-}
 
 FRIDA_ERRORS = (
   frida.AddressInUseError,
@@ -159,7 +154,7 @@ rpc.exports = {
 def watch_size_for_type(value_type):
     """Return the byte width associated with a supported scan data type."""
     try:
-        return _VALUE_SIZES[value_type]
+        return VALUE_TYPES[value_type].size
     except KeyError as error:
         raise ValueError(f"Unsupported watch data type: {value_type}") from error
 

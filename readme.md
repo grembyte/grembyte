@@ -5,12 +5,17 @@ Hermes Hook ist eine Linux-Desktopanwendung auf Basis von Python und PyQt6 zum U
 ## Funktionen
 
 - **Prozessauswahl** mit Kommandozeile und Arbeitsverzeichnis.
-- **Speicher-Scan** nach `int32`, `int64`, `float` und `double`: exakter Wert, größer/kleiner, Bereich, unbekannter Startwert sowie Folge-Scans auf verändert, unverändert, vergrößert oder verkleinert.
-- **Gemerkte Adressen** mit Live-Werten; Werte lassen sich direkt in den Prozess schreiben.
+- **Speicher-Scan** nach `int8`, `int16`, `int32`, `int64`, deren vorzeichenlosen Varianten `uint8` bis `uint64` sowie `float` und `double`: exakter Wert, größer/kleiner, Bereich, unbekannter Startwert sowie Folge-Scans auf verändert, unverändert, vergrößert oder verkleinert. „Automatisch raten“ probiert `int32`, `int64`, `float` und `double`; kleinere Typen passen fast überall und müssen ausdrücklich gewählt werden.
+- **Gemerkte Adressen** mit Live-Werten; Werte lassen sich direkt in den Prozess schreiben oder einfrieren.
 - **Schreibüberwachung**: Ein Hardware-Watchpoint zeigt, welche Codestellen eine Adresse beschreiben.
-- **Hooks**: An einer gefundenen Codestelle wird jeder Schreibzugriff abgefangen und der geschriebene Wert manipuliert, z. B. mit einem Multiplikator, einem festen Wert, Grenzen oder einer eigenen JavaScript-Funktion.
+- **Pointer-Suche**: Findet Pointer-Chains, über die gemerkte Adressen und Hooks den Wert auch nach einem Neustart des Programms wiederfinden.
+- **Hooks**: An einer gefundenen Codestelle wird jeder Schreibzugriff abgefangen und der geschriebene Wert manipuliert, z. B. mit einem Multiplikator, einem festen Wert, Grenzen oder einer eigenen JavaScript-Funktion. Hooks werden pro Programm gespeichert und beim nächsten Start wieder installiert.
+- **Hook-Templates**: Manipulationen werden als JavaScript-Funktionen mit Parametern in der Datenbank gepflegt und lassen sich ohne Spielprozess testen.
+- **Hook-Debug**: Ein Debug-Fenster protokolliert jeden Aufruf eines Hooks samt Werten, Aufrufer, Ausgaben und Fehlern.
 
-Noch nicht umgesetzt ist das Einfrieren gemerkter Adressen über die Schaltfläche „Einfrieren“; ein Hook mit „Fester Wert“ erfüllt denselben Zweck an der Codestelle.
+### Einfrieren oder Hook?
+
+**❄ Einfrieren** hält den aktuellen Wert einer gemerkten Adresse fest: Hermes schreibt ihn alle 100 ms zurück. Erneutes Klicken gibt ihn frei; **✎ Wert schreiben** ändert den eingefrorenen Wert. Bei Einträgen mit Pointer-Chain oder statischer Adresse wird der Zustand gespeichert und gilt nach einem Neustart des Programms weiter. Einträge ohne Chain werden beim erneuten Laden freigegeben, weil ihre Adresse dann nicht mehr stimmen muss. Einfrieren braucht keine Schreibüberwachung, kann aber kurz flackern, weil das Spiel den Wert zwischen zwei Durchläufen ändern darf. Ein Hook mit dem Template „Fester Wert“ greift dagegen direkt an der Schreibinstruktion.
 
 ## Voraussetzungen
 
@@ -62,7 +67,7 @@ HERMES_LANGUAGE=en hermes
 HERMES_LANGUAGE=de hermes
 ```
 
-Beim ersten Start wird die SQLite-Datenbank unter `data/hermes.db` angelegt. Für die Prozessliste werden nur Prozesse angezeigt, auf deren Informationen der aktuelle Benutzer zugreifen darf.
+Beim ersten Start wird die SQLite-Datenbank unter `~/.local/share/hermes-hook/hermes.db` angelegt (bzw. unter `$XDG_DATA_HOME/hermes-hook/`). Mit `HERMES_DB=/pfad/zur/datei.db` lässt sich eine andere Datei verwenden. Gibt es dort noch keine Datenbank, aber eine aus früheren Versionen unter `data/hermes.db` im Projektverzeichnis, wird diese einmalig kopiert; das Original bleibt erhalten. Für die Prozessliste werden nur Prozesse angezeigt, auf deren Informationen der aktuelle Benutzer zugreifen darf. Beendet sich der angehängte Prozess, setzt Hermes das Fenster innerhalb einer Sekunde zurück: Scans, Überwachung, Einfrieren und Hooks werden gestoppt, gespeicherte Adressen und Hooks bleiben erhalten und werden beim nächsten Anhängen wieder geladen.
 
 ## Linux-Rechte für Speicherzugriffe
 
@@ -84,19 +89,28 @@ sudo sysctl kernel.yama.ptrace_scope=0
 ```bash
 mkdir -p build
 gcc -O2 test_app/dummy_game.c -o build/dummy_game.exe $(pkg-config --cflags --libs gtk+-3.0)
-./build/dummy_game
+./build/dummy_game.exe
 ```
 
 Benötigt werden `gcc` und die GTK-3-Entwicklerpakete (`gtk3-devel` unter Fedora, `libgtk-3-dev` unter Debian/Ubuntu).
 
-1. In Hermes **Prozess auswählen** → `dummy_game`.
+1. In Hermes **Prozess auswählen** → `dummy_game.exe`.
 2. **Erster Scan** nach dem angezeigten Goldwert (`int32`), im Spiel Gold ändern, **Nächster Scan** mit dem neuen Wert, bis eine Adresse übrig bleibt. Mit **+ Merken** in die gemerkten Adressen übernehmen und eine Beschreibung wie „Gold“ vergeben.
 3. Rechtsklick auf die Adresse → **Schreibzugriffe auf diese Adresse überwachen …**
 4. Im Spiel **Gold +100** klicken. Im Überwachungsfenster erscheint die Codestelle, die das Gold erhöht (z. B. `dummy_game+0x…`). „Gold -100“ erzeugt eine zweite, eigene Zeile.
-5. Die Zeile der Erhöhung markieren → **Hook erstellen …**, Manipulation **Multiplikator**, Faktor `10`, „Nur Erhöhungen“.
+5. Die Zeile der Erhöhung markieren → **Hook erstellen …**, Template **Multiplikator**, Faktor `10`, „Nur Erhöhungen“.
 6. Der Hook erscheint im Tab **Hooks**. Jeder Klick auf „Gold +100“ bringt jetzt 1000 Gold; die Spalte „Letzte“ zeigt alt → vom Spiel geschrieben ⇒ gespeichert.
 
-Über den Tab **Hooks** lassen sich Hooks bearbeiten, pausieren und entfernen. Beim Entfernen, beim Prozesswechsel und beim Beenden von Hermes werden die ursprünglichen Bytes wiederhergestellt.
+Über den Tab **Hooks** lassen sich Hooks bearbeiten, pausieren, debuggen und entfernen. Beim Entfernen, beim Prozesswechsel und beim Beenden von Hermes werden die ursprünglichen Bytes wiederhergestellt.
+
+### Hooks nach einem Neustart
+
+Hooks werden pro Programm gespeichert, und zwar als Modul + Offset der Schreibinstruktion. Wählt man das Programm nach einem Neustart erneut aus, installiert Hermes die gespeicherten Hooks automatisch. Haben sich die Bytes an dieser Stelle geändert, etwa nach einem Update des Programms, wird der Hook nicht installiert. Liegt die Schreibinstruktion in keinem Modul (z. B. JIT-Code), kann der Hook nicht gespeichert werden.
+
+Nach einem Neustart ist die ursprüngliche Zieladresse nicht mehr gültig. Woran der Hook die richtigen Schreibzugriffe erkennt, hängt davon ab, wie er angelegt wurde:
+
+- **Mit Pointer-Chain** (siehe unten): Der Hook löst die Chain bei jedem Schreibzugriff auf und greift nur bei der Adresse, zu der sie gerade führt. Das ist die zuverlässigste Variante.
+- **Ohne Pointer-Chain**: Der Hook merkt sich während der Laufzeit die Aufrufer, also die Rücksprungadressen auf dem Stack, die die Zieladresse beschreiben. Nach einem Neustart greift er nur bei Schreibzugriffen dieser Aufrufer. Wie viele Rücksprungadressen einen Aufrufer kennzeichnen, legt **Aufrufer-Ebenen** im Hook-Dialog fest (Standard `1`, `aus` lernt keine Aufrufer). Mehr Ebenen helfen, wenn Spieler und andere Objekte über dieselbe Hilfsfunktion geändert werden. Schreibt ein gelernter Aufrufer auch andere Adressen, weist Hermes darauf hin.
 
 ### Gold nach einem Neustart wiederfinden (Pointer-Suche)
 
@@ -121,52 +135,48 @@ after(regs)        Manipulation aufrufen und das Ergebnis speichern
 jmp zurück
 ```
 
-Weil Hermes nur mit altem und neuem Wert rechnet, ist egal, ob das Spiel `add [mem], reg`, `mov [mem], reg` oder `sub` verwendet. Wird dieselbe Instruktion auch für andere Objekte genutzt (z. B. das Gold von Gegnern), greift der Hook nur bei der überwachten Adresse.
+Weil Hermes nur mit altem und neuem Wert rechnet, ist egal, ob das Spiel `add [mem], reg`, `mov [mem], reg` oder `sub` verwendet. Wird dieselbe Instruktion auch für andere Objekte genutzt (z. B. das Gold von Gegnern), greift der Hook nur beim Ziel: bei der überwachten Adresse, der Adresse seiner Pointer-Chain oder, nach einem Neustart ohne Chain, bei den gelernten Aufrufern. Mehrere Hooks können dieselbe Schreibinstruktion nutzen; sie laufen in der Reihenfolge, in der sie angelegt wurden.
 
 Einschränkungen:
 
 - Nur x86-64-Prozesse.
 - Die Schreibinstruktion und die Bytes bis zur Länge eines Sprungs (5 Bytes) werden überschrieben. Springt anderer Code mitten in diesen Bereich, stürzt das Ziel ab; dasselbe Risiko haben Frida-Hooks und die Code-Injection von Cheat Engine.
 - Bricht die Verbindung zu Hermes unerwartet ab, während ein Hook aktiv ist, kann das Ziel abstürzen.
-- `int64`-Werte sind in Manipulationen nur bis 2^53 exakt.
+- `int64`- und `uint64`-Werte sind in Manipulationen nur bis 2^53 exakt.
 
-## Eigene Manipulationen
+## Hook-Templates und eigene Manipulationen
 
-Eine Manipulation ist eine JavaScript-Funktion, die im Zielprozess nach jedem Schreibzugriff läuft. Sie erhält ein `ctx`-Objekt und gibt den zu speichernden Wert zurück; `undefined` behält den Wert des Spiels.
+Eine Manipulation ist eine JavaScript-Funktion, die im Zielprozess nach jedem Schreibzugriff läuft. Sie erhält ein `ctx`-Objekt und gibt den zu speichernden Wert zurück; `undefined` oder `null` behält den Wert des Spiels. Ganzzahlige Ergebnisse werden abgeschnitten und auf den Wertebereich des Typs begrenzt.
 
 | Feld | Bedeutung |
 | --- | --- |
 | `ctx.old`, `ctx.new`, `ctx.delta` | Wert vor und nach dem Schreibzugriff, Differenz |
-| `ctx.params` | Parameter der Manipulation |
+| `ctx.params` | Parameter des Templates mit den Werten des Hooks |
 | `ctx.state` | Objekt, das zwischen Aufrufen erhalten bleibt (z. B. für Zähler) |
 | `ctx.valueType`, `ctx.address`, `ctx.writePc`, `ctx.threadId`, `ctx.hookId` | Kontext des Schreibzugriffs |
+| `ctx.log(…)` | Ausgabe im Debug-Fenster; ohne Debug-Modus wirkungslos |
 
-Für einmalige Experimente gibt es in der Oberfläche **Eigenes Skript (JavaScript)**, etwa:
+### Templates pflegen
+
+Manipulationen werden als **Hook-Templates** in der Datenbank gespeichert und über die Schaltfläche **⧉ Hook-Templates** verwaltet. Beim ersten Start legt Hermes die Beispiele **Multiplikator**, **Fester Wert** und **Begrenzen** in der Sprache der Oberfläche an; sie lassen sich wie eigene Templates ändern oder löschen.
+
+Ein Template besteht aus Name, optionaler Beschreibung, der JavaScript-Funktion und Parametern. Für jeden Parameter werden Name (im Skript `ctx.params.<Name>`), Bezeichnung, Typ (**Zahl** oder **Auswahl**), Standardwert und ob er optional ist festgelegt; Auswahlwerte werden als `wert=Bezeichnung; wert=Bezeichnung` angegeben. Aus den Parametern erzeugt der Hook-Dialog das Eingabeformular. Beispiel für ein Template mit dem Zahl-Parameter `threshold`:
 
 ```js
-ctx => ctx.delta > 0 ? ctx.old + ctx.delta * 3 : undefined
+ctx => ctx.delta >= ctx.params.threshold ? ctx.new : ctx.old
 ```
 
-Wiederverwendbare Manipulationen werden in Python als Unterklasse von `ValueTransform` in `hermes/hooks/transforms.py` (oder einem eigenen, beim Start importierten Modul) registriert. Über `parameters` erzeugt die Oberfläche das Eingabeformular automatisch:
+Mit **▶ Testen** läuft die Funktion ohne Spielprozess: Werttyp, alten Wert (`ctx.old`) und vom Spiel geschriebenen Wert (`ctx.new`) eingeben und ausführen. Angezeigt werden der gespeicherte Wert, Ausgaben von `ctx.log`/`console.log` und Fehler. `ctx.state` bleibt zwischen den Testläufen erhalten, bis er zurückgesetzt wird. Der Test läuft in Qts JavaScript-Engine statt in Frida, Frida-APIs wie `ptr()` oder `Memory` stehen dort also nicht zur Verfügung.
 
-```python
-from hermes.hooks.transforms import TransformParameter, ValueTransform, register_transform
+Ein Hook speichert eine **Kopie** des Templates, aus dem er angelegt wurde. Spätere Änderungen am Template wirken sich deshalb nicht auf bestehende Hooks aus. Im Dialog **Bearbeiten** weist Hermes auf ein geändertes Template hin und bietet **Geändertes Template übernehmen** an. Wird das Template gelöscht, arbeitet der Hook mit seiner Kopie weiter.
 
+### Hooks debuggen
 
-@register_transform
-class OnlyBigGains(ValueTransform):
-    """Gewinne unterhalb einer Schwelle verwerfen."""
+Mit **◉ Debug** im Tab **Hooks** wird der ausgewählte Hook in den Debug-Modus versetzt. Das Debug-Fenster protokolliert dann jeden Aufruf mit Zeit, Thread, Adresse, Aufrufer, altem Wert, Spielwert, Ergebnis, `ctx.log`-Ausgaben und Fehlern samt Stack. Auch Schreibzugriffe, die der Hook überspringt, erscheinen mit Begründung, etwa „schreibt eine andere Adresse“ oder „Aufrufer nicht gelernt“. Der Debug-Modus kostet Zeit im Spiel; bei sehr vielen Aufrufen verwirft der Agent Einträge und zählt sie nur. Das Schließen des Fensters beendet den Debug-Modus.
 
-    kind = "only-big-gains"
-    title = "Only big gains"
-    source = "ctx => ctx.delta >= ctx.params.threshold ? ctx.new : ctx.old"
-    parameters = (TransformParameter("threshold", default=50),)
+### Beispiel-Templates im Code
 
-    def __init__(self, threshold):
-        super().__init__(threshold=threshold)
-```
-
-Übersetzte Beschriftungen kommen aus `hermes/ui/localization/*.json` unter `transform.<kind>` und `transform.<kind>.<parameter>`; fehlen sie, werden `title` und der Parametername verwendet.
+Die Beispiel-Templates stammen aus Unterklassen von `ValueTransform` in `hermes/hooks/transforms.py`, deren `kind` in `EXAMPLE_TEMPLATE_KINDS` steht. Fehlt beim Start ein Beispiel (gleicher Seed-Key oder Name), legt Hermes es an. Name, Beschreibung und Parameterbezeichnungen kommen aus `hermes/ui/localization/*.json` unter `transform.<kind>`, `transform.<kind>.description`, `transform.<kind>.<parameter>` und `transform.choice.<wert>`; fehlen sie, werden `title`, der Parametername bzw. der Auswahlwert verwendet. Für eigene Manipulationen ist das nicht nötig: Sie werden direkt als Template in der Oberfläche angelegt.
 
 ## Tests
 

@@ -27,8 +27,11 @@ from hermes.core.pointer import (
     read_mappings,
     resolve_chain,
 )
+from hermes.core.freeze import FreezeWorker, FrozenValue
 from hermes.core.scanner import MemorySnapshot, ScanWorker, ValueRefreshWorker
 from hermes.core.memory import write_process_value
+from hermes.core.process import process_start_time
+from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES, value_type as get_value_type
 from hermes.core.write_watch import WriteWatchWorker, watch_size_for_type
 from hermes.db.repository.addresses import AddressRepository, address_pointer
 from hermes.db.repository.hooks import HookRepository
@@ -40,6 +43,8 @@ from hermes.ui.widgets.templates import TemplateDialog
 from hermes.ui.widgets.write_watch import WriteWatchDialog
 
 
+# How often to check whether the attached process is still running.
+PROCESS_CHECK_INTERVAL_MS = 1000
 # Upper bound for joining a write monitor from the GUI thread.
 WRITE_WATCH_STOP_TIMEOUT_MS = 3000
 # Scan results beyond this many rows are kept but not shown in the table.
@@ -124,6 +129,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(STYLE)
 
         self._current_pid = None
+        self._process_start_time = None
         self._hook_repository = HookRepository()
         self._address_repository = AddressRepository()
         self._process_id = None
@@ -136,12 +142,16 @@ class MainWindow(QMainWindow):
         self._scan_worker = None
         self._scan_failed = False
         self._refresh_worker = None
+        self._freeze_worker = None
         self._write_watch_worker = None
         self._write_watch_dialog = None
         self._write_watch_stopping = False
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(1000)
         self._refresh_timer.timeout.connect(self._refresh_memory_values)
+        self._process_timer = QTimer(self)
+        self._process_timer.setInterval(PROCESS_CHECK_INTERVAL_MS)
+        self._process_timer.timeout.connect(self._check_process_alive)
 
         # Initialize UI attributes assigned in builder methods.
         self.lbl_result_count = None
@@ -328,11 +338,17 @@ class MainWindow(QMainWindow):
         # Data type selector
         layout.addWidget(QLabel(self.translations["search.datatype"]))
         self.combo_type = QComboBox()
-        for value_type in ("int32", "int64", "float", "double"):
+        for value_type in VALUE_TYPES:
             self.combo_type.addItem(value_type, value_type)
         self.combo_type.addItem(
             self.translations["search.auto_type"], "auto"
         )
+        self.combo_type.setItemData(
+            self.combo_type.count() - 1,
+            self.translations["search.auto_type_tooltip"],
+            Qt.ItemDataRole.ToolTipRole,
+        )
+        self.combo_type.setCurrentIndex(self.combo_type.findData(DEFAULT_VALUE_TYPE))
         layout.addWidget(self.combo_type)
 
         # Scan mode
@@ -443,6 +459,7 @@ class MainWindow(QMainWindow):
         btn_write = QPushButton(self.translations["address_table.write"])
         btn_write.clicked.connect(self._write_value)
         btn_freeze = QPushButton(self.translations["address_table.freeze"])
+        btn_freeze.setToolTip(self.translations["address_table.freeze_tooltip"])
         btn_freeze.clicked.connect(self._toggle_freeze)
         btn_remove = QPushButton(self.translations["address_table.remove"])
         btn_remove.setObjectName("btn_danger")
@@ -494,10 +511,12 @@ class MainWindow(QMainWindow):
 
         return box
 
-    def _add_address_row(self, desc, addr, vtype, value, frozen, saved_id=None, pointer=None):
+    def _add_address_row(self, desc, addr, vtype, value, frozen_value=None,
+                         saved_id=None, pointer=None):
         # pylint: disable=too-many-arguments
         """Append an address and its current state to the tracking table.
 
+        ``frozen_value`` is the value (text) the entry is frozen at, or None.
         ``saved_id`` is the entry's database id, ``pointer`` its PointerChain;
         ``addr`` may be None when the pointer does not resolve right now.
         """
@@ -529,12 +548,7 @@ class MainWindow(QMainWindow):
         val_item.setFlags(val_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.addr_table.setItem(row, 3, val_item)
 
-        freeze_item = QTableWidgetItem(
-            self.translations["address_table.yes"]
-            if frozen else self.translations["address_table.no"]
-        )
-        freeze_item.setData(Qt.ItemDataRole.UserRole, frozen)
-        freeze_item.setForeground(QColor("#58a6ff") if frozen else QColor("#8b949e"))
+        freeze_item = QTableWidgetItem()
         freeze_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         freeze_item.setFlags(freeze_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.addr_table.setItem(row, 4, freeze_item)
@@ -544,6 +558,7 @@ class MainWindow(QMainWindow):
         self.addr_table.setItem(row, 5, pointer_item)
         self._set_row_pointer(row, pointer)
         self._filling_addresses = False
+        self._set_row_frozen(row, frozen_value)
 
     # ------------------------------------------------------------------
     # Saved address list and pointers
@@ -605,6 +620,8 @@ class MainWindow(QMainWindow):
         saved = self._store_address(self._address_repository.list_addresses, self._process_id)
         if saved is None:
             return
+        # The rows are rebuilt with new keys; frozen ones register again.
+        self._stop_freeze_worker()
         self.addr_table.setRowCount(0)
         bases, memory = None, None
         try:
@@ -616,8 +633,17 @@ class MainWindow(QMainWindow):
                 address = entry.address
                 if pointer is not None:
                     address = resolve_chain(memory, bases, pointer) if memory else None
+                # Without a pointer the saved address may belong to an earlier
+                # run of the program; writing a frozen value there is unsafe.
+                frozen_value = entry.frozen_value if entry.frozen else None
+                if pointer is None and frozen_value is not None:
+                    frozen_value = None
+                    self._store_address(
+                        self._address_repository.update_address, entry.id,
+                        frozen=False, frozen_value=None,
+                    )
                 self._add_address_row(
-                    entry.label, address, entry.value_type, "?", entry.frozen,
+                    entry.label, address, entry.value_type, "?", frozen_value,
                     saved_id=entry.id, pointer=pointer,
                 )
         except OSError as error:
@@ -731,6 +757,7 @@ class MainWindow(QMainWindow):
             except OSError:
                 address = None
             self._set_row_address(row, address)
+        self._sync_freeze(row)
         if meta["id"] is not None:
             self._store_address(
                 self._address_repository.update_address, meta["id"],
@@ -1005,12 +1032,15 @@ class MainWindow(QMainWindow):
             changed = dlg.selected_pid != self._current_pid
             if changed:
                 self._stop_write_monitor()
+                self._stop_freeze_worker()
                 self._close_pointer_dialogs()
             process_id = self._known_process_id(dlg) if changed else self._process_id
             if self.hook_panel is not None:
                 self.hook_panel.set_process(dlg.selected_pid, process_id)
             self._current_pid = dlg.selected_pid
             if changed:
+                self._process_start_time = process_start_time(dlg.selected_pid)
+                self._process_timer.start()
                 self._process_id = process_id
                 self._load_saved_addresses()
             self._current_proc = self.translations["app.process_display"].format(
@@ -1022,6 +1052,50 @@ class MainWindow(QMainWindow):
             )
             if self.btn_first_scan is not None:
                 self.btn_first_scan.setEnabled(True)
+
+    def _check_process_alive(self):
+        """Reset the window if the attached process has exited; return whether it runs."""
+        if self._current_pid is None:
+            return False
+        start_time = process_start_time(self._current_pid)
+        if start_time is not None and start_time == self._process_start_time:
+            return True
+        process = self._current_proc
+        self._detach_process()
+        self.lbl_status.setText(
+            self.translations["app.process_exited"].format(process=process)
+        )
+        return False
+
+    def _detach_process(self):
+        """Stop all work on the attached process and reset the window."""
+        self._process_timer.stop()
+        self._refresh_timer.stop()
+        scan_worker = self._scan_worker
+        if scan_worker is not None and scan_worker.isRunning():
+            # Results of the old process must not show up afterwards.
+            scan_worker.results_ready.disconnect()
+            scan_worker.scan_failed.disconnect()
+            scan_worker.requestInterruption()
+            scan_worker.wait()
+        refresh_worker = self._refresh_worker
+        if refresh_worker is not None and refresh_worker.isRunning():
+            refresh_worker.requestInterruption()
+            refresh_worker.wait()
+        self._stop_write_monitor()
+        self._stop_freeze_worker()
+        self._close_pointer_dialogs()
+        if self.hook_panel is not None:
+            self.hook_panel.set_process(None)
+
+        self._current_pid = None
+        self._process_start_time = None
+        self._process_id = None
+        self._reset_scan()
+        if self.addr_table is not None:
+            self.addr_table.setRowCount(0)
+        self._current_proc = self.translations["app.no_process"]
+        self.lbl_proc_info.setText(f"  {self._current_proc}")
 
     def _ensure_example_templates(self):
         """Create the example hook templates that do not exist yet."""
@@ -1330,7 +1404,7 @@ class MainWindow(QMainWindow):
 
     def _on_refresh_failed(self, message):
         """Stop periodic refresh and display the worker error."""
-        if self.lbl_scan_status is None:
+        if not self._check_process_alive() or self.lbl_scan_status is None:
             return
         self._refresh_timer.stop()
         self.lbl_scan_status.setText(message)
@@ -1349,6 +1423,7 @@ class MainWindow(QMainWindow):
             return
 
         self._refresh_timer.stop()
+        self._process_timer.stop()
         worker = self._scan_worker
         if worker is not None and worker.isRunning():
             answer = QMessageBox.question(
@@ -1361,6 +1436,8 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 if self._has_refresh_targets():
                     self._refresh_timer.start()
+                if self._current_pid is not None:
+                    self._process_timer.start()
                 a0.ignore()
                 return
 
@@ -1372,6 +1449,7 @@ class MainWindow(QMainWindow):
 
         # A running QThread must not be destroyed, so join it fully here.
         self._stop_write_monitor(timeout_ms=None)
+        self._stop_freeze_worker()
         if self.hook_panel is not None:
             self.hook_panel.shutdown(timeout_ms=None)
         refresh_worker = self._refresh_worker
@@ -1451,7 +1529,7 @@ class MainWindow(QMainWindow):
                 label=label, value_type=data["type"], address=address, pointer=pointer,
             )
         self._add_address_row(
-            label, data["address"], data["type"], data["value"], False,
+            label, data["address"], data["type"], data["value"],
             saved_id=saved_id, pointer=pointer,
         )
 
@@ -1492,6 +1570,8 @@ class MainWindow(QMainWindow):
             item = self.addr_table.item(row, 3)
             if item is not None:
                 item.setText(str(written_value))
+            if self._row_frozen_value(row) is not None:
+                self._freeze_row(row, str(written_value))
             self.lbl_status.setText(
                 self.translations["status.written"].format(
                     address=addr, value=written_value
@@ -1499,28 +1579,124 @@ class MainWindow(QMainWindow):
             )
 
     def _toggle_freeze(self):
-        """Toggle the displayed frozen state of the selected address."""
+        """Freeze the selected address at its current value, or release it."""
         if self.addr_table is None:
             return
 
         row = self.addr_table.currentRow()
         if row < 0:
             return
-        item = self.addr_table.item(row, 4)
-        if item is not None:
-            frozen = bool(item.data(Qt.ItemDataRole.UserRole))
-            item.setData(Qt.ItemDataRole.UserRole, not frozen)
-            item.setText(
-                self.translations["address_table.no"]
-                if frozen else self.translations["address_table.yes"]
+        if self._row_frozen_value(row) is not None:
+            self._freeze_row(row, None)
+            return
+        if self._current_pid is None:
+            QMessageBox.warning(
+                self,
+                self.translations["warning.no_process_title"],
+                self.translations["warning.select_process"],
             )
-            item.setForeground(QColor("#8b949e") if frozen else QColor("#58a6ff"))
-            meta = self._address_meta(row)
-            if meta["id"] is not None:
-                self._store_address(
-                    self._address_repository.update_address, meta["id"], frozen=not frozen
-                )
-        # Pending: start or stop a FreezeWorker thread.
+            return
+        value_item = self.addr_table.item(row, 3)
+        type_item = self.addr_table.item(row, 2)
+        try:
+            value = get_value_type(type_item.text()).parse(value_item.text())
+        except (AttributeError, ValueError):
+            self.lbl_status.setText(self.translations["address_table.freeze_no_value"])
+            return
+        self._freeze_row(row, str(value))
+
+    def _freeze_row(self, row, frozen_value):
+        """Freeze a row at ``frozen_value`` (text) or release it (None) and save that."""
+        self._set_row_frozen(row, frozen_value)
+        meta = self._address_meta(row)
+        if meta["id"] is not None:
+            self._store_address(
+                self._address_repository.update_address, meta["id"],
+                frozen=frozen_value is not None, frozen_value=frozen_value,
+            )
+
+    def _row_frozen_value(self, row):
+        """Return the value (text) a row is frozen at, or None."""
+        item = self.addr_table.item(row, 4) if self.addr_table is not None else None
+        return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+
+    def _set_row_frozen(self, row, frozen_value):
+        """Show the frozen state of a row and hand it to the freeze worker."""
+        item = self.addr_table.item(row, 4)
+        if item is None:
+            return
+        self._filling_addresses = True
+        item.setData(Qt.ItemDataRole.UserRole, frozen_value)
+        if frozen_value is None:
+            item.setText(self.translations["address_table.no"])
+            item.setForeground(QColor("#8b949e"))
+        else:
+            item.setText(
+                self.translations["address_table.frozen_value"].format(value=frozen_value)
+            )
+            item.setForeground(QColor("#58a6ff"))
+        self._filling_addresses = False
+        self._sync_freeze(row)
+
+    def _sync_freeze(self, row):
+        """Start, update or stop writing back the frozen value of a row."""
+        key = self._address_meta(row)["key"]
+        entry = self._frozen_entry(row)
+        if entry is None:
+            if self._freeze_worker is not None:
+                self._freeze_worker.remove_entry(key)
+            return
+        worker = self._ensure_freeze_worker()
+        if worker is not None:
+            worker.set_entry(key, entry)
+
+    def _frozen_entry(self, row):
+        """Return the FrozenValue of a frozen row, or None."""
+        frozen_value = self._row_frozen_value(row)
+        type_item = self.addr_table.item(row, 2)
+        if frozen_value is None or type_item is None:
+            return None
+        pointer = self._address_meta(row)["pointer"]
+        address = None
+        try:
+            kind = get_value_type(type_item.text())
+            data = kind.pack(kind.parse(frozen_value))
+            if pointer is None:
+                address = int(self.addr_table.item(row, 1).text(), 0)
+        except (AttributeError, ValueError):
+            return None
+        return FrozenValue(data, address, pointer)
+
+    def _ensure_freeze_worker(self):
+        """Return the running freeze worker, starting one for the attached process."""
+        if self._freeze_worker is None and self._current_pid is not None:
+            worker = FreezeWorker(self._current_pid, self)
+            worker.write_failed.connect(self._on_freeze_failed)
+            worker.finished.connect(lambda: self._on_freeze_worker_finished(worker))
+            self._freeze_worker = worker
+            worker.start()
+        return self._freeze_worker
+
+    def _stop_freeze_worker(self):
+        """Stop writing frozen values, e.g. before switching the process."""
+        worker = self._freeze_worker
+        self._freeze_worker = None
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+            worker.wait()
+
+    def _on_freeze_failed(self, message):
+        if not self._check_process_alive():
+            return
+        self.lbl_status.setText(
+            self.translations["address_table.freeze_failed"].format(message=message)
+        )
+
+    def _on_freeze_worker_finished(self, worker):
+        """Release a finished freeze worker; the next freeze starts a new one."""
+        worker.deleteLater()
+        if self._freeze_worker is worker:
+            self._freeze_worker = None
 
     def _remove_address(self):
         """Remove the selected address from the tracking table."""
@@ -1530,6 +1706,8 @@ class MainWindow(QMainWindow):
         row = self.addr_table.currentRow()
         if row >= 0:
             meta = self._address_meta(row)
+            if self._freeze_worker is not None:
+                self._freeze_worker.remove_entry(meta["key"])
             if meta["id"] is not None:
                 self._store_address(self._address_repository.delete_address, meta["id"])
             self.addr_table.removeRow(row)

@@ -56,7 +56,7 @@ class AddressRepository:
             return entry.id
 
     def update_address(self, address_id, *, label=None, address=None, pointer=_UNSET,
-                       frozen=None):
+                       frozen=None, frozen_value=_UNSET):
         """Change the given fields; ``pointer=None`` removes the pointer."""
         with self._sessions() as session:
             entry = session.get(Address, address_id)
@@ -70,6 +70,8 @@ class AddressRepository:
                 entry.pointer = None if pointer is None else pointer.to_json()
             if frozen is not None:
                 entry.frozen = frozen
+            if frozen_value is not _UNSET:
+                entry.frozen_value = frozen_value
             session.commit()
 
     def delete_address(self, address_id):

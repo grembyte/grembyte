@@ -7,23 +7,15 @@ import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core.pointer import ProcessMemory, module_bases, read_mappings, resolve_chain
+from hermes.core.value_types import AUTO_VALUE_TYPES, VALUE_TYPES
 
-_VALUE_FORMATS = {
-    "int32": "i",
-    "int64": "q",
-    "float": "f",
-    "double": "d",
-}
+# struct format characters without byte order, e.g. "i" for int32.
+_VALUE_FORMATS = {name: kind.struct_format[1:] for name, kind in VALUE_TYPES.items()}
 
 # Scan modes that compare against the value from the previous scan.
 _PREVIOUS_VALUE_MODES = {"changed", "unchanged", "increased", "decreased"}
 
-_NUMPY_DTYPES = {
-    "int32": np.dtype("<i4"),
-    "int64": np.dtype("<i8"),
-    "float": np.dtype("<f4"),
-    "double": np.dtype("<f8"),
-}
+_NUMPY_DTYPES = {name: kind.dtype for name, kind in VALUE_TYPES.items()}
 
 
 class MemorySnapshot:
@@ -140,7 +132,7 @@ class ScanWorker(QThread):
         }:
             raise ValueError("Auto data type requires a value-based first scan")
 
-        value_types = tuple(self._VALUE_FORMATS) if auto_types else (self.value_type,)
+        value_types = AUTO_VALUE_TYPES if auto_types else (self.value_type,)
         formats = {
             value_type: self._get_value_format_for(value_type)
             for value_type in value_types
@@ -379,7 +371,7 @@ class ScanWorker(QThread):
                 except OSError:
                     continue
 
-                if value_type in {"float", "double"} and not np.isfinite(current):
+                if value_format[-1] in "fd" and not np.isfinite(current):
                     continue
                 previous_value = previous["value"]
                 if self._matches(
@@ -448,7 +440,7 @@ class ScanWorker(QThread):
         try:
             parsed = (
                 int(value, 0)
-                if value_format[-1] in {"i", "q"}
+                if value_format[-1] not in "fd"
                 else float(value)
             )
             return struct.unpack(value_format, struct.pack(value_format, parsed))[0]

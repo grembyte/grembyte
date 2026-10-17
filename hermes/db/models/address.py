@@ -12,6 +12,7 @@ class Address(Base):  # pylint: disable=too-few-public-methods
 
     ``pointer`` (``PointerChain.to_json()``) finds the value again after the
     program was restarted; ``address`` is the last address it resolved to.
+    A ``frozen`` entry is kept at ``frozen_value`` (the value as text).
     """
 
     __tablename__ = "addresses"
@@ -21,8 +22,9 @@ class Address(Base):  # pylint: disable=too-few-public-methods
         Integer, ForeignKey("processes.id", ondelete="CASCADE"), nullable=False
     )
     label = Column(String, nullable=False, default="")
-    value_type = Column(String, nullable=False)      # int32, int64, float, double
+    value_type = Column(String, nullable=False)      # see hermes.core.value_types
     address = Column(Integer, nullable=False)
     pointer = Column(JSON, nullable=True)
     frozen = Column(Boolean, nullable=False, default=False)
+    frozen_value = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

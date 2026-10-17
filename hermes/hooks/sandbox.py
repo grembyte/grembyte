@@ -11,13 +11,16 @@ from dataclasses import dataclass, field
 
 from PyQt6.QtQml import QJSEngine  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core.value_types import VALUE_TYPES
 
-# Same ranges as VALUE_IO in the hook agent.
+
+# Same ranges as VALUE_IO in the hook agent: 64-bit integers are passed as
+# JavaScript numbers and limited to the exactly representable range.
 VALUE_LIMITS = {
-    "int32": (-2147483648, 2147483647),
-    "int64": (-(2**53 - 1), 2**53 - 1),
-    "float": None,
-    "double": None,
+    name: None if kind.limits is None else (
+        max(kind.limits[0], -(2**53 - 1)), min(kind.limits[1], 2**53 - 1)
+    )
+    for name, kind in VALUE_TYPES.items()
 }
 
 _RUNNER = r"""

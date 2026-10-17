@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 from sqlalchemy.exc import SQLAlchemyError
 
+from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES
 from hermes.hooks.transforms import PARAMETER_NAME, TransformDefinition, TransformParameter
 from hermes.hooks.sandbox import TransformSandbox
 from hermes.ui.widgets.hooks import TransformForm, format_number, parse_number
@@ -493,8 +494,6 @@ class TemplateTestDialog(QDialog):
     # Widgets are created by _build_ui called from __init__.
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
-    VALUE_TYPES = ("int32", "int64", "float", "double")
-
     def __init__(self, translations, definition, parent=None):
         super().__init__(parent)
         self.translations = translations
@@ -511,8 +510,11 @@ class TemplateTestDialog(QDialog):
 
         form = QFormLayout()
         self.value_type_combo = QComboBox()
-        for value_type in self.VALUE_TYPES:
+        for value_type in VALUE_TYPES:
             self.value_type_combo.addItem(value_type, value_type)
+        self.value_type_combo.setCurrentIndex(
+            self.value_type_combo.findData(DEFAULT_VALUE_TYPE)
+        )
         form.addRow(self.translations["templates.test_value_type"], self.value_type_combo)
         self.old_input = QLineEdit("100")
         form.addRow(self.translations["templates.test_old"], self.old_input)

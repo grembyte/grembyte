@@ -55,6 +55,18 @@ MAX_CALLER_DEPTH = 4
 
 _AGENT_SOURCE = r"""
 const VALUE_IO = {
+  int8: {
+    size: 1,
+    read: p => p.readS8(),
+    write: (p, v) => p.writeS8(v),
+    limits: [-128, 127]
+  },
+  int16: {
+    size: 2,
+    read: p => p.readS16(),
+    write: (p, v) => p.writeS16(v),
+    limits: [-32768, 32767]
+  },
   int32: {
     size: 4,
     read: p => p.readS32(),
@@ -66,6 +78,30 @@ const VALUE_IO = {
     read: p => p.readS64().toNumber(),
     write: (p, v) => p.writeS64(int64(String(v))),
     limits: [Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER]
+  },
+  uint8: {
+    size: 1,
+    read: p => p.readU8(),
+    write: (p, v) => p.writeU8(v),
+    limits: [0, 255]
+  },
+  uint16: {
+    size: 2,
+    read: p => p.readU16(),
+    write: (p, v) => p.writeU16(v),
+    limits: [0, 65535]
+  },
+  uint32: {
+    size: 4,
+    read: p => p.readU32(),
+    write: (p, v) => p.writeU32(v),
+    limits: [0, 4294967295]
+  },
+  uint64: {
+    size: 8,
+    read: p => p.readU64().toNumber(),
+    write: (p, v) => p.writeU64(uint64(String(v))),
+    limits: [0, Number.MAX_SAFE_INTEGER]
   },
   float: {
     size: 4,

@@ -173,12 +173,15 @@ def test_addresses_with_pointer_scan(tmp_path):
                                   address=0x5000)
     score = repository.add_address(process_id, label="Score", value_type="int32",
                                    address=0x4010, pointer=PointerChain("game", 0x10))
-    repository.update_address(gold, label="Gold!", address=0x6000, pointer=chain, frozen=True)
+    repository.update_address(
+        gold, label="Gold!", address=0x6000, pointer=chain, frozen=True, frozen_value="5000"
+    )
     repository.save_pointer_scan(gold, SavedPointerScan([chain], 5, 0x1000, 0))
     repository.save_pointer_scan(gold, SavedPointerScan([chain, chain], 5, 0x1000, 2))
 
     saved_gold, saved_score = repository.list_addresses(process_id)
-    assert (saved_gold.label, saved_gold.address, saved_gold.frozen) == ("Gold!", 0x6000, True)
+    assert (saved_gold.label, saved_gold.address, saved_gold.frozen, saved_gold.frozen_value) \
+        == ("Gold!", 0x6000, True, "5000")
     assert address_pointer(saved_gold) == chain
     assert address_pointer(saved_score) == PointerChain("game", 0x10)
     scan = repository.get_pointer_scan(gold)
@@ -218,3 +221,34 @@ def test_init_db_adds_new_nullable_columns(tmp_path):
     assert connection.execute("SELECT name FROM processes").fetchall() == [("game",)]
     connection.close()
     engine.dispose()
+
+
+def test_default_db_path_follows_environment(monkeypatch, tmp_path):
+    # pylint: disable=import-outside-toplevel
+    from hermes.db.engine import default_db_path
+
+    monkeypatch.delenv("HERMES_DB", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert default_db_path() == tmp_path / "hermes-hook" / "hermes.db"
+
+    monkeypatch.setenv("HERMES_DB", str(tmp_path / "custom.db"))
+    assert default_db_path() == tmp_path / "custom.db"
+
+
+def test_legacy_db_is_copied_once(tmp_path):
+    # pylint: disable=import-outside-toplevel
+    from hermes.db.engine import adopt_legacy_db
+
+    legacy = tmp_path / "repo" / "hermes.db"
+    legacy.parent.mkdir()
+    legacy.write_bytes(b"old")
+    path = tmp_path / "data" / "hermes.db"
+    path.parent.mkdir()
+
+    assert adopt_legacy_db(path, legacy)
+    assert path.read_bytes() == b"old" and legacy.exists()
+
+    path.write_bytes(b"new")
+    assert not adopt_legacy_db(path, legacy)
+    assert path.read_bytes() == b"new"
+    assert not adopt_legacy_db(tmp_path / "data" / "other.db", tmp_path / "missing.db")

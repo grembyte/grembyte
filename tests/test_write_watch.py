@@ -11,6 +11,8 @@ from hermes.core.write_watch import (
 @pytest.mark.parametrize(
     ("value_type", "expected_size"),
     [
+        ("int8", 1),
+        ("uint16", 2),
         ("int32", 4),
         ("float", 4),
         ("int64", 8),

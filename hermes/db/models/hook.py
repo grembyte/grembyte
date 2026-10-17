@@ -34,7 +34,7 @@ class Hook(Base):  # pylint: disable=too-few-public-methods
     module_offset = Column(Integer, nullable=False)      # write instruction offset
     instruction_bytes = Column(String, nullable=False)   # hex, e.g. "0137"
     instruction_text = Column(String, nullable=False, default="")
-    value_type = Column(String, nullable=False)          # int32, int64, float, double
+    value_type = Column(String, nullable=False)          # see hermes.core.value_types
     template_id = Column(Integer, nullable=True)
     transform_name = Column(String, nullable=False)
     transform_source = Column(Text, nullable=False)      # copy of the template's function

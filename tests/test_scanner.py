@@ -344,3 +344,39 @@ def test_value_refresh_worker_reads_requested_addresses(monkeypatch):
     worker.run()
 
     assert emitted == [{base_address: 27, base_address + 4: 3.5}]
+
+def test_first_scan_finds_small_unsigned_values_at_any_offset(monkeypatch):
+    contents = bytes([1, 200, 3, 200, 5])
+    install_fake_process(monkeypatch, "1000-1005 rw-p 00000000 00:00 0\n", 0x1000, contents)
+    worker = ScanWorker(123, "uint8", "exact", "200", aligned=False)
+
+    assert [result["address"] for result in worker._first_scan()] == [0x1001, 0x1003]
+
+
+def test_first_scan_rejects_values_outside_the_type_range(monkeypatch):
+    install_fake_process(monkeypatch, "1000-1004 rw-p 00000000 00:00 0\n", 0x1000, bytes(4))
+
+    with pytest.raises(ValueError, match="Invalid scan value"):
+        ScanWorker(123, "uint8", "exact", "-1")._first_scan()
+
+
+def test_refine_scan_reads_int16_values(monkeypatch):
+    install_fake_process(
+        monkeypatch, "1000-1004 rw-p 00000000 00:00 0\n", 0x1000, struct.pack("<hh", -5, 7)
+    )
+    previous = [
+        {"address": 0x1000, "type": "int16", "value": -3},
+        {"address": 0x1002, "type": "int16", "value": 7},
+    ]
+    worker = ScanWorker(123, "int16", "decreased", previous_results=previous)
+
+    assert worker._refine_scan() == [{"address": 0x1000, "type": "int16", "value": -5}]
+
+
+def test_auto_first_scan_ignores_small_types(monkeypatch):
+    install_fake_process(
+        monkeypatch, "1000-1004 rw-p 00000000 00:00 0\n", 0x1000, struct.pack("<i", 7)
+    )
+    results = ScanWorker(123, "auto", "exact", "7")._first_scan()
+
+    assert {result["type"] for result in results} == {"int32"}

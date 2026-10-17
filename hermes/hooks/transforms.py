@@ -10,7 +10,7 @@ a single ``ctx`` object and returns the value to store, or ``undefined`` /
     ctx.delta      ctx.new - ctx.old
     ctx.params     the transform's JSON parameters (see ``ValueTransform.params``)
     ctx.state      per-hook object that persists between calls
-    ctx.valueType  "int32" | "int64" | "float" | "double"
+    ctx.valueType  e.g. "int32", "uint8" or "float" (see hermes.core.value_types)
     ctx.address    target address as hex string
     ctx.writePc    address of the hooked write instruction as hex string
     ctx.threadId   id of the writing thread
@@ -18,7 +18,8 @@ a single ``ctx`` object and returns the value to store, or ``undefined`` /
     ctx.log(...)   output shown in the hook debug window (no-op otherwise)
 
 Integer results are truncated and clamped to the value type's range; int64
-values are passed as JavaScript numbers and are only exact up to 2**53.
+and uint64 values are passed as JavaScript numbers and are only exact up to
+2**53.
 
 New transforms subclass ``ValueTransform``, set ``kind`` and ``source`` and
 register themselves with ``@register_transform``. Declaring ``parameters``
