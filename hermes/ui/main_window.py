@@ -16,6 +16,7 @@ from hermes.ui.localization import load_translations
 from hermes.ui.styles.styles import STYLE
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.process_list import ProcessSelectDialog
+from hermes.ui.widgets.table import set_row_height
 from hermes.core.scanner import MemorySnapshot, ScanWorker, ValueRefreshWorker
 from hermes.core.memory import write_process_value
 from hermes.core.write_watch import WriteWatchWorker, watch_size_for_type
@@ -1206,7 +1207,7 @@ class MainWindow(QMainWindow):
     def _style_table(self, table):
         """Apply the shared look and feel to a table widget."""
         table.setShowGrid(False)
-        table.verticalHeader().setDefaultSectionSize(30)
+        set_row_height(table)
         header = table.horizontalHeader()
         # Prevent bold header text for columns containing selected cells
         header.setHighlightSections(False)

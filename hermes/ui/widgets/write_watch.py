@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHeaderView,
 )
 
+from hermes.ui.widgets.table import set_row_height
+
 
 class WriteWatchDialog(QDialog):
     """Display grouped write-watch hits and let the user stop monitoring."""
@@ -70,6 +72,7 @@ class WriteWatchDialog(QDialog):
             header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
             header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.results_table.verticalHeader().setVisible(False)
+        set_row_height(self.results_table)
         self.results_table.itemSelectionChanged.connect(self._update_hook_button)
         self.results_table.doubleClicked.connect(self._request_hook)
         layout.addWidget(self.results_table)

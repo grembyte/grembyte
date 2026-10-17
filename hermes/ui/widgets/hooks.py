@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from hermes.hooks.engine import HookWorker
 from hermes.hooks.transforms import available_transforms
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.widgets.table import set_row_height
 
 
 # Upper bound for joining a hook worker from the GUI thread.
@@ -286,6 +287,7 @@ class HookPanel(QGroupBox):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
+        set_row_height(self.table)
         header = self.table.horizontalHeader()
         if header is not None:
             for column in range(len(self._COLUMNS)):

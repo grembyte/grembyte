@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
 
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.widgets.table import set_row_height
 from hermes.ui.localization import load_translations
 
 
@@ -82,6 +83,7 @@ class ProcessSelectDialog(QDialog):
         self.list.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.list.setAlternatingRowColors(True)
         self.list.verticalHeader().setVisible(False)
+        set_row_height(self.list)
         self.list.doubleClicked.connect(self._accept)
         layout.addWidget(self.list)
 

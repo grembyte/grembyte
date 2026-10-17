@@ -164,6 +164,11 @@ STYLE = """
     QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {
         border-color: #58a6ff;
     }
+    /* Editors inside table cells: the cell height is fixed, so use less padding. */
+    QTableWidget QLineEdit, QTableWidget QComboBox {
+        padding: 2px 6px;
+        border-radius: 4px;
+    }
     QComboBox QAbstractItemView {
         background-color: #161b22;
         border: 1px solid #30363d;
