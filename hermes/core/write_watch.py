@@ -363,3 +363,25 @@ class WriteWatchWorker(QThread):
 
     def _on_session_detached(self, reason, _crash):
         self._detach_reason = reason
+
+
+# Watch backends the UI can switch between.
+BACKEND_FRIDA = "frida"
+BACKEND_PTRACE = "ptrace"
+WATCH_BACKENDS = (BACKEND_FRIDA, BACKEND_PTRACE)
+
+
+def create_watch_worker(backend, pid, address, size, parent=None, reads=False):
+    """Build the watch worker for ``backend`` (``frida`` or ``ptrace``).
+
+    Both workers share the same signals and attributes, so callers treat them
+    alike. The ptrace backend is imported lazily so a Frida-only run never
+    needs ctypes/capstone on the watch path.
+    """
+    # pylint: disable=too-many-arguments
+    if backend == BACKEND_PTRACE:
+        from hermes.core.ptrace_watch import (  # pylint: disable=import-outside-toplevel
+            PtraceWriteWatchWorker,
+        )
+        return PtraceWriteWatchWorker(pid, address, size, parent, reads=reads)
+    return WriteWatchWorker(pid, address, size, parent, reads=reads)

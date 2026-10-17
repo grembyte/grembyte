@@ -42,5 +42,6 @@ def is_wine_process(pid, proc_root="/proc"):
 # runs (seen with Frida 17.23 and 17.24 on Proton 11).
 WINE_FRIDA_ERROR = (
   "Frida cannot attach to Wine/Proton processes: its agent crashes the game "
-  "during injection."
+  "during injection. Switch the watch backend to ptrace "
+  "(Settings → Watch backend) to monitor this process instead."
 )

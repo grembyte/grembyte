@@ -27,7 +27,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core.pointer import PointerChain
 from hermes.db.repository.hooks import hook_transform
-from hermes.hooks.engine import MAX_CALLER_DEPTH, HookSpec, HookWorker
+from hermes.hooks.engine import MAX_CALLER_DEPTH, HookSpec, create_hook_worker
+from hermes.core.write_watch import BACKEND_FRIDA
 from hermes.hooks.transforms import (
     TemplateTransform,
     as_template_transform,
@@ -406,6 +407,7 @@ class HookPanel(QGroupBox):
         self._repository = repository
         self._pid = None
         self._process_id = None
+        self._backend = BACKEND_FRIDA
         self._debug_window = None
         self._worker = None
         self._hooks = {}
@@ -770,10 +772,19 @@ class HookPanel(QGroupBox):
     # ------------------------------------------------------------------
     # Worker management
     # ------------------------------------------------------------------
+    def set_backend(self, backend):
+        """Choose the hook backend ('frida' or 'ptrace').
+
+        A running worker keeps its backend; the choice applies the next time a
+        worker is created (after the process is re-attached or the panel is
+        shut down), so no hooks are lost by switching mid-session.
+        """
+        self._backend = backend
+
     def _ensure_worker(self):
         if self._worker is not None and self._worker.isRunning():
             return self._worker
-        worker = HookWorker(self._pid, self)
+        worker = create_hook_worker(self._backend, self._pid, self)
         worker.hook_installed.connect(
             lambda hook_id, info: self._on_installed(worker, hook_id, info)
         )

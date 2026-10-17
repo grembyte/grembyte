@@ -12,8 +12,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox, QTabWidget,
 )
-from PyQt6.QtCore import Qt, QSize, QTimer  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import Qt, QSize, QTimer, QSettings  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtGui import QColor, QActionGroup  # pylint: disable=import-error,no-name-in-module
 
 from hermes.ui.localization import load_translations
 from hermes.ui.styles.styles import STYLE
@@ -37,9 +37,15 @@ from hermes.core.scanner import (
     ValueRefreshWorker,
 )
 from hermes.core.memory import write_process_value
-from hermes.core.process import process_start_time
+from hermes.core.process import is_wine_process, process_start_time
 from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES, value_type as get_value_type
-from hermes.core.write_watch import WriteWatchWorker, watch_size_for_type
+from hermes.core.write_watch import (
+    WATCH_BACKENDS,
+    BACKEND_FRIDA,
+    BACKEND_PTRACE,
+    create_watch_worker,
+    watch_size_for_type,
+)
 from hermes.db.repository.addresses import AddressRepository, address_pointer
 from hermes.db.repository.hooks import HookRepository
 from hermes.hooks.engine import HookSpec
@@ -206,6 +212,10 @@ class MainWindow(QMainWindow):
         self._write_watch_worker = None
         self._write_watch_dialog = None
         self._write_watch_stopping = False
+        self._settings = QSettings("hermes-hook", "hermes-hook")
+        self._watch_backend = self._settings.value("watch_backend", BACKEND_FRIDA)
+        if self._watch_backend not in WATCH_BACKENDS:
+            self._watch_backend = BACKEND_FRIDA
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(1000)
         self._refresh_timer.timeout.connect(self._refresh_memory_values)
@@ -234,10 +244,70 @@ class MainWindow(QMainWindow):
         self.addr_table = None
         self.hook_panel = None
         self.bottom_tabs = None
+        self.lbl_backend = None
 
+        self._build_menu()
         self._build_toolbar()
         self._build_central()
         self._build_statusbar()
+
+    # ------------------------------------------------------------------
+    # Menu
+    # ------------------------------------------------------------------
+    def _build_menu(self):
+        """Create the menu bar and the watch-backend switch."""
+        menu_bar = self.menuBar()
+        settings_menu = menu_bar.addMenu(self.translations["menu.settings"])
+        backend_menu = settings_menu.addMenu(self.translations["menu.watch_backend"])
+
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        self._backend_actions = {}
+        for backend, label in (
+            (BACKEND_FRIDA, "menu.backend_frida"),
+            (BACKEND_PTRACE, "menu.backend_ptrace"),
+        ):
+            action = backend_menu.addAction(self.translations[label])
+            action.setCheckable(True)
+            action.setChecked(self._watch_backend == backend)
+            action.setToolTip(self.translations[f"{label}_tooltip"])
+            action.triggered.connect(
+                lambda _checked, value=backend: self._set_watch_backend(value)
+            )
+            group.addAction(action)
+            self._backend_actions[backend] = action
+
+    def _set_watch_backend(self, backend):
+        """Apply a backend the user picked by hand and remember it."""
+        self._apply_backend(backend, persist=True)
+
+    def _apply_backend(self, backend, *, persist):
+        """Make ``backend`` the active watch/hook backend and reflect it in the UI.
+
+        ``persist`` writes the choice to settings (a manual pick); automatic
+        selection on attach leaves the saved default untouched.
+        """
+        self._watch_backend = backend
+        if persist:
+            self._settings.setValue("watch_backend", backend)
+        if self.hook_panel is not None:
+            self.hook_panel.set_backend(backend)
+        action = self._backend_actions.get(backend)
+        if action is not None:
+            action.setChecked(True)  # keeps the menu in sync on auto-select
+        self._update_backend_label()
+
+    def _auto_select_backend(self, pid):
+        """Pick ptrace for Wine/Proton processes, Frida for native ones."""
+        backend = BACKEND_PTRACE if is_wine_process(pid) else BACKEND_FRIDA
+        self._apply_backend(backend, persist=False)
+
+    def _update_backend_label(self):
+        """Show the active backend in the status bar, if it exists yet."""
+        if getattr(self, "lbl_backend", None) is None:
+            return
+        name = self.translations[f"status.backend_{self._watch_backend}"]
+        self.lbl_backend.setText(self.translations["status.backend"].format(backend=name))
 
     # ------------------------------------------------------------------
     # Toolbar
@@ -315,6 +385,7 @@ class MainWindow(QMainWindow):
         self.hook_panel = HookPanel(
             self.translations, self, repository=self._hook_repository
         )
+        self.hook_panel.set_backend(self._watch_backend)
         self.hook_panel.setTitle("")
         self.hook_panel.setObjectName("tab_page")
         self.hook_panel.count_changed.connect(self._on_hook_count_changed)
@@ -1123,7 +1194,8 @@ class MainWindow(QMainWindow):
         # Hooks in training watch the process too; they rest meanwhile.
         if self.hook_panel is not None:
             self.hook_panel.pause_trainings(True)
-        worker = WriteWatchWorker(
+        worker = create_watch_worker(
+            self._watch_backend,
             self._current_pid,
             address_value,
             size,
@@ -1272,6 +1344,10 @@ class MainWindow(QMainWindow):
         self.setStatusBar(sb)
         self.lbl_status = QLabel(self.translations["status.no_process_attached"])
         sb.addWidget(self.lbl_status)
+        self.lbl_backend = QLabel()
+        self.lbl_backend.setObjectName("lbl_backend")
+        sb.addWidget(self.lbl_backend)
+        self._update_backend_label()
         sb.addPermanentWidget(QLabel(self.translations["app.version_status"]))
         sb.setSizeGripEnabled(False)
 
@@ -1290,6 +1366,8 @@ class MainWindow(QMainWindow):
                 self._switch_pointer_dialogs(dlg.selected_pid, process_id)
                 if self._memory_viewer is not None:
                     self._memory_viewer.set_process(dlg.selected_pid)
+                # Wine/Proton cannot take Frida; native processes prefer it.
+                self._auto_select_backend(dlg.selected_pid)
             if self.hook_panel is not None:
                 self.hook_panel.set_process(dlg.selected_pid, process_id)
             self._current_pid = dlg.selected_pid

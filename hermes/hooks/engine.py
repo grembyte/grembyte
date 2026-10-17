@@ -53,7 +53,12 @@ from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-
 
 from hermes.core.pointer import PointerChain
 from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
-from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS, watch_size_for_type
+from hermes.core.write_watch import (
+    BACKEND_PTRACE,
+    CLEANUP_ERRORS,
+    FRIDA_ERRORS,
+    watch_size_for_type,
+)
 from hermes.hooks.transforms import ValueTransform
 
 
@@ -1360,6 +1365,22 @@ class HookSpec:
 
 def build_agent_source():
     return _AGENT_SOURCE
+
+
+def create_hook_worker(backend, pid, parent=None):
+    """Build the hook worker for ``backend`` (``frida`` or ``ptrace``).
+
+    Both workers share the same signals and public methods, so the panel treats
+    them alike. The ptrace backend (Option A) needs no injection and works on
+    Wine/Proton, but only rewrites values at a data watchpoint; see
+    :mod:`hermes.hooks.ptrace_hook` for what it does not cover.
+    """
+    if backend == BACKEND_PTRACE:
+        from hermes.hooks.ptrace_hook import (  # pylint: disable=import-outside-toplevel
+            PtraceHookWorker,
+        )
+        return PtraceHookWorker(pid, parent)
+    return HookWorker(pid, parent)
 
 
 class HookWorker(QThread):
