@@ -129,6 +129,7 @@ class MainWindow(QMainWindow):
         self._process_id = None
         self._address_keys = itertools.count(1)
         self._filling_addresses = False
+        self._pointer_dialogs = {}
         self._ensure_example_templates()
         self._current_proc = self.translations["app.no_process"]
         self._scan_results = []
@@ -675,12 +676,46 @@ class MainWindow(QMainWindow):
             "address": address,
             "type": self.addr_table.item(row, 2).text(),
         }
-        dialog = PointerScanDialog(
-            self.translations, self._address_repository, self._current_pid, entry, self
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.chain is None:
+        dialog = self._pointer_dialogs.get(meta["id"])
+        if dialog is not None:
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
             return
-        self._set_pointer(row, dialog.chain)
+        dialog = PointerScanDialog(
+            self.translations, self._address_repository, self._current_pid, entry, self,
+            address_source=self._selected_scan_address,
+        )
+        entry_id = meta["id"]
+        self._pointer_dialogs[entry_id] = dialog
+        dialog.chain_chosen.connect(lambda chain: self._set_pointer_for(entry_id, chain))
+        dialog.finished.connect(lambda _result: self._pointer_dialogs.pop(entry_id, None))
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
+
+    def _selected_scan_address(self):
+        """Return the address of the selected scan result, or None."""
+        if self.result_table is None:
+            return None
+        row = self.result_table.currentRow()
+        if row < 0 or not self.result_table.selectionModel().hasSelection():
+            return None
+        item = self.result_table.item(row, 0)
+        metadata = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        return metadata["address_value"] if metadata else None
+
+    def _set_pointer_for(self, entry_id, chain):
+        """Set the pointer of the address-list entry with database id ``entry_id``."""
+        for row in range(self.addr_table.rowCount()):
+            if self._address_meta(row)["id"] == entry_id:
+                self._set_pointer(row, chain)
+                return
+
+    def _close_pointer_dialogs(self):
+        """Close open pointer scans; they belong to the previous process."""
+        for dialog in list(self._pointer_dialogs.values()):
+            dialog.reject()
+        self._pointer_dialogs.clear()
 
     def _set_pointer(self, row, chain):
         """Use ``chain`` (or None) to locate an address-list entry."""
@@ -743,10 +778,11 @@ class MainWindow(QMainWindow):
             type_item = table.item(row, 2)
             value_type = type_item.text() if type_item is not None else ""
 
+        pointer = self._address_meta(row)["pointer"] if table is self.addr_table else None
         menu = QMenu(self)
         menu.addAction(
             self.translations["address_table.watch"],
-            lambda: self._start_write_monitor(address, value_type),
+            lambda: self._start_write_monitor(address, value_type, pointer),
         )
         if table is self.addr_table:
             meta = self._address_meta(row)
@@ -762,8 +798,12 @@ class MainWindow(QMainWindow):
                 )
         menu.exec(table.viewport().mapToGlobal(position))
 
-    def _start_write_monitor(self, address, value_type):
-        """Start a live hardware-watchpoint monitor for one address."""
+    def _start_write_monitor(self, address, value_type, pointer=None):
+        """Start a live hardware-watchpoint monitor for one address.
+
+        Hooks created from the monitor target ``pointer`` (a PointerChain of
+        the address-list entry) if there is one.
+        """
         if self._current_pid is None:
             QMessageBox.warning(
                 self,
@@ -824,7 +864,7 @@ class MainWindow(QMainWindow):
         dialog.stop_requested.connect(worker.requestInterruption)
         dialog.hook_requested.connect(
             lambda trap_pc, site: self._create_hook(
-                address_value, value_type, trap_pc, site
+                address_value, value_type, trap_pc, site, pointer
             )
         )
         dialog.finished.connect(
@@ -847,7 +887,8 @@ class MainWindow(QMainWindow):
         worker.start()
         dialog.show()
 
-    def _create_hook(self, address_value, value_type, trap_pc, site):
+    def _create_hook(self, address_value, value_type, trap_pc, site, pointer=None):
+        # pylint: disable=too-many-arguments
         """Ask for a transform and hook the write instruction before trap_pc."""
         if self._current_pid is None or self.hook_panel is None:
             return
@@ -858,6 +899,7 @@ class MainWindow(QMainWindow):
             site,
             label=self._tracked_description(address_value),
             templates=self.hook_panel.templates(),
+            pointer=pointer,
             parent=self._write_watch_dialog or self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -868,6 +910,7 @@ class MainWindow(QMainWindow):
             dialog.transform,
             trap_pc=trap_pc,
             caller_depth=dialog.caller_depth,
+            pointer=pointer,
             label=dialog.label,
         )
         self.hook_panel.add_hook(spec, site)
@@ -962,6 +1005,7 @@ class MainWindow(QMainWindow):
             changed = dlg.selected_pid != self._current_pid
             if changed:
                 self._stop_write_monitor()
+                self._close_pointer_dialogs()
             process_id = self._known_process_id(dlg) if changed else self._process_id
             if self.hook_panel is not None:
                 self.hook_panel.set_process(dlg.selected_pid, process_id)

@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
+from hermes.core.pointer import PointerChain
 from hermes.db.repository.hooks import hook_transform
 from hermes.hooks.engine import MAX_CALLER_DEPTH, HookSpec, HookWorker
 from hermes.hooks.transforms import (
@@ -143,10 +144,11 @@ class HookDialog(QDialog):
     """
 
     def __init__(self, translations, address, value_type, site,
-                 transform=None, label="", templates=None, parent=None):
+                 transform=None, label="", templates=None, pointer=None, parent=None):
         # pylint: disable=too-many-arguments
         super().__init__(parent)
         self.translations = translations
+        self.pointer = pointer
         self.transform = None
         self.label = label
         self.caller_depth = 1
@@ -207,7 +209,13 @@ class HookDialog(QDialog):
         self.label_input = QLineEdit(label)
         self.label_input.setPlaceholderText(self.translations["hooks.label_placeholder"])
         form.addRow(self.translations["hooks.label"], self.label_input)
-        if not self._editing:
+        if self.pointer is not None:
+            target = QLabel(self.pointer.text())
+            target.setStyleSheet("color: #d2a8ff;")
+            target.setToolTip(self.translations["hooks.pointer_hint"])
+            target.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            form.addRow(self.translations["hooks.pointer"], target)
+        elif not self._editing:
             self.caller_depth_input = QSpinBox()
             self.caller_depth_input.setRange(0, MAX_CALLER_DEPTH)
             self.caller_depth_input.setValue(self.caller_depth)
@@ -322,7 +330,9 @@ class HookDialog(QDialog):
             self.error_label.setText(str(error))
             return
         self.label = self.label_input.text().strip()
-        if not self._editing:
+        if self.pointer is not None:
+            self.caller_depth = 0
+        elif not self._editing:
             self.caller_depth = self.caller_depth_input.value()
         self.accept()
 
@@ -356,6 +366,7 @@ def spec_from_saved(saved):
         enabled=saved.enabled,
         caller_depth=saved.caller_depth,
         callers=persistable_callers(saved.callers),
+        pointer=None if saved.pointer is None else PointerChain.from_json(saved.pointer),
         label=saved.label,
     )
 
@@ -647,6 +658,8 @@ class HookPanel(QGroupBox):
     # Persistence
     # ------------------------------------------------------------------
     def _address_text(self, spec):
+        if spec.pointer is not None:
+            return self.translations["hooks.address_pointer"].format(chain=spec.pointer.text())
         if spec.address is not None:
             return f"0x{spec.address:X}"
         if spec.caller_depth > 0 and spec.callers:
@@ -655,7 +668,9 @@ class HookPanel(QGroupBox):
 
     def _show_callers(self, hook_id):
         spec = self._hooks[hook_id]["spec"]
-        if spec.caller_depth == 0:
+        if spec.pointer is not None:
+            tooltip = self.translations["hooks.pointer_hint"]
+        elif spec.caller_depth == 0:
             tooltip = self.translations["hooks.callers_off"]
         elif spec.callers:
             tooltip = self.translations["hooks.callers_tooltip"].format(
@@ -729,6 +744,7 @@ class HookPanel(QGroupBox):
             enabled=spec.enabled,
             caller_depth=spec.caller_depth,
             callers=spec.callers,
+            pointer=spec.pointer,
         )
 
     # ------------------------------------------------------------------
@@ -912,6 +928,7 @@ class HookPanel(QGroupBox):
             transform=spec.transform,
             label=spec.label,
             templates=self.templates(),
+            pointer=spec.pointer,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:

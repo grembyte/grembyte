@@ -79,11 +79,11 @@ sudo sysctl kernel.yama.ptrace_scope=0
 
 ## Beispiel: Gold-Multiplikator für das Test-Spiel
 
-`test_app/dummy_game.c` ist ein minimales GTK-Spiel mit Buttons für „Gold +100“ und „Gold -100“. Es gibt beim Start seine PID und die Adresse des Golds aus, sodass sich die Ergebnisse des Scanners prüfen lassen.
+`test_app/dummy_game.c` ist ein minimales GTK-Spiel mit Buttons für „Gold +100“, „Gold -100“ und „New game“. Wie in echten Spielen liegt der Spieler auf dem Heap hinter Zeigern (`g_game → player → gold`), seine Adresse ändert sich also bei jedem Start und bei jedem „New game“. Das Spiel gibt seine PID, die Pointer-Chain und die aktuelle Adresse des Golds aus, sodass sich die Ergebnisse von Scanner und Pointer-Suche prüfen lassen. Es dürfen mehrere Instanzen gleichzeitig laufen.
 
 ```bash
 mkdir -p build
-gcc -O2 test_app/dummy_game.c -o build/dummy_game $(pkg-config --cflags --libs gtk+-3.0)
+gcc -O2 test_app/dummy_game.c -o build/dummy_game.exe $(pkg-config --cflags --libs gtk+-3.0)
 ./build/dummy_game
 ```
 
@@ -97,6 +97,17 @@ Benötigt werden `gcc` und die GTK-3-Entwicklerpakete (`gtk3-devel` unter Fedora
 6. Der Hook erscheint im Tab **Hooks**. Jeder Klick auf „Gold +100“ bringt jetzt 1000 Gold; die Spalte „Letzte“ zeigt alt → vom Spiel geschrieben ⇒ gespeichert.
 
 Über den Tab **Hooks** lassen sich Hooks bearbeiten, pausieren und entfernen. Beim Entfernen, beim Prozesswechsel und beim Beenden von Hermes werden die ursprünglichen Bytes wiederhergestellt.
+
+### Gold nach einem Neustart wiederfinden (Pointer-Suche)
+
+Gemerkte Adressen werden pro Programm gespeichert. Damit „Gold“ nach einem Neustart des Spiels wieder stimmt, braucht der Eintrag eine Pointer-Chain:
+
+1. Rechtsklick auf „Gold“ → **Pointer suchen …** → **Neue Suche**. Gefunden wird u. a. `dummy_game+0x…  → 0x28 → 0x0` (`g_game` → Spieler → Gold), dazu einige Zufallstreffer.
+2. Im Spiel **New game** klicken (oder das Spiel neu starten) und das Gold im Scanner neu suchen – der Pointer-Dialog kann dabei offen bleiben. Das gefundene Ergebnis im Scanner markieren, im Pointer-Dialog **Aus Scan übernehmen** und **Mit dieser Adresse filtern**. Zufallstreffer, die nur durch die Anordnung im Speicher passten, fallen dabei heraus; ein reiner Neustart reicht dafür oft nicht, weil die Anordnung beim Start gleich bleibt.
+3. Die verbleibende Chain auswählen → **Pointer verwenden**. Ab jetzt zeigt die Adressliste das Gold nach jedem Neustart und nach jedem „New game“ automatisch richtig an.
+4. Wird die Schreibüberwachung aus diesem Eintrag gestartet, bekommt ein neuer Hook die Chain als Ziel: Er folgt dem Spieler auch nach „New game“ und nach einem Neustart.
+
+Liegt eine Adresse im statischen Speicher des Programms (eine globale Variable), speichert Hermes sie beim Merken direkt als Modul + Offset; eine Pointer-Suche ist dann nicht nötig, und der Pointer-Dialog weist darauf hin.
 
 ### Wie ein Hook funktioniert
 

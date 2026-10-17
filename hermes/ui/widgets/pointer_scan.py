@@ -23,6 +23,7 @@ from hermes.core.pointer import (
     PointerMap,
     ProcessMemory,
     ScanCancelled,
+    chain_for_static_address,
     module_bases,
     read_mappings,
     resolve_chain,
@@ -104,15 +105,24 @@ class PointerScanDialog(QDialog):
 
     The candidates are saved for the entry, so after the program was
     restarted they can be filtered with the address the value has now.
-    ``chain`` holds the chosen PointerChain after the dialog was accepted.
+
+    The dialog is not modal, so the value can be searched again with the
+    scanner while it is open; ``address_source()`` returns the address
+    selected there (or None). The chosen chain is emitted with
+    ``chain_chosen`` and kept in ``chain``.
     """
 
     # Widgets are created by _build_ui called from __init__.
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
-    def __init__(self, translations, repository, pid, entry, parent=None):
+    chain_chosen = pyqtSignal(object)
+
+    def __init__(self, translations, repository, pid, entry, parent=None,
+                 address_source=None):
         # pylint: disable=too-many-arguments
         super().__init__(parent)
+        self.setModal(False)
+        self.address_source = address_source
         self.translations = translations
         self.repository = repository
         self.pid = pid
@@ -122,7 +132,9 @@ class PointerScanDialog(QDialog):
         self._scan = self._load_scan()
         self.setWindowTitle(translations["pointer.title"].format(label=entry["label"]))
         self.resize(820, 620)
+        self._static_chain = None
         self._build_ui()
+        self._check_static(entry["address"])
         self._show_candidates()
 
     # ------------------------------------------------------------------
@@ -135,10 +147,27 @@ class PointerScanDialog(QDialog):
         hint.setStyleSheet("color: #8b949e;")
         layout.addWidget(hint)
 
+        # Shown when the address lies in a module's static data: no scan needed.
+        self.static_notice = QHBoxLayout()
+        self.static_label = WrappedLabel("")
+        self.static_label.setStyleSheet("color: #3fb950;")
+        self.btn_static = QPushButton(self.translations["pointer.static_use"])
+        self.btn_static.clicked.connect(self._use_static)
+        self.static_notice.addWidget(self.static_label, 1)
+        self.static_notice.addWidget(self.btn_static)
+        layout.addLayout(self.static_notice)
+
         form = QFormLayout()
         self.address_input = QLineEdit(f"0x{self.entry['address']:X}")
         self.address_input.setToolTip(self.translations["pointer.address_tooltip"])
-        form.addRow(self.translations["pointer.address"], self.address_input)
+        address_row = QHBoxLayout()
+        address_row.addWidget(self.address_input, 1)
+        self.btn_from_scan = QPushButton(self.translations["pointer.from_scan"])
+        self.btn_from_scan.setToolTip(self.translations["pointer.from_scan_tooltip"])
+        self.btn_from_scan.clicked.connect(self.take_scan_address)
+        self.btn_from_scan.setVisible(self.address_source is not None)
+        address_row.addWidget(self.btn_from_scan)
+        form.addRow(self.translations["pointer.address"], address_row)
         self.depth_input = QSpinBox()
         self.depth_input.setRange(1, 7)
         self.depth_input.setValue(self._scan.max_depth if self._scan else 5)
@@ -265,6 +294,36 @@ class PointerScanDialog(QDialog):
         item = self.table.item(row, 0)
         return None if item is None else item.data(Qt.ItemDataRole.UserRole)
 
+    def _check_static(self, address):
+        """Show whether ``address`` is static, i.e. needs no pointer at all."""
+        try:
+            self._static_chain = chain_for_static_address(read_mappings(self.pid), address)
+        except (OSError, TypeError):
+            self._static_chain = None
+        static = self._static_chain is not None
+        if static:
+            self.static_label.setText(self.translations["pointer.static"].format(
+                chain=self._static_chain.text()
+            ))
+        self.static_label.setVisible(static)
+        self.btn_static.setVisible(static)
+        return static
+
+    def _use_static(self):
+        if self._static_chain is not None and self._worker is None:
+            self._choose(self._static_chain)
+
+    def take_scan_address(self):
+        """Use the address selected in the scanner results."""
+        address = self.address_source() if self.address_source is not None else None
+        if address is None:
+            self.status_label.setText(self.translations["pointer.from_scan_none"])
+            return
+        self.address_input.setText(f"0x{address:X}")
+        self.status_label.setText(self.translations["pointer.from_scan_done"].format(
+            address=f"0x{address:X}"
+        ))
+
     def _target(self):
         try:
             return int(self.address_input.text().strip(), 0)
@@ -284,6 +343,7 @@ class PointerScanDialog(QDialog):
         except ValueError:
             self.status_label.setText(self.translations["pointer.invalid_input"])
             return
+        self._check_static(target)
         if self._scan is not None and self._scan.chains:
             answer = QMessageBox.question(
                 self,
@@ -340,7 +400,9 @@ class PointerScanDialog(QDialog):
         self._save()
         message = self.translations["pointer.found"].format(count=len(chains))
         if not chains:
-            message = self.translations["pointer.none_found"]
+            message = self.translations[
+                "pointer.none_found_static" if self._static_chain else "pointer.none_found"
+            ]
         self._show_candidates(message)
 
     def _filter_done(self, chains):
@@ -388,7 +450,11 @@ class PointerScanDialog(QDialog):
         chain = self._selected_chain()
         if chain is None or self._worker is not None:
             return
+        self._choose(chain)
+
+    def _choose(self, chain):
         self.chain = chain
+        self.chain_chosen.emit(chain)
         self.accept()
 
     def reject(self):  # pylint: disable=invalid-name

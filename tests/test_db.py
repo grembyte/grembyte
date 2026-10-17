@@ -191,3 +191,30 @@ def test_addresses_with_pointer_scan(tmp_path):
     assert [a.label for a in repository.list_addresses(process_id)] == ["Score"]
     assert repository.get_pointer_scan(gold) is None
     engine.dispose()
+
+
+def test_init_db_adds_new_nullable_columns(tmp_path):
+    # pylint: disable=import-outside-toplevel
+    import sqlite3
+
+    from hermes.db.engine import init_db
+
+    path = tmp_path / "old.db"
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE processes (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL)")
+    connection.execute("INSERT INTO processes (name) VALUES ('game')")
+    connection.commit()
+    connection.close()
+
+    engine = create_engine(f"sqlite:///{path}")
+    init_db(engine)
+    init_db(engine)
+
+    connection = sqlite3.connect(path)
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(hooks)")}
+    process_columns = {row[1] for row in connection.execute("PRAGMA table_info(processes)")}
+    assert "pointer" in columns
+    assert "created_at" in process_columns
+    assert connection.execute("SELECT name FROM processes").fetchall() == [("game",)]
+    connection.close()
+    engine.dispose()

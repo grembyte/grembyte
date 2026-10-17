@@ -43,6 +43,7 @@ class Hook(Base):  # pylint: disable=too-few-public-methods
     enabled = Column(Boolean, nullable=False, default=True)
     caller_depth = Column(Integer, nullable=False, default=1)
     callers = Column(JSON, nullable=False, default=list)
+    pointer = Column(JSON, nullable=True)                # PointerChain.to_json() of the target
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     process = relationship("Process", back_populates="hooks")

@@ -30,7 +30,16 @@ typedef struct { int32_t hp; int32_t gold; } Player;
 typedef struct { char pad[0x40]; Player *player; } World;
 typedef struct { char pad[0x18]; World *world; } Game;
 Game *g_game;
+Player *g_enemy;
 int32_t g_score = 7;
+volatile int g_events;
+
+/* Shared code: changes the gold of the player and of the enemy. g_events keeps
+   the function long enough for the 5-byte jump of a hook. */
+__attribute__((noinline)) void add_gold(Player *p, int32_t amount) {
+    p->gold += amount;
+    g_events++;
+}
 
 int main(void) {
     /* A different number of allocations per run moves the objects around. */
@@ -42,6 +51,8 @@ int main(void) {
     g_game->world = calloc(1, sizeof(World));
     g_game->world->player = calloc(1, sizeof(Player));
     g_game->world->player->gold = 1234;
+    g_enemy = calloc(1, sizeof(Player));
+    g_enemy->gold = 50;
     printf("%d %p %p\n", getpid(), (void *)&g_game->world->player->gold, (void *)&g_score);
     fflush(stdout);
     char cmd[16];
@@ -54,8 +65,13 @@ int main(void) {
             g_game->world->player = calloc(1, sizeof(Player));
             g_game->world->player->gold = old->gold;
             free(old);
+        } else if (strcmp(cmd, "add") == 0) {
+            add_gold(g_game->world->player, value);
+        } else if (strcmp(cmd, "enemy") == 0) {
+            add_gold(g_enemy, value);
         }
-        printf("%p\n", (void *)&g_game->world->player->gold);
+        printf("%p %d %d\n", (void *)&g_game->world->player->gold,
+               g_game->world->player->gold, g_enemy->gold);
         fflush(stdout);
     }
     return 0;
@@ -73,10 +89,15 @@ class _Target:
         self.gold = int(gold, 16)
         self.score = int(score, 16)
 
-    def new_level(self, allocations):
-        self.process.stdin.write(f"level {allocations}\n")
+    def send(self, command, value):
+        """Run a command; return (address of the player's gold, gold, enemy gold)."""
+        self.process.stdin.write(f"{command} {value}\n")
         self.process.stdin.flush()
-        return int(self.process.stdout.readline(), 16)
+        address, gold, enemy = self.process.stdout.readline().split()
+        return int(address, 16), int(gold), int(enemy)
+
+    def new_level(self, allocations):
+        return self.send("level", allocations)[0]
 
     def close(self):
         self.process.kill()
@@ -358,4 +379,157 @@ def test_address_list_survives_restart(binary, qt_app, sessions, monkeypatch):
         assert [entry.label for entry in saved] == ["Gold"] and saved[0].pointer is None
     finally:
         second.close()
+        window.close()
+
+
+
+def _add_gold_write_offset(binary):
+    """Module offset of the instruction in add_gold that writes the gold."""
+    dump = subprocess.run(["objdump", "-d", "--no-show-raw-insn", str(binary)],
+                          check=True, capture_output=True, text=True).stdout
+    body = dump.split("<add_gold>:", 1)[1].split("\n\n", 1)[0]
+    line = next(line for line in body.splitlines() if "add" in line and "(%rdi)" in line)
+    return int(line.split(":")[0], 16)
+
+
+def test_hook_dialog_with_pointer_target(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets.hooks import HookDialog
+
+    chain = PointerChain("game", 0x3070, (0x18, 0x40, 0x4))
+    dialog = HookDialog(load_translations("de"), "0x1000", "int32", "game+0x10", pointer=chain)
+
+    assert not hasattr(dialog, "caller_depth_input")
+    dialog._accept()  # pylint: disable=protected-access
+    assert dialog.caller_depth == 0
+
+
+@requires_target
+def test_pointer_hook_survives_restart_and_ignores_enemy(binary, qt_app, sessions):
+    # pylint: disable=import-outside-toplevel,protected-access,too-many-locals
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.hooks.engine import HookSpec
+    from hermes.hooks.transforms import MultiplyTransform
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets.hooks import HookPanel
+
+    translations = load_translations("de")
+    repository = HookRepository(sessions)
+    process_id = repository.get_or_create_process("target", str(binary))
+    chain = _gold_chain(binary)
+    status = lambda panel: panel.table.item(0, 4).text()  # pylint: disable=unnecessary-lambda-assignment
+
+    first = _Target(binary)
+    panel = HookPanel(translations, repository=repository)
+    try:
+        panel.set_process(first.pid, process_id)
+        panel.add_hook(HookSpec(
+            None, "int32", MultiplyTransform(3),
+            module="target", module_offset=_add_gold_write_offset(binary),
+            pointer=chain, caller_depth=0, label="Gold",
+        ), "target+?")
+        _wait(qt_app, lambda: status(panel) != "Wird installiert …")
+        assert status(panel) == "Aktiv"
+        assert panel.table.item(0, 1).text() == "↳ " + chain.text()
+
+        assert first.send("add", 10)[1:] == (1234 + 30, 50)
+        # Same code, other object: the pointer target tells them apart.
+        assert first.send("enemy", 5)[1:] == (1264, 55)
+        # The game allocates a new player object; the hook follows the chain.
+        first.new_level(10)
+        assert first.send("add", 10)[1:] == (1294, 55)
+        [saved] = repository.list_hooks(process_id)
+        assert PointerChain.from_json(saved.pointer) == chain
+    finally:
+        panel.shutdown(timeout_ms=None)
+        first.close()
+
+    second = _Target(binary)
+    panel = HookPanel(translations, repository=repository)
+    try:
+        panel.set_process(second.pid, process_id)
+        _wait(qt_app, lambda: status(panel) != "Wird installiert …")
+        assert status(panel) == "Aktiv"
+        assert second.send("add", 10)[1:] == (1264, 50)
+        assert second.send("enemy", 5)[1:] == (1264, 55)
+    finally:
+        panel.shutdown(timeout_ms=None)
+        second.close()
+
+
+@requires_target
+def test_pointer_dialog_recognizes_static_address(binary, qt_app, sessions):
+    # pylint: disable=import-outside-toplevel,protected-access,unused-argument
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+
+    translations = load_translations("de")
+    repository = AddressRepository(sessions)
+    process_id = HookRepository(sessions).get_or_create_process("target", str(binary))
+    target = _Target(binary)
+    try:
+        def dialog_for(address):
+            entry_id = repository.add_address(process_id, label="x", value_type="int32",
+                                              address=address)
+            entry = {"id": entry_id, "label": "x", "address": address, "type": "int32"}
+            return PointerScanDialog(translations, repository, target.pid, entry)
+
+        static = dialog_for(target.score)
+        assert static.static_label.isVisibleTo(static)
+        assert "target+0x" in static.static_label.text()
+        static._use_static()
+        assert static.chain == PointerChain("target", static._static_chain.base_offset)
+        assert static.chain.offsets == ()
+
+        heap = dialog_for(target.gold)
+        assert not heap.static_label.isVisibleTo(heap)
+        assert not heap.btn_static.isVisibleTo(heap)
+    finally:
+        target.close()
+
+
+@requires_target
+def test_pointer_dialog_stays_open_while_scanning(binary, qt_app, sessions, monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui import main_window
+
+    monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
+    monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
+    window = main_window.MainWindow("de")
+    target = _Target(binary)
+    try:
+        window._current_pid = target.pid
+        window._process_id = HookRepository(sessions).get_or_create_process("target", "t")
+        window._refresh_timer.stop()
+        window._add_tracked_address({"address": hex(target.gold), "address_value": target.gold,
+                                     "type": "int32", "value": "1234"})
+        window._open_pointer_scan(0)
+        entry_id = window._address_meta(0)["id"]
+        dialog = window._pointer_dialogs[entry_id]
+        assert not dialog.isModal() and dialog.isVisible()
+
+        # The scanner can be used meanwhile; its selection fills the address.
+        dialog.take_scan_address()
+        assert "zuerst ein Ergebnis" in dialog.status_label.text()
+        moved = target.new_level(10)
+        window._on_scan_results([{"address": moved, "type": "int32", "value": 1234}])
+        window.result_table.selectRow(0)
+        dialog.take_scan_address()
+        assert dialog.address_input.text() == f"0x{moved:X}"
+
+        window._open_pointer_scan(0)
+        assert window._pointer_dialogs[entry_id] is dialog
+
+        dialog._choose(_gold_chain(binary))
+        qt_app.processEvents()
+        assert window._address_meta(0)["pointer"] == _gold_chain(binary)
+        assert window.addr_table.item(0, 1).text() == f"0x{moved:X}"
+        assert entry_id not in window._pointer_dialogs
+    finally:
+        target.close()
         window.close()

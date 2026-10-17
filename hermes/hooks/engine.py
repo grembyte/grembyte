@@ -26,6 +26,11 @@ Return addresses are found by scanning the stack for values that follow a
 call instruction, so the same caller signature can show up for other
 addresses; the agent reports that as ambiguous.
 
+A hook with a pointer chain (``module + base_offset``, then dereference and
+add each offset) resolves it on every write and only applies to writes of the
+address it leads to. That works the same after a restart, follows objects the
+game allocates anew and tells player and enemy apart in shared code.
+
 In debug mode a hook reports every call (values, caller, ``ctx.log()``
 output, errors with stack) and every write it skipped, with the reason.
 At most ``MAX_DEBUG_EVENTS`` events are sent per 100 ms; the rest is counted.
@@ -40,6 +45,7 @@ from dataclasses import dataclass, field
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core.pointer import PointerChain
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS, watch_size_for_type
 from hermes.hooks.transforms import ValueTransform
 
@@ -508,6 +514,38 @@ function dynamicTarget(hook, write) {
   return { target: toPointer(address) };
 }
 
+function resolvePointer(pointer) {
+  if (pointer.base === null) {
+    const module = Process.findModuleByName(pointer.module);
+    if (module === null)
+      return null;
+    pointer.base = module.base;
+  }
+  try {
+    let address = pointer.base.add(pointer.baseOffset);
+    for (const offset of pointer.offsets) {
+      const next = address.readPointer();
+      if (next.isNull())
+        return null;
+      address = next.add(offset);
+    }
+    return address;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function pointerTarget(hook, write) {
+  const target = resolvePointer(hook.pointer);
+  if (target === null)
+    return { skip: 'pointer' };
+  const address = write.address();
+  if (address !== null
+      && !overlaps(address, write.site.writeOp.size, toBigInt(target), hook.io.size))
+    return { skip: 'address' };
+  return { target };
+}
+
 function pendingWrite(site, block) {
   // Registers, address and caller signatures are computed at most once per write.
   let regs = null;
@@ -536,8 +574,8 @@ function onBefore(site, block) {
     for (const hook of site.hooks.values()) {
       if (!hook.enabled)
         continue;
-      const { target, skip } = hook.target === null
-        ? dynamicTarget(hook, write) : fixedTarget(hook, write);
+      const { target, skip } = hook.pointer !== null ? pointerTarget(hook, write)
+        : hook.target === null ? dynamicTarget(hook, write) : fixedTarget(hook, write);
       if (target !== undefined) {
         hook.pending.set(threadId, {
           target,
@@ -702,6 +740,12 @@ function addHook(spec) {
     valueType: spec.valueType,
     io,
     filterAddress: spec.filterAddress,
+    pointer: spec.pointer === null ? null : {
+      module: spec.pointer.module,
+      baseOffset: spec.pointer.baseOffset,
+      offsets: spec.pointer.offsets,
+      base: null
+    },
     callerDepth: spec.callerDepth,
     callers: resolveCallers(spec.callers),
     foreignCallers: new Set(),
@@ -819,6 +863,9 @@ class HookSpec:
     ``caller_depth`` is the number of return addresses that identify a caller
     (0 disables caller learning); ``callers`` holds the learned signatures as
     lists of ``(module, offset)`` frames.
+
+    With a ``pointer`` (PointerChain) the hook targets whatever address the
+    chain leads to at each write; caller learning is not needed then.
     """
 
     # pylint: disable=too-many-instance-attributes
@@ -834,6 +881,7 @@ class HookSpec:
     enabled: bool = True
     caller_depth: int = 1
     callers: list = field(default_factory=list)
+    pointer: PointerChain | None = None
     label: str = field(default="", compare=False)
 
     def __post_init__(self):
@@ -865,6 +913,11 @@ class HookSpec:
             "enabled": self.enabled,
             "callerDepth": self.caller_depth,
             "callers": [[list(frame) for frame in frames] for frames in self.callers],
+            "pointer": None if self.pointer is None else {
+                "module": self.pointer.module,
+                "baseOffset": self.pointer.base_offset,
+                "offsets": list(self.pointer.offsets),
+            },
             "transform": self.transform.to_agent(),
         }
 
