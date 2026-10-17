@@ -3,7 +3,7 @@
 import os
 import subprocess
 
-from hermes.core.process import process_start_time
+from hermes.core.process import is_wine_process, process_start_time
 
 
 def _write_stat(root, pid, name, state, start_time):
@@ -37,3 +37,25 @@ def test_running_and_exited_real_process():
         child.kill()
         child.wait()
     assert process_start_time(child.pid) is None
+
+
+def _link_exe(root, pid, target):
+    (root / str(pid)).mkdir()
+    (root / str(pid) / "exe").symlink_to(target)
+
+
+def test_detects_wine_and_proton_loaders(tmp_path):
+    proton = "/steam/GE-Proton11-7/files/lib/wine"
+    _link_exe(tmp_path, 1, f"{proton}/i386-unix/wine-preloader")
+    _link_exe(tmp_path, 2, f"{proton}/x86_64-unix/wine64-preloader")
+    _link_exe(tmp_path, 3, "/usr/bin/wine64")
+    _link_exe(tmp_path, 4, "/games/PillarsOfEternity")
+    _link_exe(tmp_path, 5, "/usr/bin/winecfg")
+
+    assert is_wine_process(1, tmp_path)
+    assert is_wine_process(2, tmp_path)
+    assert is_wine_process(3, tmp_path)
+    assert not is_wine_process(4, tmp_path)
+    assert not is_wine_process(5, tmp_path)
+    assert not is_wine_process(6, tmp_path)
+    assert not is_wine_process(os.getpid())

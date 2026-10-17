@@ -52,6 +52,7 @@ import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core.pointer import PointerChain
+from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS, watch_size_for_type
 from hermes.hooks.transforms import ValueTransform
 
@@ -1440,6 +1441,8 @@ class HookWorker(QThread):
         session = None
         script = None
         try:
+            if is_wine_process(self.pid):
+                raise RuntimeError(WINE_FRIDA_ERROR)
             session = frida.attach(self.pid)
             session.on("detached", self._on_session_detached)
             script = session.create_script(build_agent_source())

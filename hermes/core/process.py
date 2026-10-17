@@ -20,3 +20,27 @@ def process_start_time(pid, proc_root="/proc"):
     if fields[0] in {"Z", "X", "x"}:
         return None
     return int(fields[19])
+
+
+def is_wine_process(pid, proc_root="/proc"):
+    """Return True if ``pid`` runs under Wine or Proton.
+
+    Wine starts Windows programs through its static ``wine-preloader``
+    (``wine64-preloader``), or through the ``wine`` loader itself.
+    """
+    try:
+        name = (Path(proc_root) / str(pid) / "exe").readlink().name
+    except OSError:
+        return False
+    return name in {"wine", "wine64"} or (
+        name.startswith("wine") and name.endswith("-preloader"))
+
+
+# Frida's agent looks up the main program through the program headers that
+# the kernel recorded for the preloader. The preloader loads Wine itself, so
+# nothing is mapped there and the agent crashes the target before any script
+# runs (seen with Frida 17.23 and 17.24 on Proton 11).
+WINE_FRIDA_ERROR = (
+  "Frida cannot attach to Wine/Proton processes: its agent crashes the game "
+  "during injection."
+)

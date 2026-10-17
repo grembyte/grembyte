@@ -10,6 +10,7 @@ import threading
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
 from hermes.core.value_types import VALUE_TYPES
 
 
@@ -281,6 +282,8 @@ class WriteWatchWorker(QThread):
         session = None
         script = None
         try:
+            if is_wine_process(self.pid):
+                raise RuntimeError(WINE_FRIDA_ERROR)
             session = frida.attach(self.pid)
             session.on("detached", self._on_session_detached)
             script = session.create_script(
