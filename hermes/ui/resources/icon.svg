@@ -1,0 +1,54 @@
+<!-- hermes-hook app icon: a fishing hook whose shank sweeps into the wing of Hermes (transparent background) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="120 97 247 247">
+  <defs>
+    <linearGradient id="steel" gradientUnits="userSpaceOnUse" x1="350" y1="100" x2="150" y2="340">
+      <stop offset="0" stop-color="#f4f7fb"/>
+      <stop offset="0.45" stop-color="#c6d1de"/>
+      <stop offset="0.78" stop-color="#82a0c4"/>
+      <stop offset="1" stop-color="#4a6fa0"/>
+    </linearGradient>
+    <!-- blue outer half of shank and bend, fading in towards the top -->
+    <linearGradient id="outer" gradientUnits="userSpaceOnUse" x1="0" y1="215" x2="0" y2="300">
+      <stop offset="0" stop-color="#355d93" stop-opacity="0"/>
+      <stop offset="1" stop-color="#355d93" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f5e2b8"/>
+      <stop offset="1" stop-color="#d8b97c"/>
+    </linearGradient>
+  </defs>
+
+  <!-- eye and stem; the stem ends in a curve parallel to the feather edge, 6 units away -->
+  <path fill="url(#steel)" fill-rule="evenodd"
+        d="M204.5 132 A17.5 17.5 0 1 0 239.5 132 A17.5 17.5 0 1 0 204.5 132 Z
+           M213.5 132 A8.5 8.5 0 1 0 230.5 132 A8.5 8.5 0 1 0 213.5 132 Z"/>
+  <path d="M217 145 L227 145 L227 169.9 C223.1 174.2, 219.7 179, 217 184.1 Z" fill="url(#steel)"/>
+
+  <!-- hook body: top feather, shank, bend, point with barb -->
+  <path fill="url(#steel)" d="
+    M352 103
+    C300 122, 245 156, 228 178
+    C218 191, 215 205, 215 222
+    L215 290
+    A32.5 32.5 0 0 1 150 290
+    L150 284 L166 293 L135 238 L135 290
+    A47.5 47.5 0 0 0 230 290
+    L230 230
+    C232 212, 245 197, 262 188
+    C290 174, 328 152, 340 132
+    C345 122, 350 112, 352 103 Z"/>
+  <!-- shaded lower face of the feather and right side of the shank -->
+  <path fill="#5d7697" fill-opacity="0.4" d="
+    M342 116
+    C302 138, 254 168, 238 194
+    C232 204, 230 214, 230 230
+    C232 212, 245 197, 262 188
+    C290 174, 328 152, 340 132 Z"/>
+  <path fill="url(#outer)" d="M222.5 215 L230 215 L230 290 A47.5 47.5 0 0 1 135 290 L142.5 290 A40 40 0 0 0 222.5 290 Z"/>
+
+  <!-- golden feathers -->
+  <path fill="url(#gold)" d="M243 236 C258 210, 296 184, 342 163 C336 186, 316 205, 290 219 C272 227, 256 232, 243 236 Z"/>
+  <path fill="#a0804a" fill-opacity="0.42" d="M243 236 C268 218, 300 201, 327 186 C317 203, 304 211, 290 219 C272 227, 256 232, 243 236 Z"/>
+  <path fill="url(#gold)" d="M236 259 C252 238, 284 226, 313 220 C307 240, 292 252, 272 256 C258 259, 246 260, 236 259 Z"/>
+  <path fill="#a0804a" fill-opacity="0.42" d="M236 259 C258 247, 280 238, 300 233 C293 246, 284 252, 272 256 C258 259, 246 260, 236 259 Z"/>
+</svg>

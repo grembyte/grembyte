@@ -2,12 +2,17 @@
 
 import signal
 import sys
+from pathlib import Path
 
-from PyQt6.QtCore import QTimer  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import QStandardPaths, QTimer  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
 from hermes.db.engine import init_db
 from hermes.ui.main_window import MainWindow
+
+ICON_PATH = Path(__file__).parent / "ui" / "resources" / "icon.svg"
+DESKTOP_FILE_NAME = "hermes-hook"
 
 
 def main() -> int:
@@ -16,6 +21,14 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setWindowIcon(QIcon(str(ICON_PATH)))
+    # Wayland shows the icon of the app's .desktop file. Only name it when it
+    # is installed; otherwise the desktop portal rejects the app ID with a warning.
+    if QStandardPaths.locate(
+        QStandardPaths.StandardLocation.ApplicationsLocation,
+        f"{DESKTOP_FILE_NAME}.desktop",
+    ):
+        app.setDesktopFileName(DESKTOP_FILE_NAME)
     window = MainWindow()
     window.show()
 
