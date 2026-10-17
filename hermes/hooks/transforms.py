@@ -26,10 +26,16 @@ looked up as ``transform.<kind>`` and ``transform.<kind>.<parameter>`` in the
 translation catalogs and fall back to ``title`` / the parameter name.
 ``ScriptTransform`` accepts an arbitrary function source for one-off
 experiments.
+
+Hook templates maintained in the database are ``TransformDefinition``
+objects (name, function source, parameters); ``TemplateTransform`` applies
+one with concrete parameter values. A hook keeps its own copy of the
+definition, so later template changes only reach it when they are adopted.
 """
 
 import math
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 
 
 _TRANSFORMS = {}
@@ -41,6 +47,8 @@ class TransformParameter:
 
     ``kind`` is ``"number"``, ``"choice"`` (one of ``choices``) or ``"code"``
     (multi-line text). ``optional`` parameters may be left empty (``None``).
+    ``label`` and ``choice_labels`` (parallel to ``choices``) are display
+    texts used by templates; built-in transforms use the translations.
     """
 
     name: str
@@ -48,6 +56,72 @@ class TransformParameter:
     default: object = None
     choices: tuple = ()
     optional: bool = False
+    label: str = ""
+    choice_labels: tuple = ()
+
+    def choice_label(self, index):
+        """Return the display text of ``choices[index]``."""
+        if index < len(self.choice_labels) and self.choice_labels[index]:
+            return self.choice_labels[index]
+        return str(self.choices[index])
+
+    def to_json(self):
+        return {
+            "name": self.name,
+            "label": self.label,
+            "kind": self.kind,
+            "default": self.default,
+            "optional": self.optional,
+            "choices": [
+                [choice, self.choice_label(index)]
+                for index, choice in enumerate(self.choices)
+            ],
+        }
+
+    @classmethod
+    def from_json(cls, data):
+        choices = data.get("choices") or []
+        return cls(
+            name=data["name"],
+            kind=data.get("kind", "number"),
+            default=data.get("default"),
+            choices=tuple(choice for choice, _label in choices),
+            optional=bool(data.get("optional", False)),
+            label=data.get("label", ""),
+            choice_labels=tuple(label for _choice, label in choices),
+        )
+
+
+PARAMETER_NAME = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+
+
+@dataclass(frozen=True)
+class TransformDefinition:
+    """A manipulation as maintained in a hook template or copied into a hook.
+
+    Two definitions are equal when name, source and parameters match;
+    ``description`` and ``template_id`` (the template it stems from) do not
+    count.
+    """
+
+    name: str
+    source: str
+    parameters: tuple = ()
+    description: str = field(default="", compare=False)
+    template_id: int | None = field(default=None, compare=False)
+
+    def parameters_json(self):
+        return [parameter.to_json() for parameter in self.parameters]
+
+    @classmethod
+    def from_json(cls, name, source, parameters, description="", template_id=None):
+        return cls(
+            name=name,
+            source=source,
+            parameters=tuple(TransformParameter.from_json(p) for p in parameters or []),
+            description=description or "",
+            template_id=template_id,
+        )
 
 
 def register_transform(cls):
@@ -239,3 +313,84 @@ class ScriptTransform(ValueTransform):
     def describe(self):
         first_line = self.source.strip().splitlines()[0]
         return f"script({first_line})"
+
+
+class TemplateTransform(ValueTransform):
+    """Apply a ``TransformDefinition`` with concrete parameter values."""
+
+    kind = "template"
+
+    def __init__(self, definition, **params):
+        self.definition = definition
+        self.source = definition.source
+        self.parameters = definition.parameters
+        super().__init__(**params)
+
+    def validate(self, params):
+        values = {}
+        for parameter in self.parameters:
+            value = params.get(parameter.name, parameter.default)
+            name = parameter.label or parameter.name
+            if value is None:
+                if not parameter.optional and parameter.kind != "code":
+                    raise ValueError(f"{name} needs a value")
+            elif parameter.kind == "number":
+                _require_number(name, value)
+            elif parameter.kind == "choice" and value not in parameter.choices:
+                raise ValueError(f"{name} must be one of {', '.join(map(str, parameter.choices))}")
+            values[parameter.name] = value
+        return values
+
+    def to_agent(self):
+        return {"kind": self.definition.name, "source": self.source, "params": self.params}
+
+    def describe(self):
+        details = ", ".join(
+            f"{key}={value}" for key, value in self.params.items() if value is not None
+        )
+        return f"{self.definition.name}({details})"
+
+
+def as_template_transform(transform):
+    """Return ``transform`` as a TemplateTransform, e.g. to store its definition."""
+    if isinstance(transform, TemplateTransform):
+        return transform
+    parameters = tuple(p for p in type(transform).parameters if p.name in transform.params)
+    definition = TransformDefinition(transform.kind, transform.source.strip(), parameters)
+    return TemplateTransform(definition, **transform.params)
+
+
+# Built-in transforms offered as initial hook templates, keyed by seed key.
+EXAMPLE_TEMPLATE_KINDS = ("multiply", "freeze", "clamp")
+
+
+def example_templates(translations):
+    """Return the example template definitions labelled in the UI language."""
+    def tr(key, fallback):
+        return translations.get(key, fallback)
+
+    examples = {}
+    for kind in EXAMPLE_TEMPLATE_KINDS:
+        cls = _TRANSFORMS[kind]
+        parameters = tuple(
+            TransformParameter(
+                name=parameter.name,
+                kind=parameter.kind,
+                default=parameter.default,
+                choices=parameter.choices,
+                optional=parameter.optional,
+                label=tr(f"transform.{kind}.{parameter.name}", parameter.name),
+                choice_labels=tuple(
+                    tr(f"transform.choice.{choice}", str(choice))
+                    for choice in parameter.choices
+                ),
+            )
+            for parameter in cls.parameters
+        )
+        examples[kind] = TransformDefinition(
+            name=tr(f"transform.{kind}", cls.title or kind),
+            source=cls.source.strip(),
+            parameters=parameters,
+            description=tr(f"transform.{kind}.description", ""),
+        )
+    return examples

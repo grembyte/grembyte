@@ -14,6 +14,9 @@ from hermes.hooks.transforms import (
     FreezeTransform,
     MultiplyTransform,
     ScriptTransform,
+    TemplateTransform,
+    TransformDefinition,
+    TransformParameter,
     ValueTransform,
     available_transforms,
     create_transform,
@@ -316,15 +319,22 @@ def test_hook_worker_rewrites_values(tmp_path, qt_app, optimization):
 
 # --- UI --------------------------------------------------------------------
 
-def test_hook_dialog_lists_all_registered_transforms(qt_app, translations):
+def _template(template_id=1, source="ctx => ctx.new * ctx.params.factor", default=2):
+    return TransformDefinition(
+        "Faktor", source, (TransformParameter("factor", default=default, label="Faktor"),),
+        template_id=template_id,
+    )
+
+
+def test_hook_dialog_lists_example_templates(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from hermes.ui.widgets.hooks import HookDialog
 
     dialog = HookDialog(translations, "0x1000", "int32", "game+0x10")
 
-    kinds = [dialog.kind_combo.itemData(i) for i in range(dialog.kind_combo.count())]
-    assert kinds == list(available_transforms())
-    assert dialog.kind_combo.itemText(0) == "Multiplikator"
+    names = [dialog.template_combo.itemText(i) for i in range(dialog.template_combo.count())]
+    assert names == ["Multiplikator", "Fester Wert", "Begrenzen"]
+    assert not dialog.template_notice.isVisibleTo(dialog)
 
 
 def test_hook_dialog_builds_transform_from_form(qt_app, translations):
@@ -339,8 +349,10 @@ def test_hook_dialog_builds_transform_from_form(qt_app, translations):
     dialog._accept()  # pylint: disable=protected-access
 
     assert dialog.result() == dialog.DialogCode.Accepted
-    assert isinstance(dialog.transform, MultiplyTransform)
+    assert isinstance(dialog.transform, TemplateTransform)
+    assert dialog.transform.definition.name == "Multiplikator"
     assert dialog.transform.params == {"factor": 16, "direction": "increase"}
+    assert dialog.transform.source == MultiplyTransform.source.strip()
     assert dialog.label == "Gold"
 
 
@@ -360,30 +372,99 @@ def test_hook_dialog_sets_caller_depth_only_when_creating(qt_app, translations):
 
 
 def test_hook_dialog_reports_invalid_input(qt_app, translations):
-    # pylint: disable=import-outside-toplevel,unused-argument
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from hermes.ui.widgets.hooks import HookDialog
 
     dialog = HookDialog(translations, "0x1000", "int32", "game+0x10")
-    dialog.kind_combo.setCurrentIndex(dialog.kind_combo.findData("clamp"))
+    dialog.forms.currentWidget()._editors["factor"][1].setText("viel")
 
-    dialog._accept()  # pylint: disable=protected-access
+    dialog._accept()
 
     assert dialog.transform is None
-    assert "minimum" in dialog.error_label.text()
+    assert "Faktor" in dialog.error_label.text()
 
 
-def test_hook_dialog_prefills_existing_transform(qt_app, translations):
+def test_hook_dialog_prefills_transform_without_template(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from hermes.ui.widgets.hooks import HookDialog
 
     dialog = HookDialog(
         translations, "0x1000", "int32", "game+0x10",
-        transform=ScriptTransform("ctx => 7"),
+        transform=FreezeTransform(7),
     )
 
-    assert dialog.kind_combo.currentData() == "script"
-    editor = dialog.forms.currentWidget()._editors["source"][1]  # pylint: disable=protected-access
-    assert editor.toPlainText() == "ctx => 7"
+    assert dialog.template_combo.currentIndex() == 0
+    assert dialog.template_combo.currentText() == "freeze"
+    editor = dialog.forms.currentWidget()._editors["value"][1]  # pylint: disable=protected-access
+    assert editor.text() == "7"
+    assert dialog.template_state() is None
+
+
+def test_hook_dialog_uses_hook_copy_of_unchanged_template(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.widgets.hooks import HookDialog
+
+    dialog = HookDialog(
+        translations, "0x1000", "int32", "game+0x10",
+        transform=TemplateTransform(_template(), factor=5),
+        templates=[_template(), _template(2)],
+    )
+
+    assert dialog.template_combo.count() == 2
+    assert dialog.template_state() is None
+    assert not dialog.template_notice.isVisibleTo(dialog)
+
+
+def test_hook_dialog_offers_changed_template(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from hermes.ui.widgets.hooks import HookDialog
+
+    changed = TransformDefinition(
+        "Faktor neu", "ctx => ctx.old + ctx.delta * ctx.params.factor",
+        (
+            TransformParameter("factor", default=2, label="Faktor"),
+            TransformParameter("limit", optional=True, label="Grenze"),
+        ),
+        template_id=1,
+    )
+    dialog = HookDialog(
+        translations, "0x1000", "int32", "game+0x10",
+        transform=TemplateTransform(_template(), factor=5),
+        templates=[changed],
+    )
+
+    assert dialog.template_state() == "changed"
+    assert dialog.template_notice.isVisibleTo(dialog)
+    assert "Faktor neu" in dialog.template_notice_label.text()
+
+    dialog._adopt_template()
+
+    assert dialog.template_state() is None
+    assert not dialog.template_notice.isVisibleTo(dialog)
+    assert dialog.template_combo.currentText() == "Faktor neu"
+    dialog._accept()
+    assert dialog.transform.definition == changed
+    assert dialog.transform.definition.template_id == 1
+    assert dialog.transform.params == {"factor": 5, "limit": None}
+
+
+def test_hook_dialog_reports_deleted_template(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.widgets.hooks import HookDialog
+
+    dialog = HookDialog(
+        translations, "0x1000", "int32", "game+0x10",
+        transform=TemplateTransform(_template(7), factor=5),
+        templates=[_template(2)],
+    )
+
+    assert dialog.template_state() == "deleted"
+    assert dialog.template_combo.count() == 2
+    assert dialog.template_notice.isVisibleTo(dialog)
+    assert not dialog.btn_adopt_template.isVisibleTo(dialog)
+
+    dialog.template_combo.setCurrentIndex(1)
+    assert not dialog.template_notice.isVisibleTo(dialog)
 
 
 @requires_target

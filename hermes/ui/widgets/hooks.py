@@ -25,8 +25,13 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
+from hermes.db.repository.hooks import hook_transform
 from hermes.hooks.engine import MAX_CALLER_DEPTH, HookSpec, HookWorker
-from hermes.hooks.transforms import available_transforms, create_transform
+from hermes.hooks.transforms import (
+    TemplateTransform,
+    as_template_transform,
+    example_templates,
+)
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.table import set_row_height
 
@@ -44,68 +49,49 @@ _STATUS_COLORS = {
 }
 
 
-def _tr(translations, key, fallback):
-    return translations.get(key, fallback)
-
-
-def transform_title(translations, transform_class):
-    """Return the display name of a transform class."""
-    return _tr(
-        translations,
-        f"transform.{transform_class.kind}",
-        transform_class.title or transform_class.kind,
-    )
-
-
-def _parse_number(text):
+def parse_number(text):
+    """Parse an int (also hex, e.g. 0x10) or a float."""
     try:
         return int(text, 0)
     except ValueError:
         return float(text)
 
 
-def _format_number(value):
+def format_number(value):
+    """Format a number for an input field."""
     if isinstance(value, float):
         return f"{value:g}"
     return str(value)
 
 
 class _TransformForm(QWidget):
-    """Input form generated from a transform's parameter declarations."""
+    """Input form generated from a transform definition's parameters."""
 
-    def __init__(self, transform_class, translations, values=None, parent=None):
+    def __init__(self, definition, translations, values=None, parent=None):
         super().__init__(parent)
-        self.transform_class = transform_class
+        self.definition = definition
         self.translations = translations
         self._editors = {}
         values = values or {}
 
         layout = QFormLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        for parameter in transform_class.parameters:
-            label = _tr(
-                translations,
-                f"transform.{transform_class.kind}.{parameter.name}",
-                parameter.name,
-            )
+        for parameter in definition.parameters:
             value = values.get(parameter.name, parameter.default)
             editor = self._create_editor(parameter, value)
             self._editors[parameter.name] = (parameter, editor)
-            layout.addRow(label, editor)
+            layout.addRow(parameter.label or parameter.name, editor)
 
-        if transform_class.kind == "script":
-            hint = QLabel(translations["hooks.script_hint"])
+        if definition.description:
+            hint = QLabel(definition.description)
             hint.setWordWrap(True)
             layout.addRow(hint)
 
     def _create_editor(self, parameter, value):
         if parameter.kind == "choice":
             editor = QComboBox()
-            for choice in parameter.choices:
-                editor.addItem(
-                    _tr(self.translations, f"transform.choice.{choice}", str(choice)),
-                    choice,
-                )
+            for index, choice in enumerate(parameter.choices):
+                editor.addItem(parameter.choice_label(index), choice)
             index = editor.findData(value)
             editor.setCurrentIndex(max(index, 0))
             return editor
@@ -113,7 +99,7 @@ class _TransformForm(QWidget):
             editor = QPlainTextEdit("" if value is None else str(value))
             editor.setMinimumHeight(120)
             return editor
-        editor = QLineEdit("" if value is None else _format_number(value))
+        editor = QLineEdit("" if value is None else format_number(value))
         if parameter.optional:
             editor.setPlaceholderText(self.translations["hooks.optional"])
         return editor
@@ -122,11 +108,7 @@ class _TransformForm(QWidget):
         """Build the transform; raises ValueError with a readable message."""
         values = {}
         for name, (parameter, editor) in self._editors.items():
-            label = _tr(
-                self.translations,
-                f"transform.{self.transform_class.kind}.{name}",
-                name,
-            )
+            label = parameter.label or name
             if parameter.kind == "choice":
                 values[name] = editor.currentData()
             elif parameter.kind == "code":
@@ -141,34 +123,73 @@ class _TransformForm(QWidget):
                     values[name] = None
                     continue
                 try:
-                    values[name] = _parse_number(text)
+                    values[name] = parse_number(text)
                 except ValueError as error:
                     raise ValueError(
                         self.translations["hooks.invalid_number"].format(name=label)
                     ) from error
-        return self.transform_class(**values)
+        return TemplateTransform(self.definition, **values)
 
 
 class HookDialog(QDialog):
     # Dialogs expose their result through attributes after exec().
-    # pylint: disable=too-few-public-methods
-    """Choose a transform and its parameters for a write hook."""
+    # pylint: disable=too-few-public-methods,too-many-instance-attributes
+    """Choose a hook template and its parameters for a write hook.
+
+    ``templates`` are the TransformDefinitions to choose from (the example
+    templates if omitted). When editing, the hook's own copy of its template
+    is shown; if the template has changed since, the dialog offers to adopt it.
+    """
 
     def __init__(self, translations, address, value_type, site,
-                 transform=None, label="", parent=None):
+                 transform=None, label="", templates=None, parent=None):
+        # pylint: disable=too-many-arguments
         super().__init__(parent)
         self.translations = translations
         self.transform = None
         self.label = label
         self.caller_depth = 1
         self._editing = transform is not None
+        if templates is None:
+            templates = list(example_templates(translations).values())
+        self._options, self._values, self._copy_index, self._template = (
+            self._build_options(templates, transform)
+        )
         self.setWindowTitle(
             translations["hooks.edit_title" if self._editing else "hooks.create_title"]
         )
-        self.resize(520, 380)
-        self._build_ui(address, value_type, site, transform, label)
+        self.resize(520, 420)
+        self._build_ui(address, value_type, site, label)
 
-    def _build_ui(self, address, value_type, site, transform, label):
+    @staticmethod
+    def _build_options(templates, transform):
+        """Return the definitions to offer, the hook's values and copy index.
+
+        The hook's copy replaces the template it was created from; a copy whose
+        template no longer exists is offered in addition.
+        """
+        options = list(templates)
+        if transform is None:
+            return options, {}, None, None
+        current = as_template_transform(transform)
+        copy = current.definition
+        index = next(
+            (
+                i for i, option in enumerate(options)
+                if copy.template_id is not None and option.template_id == copy.template_id
+            ),
+            None,
+        )
+        template = None
+        if index is None:
+            options.insert(0, copy)
+            index = 0
+        else:
+            template = options[index]
+            options[index] = copy
+        return options, current.form_values(), index, template
+
+    def _build_ui(self, address, value_type, site, label):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
@@ -194,30 +215,33 @@ class HookDialog(QDialog):
             )
             self.caller_depth_input.setToolTip(self.translations["hooks.caller_depth_hint"])
             form.addRow(self.translations["hooks.caller_depth"], self.caller_depth_input)
-        self.kind_combo = QComboBox()
-        form.addRow(self.translations["hooks.transform"], self.kind_combo)
+        self.template_combo = QComboBox()
+        form.addRow(self.translations["hooks.template"], self.template_combo)
         layout.addLayout(form)
 
+        self.template_notice = QWidget()
+        notice_layout = QHBoxLayout(self.template_notice)
+        notice_layout.setContentsMargins(0, 0, 0, 0)
+        self.template_notice_label = QLabel()
+        self.template_notice_label.setWordWrap(True)
+        self.template_notice_label.setStyleSheet("color: #d29922;")
+        self.btn_adopt_template = QPushButton(self.translations["hooks.template_adopt"])
+        self.btn_adopt_template.clicked.connect(self._adopt_template)
+        notice_layout.addWidget(self.template_notice_label, 1)
+        notice_layout.addWidget(self.btn_adopt_template)
+        layout.addWidget(self.template_notice)
+
         self.forms = QStackedWidget()
-        for kind, transform_class in available_transforms().items():
-            values = (
-                transform.form_values()
-                if transform is not None and transform.kind == kind
-                else None
-            )
-            self.kind_combo.addItem(
-                transform_title(self.translations, transform_class), kind
-            )
-            self.forms.addWidget(
-                _TransformForm(transform_class, self.translations, values)
-            )
-        self.kind_combo.currentIndexChanged.connect(self.forms.setCurrentIndex)
-        if transform is not None:
-            self.kind_combo.setCurrentIndex(
-                max(self.kind_combo.findData(transform.kind), 0)
-            )
+        for index, definition in enumerate(self._options):
+            self.template_combo.addItem(definition.name, index)
+            values = self._values if index == self._copy_index else None
+            self.forms.addWidget(_TransformForm(definition, self.translations, values))
+        self.template_combo.currentIndexChanged.connect(self._on_template_selected)
+        if self._copy_index is not None:
+            self.template_combo.setCurrentIndex(self._copy_index)
         layout.addWidget(self.forms)
         layout.addStretch()
+        self._update_template_notice()
 
         self.error_label = QLabel("")
         self.error_label.setWordWrap(True)
@@ -230,6 +254,65 @@ class HookDialog(QDialog):
             self._accept,
             self.reject,
         ))
+
+    def template_state(self):
+        """Return how the hook's copy relates to its template.
+
+        ``"changed"``, ``"deleted"`` or ``None`` (unchanged, or not editing).
+        """
+        if self._copy_index is None:
+            return None
+        copy = self._options[self._copy_index]
+        if copy.template_id is None:
+            return None
+        if self._template is None:
+            return "deleted"
+        return "changed" if self._template != copy else None
+
+    def _on_template_selected(self, index):
+        self.forms.setCurrentIndex(index)
+        self._update_template_notice()
+
+    def _update_template_notice(self):
+        state = self.template_state()
+        visible = state is not None and self.template_combo.currentIndex() == self._copy_index
+        self.template_notice.setVisible(visible)
+        if not visible:
+            return
+        name = self._options[self._copy_index].name
+        if state == "changed":
+            self.template_notice_label.setText(
+                self.translations["hooks.template_changed"].format(
+                    name=self._template.name
+                )
+            )
+        else:
+            self.template_notice_label.setText(
+                self.translations["hooks.template_deleted"].format(name=name)
+            )
+        self.btn_adopt_template.setVisible(state == "changed")
+
+    def _adopt_template(self):
+        """Replace the hook's copy by the current template, keeping values."""
+        index = self._copy_index
+        if index is None or self._template is None:
+            return
+        old_form = self.forms.widget(index)
+        values = dict(self._values)
+        try:
+            values.update(old_form.create_transform().form_values())
+        except (TypeError, ValueError):
+            pass
+        names = {parameter.name for parameter in self._template.parameters}
+        values = {name: value for name, value in values.items() if name in names}
+        self._options[index] = self._template
+        new_form = _TransformForm(self._template, self.translations, values)
+        self.forms.insertWidget(index, new_form)
+        self.forms.removeWidget(old_form)
+        old_form.deleteLater()
+        self.forms.setCurrentIndex(index)
+        self.template_combo.setItemText(index, self._template.name)
+        self._update_template_notice()
 
     def _accept(self):
         try:
@@ -265,7 +348,7 @@ def spec_from_saved(saved):
     return HookSpec(
         None,
         saved.value_type,
-        create_transform(saved.transform_kind, **saved.transform_params),
+        hook_transform(saved),
         module=saved.module,
         module_offset=saved.module_offset,
         instruction_bytes=saved.instruction_bytes,
@@ -511,6 +594,15 @@ class HookPanel(QGroupBox):
             )
             return None
 
+    def templates(self):
+        """Return the hook templates to choose from."""
+        if self._repository is None:
+            return list(example_templates(self.translations).values())
+        templates = self._store(self._repository.list_templates)
+        if templates is None:
+            return list(example_templates(self.translations).values())
+        return templates
+
     def _restore_saved_hooks(self):
         if self._repository is None or self._process_id is None:
             return
@@ -647,9 +739,9 @@ class HookPanel(QGroupBox):
                 self._set_cell(
                     hook_id,
                     6,
-                    f"{_format_number(last.get('old'))} → "
-                    f"{_format_number(last.get('new'))} ⇒ "
-                    f"{_format_number(last.get('result'))}",
+                    f"{format_number(last.get('old'))} → "
+                    f"{format_number(last.get('new'))} ⇒ "
+                    f"{format_number(last.get('result'))}",
                 )
             if state["status"] == "error":
                 self._set_status(hook_id, "active")
@@ -728,6 +820,7 @@ class HookPanel(QGroupBox):
             site_item.text() if site_item is not None else "",
             transform=spec.transform,
             label=spec.label,
+            templates=self.templates(),
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:

@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from hermes.db.base import Base
@@ -16,6 +16,11 @@ class Hook(Base):  # pylint: disable=too-few-public-methods
     ``instruction_bytes`` guards against patching a changed binary.
     ``callers`` holds the learned caller signatures, each a list of
     ``caller_depth`` ``[module, offset]`` return addresses.
+
+    The manipulation is a copy of the template it was created from
+    (``template_id``), so editing or deleting the template does not change
+    the hook. ``template_id`` is no foreign key: it is kept after the template
+    is deleted so the hook dialog can tell the user.
     """
 
     __tablename__ = "hooks"
@@ -30,8 +35,11 @@ class Hook(Base):  # pylint: disable=too-few-public-methods
     instruction_bytes = Column(String, nullable=False)   # hex, e.g. "0137"
     instruction_text = Column(String, nullable=False, default="")
     value_type = Column(String, nullable=False)          # int32, int64, float, double
-    transform_kind = Column(String, nullable=False)
-    transform_params = Column(JSON, nullable=False)      # ValueTransform.form_values()
+    template_id = Column(Integer, nullable=True)
+    transform_name = Column(String, nullable=False)
+    transform_source = Column(Text, nullable=False)      # copy of the template's function
+    transform_parameters = Column(JSON, nullable=False)  # copy of its parameter definitions
+    transform_params = Column(JSON, nullable=False)      # parameter values of this hook
     enabled = Column(Boolean, nullable=False, default=True)
     caller_depth = Column(Integer, nullable=False, default=1)
     callers = Column(JSON, nullable=False, default=list)

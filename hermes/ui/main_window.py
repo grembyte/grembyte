@@ -24,7 +24,9 @@ from hermes.core.memory import write_process_value
 from hermes.core.write_watch import WriteWatchWorker, watch_size_for_type
 from hermes.db.repository.hooks import HookRepository
 from hermes.hooks.engine import HookSpec
+from hermes.hooks.transforms import example_templates
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
+from hermes.ui.widgets.templates import TemplateDialog
 from hermes.ui.widgets.write_watch import WriteWatchDialog
 
 
@@ -113,6 +115,7 @@ class MainWindow(QMainWindow):
 
         self._current_pid = None
         self._hook_repository = HookRepository()
+        self._ensure_example_templates()
         self._current_proc = self.translations["app.no_process"]
         self._scan_results = []
         self._scan_worker = None
@@ -173,6 +176,13 @@ class MainWindow(QMainWindow):
         self.lbl_proc_info = QLabel(f"  {self._current_proc}")
         self.lbl_proc_info.setObjectName("lbl_process")
         tb.addWidget(self.lbl_proc_info)
+
+        tb.addSeparator()
+
+        self.btn_templates = QPushButton(self.translations["templates.button"])
+        self.btn_templates.setToolTip(self.translations["templates.button_tooltip"])
+        self.btn_templates.clicked.connect(self._open_template_dialog)
+        tb.addWidget(self.btn_templates)
 
     # ------------------------------------------------------------------
     # Central layout
@@ -642,6 +652,7 @@ class MainWindow(QMainWindow):
             value_type,
             site,
             label=self._tracked_description(address_value),
+            templates=self.hook_panel.templates(),
             parent=self._write_watch_dialog or self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -759,6 +770,18 @@ class MainWindow(QMainWindow):
             )
             if self.btn_first_scan is not None:
                 self.btn_first_scan.setEnabled(True)
+
+    def _ensure_example_templates(self):
+        """Create the example hook templates that do not exist yet."""
+        try:
+            self._hook_repository.ensure_templates(example_templates(self.translations))
+        except SQLAlchemyError:
+            # The status bar does not exist yet; dialogs report DB errors later.
+            pass
+
+    def _open_template_dialog(self):
+        """Show the dialog for maintaining hook templates."""
+        TemplateDialog(self.translations, self._hook_repository, self).exec()
 
     def _known_process_id(self, dlg):
         """Return the database id of the selected program, saving it if new."""

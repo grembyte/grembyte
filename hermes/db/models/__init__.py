@@ -4,3 +4,4 @@
 # before create_all() is called in init_db().
 from hermes.db.models.hook import Hook  # noqa: F401
 from hermes.db.models.process import Process  # noqa: F401
+from hermes.db.models.template import HookTemplate  # noqa: F401

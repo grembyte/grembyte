@@ -1,9 +1,45 @@
-"""Persistence of known processes and their saved hooks."""
+"""Persistence of known processes, their saved hooks and hook templates."""
 
 from sqlalchemy import select
 
 from hermes.db.engine import SESSION_LOCAL
-from hermes.db.models import Hook, Process
+from hermes.db.models import Hook, HookTemplate, Process
+from hermes.hooks.transforms import (
+    TemplateTransform,
+    TransformDefinition,
+    as_template_transform,
+)
+
+
+def _template_definition(template):
+    return TransformDefinition.from_json(
+        template.name,
+        template.source,
+        template.parameters,
+        description=template.description,
+        template_id=template.id,
+    )
+
+
+def hook_transform(hook):
+    """Return the manipulation copied into a saved hook."""
+    definition = TransformDefinition.from_json(
+        hook.transform_name,
+        hook.transform_source,
+        hook.transform_parameters,
+        template_id=hook.template_id,
+    )
+    return TemplateTransform(definition, **hook.transform_params)
+
+
+def _store_transform(hook, transform):
+    transform = as_template_transform(transform)
+    definition = transform.definition
+    hook.template_id = definition.template_id
+    hook.transform_name = definition.name
+    hook.transform_source = definition.source
+    hook.transform_parameters = definition.parameters_json()
+    hook.transform_params = transform.form_values()
 
 
 class HookRepository:
@@ -45,12 +81,11 @@ class HookRepository:
                 instruction_bytes=instruction_bytes,
                 instruction_text=instruction_text,
                 value_type=value_type,
-                transform_kind=transform.kind,
-                transform_params=transform.form_values(),
                 enabled=enabled,
                 caller_depth=caller_depth,
                 callers=[list(map(list, frames)) for frames in callers],
             )
+            _store_transform(hook, transform)
             session.add(hook)
             session.commit()
             return hook.id
@@ -65,8 +100,7 @@ class HookRepository:
             if label is not None:
                 hook.label = label
             if transform is not None:
-                hook.transform_kind = transform.kind
-                hook.transform_params = transform.form_values()
+                _store_transform(hook, transform)
             if enabled is not None:
                 hook.enabled = enabled
             if callers is not None:
@@ -80,3 +114,70 @@ class HookRepository:
             if hook is not None:
                 session.delete(hook)
                 session.commit()
+
+    # ------------------------------------------------------------------
+    # Templates
+    # ------------------------------------------------------------------
+    def list_templates(self):
+        """Return all hook templates as TransformDefinitions, sorted by name."""
+        with self._sessions() as session:
+            return [
+                _template_definition(template)
+                for template in session.scalars(
+                    select(HookTemplate).order_by(HookTemplate.name)
+                )
+            ]
+
+    def save_template(self, definition, template_id=None):
+        """Create or update a template and return its id.
+
+        Raises ValueError when another template already has the name.
+        """
+        with self._sessions() as session:
+            duplicate = session.scalars(
+                select(HookTemplate).where(
+                    HookTemplate.name == definition.name, HookTemplate.id != template_id
+                )
+            ).first()
+            if duplicate is not None:
+                raise ValueError(f"A template named {definition.name!r} already exists")
+            template = None if template_id is None else session.get(HookTemplate, template_id)
+            if template is None:
+                template = HookTemplate()
+                session.add(template)
+            template.name = definition.name
+            template.description = definition.description
+            template.source = definition.source
+            template.parameters = definition.parameters_json()
+            session.commit()
+            return template.id
+
+    def delete_template(self, template_id):
+        """Delete a template; hooks created from it keep their copy."""
+        with self._sessions() as session:
+            template = session.get(HookTemplate, template_id)
+            if template is not None:
+                session.delete(template)
+            session.commit()
+
+    def ensure_templates(self, examples):
+        """Create the example templates ``{seed_key: definition}`` that are missing.
+
+        An example counts as existing when a template with its seed key or its
+        name is present.
+        """
+        with self._sessions() as session:
+            existing = session.execute(select(HookTemplate.seed_key, HookTemplate.name)).all()
+            seed_keys = {seed_key for seed_key, _name in existing}
+            names = {name for _seed_key, name in existing}
+            for seed_key, definition in examples.items():
+                if seed_key in seed_keys or definition.name in names:
+                    continue
+                session.add(HookTemplate(
+                    name=definition.name,
+                    description=definition.description,
+                    source=definition.source,
+                    parameters=definition.parameters_json(),
+                    seed_key=seed_key,
+                ))
+            session.commit()
