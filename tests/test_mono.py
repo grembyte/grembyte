@@ -34,12 +34,29 @@ _FAKE_MONO_SOURCE = r"""
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <pthread.h>
+#include <stdio.h>
 
 typedef struct Class Class;
 typedef struct { const char *name; int kind; int byref; Class *klass; } Type;
 typedef struct { const char *name; const char *file; } Image;
-struct Class { Type type; Image *image; int is_enum; Type *base; int is_valuetype; };
-typedef struct { Class *klass; } Object;  /* a MonoObject starts with its vtable */
+typedef struct { const char *name; Type *type; uint32_t offset; uint32_t flags; } Field;
+struct Class {
+    Type type;
+    Image *image;
+    int is_enum;
+    Type *base;
+    int is_valuetype;
+    Class *parent;
+    int field_count;
+    Field fields[6];
+    int rank;
+    Class *element;
+    int element_size;
+};
+/* Like Mono: an object starts with its vtable, the vtable with its class. */
+typedef struct { Class *klass; } VTable;
+typedef struct { VTable *vtable; void *sync; } Object;
 
 typedef struct {
     const char *name;
@@ -60,24 +77,145 @@ typedef struct {
 #define ADD_GOLD 0x06000001u
 #define TAKE 0x06000002u
 #define ROLL_DAMAGE 0x06000004u
+#define CALC_DAMAGE 0x06000005u
 #define STATIC 0x10u
 
-/* Assembly-CSharp: Game.Inventory, Game.Loot, Game.Combat and the enum
-   Game.DamageType; mscorlib: System.Object. */
+/* Assembly-CSharp: Game.Inventory, Game.Loot, Game.Combat (a Unity
+   component), the enum Game.DamageType, Game.DamageInfo and Game.Loop;
+   mscorlib: System.Object, System.Int32, System.Int32[],
+   UnityEngine.Component[] and System.InvalidOperationException;
+   UnityEngine.CoreModule: UnityEngine.Object, .Component and .GameObject. */
 static Image game = { "Assembly-CSharp", "/game/Assembly-CSharp.dll" };
 static Image corlib = { "mscorlib", "/game/mscorlib.dll" };
-static Class classes[5];
+static Image unity = { "UnityEngine.CoreModule", "/game/UnityEngine.CoreModule.dll" };
+static Class classes[14];
 static Type t_void = { "System.Void", 0x01 }, t_int = { "System.Int32", 0x08 },
     t_int_ref = { "System.Int32&", 0x08, 1 }, t_float = { "System.Single", 0x0c },
     t_string = { "System.String", 0x0e }, t_bool = { "System.Boolean", 0x02 },
-    t_damage = { "Game.DamageType", 0x11, 0, &classes[4] };
-static Class classes[5] = {
-    { { "Game.Inventory", 0x12 }, &game },
-    { { "Game.Loot", 0x12 }, &game },
-    { { "System.Object", 0x1c }, &corlib },
-    { { "Game.Combat", 0x12 }, &game },
-    { { "Game.DamageType", 0x11 }, &game, 1, &t_int, 1 },
+    t_damage = { "Game.DamageType", 0x11, 0, &classes[4] },
+    t_combat = { "Game.Combat", 0x12, 0, &classes[3] },
+    t_info_ref = { "Game.DamageInfo&", 0x12, 1, &classes[6] },
+    t_ints = { "System.Int32[]", 0x1d, 0, &classes[7] },
+    t_intptr = { "System.IntPtr", 0x18 },
+    t_game_object = { "UnityEngine.GameObject", 0x12, 0, &classes[10] },
+    t_type = { "System.Type", 0x12 };
+static Type *type_params[] = { &t_type };
+static Class classes[14] = {
+    { .type = { "Game.Inventory", 0x12 }, .image = &game },
+    { .type = { "Game.Loot", 0x12 }, .image = &game },
+    { .type = { "System.Object", 0x1c }, .image = &corlib },
+    { .type = { "Game.Combat", 0x12 }, .image = &game, .parent = &classes[9],
+      .field_count = 2,
+      .fields = { { "Health", &t_int, 0x20 }, { "Instances", &t_int, 0, 0x10 } } },
+    { .type = { "Game.DamageType", 0x11 }, .image = &game, .is_enum = 1, .base = &t_int,
+      .is_valuetype = 1 },
+    { .type = { "System.Int32", 0x08 }, .image = &corlib, .is_valuetype = 1 },
+    { .type = { "Game.DamageInfo", 0x12 }, .image = &game, .parent = &classes[2],
+      .field_count = 5,
+      .fields = { { "Damage", &t_float, 0x10 }, { "Type", &t_damage, 0x14 },
+                  { "Name", &t_string, 0x18 }, { "Owner", &t_combat, 0x20 },
+                  { "Rolls", &t_ints, 0x28 } } },
+    { .type = { "System.Int32[]", 0x1d }, .image = &corlib, .parent = &classes[2],
+      .rank = 1, .element = &classes[5], .element_size = 4 },
+    { .type = { "UnityEngine.Object", 0x12 }, .image = &unity, .parent = &classes[2],
+      .field_count = 1, .fields = { { "m_CachedPtr", &t_intptr, 0x10 } } },
+    { .type = { "UnityEngine.Component", 0x12 }, .image = &unity, .parent = &classes[8] },
+    { .type = { "UnityEngine.GameObject", 0x12 }, .image = &unity, .parent = &classes[8] },
+    { .type = { "UnityEngine.Component[]", 0x1d }, .image = &corlib, .parent = &classes[2],
+      .rank = 1, .element = &classes[9], .element_size = 8 },
+    { .type = { "System.InvalidOperationException", 0x12 }, .image = &corlib,
+      .parent = &classes[2], .field_count = 1, .fields = { { "_message", &t_string, 0x10 } } },
+    { .type = { "Game.Loop", 0x12 }, .image = &game, .parent = &classes[2] },
 };
+static VTable vt_combat = { &classes[3] }, vt_info = { &classes[6] }, vt_ints = { &classes[7] },
+    vt_game_object = { &classes[10] }, vt_components = { &classes[11] },
+    vt_exception = { &classes[12] };
+/* Unity objects: the name lives on Unity's native side, in no field. */
+typedef struct GameObject GameObject;
+typedef struct { Object header; void *cached_ptr; const char *name; int32_t health;
+                 GameObject *game_object; } Combat;
+struct GameObject { Object header; void *cached_ptr; const char *name; Combat *component; };
+typedef struct { Object header; void *bounds; uintptr_t length; void *data[1]; } ComponentArray;
+typedef struct { Object header; void *message; } Exception;
+static int type_object_component, type_object_other;
+typedef struct { Object header; float damage; int32_t type; void *name; Combat *owner;
+                 void *rolls; } DamageInfo;
+typedef struct { Object header; void *bounds; uintptr_t length; int32_t data[3]; } IntArray;
+void *fake_string(const char *ascii);
+
+/* Methods mono_runtime_invoke calls: (this, params, exception) */
+typedef void *(*invoke_fn)(void *self, void **params, void **exception);
+
+static void *box_int(int32_t value) {
+    uint8_t *box = calloc(1, sizeof(Object) + 8);  /* boxed value types: header, value */
+    memcpy(box + sizeof(Object), &value, 4);
+    return box;
+}
+
+/* string UnityEngine.Object.get_name(); Combat and GameObject keep the
+   name at the same place */
+static void *unity_get_name(Combat *self, void **params, void **exception) {
+    (void)params; (void)exception;
+    return fake_string(self->name);
+}
+/* GameObject UnityEngine.Component.get_gameObject() */
+static void *component_get_game_object(Combat *self, void **params, void **exception) {
+    (void)params; (void)exception;
+    return self->game_object;
+}
+/* Component[] UnityEngine.GameObject.GetComponents(Type type) */
+static void *game_object_get_components(GameObject *self, void **params, void **exception) {
+    (void)exception;
+    ComponentArray *array = calloc(1, sizeof *array);
+    array->header.vtable = &vt_components;
+    if (params[0] == &type_object_component) {
+        array->length = 1;
+        array->data[0] = self->component;
+    }
+    return array;
+}
+/* bool Game.Combat.IsPartyMember { get; } */
+static void *combat_is_party_member(Combat *self, void **params, void **exception) {
+    (void)params; (void)exception;
+    return box_int(strcmp(self->name, "Miranda") == 0);
+}
+/* int Game.Combat.Broken { get; } throws */
+static void *combat_broken(Combat *self, void **params, void **exception) {
+    (void)self; (void)params;
+    Exception *error = calloc(1, sizeof *error);
+    error->header.vtable = &vt_exception;
+    error->message = fake_string("broken getter");
+    *exception = error;
+    return NULL;
+}
+/* static int Game.Combat.Count { get; } */
+static void *combat_count(void *self, void **params, void **exception) {
+    (void)self; (void)params; (void)exception;
+    return box_int(7);
+}
+/* static void Game.Loop.Update(): what Unity runs every frame */
+static void *loop_update(void *self, void **params, void **exception) {
+    (void)self; (void)params; (void)exception;
+    return NULL;
+}
+
+/* void CalcDamage(Combat other, out DamageInfo info), an instance method */
+__attribute__((noipa)) void calc_damage(Combat *self, Combat *other, DamageInfo **info) {
+    (void)other;
+    DamageInfo *result = calloc(1, sizeof *result);
+    IntArray *rolls = calloc(1, sizeof *rolls);
+    rolls->header.vtable = &vt_ints;
+    rolls->length = 3;
+    for (int i = 0; i < 3; i++)
+        rolls->data[i] = 3 + i;
+    result->header.vtable = &vt_info;
+    result->damage = 12.5f;
+    result->type = 2;
+    result->name = fake_string("Slash");
+    result->owner = self;
+    result->rolls = rolls;
+    *info = result;
+}
 
 /* float RollDamage(int min, float scale, string name, bool crit,
                     DamageType type, out int roll), an instance method */
@@ -100,6 +238,26 @@ static Method methods[] = {
       &classes[3], "RollDamage", 0, &t_float, 6,
       { &t_int, &t_float, &t_string, &t_bool, &t_damage, &t_int_ref },
       { "min", "scale", "name", "crit", "type", "roll" }, (void *)roll_damage },
+    { "Game.Combat:CalcDamage", "Game.Combat:CalcDamage (Game.Combat,Game.DamageInfo&)",
+      CALC_DAMAGE, &classes[3], "CalcDamage", 0, &t_void, 2, { &t_combat, &t_info_ref },
+      { "other", "info" }, (void *)calc_damage },
+    { "UnityEngine.Object:get_name", "UnityEngine.Object:get_name ()", 0x06000006u,
+      &classes[8], "get_name", 0, &t_string, 0, { 0 }, { 0 }, (void *)unity_get_name },
+    { "Game.Combat:get_IsPartyMember", "Game.Combat:get_IsPartyMember ()", 0x06000007u,
+      &classes[3], "get_IsPartyMember", 0, &t_bool, 0, { 0 }, { 0 },
+      (void *)combat_is_party_member },
+    { "Game.Combat:get_Broken", "Game.Combat:get_Broken ()", 0x06000008u,
+      &classes[3], "get_Broken", 0, &t_int, 0, { 0 }, { 0 }, (void *)combat_broken },
+    { "Game.Combat:get_Count", "Game.Combat:get_Count ()", 0x06000009u,
+      &classes[3], "get_Count", STATIC, &t_int, 0, { 0 }, { 0 }, (void *)combat_count },
+    { "UnityEngine.Component:get_gameObject", "UnityEngine.Component:get_gameObject ()",
+      0x0600000au, &classes[9], "get_gameObject", 0, &t_game_object, 0, { 0 }, { 0 },
+      (void *)component_get_game_object },
+    { "UnityEngine.GameObject:GetComponents", "UnityEngine.GameObject:GetComponents (System.Type)",
+      0x0600000bu, &classes[10], "GetComponents", 0, &t_void, 1, { &t_type }, { "type" },
+      (void *)game_object_get_components },
+    { "Game.Loop:Update", "Game.Loop:Update ()", 0x0600000cu, &classes[13], "Update", STATIC,
+      &t_void, 0, { 0 }, { 0 }, (void *)loop_update },
 };
 #define COUNT(array) (sizeof array / sizeof *array)
 static int root_domain, script_domain, thread;
@@ -164,8 +322,46 @@ __attribute__((constructor)) static void init(void) {
 /* Like Mono releasing its JIT code while the game exits */
 void fake_unmap(void) { munmap(region, 0x1000); }
 
-/* The game's side: its thread runs scripts in the child domain. */
-void fake_attach(void) { current_domain = &script_domain; }
+/* The game's side: its thread runs scripts in the child domain; it is
+   Unity's main thread, the only one where get_name works. */
+static pthread_t main_thread;
+static int exception_object;
+void fake_attach(void) {
+    current_domain = &script_domain;
+    main_thread = pthread_self();
+}
+void *mono_class_get_method_from_name(Class *k, const char *name, int count) {
+    for (size_t i = 0; i < COUNT(methods); i++)
+        if (methods[i].klass == k && strcmp(methods[i].short_name, name) == 0
+            && methods[i].param_count == count)
+            return &methods[i];
+    return NULL;
+}
+void *mono_runtime_invoke(Method *m, void *object, void **params, void **exception) {
+    if (!pthread_equal(pthread_self(), main_thread)) {
+        *exception = &exception_object;  /* UnityException: main thread only */
+        return NULL;
+    }
+    return ((invoke_fn)m->native)(object, params, exception);
+}
+void *mono_object_get_virtual_method(void *object, Method *m) { (void)object; return m; }
+void *mono_type_get_object(void *domain, Type *type) {
+    (void)domain;
+    return type == &classes[9].type ? (void *)&type_object_component : &type_object_other;
+}
+void *mono_class_from_name(Image *img, const char *ns, const char *name) {
+    char full[128];
+    snprintf(full, sizeof full, "%s.%s", ns, name);
+    for (size_t i = 0; i < COUNT(classes); i++)
+        if (classes[i].image == img && strcmp(classes[i].type.name, full) == 0)
+            return &classes[i];
+    return NULL;
+}
+/* The game's main loop runs a script method (Unity: every frame) */
+void fake_tick(void) {
+    void *exception = NULL;
+    mono_runtime_invoke(by_token(0x0600000cu), NULL, NULL, &exception);
+}
 void *fake_code(uint32_t token) { return compile(by_token(token)); }
 
 void *mono_get_root_domain(void) { return &root_domain; }
@@ -215,6 +411,7 @@ void mono_free(void *pointer) { free(pointer); }
 void mono_assembly_foreach(void (*callback)(void *, void *), void *data) {
     callback(&game, data);  /* an assembly stands for its image here */
     callback(&corlib, data);
+    callback(&unity, data);
 }
 void *mono_assembly_get_image(void *assembly) { return assembly; }
 int mono_image_get_table_rows(Image *img, int table) {
@@ -268,13 +465,34 @@ int mono_class_is_enum(Class *k) { return k->is_enum; }
 void *mono_class_enum_basetype(Class *k) { return k->base; }
 int mono_class_is_valuetype(Class *k) { return k->is_valuetype; }
 int mono_class_value_size(Class *k, uint32_t *align) { (void)k; (void)align; return 4; }
-void *mono_object_get_class(Object *object) { return object->klass; }
+void *mono_object_get_class(Object *object) { return object->vtable->klass; }
+void *mono_class_get_fields(Class *k, void **iterator) {
+    int next = *iterator ? (int)((Field *)*iterator - k->fields) + 1 : 0;
+    if (next >= k->field_count)
+        return NULL;
+    return *iterator = &k->fields[next];
+}
+const char *mono_field_get_name(Field *field) { return field->name; }
+void *mono_field_get_type(Field *field) { return field->type; }
+uint32_t mono_field_get_offset(Field *field) { return field->offset; }
+uint32_t mono_field_get_flags(Field *field) { return field->flags; }
+void *mono_class_get_parent(Class *k) { return k->parent; }
+int mono_class_get_rank(Class *k) { return k->rank; }
+void *mono_class_get_element_class(Class *k) { return k->element; }
+int mono_array_element_size(Class *k) { return k->element_size; }
 
 /* The game's side: a Game.Combat object and a C# string */
-void *fake_combat(void) {
-    Object *object = malloc(sizeof *object);
-    object->klass = &classes[3];
-    return object;
+void *fake_combat(const char *name) {
+    Combat *combat = calloc(1, sizeof *combat);
+    GameObject *game_object = calloc(1, sizeof *game_object);
+    combat->header.vtable = &vt_combat;
+    combat->health = 100;
+    combat->name = name;
+    combat->game_object = game_object;
+    game_object->header.vtable = &vt_game_object;
+    game_object->name = name;
+    game_object->component = combat;
+    return combat;
 }
 void *fake_string(const char *ascii) {
     int32_t length = (int32_t)strlen(ascii);
@@ -292,14 +510,25 @@ _TARGET_SOURCE = r"""
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
 void fake_attach(void);
 void fake_unmap(void);
 void *fake_code(uint32_t token);
-void *fake_combat(void);
+void *fake_combat(const char *name);
 void *fake_string(const char *ascii);
+void fake_tick(void);
 typedef float (*roll_fn)(void *self, int32_t min, float scale, void *name, int32_t crit,
                          int32_t type, int32_t *roll);
+typedef void (*calc_fn)(void *self, void *other, void **info);
+
+static void *roll_in_background(void *arg) {
+    int32_t roll;
+    (void)arg;
+    ((roll_fn)fake_code(0x06000004u))(fake_combat("Ghost"), 1, 1.5f, fake_string("Bolt"), 0, 0,
+                                      &roll);
+    return NULL;
+}
 
 typedef struct { int32_t hp; int32_t gold; } Player;
 typedef struct { char pad[0x10]; Player *player; } Game;
@@ -321,17 +550,34 @@ int main(void) {
             fake_unmap();
             exit(0);
         }
-        if (strcmp(cmd, "add") == 0)
+        if (strcmp(cmd, "tick") == 0)
+            fake_tick();
+        else if (strcmp(cmd, "add") == 0)
             ((change_fn)fake_code(0x06000001u))(&g_game->player->gold, value);
         else if (strcmp(cmd, "loot") == 0)
             ((change_fn)fake_code(0x06000002u))(&g_game->player->gold, value);
+        else if (strcmp(cmd, "calc") == 0) {
+            void *info = NULL;
+            ((calc_fn)fake_code(0x06000005u))(fake_combat("Miranda"), fake_combat("Young Wolf"),
+                                              &info);
+            printf("%d %d\n", (int)(*(float *)((char *)info + 0x10) * 2),
+                   *(int32_t *)((char *)info + 0x14));
+            fflush(stdout);
+            continue;
+        }
         else if (strcmp(cmd, "roll") == 0) {
             int32_t roll = -1;
             float damage = ((roll_fn)fake_code(0x06000004u))(
-                fake_combat(), value, 1.5f, fake_string("Fireball"), 1, 2, &roll);
+                fake_combat("Hero"), value, 1.5f, fake_string("Fireball"), 1, 2, &roll);
             printf("%d %d\n", (int)damage, roll);
             fflush(stdout);
             continue;
+        }
+        else if (strcmp(cmd, "bgroll") == 0) {
+            /* The same call on a thread other than Unity's main thread */
+            pthread_t thread;
+            pthread_create(&thread, NULL, roll_in_background, NULL);
+            pthread_join(thread, NULL);
         }
         printf("%d 0\n", g_game->player->gold);
         fflush(stdout);
@@ -535,7 +781,7 @@ def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
 
         found, loaded = read()
         assert [(a["name"], a["classes"]) for a in found] == [
-            ("Assembly-CSharp", 4), ("mscorlib", 1)]
+            ("Assembly-CSharp", 6), ("mscorlib", 5), ("UnityEngine.CoreModule", 3)]
         # Framework assemblies are only read on request.
         assert loaded == {"Assembly-CSharp": [
             CatalogMethod("Assembly-CSharp", "Game.Inventory", "AddGold", "(int&,int)",
@@ -546,6 +792,17 @@ def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
                           "(int,single,string,bool,Game.DamageType,int&)", "System.Single",
                           False, 0x06000004,
                           "Game.Combat:RollDamage (int,single,string,bool,Game.DamageType,int&)"),
+            CatalogMethod("Assembly-CSharp", "Game.Combat", "CalcDamage",
+                          "(Game.Combat,Game.DamageInfo&)", "System.Void", False, 0x06000005,
+                          "Game.Combat:CalcDamage (Game.Combat,Game.DamageInfo&)"),
+            CatalogMethod("Assembly-CSharp", "Game.Combat", "get_IsPartyMember", "()",
+                          "System.Boolean", False, 0x06000007, "Game.Combat:get_IsPartyMember ()"),
+            CatalogMethod("Assembly-CSharp", "Game.Combat", "get_Broken", "()", "System.Int32",
+                          False, 0x06000008, "Game.Combat:get_Broken ()"),
+            CatalogMethod("Assembly-CSharp", "Game.Combat", "get_Count", "()", "System.Int32",
+                          True, 0x06000009, "Game.Combat:get_Count ()"),
+            CatalogMethod("Assembly-CSharp", "Game.Loop", "Update", "()", "System.Void", True,
+                          0x0600000c, "Game.Loop:Update ()"),
         ]}
         assert loaded["Assembly-CSharp"][0].signature == "Game.Inventory:AddGold (int&,int)"
         _found, loaded = read(["mscorlib"])
@@ -563,8 +820,8 @@ def test_catalog_dialog_searches_methods(tmp_path, qt_app, translations):
     dialog = CatalogDialog(translations, target.pid)
     try:
         _wait_for(qt_app, lambda: dialog._worker is None)
-        assert dialog.model.rowCount() == 3
-        assert "3 von 3 Methoden" in dialog.status_label.text()
+        assert dialog.model.rowCount() == 8
+        assert "8 von 8 Methoden" in dialog.status_label.text()
 
         dialog.search_input.setText("loot TAKE")
         dialog._apply_filter()
@@ -612,8 +869,9 @@ def test_method_monitor_logs_arguments_caller_and_result(tmp_path, qt_app):
         assert target.send("roll", 5) == (15, 42)
         _wait_for(qt_app, lambda: calls)
         call = calls[0]
-        assert call["self"].startswith("Game.Combat@0x")
-        args = dict(call["args"])
+        # Game.Combat is a Unity component: Unity knows its name.
+        assert call["self"]["text"].startswith('Game.Combat "Hero"@0x')
+        args = {arg["name"]: arg["text"] for arg in call["args"]}
         assert {key: args[key] for key in ("min", "scale", "name", "crit", "type")} == {
             "min": "5", "scale": "1.5", "name": '"Fireball"', "crit": "true",
             "type": "2 (Game.DamageType)"}
@@ -628,8 +886,10 @@ def test_method_monitor_logs_arguments_caller_and_result(tmp_path, qt_app):
         calls.clear()
         assert target.send("roll", 2) == (6, 42)
         _wait_for(qt_app, lambda: calls)
-        assert [call["result"] for call in calls] == ["6"]
+        assert [call["result"]["text"] for call in calls] == ["6"]
         assert [call["monitorId"] for call in calls] == [with_result]
+        # What the method left in the out argument
+        assert calls[0]["args"][5]["after"] == {"text": "42"}
     finally:
         worker.requestInterruption()
         worker.wait(5000)
@@ -663,4 +923,351 @@ def test_method_monitor_lets_the_game_free_its_code_and_exit(tmp_path, qt_app):
     finally:
         worker.requestInterruption()
         worker.wait(5000)
+        target.close()
+
+
+_CALC_DAMAGE = {"image": "Assembly-CSharp", "file": None, "token": 0x06000005,
+                "method": "Game.Combat:CalcDamage (Game.Combat,Game.DamageInfo&)"}
+
+
+@requires_target
+def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel,too-many-locals
+    from hermes.core.method_monitor import MethodMonitorWorker
+
+    target = _MonoTarget(_build(tmp_path))
+    worker = MethodMonitorWorker(target.pid)
+    added, calls, inspected, failed = {}, [], {}, {}
+    worker.monitor_added.connect(added.__setitem__)
+    worker.calls.connect(lambda events, _dropped, _counts: calls.extend(events))
+    worker.inspected.connect(inspected.__setitem__)
+    worker.inspect_failed.connect(failed.__setitem__)
+
+    def inspect(value_target):
+        request = worker.inspect(value_target)
+        _wait_for(qt_app, lambda: request in inspected or request in failed)
+        return inspected.get(request) or failed[request]
+
+    try:
+        worker.start()
+        monitor_id = worker.add_monitor(_CALC_DAMAGE, returns=True, objects=True)
+        _wait_for(qt_app, lambda: monitor_id in added)
+        assert target.send("calc", 0) == (25, 2)
+        _wait_for(qt_app, lambda: calls)
+        call = calls[0]
+
+        def fields_of(snapshot):
+            return [(f["name"], f["static"], f["value"]["text"]) for f in snapshot["fields"]]
+
+        combat_fields = [("m_CachedPtr", False, "0x0"), ("Health", False, "100"),
+                         ("Instances", True, "")]
+        assert call["self"]["text"].startswith('Game.Combat "Miranda"@0x')
+        assert call["self"]["snapshot"]["name"] == "Game.Combat"
+        assert fields_of(call["self"]["snapshot"]) == combat_fields
+        other, info = call["args"]
+        assert other["text"].startswith('Game.Combat "Young Wolf"@0x')
+        assert fields_of(other["snapshot"]) == combat_fields
+        # The out argument is empty when the method starts, filled afterwards.
+        assert info["text"].startswith("&0x") and info["text"].endswith("→ null")
+        assert "snapshot" not in info
+        after = info["after"]
+        assert after["text"].startswith("Game.DamageInfo@0x")
+        recorded = fields_of(after["snapshot"])
+        assert recorded[:3] == [("Damage", False, "12.5"), ("Type", False, "2 (Game.DamageType)"),
+                                ("Name", False, '"Slash"')]
+        assert recorded[3][2].startswith('Game.Combat "Miranda"@0x')
+        assert recorded[4][2].startswith("System.Int32[3]@0x")
+        # Objects in recorded fields can be opened: they keep their target.
+        assert after["snapshot"]["fields"][3]["value"]["target"] == call["self"]["target"]
+
+        contents = inspect(after["target"])
+        assert contents["name"] == "Game.DamageInfo"
+        fields = {field["name"]: field for field in contents["fields"]}
+        assert list(fields) == ["Damage", "Type", "Name", "Owner", "Rolls"]
+        assert fields["Damage"]["value"]["text"] == "12.5"
+        assert fields["Damage"]["type"] == "System.Single" and fields["Damage"]["offset"] == 0x10
+
+        rolls = inspect(fields["Rolls"]["value"]["target"])
+        assert rolls["length"] == 3
+        assert [(f["name"], f["value"]["text"]) for f in rolls["fields"]] == [
+            ("[0]", "3"), ("[1]", "4"), ("[2]", "5")]
+        owner = inspect(fields["Owner"]["value"]["target"])
+        assert [(f["name"], f["static"], f["value"]["text"]) for f in owner["fields"]] == [
+            ("m_CachedPtr", False, "0x0"), ("Health", False, "100"), ("Instances", True, "")]
+
+        # An address that holds no object is refused instead of read.
+        assert "no object" in inspect({"address": "0x10"})
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_monitor_window_opens_objects_in_the_inspector(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.core.mono_catalog import CatalogMethod
+    from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+
+    target = _MonoTarget(_build(tmp_path))
+    dialog = MethodMonitorDialog(translations, target.pid)
+    try:
+        dialog.add_method(CatalogMethod(
+            "Assembly-CSharp", "Game.Combat", "CalcDamage", "(Game.Combat,Game.DamageInfo&)",
+            "System.Void", False, 0x06000005, _CALC_DAMAGE["method"]), returns=True, objects=False)
+        _wait_for(qt_app, lambda: dialog.methods_table.item(0, 5).text() == "Aktiv")
+        target.send("calc", 0)
+        _wait_for(qt_app, lambda: dialog.log.rowCount() == 1)
+        assert "info=&0x" in dialog.log.data(dialog.log.index(0, 4))
+        assert "⇒ Game.DamageInfo@0x" in dialog.log.data(dialog.log.index(0, 4))
+
+        dialog.log_view.selectRow(0)
+        labels = [dialog.details.item(row, 0).text() for row in range(dialog.details.rowCount())]
+        assert labels == ["this", "other", "info", "info ⇒"]
+        # Objects get a link to their fields; without recorded objects the
+        # dialog shows the current ones.
+        links = [dialog.details.cellWidget(row, 2) for row in range(4)]
+        assert [link is not None for link in links] == [True, True, False, True]
+        assert "Objekt-Details" in links[3].text()
+        links[3].linkActivated.emit("#")
+        assert len(dialog.inspectors) == 1
+        inspector = dialog.inspectors[0]
+        _wait_for(qt_app, lambda: inspector.table.rowCount() == 5)
+        assert inspector.title_label.text().startswith("Game.DamageInfo @ 0x")
+        assert inspector.windowTitle() == "Objekt-Inspektor - info (Game.DamageInfo) (1)"
+        assert inspector.table.item(0, 2).text() == "12.5"
+        assert inspector.live_check.isVisibleTo(inspector)
+
+        # Owner and Rolls are objects: "öffnen" shows each in a new dialog.
+        opens = [inspector.table.cellWidget(row, 4) is not None for row in range(5)]
+        assert opens == [False, False, False, True, True]
+        inspector.table.cellWidget(3, 4).linkActivated.emit("#")
+        assert len(dialog.inspectors) == 2
+        owner = dialog.inspectors[1]
+        _wait_for(qt_app, lambda: owner.title_label.text().startswith("Game.Combat"))
+        assert owner.windowTitle() == "Objekt-Inspektor - Owner (Game.Combat) (2)"
+        assert owner.table.item(2, 2).text() == "(statisch)"
+        assert inspector.title_label.text().startswith("Game.DamageInfo")
+        owner.close()
+        _wait_for(qt_app, lambda: len(dialog.inspectors) == 1)
+
+        # Clearing the log clears the values of the selected call as well.
+        dialog.log.clear()
+        assert dialog.details.rowCount() == 0
+    finally:
+        dialog.close()
+        target.close()
+
+
+@requires_target
+def test_method_monitor_asks_unity_for_names_only_on_its_main_thread(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.core.method_monitor import MethodMonitorWorker
+
+    target = _MonoTarget(_build(tmp_path))
+    worker = MethodMonitorWorker(target.pid)
+    added, calls = {}, []
+    worker.monitor_added.connect(added.__setitem__)
+    worker.calls.connect(lambda events, _dropped, _counts: calls.extend(events))
+    try:
+        worker.start()
+        monitor_id = worker.add_monitor(
+            {"image": "Assembly-CSharp", "file": None, "token": 0x06000004,
+             "method": "Game.Combat:RollDamage (int,single,string,bool,Game.DamageType,int&)"})
+        _wait_for(qt_app, lambda: monitor_id in added)
+        for command in ("bgroll", "roll", "bgroll"):
+            target.send(command, 1)
+        _wait_for(qt_app, lambda: len(calls) == 3)
+        selves = [call["self"]["text"] for call in calls]
+        # Unity refuses get_name on other threads: the address only.
+        assert selves[0].startswith("Game.Combat@0x")
+        assert selves[1].startswith('Game.Combat "Hero"@0x')
+        assert selves[2].startswith("Game.Combat@0x")
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+def test_inspector_shows_recorded_fields_without_reading_again(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
+
+    opened = []
+    contents = {"name": "Game.DamageInfo", "address": "0x1000", "fields": [
+        {"name": "Damage", "type": "System.Single", "offset": 0x10, "static": False,
+         "value": {"text": "12.5"}},
+        {"name": "Owner", "type": "Game.Combat", "offset": 0x20, "static": False,
+         "value": {"text": "Game.Combat@0x2000", "target": {"address": "0x2000"}}},
+    ]}
+    dialog = ObjectInspectorDialog(
+        translations, lambda target, origin, name: opened.append((target, name)),
+        contents=contents, captured="09:47:10.738", name="damage")
+    try:
+        assert "beim Aufruf um 09:47:10.738" in dialog.title_label.text()
+        assert not dialog.live_check.isVisibleTo(dialog)
+        assert dialog.table.cellWidget(0, 4) is None
+        dialog.table.cellWidget(1, 4).linkActivated.emit("#")
+        assert dialog.windowTitle() == "Objekt-Inspektor - damage (Game.DamageInfo) (1)"
+        assert opened == [({"address": "0x2000"}, "Owner")]
+        # A failed recording shows its reason.
+        failed = ObjectInspectorDialog(translations, lambda *_: None, contents={"error": "gone"},
+                                       captured="09:47:10.738")
+        assert "gone" in failed.status_label.text()
+        failed.close()
+    finally:
+        dialog.close()
+
+
+@requires_target
+def test_properties_are_evaluated_on_the_main_thread(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel,too-many-locals
+    from hermes.core.method_monitor import MethodMonitorWorker
+
+    target = _MonoTarget(_build(tmp_path))
+    worker = MethodMonitorWorker(target.pid)
+    added, calls, answers, failures = {}, [], {}, {}
+    worker.monitor_added.connect(added.__setitem__)
+    worker.calls.connect(lambda events, _dropped, _counts: calls.extend(events))
+    worker.inspected.connect(answers.__setitem__)
+    worker.evaluated.connect(answers.__setitem__)
+    worker.inspect_failed.connect(failures.__setitem__)
+    worker.evaluate_failed.connect(failures.__setitem__)
+
+    def answer(request, then=None):
+        if then is not None:
+            time.sleep(0.2)  # the agent waits for the main thread now
+            target.send(then, 0)
+        _wait_for(qt_app, lambda: request in answers or request in failures, timeout=6)
+        return answers.get(request, failures.get(request))
+
+    try:
+        worker.start()
+        monitor_id = worker.add_monitor(_CALC_DAMAGE)
+        _wait_for(qt_app, lambda: monitor_id in added)
+        target.send("calc", 0)
+        _wait_for(qt_app, lambda: calls)
+        miranda = calls[0]["self"]["target"]
+
+        properties = answer(worker.inspect(miranda))["properties"]
+        assert [(p["name"], p["type"], p["static"]) for p in properties] == [
+            ("IsPartyMember", "System.Boolean", False), ("Broken", "System.Int32", False),
+            ("Count", "System.Int32", True), ("gameObject", "UnityEngine.GameObject", False),
+            ("name", "System.String", False)]
+
+        # The getters run when the main thread runs game code (here: "tick").
+        values = answer(worker.evaluate(miranda, [p["name"] for p in properties]), then="tick")
+        values = {value["name"]: value["value"] for value in values}
+        assert values["IsPartyMember"] == {"text": "true"}
+        assert values["Broken"]["error"]
+        assert values["Broken"]["text"] == 'System.InvalidOperationException: "broken getter"'
+        assert values["Count"] == {"text": "7"}
+        assert values["name"] == {"text": '"Miranda"'}
+        game_object = values["gameObject"]
+        assert game_object["text"].startswith('UnityEngine.GameObject "Miranda"@0x')
+
+        # A GameObject lists its components; a monitored call on the main
+        # thread runs waiting work as well.
+        values = answer(worker.evaluate(game_object["target"], ["GetComponents()"]), then="calc")
+        components = values[0]["value"]
+        assert components["text"].startswith("UnityEngine.Component[1]@0x")
+        elements = answer(worker.inspect(components["target"]))["fields"]
+        assert elements[0]["value"]["target"] == miranda
+
+        # Without the main thread running game code the request gives up.
+        message = answer(worker.evaluate(miranda, ["Count"]))
+        assert "main thread" in message
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_inspector_evaluates_properties(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.core.mono_catalog import CatalogMethod
+    from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+
+    target = _MonoTarget(_build(tmp_path))
+    dialog = MethodMonitorDialog(translations, target.pid)
+    try:
+        dialog.add_method(CatalogMethod(
+            "Assembly-CSharp", "Game.Combat", "CalcDamage", "(Game.Combat,Game.DamageInfo&)",
+            "System.Void", False, 0x06000005, _CALC_DAMAGE["method"]))
+        _wait_for(qt_app, lambda: dialog.methods_table.item(0, 5).text() == "Aktiv")
+        target.send("calc", 0)
+        _wait_for(qt_app, lambda: dialog.log.rowCount() == 1)
+        dialog.log_view.selectRow(0)
+        dialog.details.cellWidget(0, 2).linkActivated.emit("#")
+        inspector = dialog.inspectors[0]
+        _wait_for(qt_app, lambda: inspector.properties_table.rowCount() == 5)
+        assert inspector.properties_table.item(0, 0).text() == "IsPartyMember"
+        assert inspector.properties_table.cellWidget(0, 3).text().endswith("auswerten</a>")
+
+        inspector.properties_table.cellWidget(0, 3).linkActivated.emit("#")
+        time.sleep(0.2)
+        target.send("tick", 0)
+        _wait_for(qt_app, lambda: inspector.properties_table.item(0, 2).text() == "true")
+
+        inspector.evaluate_button.click()
+        time.sleep(0.2)
+        target.send("tick", 0)
+        _wait_for(qt_app, lambda: inspector.properties_table.item(2, 2).text() == "7")
+        # An object value can be opened in a dialog of its own.
+        assert inspector.properties_table.item(3, 2).text().startswith("UnityEngine.GameObject")
+        inspector.properties_table.cellWidget(3, 3).linkActivated.emit("#")
+        assert len(dialog.inspectors) == 2
+        _wait_for(qt_app, lambda: dialog.inspectors[1].properties_table.rowCount() == 2)
+        assert dialog.inspectors[1].windowTitle() == \
+            "Objekt-Inspektor - gameObject (UnityEngine.GameObject) (2)"
+        assert dialog.inspectors[1].properties_table.item(0, 0).text() == "GetComponents()"
+    finally:
+        dialog.close()
+        target.close()
+
+
+@requires_target
+def test_monitor_options_default_to_what_the_method_has(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.core.mono_catalog import CatalogMethod
+    from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+
+    target = _MonoTarget(_build(tmp_path))
+    dialog = MethodMonitorDialog(translations, target.pid)
+    try:
+        # An instance method with an out argument: both options.
+        dialog.add_method(CatalogMethod(
+            "Assembly-CSharp", "Game.Combat", "CalcDamage", "(Game.Combat,Game.DamageInfo&)",
+            "System.Void", False, 0x06000005, _CALC_DAMAGE["method"]))
+        # A static method with a ref int: a result to show, but no objects.
+        dialog.add_method(CatalogMethod(
+            "Assembly-CSharp", "Game.Inventory", "AddGold", "(int&,int)", "System.Void", True,
+            0x06000001, "Game.Inventory:AddGold (int&,int)"))
+        # Neither: Game.Loop:Update returns nothing and has no arguments.
+        dialog.add_method(CatalogMethod(
+            "Assembly-CSharp", "Game.Loop", "Update", "()", "System.Void", True,
+            0x0600000c, "Game.Loop:Update ()"))
+        _wait_for(qt_app, lambda: all(dialog.methods_table.item(row, 5).text() == "Aktiv"
+                                      for row in range(3)))
+        states = sorted(dialog._monitors.values(), key=lambda state: state["method"].token)
+        options = [(state["returns_check"].isChecked(), state["returns_check"].isEnabled(),
+                    state["objects_check"].isChecked(), state["objects_check"].isEnabled())
+                   for state in states]
+        assert options == [(True, True, False, False),   # AddGold
+                           (True, True, True, True),     # CalcDamage
+                           (False, False, False, False)]  # Update
+
+        # Recorded accordingly: the out argument afterwards, objects' fields.
+        target.send("calc", 0)
+        _wait_for(qt_app, lambda: dialog.log.rowCount() == 1)
+        info = dialog.log.calls[0]["args"][1]
+        assert info["after"]["text"].startswith("Game.DamageInfo@0x")
+        assert "snapshot" in info["after"]
+        # Switching an option off still works and sticks.
+        states[1]["objects_check"].setChecked(False)
+        _wait_for(qt_app, lambda: dialog.methods_table.item(1, 5).text() == "Aktiv")
+        assert not states[1]["objects_check"].isChecked()
+    finally:
+        dialog.close()
         target.close()

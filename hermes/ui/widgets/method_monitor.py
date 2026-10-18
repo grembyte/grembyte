@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QPoint, Qt  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QTableView,
@@ -21,6 +20,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 
 from hermes.core.method_monitor import MethodMonitorWorker
+from hermes.ui.widgets.object_inspector import ObjectInspectorDialog, link_label, link_width
 from hermes.ui.widgets.table import set_row_height
 
 
@@ -28,7 +28,7 @@ from hermes.ui.widgets.table import set_row_height
 MAX_CALLS = 5000
 
 # Columns of the monitored methods and of the call log.
-_M_METHOD, _M_SIGNATURE, _M_CALLS, _M_RETURNS, _M_STATUS = range(5)
+_M_METHOD, _M_SIGNATURE, _M_CALLS, _M_RETURNS, _M_OBJECTS, _M_STATUS = range(6)
 _C_TIME, _C_THREAD, _C_METHOD, _C_SELF, _C_ARGS, _C_RESULT, _C_CALLER = range(7)
 _CALL_COLUMNS = (
     "monitor.column_time", "monitor.column_thread", "monitor.column_method",
@@ -43,8 +43,40 @@ def short_name(signature):
     return f"{class_name.rsplit('.', 1)[-1]}:{method}"
 
 
+def call_time(call):
+    """Local time of a call, e.g. ``09:47:10.738``."""
+    return datetime.fromtimestamp(call.get("time", 0) / 1000).strftime("%H:%M:%S.%f")[:-3]
+
+
+def value_text(value):
+    """Text of a logged value (``{text, target?, snapshot?}``), '' for none."""
+    return value.get("text", "") if value else ""
+
+
+def argument_text(arg):
+    """``name=value``, plus ``⇒ value`` for what a ref/out argument held after the call."""
+    text = f"{arg.get('name', '?')}={value_text(arg)}"
+    if "after" in arg:
+        text += f" ⇒ {value_text(arg['after'])}"
+    return text
+
+
 def arguments_text(args):
-    return ", ".join(f"{name}={value}" for name, value in args)
+    return ", ".join(argument_text(arg) for arg in args)
+
+
+def call_values(call, translations):
+    """(label, value) of everything a call logged, for the details."""
+    values = []
+    if call.get("self"):
+        values.append(("this", call["self"]))
+    for arg in call.get("args", []):
+        values.append((arg.get("name", "?"), arg))
+        if "after" in arg:
+            values.append((f"{arg.get('name', '?')} ⇒", arg["after"]))
+    if "result" in call:
+        values.append((translations["monitor.column_result"], call["result"]))
+    return values
 
 
 class CallLogModel(QAbstractTableModel):
@@ -74,17 +106,19 @@ class CallLogModel(QAbstractTableModel):
         call = self.calls[index.row()]
         column = index.column()
         if column == _C_TIME:
-            return datetime.fromtimestamp(call.get("time", 0) / 1000).strftime("%H:%M:%S.%f")[:-3]
+            return call_time(call)
         if column == _C_THREAD:
             return str(call.get("threadId", ""))
         if column == _C_METHOD:
             return self.names.get(call.get("monitorId"), "?")
         if column == _C_SELF:
-            return call.get("self") or ""
+            return value_text(call.get("self"))
         if column == _C_ARGS:
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return "\n".join(argument_text(arg) for arg in call.get("args", []))
             return arguments_text(call.get("args", []))
         if column == _C_RESULT:
-            return call.get("result", "")
+            return value_text(call.get("result"))
         return call.get("caller", "")
 
     def append(self, calls):
@@ -126,6 +160,10 @@ class MethodMonitorDialog(QDialog):
         # monitor id -> {"method", "returns", "row", "calls", "dropped"}
         self._monitors = {}
         self._paused = False
+        # open object inspectors; inspection request id -> waiting inspector
+        self.inspectors = []
+        self._inspections = {}
+        self._detail_time = ""
         self.setWindowTitle(translations["monitor.title"])
         self.resize(1100, 700)
         self._build_ui()
@@ -135,6 +173,10 @@ class MethodMonitorDialog(QDialog):
         self._worker.monitor_ended.connect(self._on_ended)
         self._worker.calls.connect(self._on_calls)
         self._worker.worker_failed.connect(self._on_worker_failed)
+        self._worker.inspected.connect(self._on_inspected)
+        self._worker.inspect_failed.connect(self._on_inspect_failed)
+        self._worker.evaluated.connect(self._on_evaluated)
+        self._worker.evaluate_failed.connect(self._on_evaluate_failed)
         self._worker.start()
 
     # --- UI ------------------------------------------------------------------
@@ -149,22 +191,25 @@ class MethodMonitorDialog(QDialog):
         top = QWidget()
         top_layout = QVBoxLayout(top)
         top_layout.setContentsMargins(0, 0, 0, 0)
-        self.methods_table = QTableWidget(0, 5)
+        self.methods_table = QTableWidget(0, 6)
         self.methods_table.setHorizontalHeaderLabels([
             self.translations["monitor.column_method"],
             self.translations["monitor.column_signature"],
             self.translations["monitor.column_calls"],
             self.translations["monitor.column_returns"],
+            self.translations["monitor.column_objects"],
             self.translations["monitor.column_status"],
         ])
         self.methods_table.horizontalHeaderItem(_M_RETURNS).setToolTip(
             self.translations["monitor.returns_tooltip"])
+        self.methods_table.horizontalHeaderItem(_M_OBJECTS).setToolTip(
+            self.translations["monitor.objects_tooltip"])
         self.methods_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.methods_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.methods_table.verticalHeader().setVisible(False)
         set_row_height(self.methods_table)
         header = self.methods_table.horizontalHeader()
-        for column in range(5):
+        for column in range(6):
             header.setSectionResizeMode(
                 column, QHeaderView.ResizeMode.Stretch if column == _M_SIGNATURE
                 else QHeaderView.ResizeMode.ResizeToContents)
@@ -211,10 +256,28 @@ class MethodMonitorDialog(QDialog):
         log_header.resizeSection(_C_RESULT, 110)
         log_header.resizeSection(_C_CALLER, 240)
         self.log_view.selectionModel().currentRowChanged.connect(self._show_call)
+        # A reset (clearing the log) does not report a new current row.
+        self.log.modelReset.connect(lambda: self._show_call(QModelIndex()))
         bottom_layout.addWidget(self.log_view, 1)
-        self.details = QPlainTextEdit()
-        self.details.setReadOnly(True)
-        self.details.setMaximumHeight(110)
+        # The values of the selected call; double click inspects an object.
+        self.details = QTableWidget(0, 3)
+        self.details.setHorizontalHeaderLabels([
+            self.translations["monitor.details_name"],
+            self.translations["monitor.details_value"],
+            self.translations["monitor.details_fields"],
+        ])
+        self.details.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.details.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.details.verticalHeader().setVisible(False)
+        self.details.setWordWrap(False)
+        details_header = self.details.horizontalHeader()
+        details_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        details_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        details_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        details_header.resizeSection(
+            2, link_width(self.details, [self.translations["monitor.object_details"]]))
+        self.details.setMaximumHeight(190)
+        self.details.cellDoubleClicked.connect(self._inspect_detail)
         bottom_layout.addWidget(self.details)
         splitter.addWidget(bottom)
         splitter.setSizes([180, 520])
@@ -225,8 +288,26 @@ class MethodMonitorDialog(QDialog):
         layout.addWidget(self.status_label)
 
     # --- Monitors --------------------------------------------------------------
-    def add_method(self, method, returns=False):
-        """Monitor a ``CatalogMethod``; a method is monitored at most once."""
+    def _option_check(self, row, column, checked, tooltip, toggled):
+        check = QCheckBox()
+        check.setChecked(checked)
+        check.setToolTip(tooltip)
+        holder = QWidget()
+        holder_layout = QHBoxLayout(holder)
+        holder_layout.setContentsMargins(0, 0, 0, 0)
+        holder_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        holder_layout.addWidget(check)
+        self.methods_table.setCellWidget(row, column, holder)
+        check.toggled.connect(toggled)
+        return check
+
+    def add_method(self, method, returns=None, objects=None):
+        """Monitor a ``CatalogMethod``; a method is monitored at most once.
+
+        ``returns`` and ``objects`` default to "if the method has any": a
+        return value or ref/out arguments, objects among ``this``, the
+        arguments and the result.
+        """
         for state in self._monitors.values():
             if state["method"] == method:
                 return
@@ -240,34 +321,31 @@ class MethodMonitorDialog(QDialog):
         self.methods_table.item(row, _M_SIGNATURE).setText(
             f"{method.parameters} → {method.return_type}")
         self.methods_table.item(row, _M_CALLS).setText("0")
-        check = QCheckBox()
-        check.setChecked(returns)
-        check.setToolTip(self.translations["monitor.returns_tooltip"])
-        holder = QWidget()
-        holder_layout = QHBoxLayout(holder)
-        holder_layout.setContentsMargins(0, 0, 0, 0)
-        holder_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        holder_layout.addWidget(check)
-        self.methods_table.setCellWidget(row, _M_RETURNS, holder)
-        state = {"method": method, "returns": returns, "check": check,
+        state = {"method": method, "returns": returns, "objects": objects,
                  "calls": 0, "dropped": 0}
-        check.toggled.connect(lambda checked: self._set_returns(state, checked))
+        state["returns_check"] = self._option_check(
+            row, _M_RETURNS, bool(returns), self.translations["monitor.returns_tooltip"],
+            lambda checked: self._set_option(state, "returns", checked))
+        state["objects_check"] = self._option_check(
+            row, _M_OBJECTS, bool(objects), self.translations["monitor.objects_tooltip"],
+            lambda checked: self._set_option(state, "objects", checked))
         self._start(state)
         self.raise_()
 
     def _start(self, state):
-        monitor_id = self._worker.add_monitor(state["method"].identity(), state["returns"])
+        monitor_id = self._worker.add_monitor(
+            state["method"].identity(), state["returns"], state["objects"])
         self._monitors[monitor_id] = state
         self.log.names[monitor_id] = short_name(state["method"].signature)
         self._set_status(state, self.translations["monitor.status_starting"])
 
-    def _set_returns(self, state, returns):
+    def _set_option(self, state, option, enabled):
         # Frida needs onLeave from the start: monitor the method anew.
         monitor_id = self._id_of(state)
         if monitor_id is not None:
             self._worker.remove_monitor(monitor_id)
             del self._monitors[monitor_id]
-        state["returns"] = returns
+        state[option] = enabled
         self._start(state)
 
     def _id_of(self, state):
@@ -306,6 +384,20 @@ class MethodMonitorDialog(QDialog):
         state = self._monitors.get(monitor_id)
         if state is None:
             return
+        # The agent decided the options left open; show them, and grey out
+        # what the method has nothing for.
+        for option, check, records, has, key in (
+                ("returns", state["returns_check"], "recordsResults", "hasResults",
+                 "monitor.no_results"),
+                ("objects", state["objects_check"], "recordsObjects", "hasObjects",
+                 "monitor.no_objects")):
+            state[option] = info.get(records, state[option])
+            check.blockSignals(True)
+            check.setChecked(bool(state[option]))
+            check.blockSignals(False)
+            if not info.get(has, True) and not state[option]:
+                check.setEnabled(False)
+                check.setToolTip(self.translations[key])
         text = self.translations["monitor.status_active"]
         if info.get("undecoded"):
             text = self.translations["monitor.status_undecoded"].format(
@@ -365,18 +457,93 @@ class MethodMonitorDialog(QDialog):
             self.translations["monitor.resume" if paused else "monitor.pause"])
 
     def _show_call(self, current, _previous=None):
-        if not current.isValid():
-            self.details.clear()
+        call = self.log.calls[current.row()] if current.isValid() else None
+        values = call_values(call, self.translations) if call else []
+        self._detail_time = call_time(call) if call else ""
+        self.details.setRowCount(len(values))
+        for row, (label, value) in enumerate(values):
+            name = QTableWidgetItem(label)
+            name.setData(Qt.ItemDataRole.UserRole, value)
+            text = QTableWidgetItem(value_text(value))
+            text.setToolTip(value_text(value))
+            self.details.setItem(row, 0, name)
+            self.details.setItem(row, 1, text)
+            self.details.removeCellWidget(row, 2)
+            if value.get("target"):
+                link = link_label(self.translations["monitor.object_details"],
+                                  lambda row=row: self._inspect_detail(row, 2))
+                link.setToolTip(self.translations[
+                    "monitor.fields_captured" if "snapshot" in value else "monitor.fields_current"])
+                self.details.setCellWidget(row, 2, link)
+
+    # --- Object inspector ------------------------------------------------------
+    def _inspect_detail(self, row, _column):
+        """Show the fields of the object in details ``row``: as recorded at the
+        call if the monitor recorded objects, else as they are now."""
+        item = self.details.item(row, 0)
+        value = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if not value or not value.get("target"):
             return
-        call = self.log.calls[current.row()]
-        lines = [self.log.names.get(call.get("monitorId"), "?")]
-        if call.get("self"):
-            lines.append(f"this = {call['self']}")
-        lines += [f"{name} = {value}" for name, value in call.get("args", [])]
-        if "result" in call:
-            lines.append(f"→ {call['result']}")
-        lines.append(f"{self.translations['monitor.column_caller']}: {call.get('caller', '')}")
-        self.details.setPlainText("\n".join(lines))
+        name = item.text().removesuffix(" ⇒")  # "info ⇒": what info held after the call
+        if "snapshot" in value:
+            self._show_inspector(ObjectInspectorDialog(
+                self.translations, self.inspect, target=value["target"],
+                contents=value["snapshot"], captured=self._detail_time,
+                evaluate=self._request_evaluation, name=name, parent=self))
+        else:
+            self.inspect(value["target"], name=name)
+
+    def inspect(self, target, origin=None, name=""):
+        """Show the current fields of ``target`` in a dialog of its own.
+
+        ``origin`` is the dialog it was opened from (one level less deep).
+        """
+        self._show_inspector(ObjectInspectorDialog(
+            self.translations, self.inspect, target=target, request=self._request_inspection,
+            evaluate=self._request_evaluation, name=name,
+            depth=1 if origin is None else origin.depth + 1, parent=self), origin)
+
+    def _show_inspector(self, inspector, origin=None):
+        self.inspectors.append(inspector)
+        inspector.destroyed.connect(lambda _object, inspector=inspector: self._forget(inspector))
+        if origin is not None:
+            # Opened from another dialog: a little offset, so both stay visible.
+            inspector.move(origin.pos() + QPoint(32, 32))
+        inspector.show()
+        inspector.activateWindow()
+
+    def _forget(self, inspector):
+        if inspector in self.inspectors:
+            self.inspectors.remove(inspector)
+        for request_id, waiting in list(self._inspections.items()):
+            if waiting is inspector:
+                del self._inspections[request_id]
+
+    def _request_inspection(self, target, inspector):
+        self._inspections[self._worker.inspect(target)] = inspector
+
+    def _request_evaluation(self, target, names, inspector):
+        self._inspections[self._worker.evaluate(target, names)] = inspector
+
+    def _on_evaluated(self, request_id, results):
+        inspector = self._inspections.pop(request_id, None)
+        if inspector is not None:
+            inspector.show_properties(results)
+
+    def _on_evaluate_failed(self, request_id, message):
+        inspector = self._inspections.pop(request_id, None)
+        if inspector is not None:
+            inspector.show_property_error(message)
+
+    def _on_inspected(self, request_id, contents):
+        inspector = self._inspections.pop(request_id, None)
+        if inspector is not None:
+            inspector.show_contents(contents)
+
+    def _on_inspect_failed(self, request_id, message):
+        inspector = self._inspections.pop(request_id, None)
+        if inspector is not None:
+            inspector.show_error(message)
 
     def closeEvent(self, event):  # pylint: disable=invalid-name
         # Removing the interceptors can wait for calls in progress; do not

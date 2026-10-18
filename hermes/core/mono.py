@@ -34,6 +34,18 @@ Frida agents include ``MONO_AGENT_SOURCE``; it defines ``mono`` with:
 ``mono.prepare(identity)`` / ``mono.objectClassName(object)``
     For the method monitor: ``compile`` plus the method's signature, and
     the class name of a managed object.
+``mono.classOf(object)`` / ``mono.layout(klass)``
+    For inspecting objects: the class of an object (null for an address
+    that holds none) and the fields of a class (cached).
+``mono.unityName(object)``
+    The name of a GameObject or component, by calling Unity's
+    ``UnityEngine.Object.get_name``; only on the game's main thread.
+``mono.onMainThread(work)`` / ``mono.drainMain()``
+    Run game code on Unity's main thread, as soon as it runs a script
+    method (a promise); ``drainMain`` runs queued work if called there.
+``mono.properties(klass)`` / ``mono.getProperty(object, property, isStruct)``
+    The parameterless getters of a class (and a GameObject's components),
+    and calling one on the main thread: ``{result, exception}``.
 ``mono.compile(identity)``
     Look up the method of an ``identify`` result, let Mono compile it (or
     return the code it has) and return ``{start, size}`` of its code.
@@ -126,7 +138,33 @@ const mono = (() => {
         enumBase: exported('mono_class_enum_basetype', 'pointer', ['pointer']),
         isValueType: exported('mono_class_is_valuetype', 'int', ['pointer']),
         valueSize: exported('mono_class_value_size', 'int', ['pointer', 'pointer']),
-        objectClass: exported('mono_object_get_class', 'pointer', ['pointer'])
+        objectClass: exported('mono_object_get_class', 'pointer', ['pointer']),
+        classFields: exported('mono_class_get_fields', 'pointer', ['pointer', 'pointer']),
+        fieldName: exported('mono_field_get_name', 'pointer', ['pointer']),
+        fieldType: exported('mono_field_get_type', 'pointer', ['pointer']),
+        fieldOffset: exported('mono_field_get_offset', 'uint32', ['pointer']),
+        fieldFlags: exported('mono_field_get_flags', 'uint32', ['pointer']),
+        classParent: exported('mono_class_get_parent', 'pointer', ['pointer']),
+        classRank: exported('mono_class_get_rank', 'int', ['pointer']),
+        elementClass: exported('mono_class_get_element_class', 'pointer', ['pointer']),
+        elementSize: exported('mono_array_element_size', 'int', ['pointer'])
+      })),
+      // Only Unity object names need these. Cooperative: they run game code.
+      invoke: optional(() => ({
+        methodFromName: exported('mono_class_get_method_from_name', 'pointer',
+          ['pointer', 'pointer', 'int']),
+        runtimeInvoke: blocking('mono_runtime_invoke', 'pointer',
+          ['pointer', 'pointer', 'pointer', 'pointer']),
+        // Unity runs its script methods through it: a way onto its main thread.
+        runtimeInvokeAddress: address('mono_runtime_invoke'),
+        virtualMethod: exported('mono_object_get_virtual_method', 'pointer',
+          ['pointer', 'pointer']),
+        typeObject: blocking('mono_type_get_object', 'pointer', ['pointer', 'pointer']),
+        classFromName: exported('mono_class_from_name', 'pointer',
+          ['pointer', 'pointer', 'pointer']),
+        classMethods: exported('mono_class_get_methods', 'pointer', ['pointer', 'pointer']),
+        methodName: exported('mono_method_get_name', 'pointer', ['pointer']),
+        methodFlags: exported('mono_method_get_flags', 'uint32', ['pointer', 'pointer'])
       }))
     };
   }
@@ -347,6 +385,7 @@ const mono = (() => {
       } else if (!klass.isNull() && t.isValueType(klass) !== 0) {
         info.kind = TYPE.VALUETYPE;
         info.structSize = t.valueSize(klass, NULL);
+        info.klass = klass;
       }
     }
     return info;
@@ -381,6 +420,312 @@ const mono = (() => {
         returns: typeInfo(t, t.returnType(signature))
       };
     });
+  }
+
+  // --- Objects: classes, their fields, arrays -----------------------------
+
+  const FIELD_STATIC = 0x10;
+  const layouts = new Map();
+  let knownImages = new Set();
+
+  function isLoadedImage(image) {
+    if (knownImages.has(image.toString()))
+      return true;
+    if (api.catalog === null)
+      return false;
+    // Assemblies may have been loaded since.
+    knownImages = new Set(loadedImages(api.catalog).map(String));
+    return knownImages.has(image.toString());
+  }
+
+  function classOf(object) {
+    // The class of a managed object, or null if ``object`` is none (any
+    // more): a MonoObject starts with its vtable, which starts with the
+    // class, and a real class belongs to a loaded assembly. Only plain
+    // memory reads until then, so a stale address cannot mislead Mono.
+    typesApi();
+    try {
+      const klass = object.readPointer().readPointer();
+      return isLoadedImage(api.classImage(klass)) ? klass : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function layout(klass) {
+    // { name, valueType, rank, fields: [{ name, type, offset, static }] }
+    // with inherited fields first; for arrays also element type and size.
+    const key = klass.toString();
+    let result = layouts.get(key);
+    if (result !== undefined)
+      return result;
+    const t = typesApi();
+    const chain = [];
+    for (let current = klass; !current.isNull(); current = t.classParent(current))
+      chain.unshift(current);
+    const fields = [];
+    const iterator = Memory.alloc(Process.pointerSize);
+    for (const current of chain) {
+      iterator.writePointer(NULL);
+      for (;;) {
+        const field = t.classFields(current, iterator);
+        if (field.isNull())
+          break;
+        fields.push({
+          name: t.fieldName(field).readUtf8String(),
+          type: typeInfo(t, t.fieldType(field)),
+          offset: t.fieldOffset(field),
+          static: (t.fieldFlags(field) & FIELD_STATIC) !== 0
+        });
+      }
+    }
+    result = {
+      name: cString(t.typeName(t.classType(klass))) || '?',
+      valueType: t.isValueType(klass) !== 0,
+      rank: t.classRank(klass),
+      fields
+    };
+    if (result.rank > 0) {
+      const element = t.elementClass(klass);
+      result.element = typeInfo(t, t.classType(element));
+      result.elementSize = t.elementSize(klass);
+    }
+    layouts.set(key, result);
+    return result;
+  }
+
+  // --- Unity object names ----------------------------------------------------
+  // GameObjects and components keep their name on Unity's native side; the
+  // managed object only holds a pointer to it (m_CachedPtr). Reading it means
+  // calling UnityEngine.Object.get_name, which Unity only allows on its main
+  // thread: call unityName only on a game thread that runs game code. Threads
+  // where it never worked are not asked again.
+
+  const MAX_FAILURES = 3;
+  const nameMethods = new Map();
+  const nameThreads = new Map();
+  const naming = new Set();
+
+  function nameMethod(klass) {
+    // UnityEngine.Object.get_name if ``klass`` derives from UnityEngine.Object.
+    const key = klass.toString();
+    let method = nameMethods.get(key);
+    if (method !== undefined)
+      return method;
+    const t = typesApi();
+    method = null;
+    for (let current = klass; !current.isNull(); current = t.classParent(current)) {
+      if (layout(current).name === 'UnityEngine.Object') {
+        const found = api.invoke.methodFromName(current, Memory.allocUtf8String('get_name'), 0);
+        method = found.isNull() ? null : found;
+        break;
+      }
+    }
+    nameMethods.set(key, method);
+    return method;
+  }
+
+  function unityName(object) {
+    // The name of a GameObject or component, or null.
+    if (api === null || api.types === null || api.invoke === null)
+      return null;
+    const thread = Process.getCurrentThreadId();
+    const state = nameThreads.get(thread) || { ok: 0, failed: 0 };
+    if ((state.ok === 0 && state.failed >= MAX_FAILURES) || naming.has(thread))
+      return null;
+    const klass = classOf(object);
+    const method = klass === null ? null : nameMethod(klass);
+    if (method === null)
+      return null;
+    const exception = Memory.alloc(Process.pointerSize);
+    exception.writePointer(NULL);
+    naming.add(thread);  // get_name could run a monitored method
+    let result;
+    try {
+      result = api.invoke.runtimeInvoke(method, object, NULL, exception);
+    } finally {
+      naming.delete(thread);
+    }
+    // An exception: not the main thread, or the object was destroyed.
+    const failed = !exception.readPointer().isNull() || result.isNull();
+    if (failed)
+      state.failed++;
+    else
+      state.ok++;
+    nameThreads.set(thread, state);
+    if (failed)
+      return null;
+    const length = result.add(2 * Process.pointerSize).readS32();
+    return result.add(2 * Process.pointerSize + 4).readUtf16String(Math.min(length, 120));
+  }
+
+  // --- Unity's main thread ----------------------------------------------------
+  // Game code that Unity only allows on its main thread (Unity API, game
+  // logic) runs there via onMainThread: the next time the main thread starts
+  // a script method through mono_runtime_invoke, the queued work runs first.
+  // On Linux the main thread's id is the process id.
+
+  const MAIN_TIMEOUT = 3000;
+  const mainQueue = [];
+  let mainHook = null;
+  let draining = false;
+
+  function isMainThread() {
+    return Process.getCurrentThreadId() === Process.id;
+  }
+
+  function drainMain() {
+    // Run the queued work; call it on any thread, it only acts on the main one.
+    if (draining || !isMainThread())
+      return;
+    draining = true;  // our own invocations pass mono_runtime_invoke, too
+    try {
+      while (mainQueue.length > 0) {
+        const job = mainQueue.shift();
+        clearTimeout(job.timer);
+        try {
+          job.resolve(job.work());
+        } catch (error) {
+          job.reject(error);
+        }
+      }
+    } finally {
+      draining = false;
+    }
+    if (mainHook !== null) {
+      const hook = mainHook;
+      mainHook = null;
+      setTimeout(() => hook.detach(), 0);  // not from within its own callback
+    }
+  }
+
+  function onMainThread(work) {
+    // A promise of work()'s result, computed on Unity's main thread.
+    if (api === null || api.invoke === null)
+      return Promise.reject(new Error('this Mono runtime cannot run game code'));
+    return new Promise((resolve, reject) => {
+      const job = { work, resolve, reject };
+      job.timer = setTimeout(() => {
+        const index = mainQueue.indexOf(job);
+        if (index >= 0)
+          mainQueue.splice(index, 1);
+        reject(new Error('the game did not run code on its main thread for 3 s ' +
+                         '(still loading, or no Unity game?)'));
+      }, MAIN_TIMEOUT);
+      mainQueue.push(job);
+      if (mainHook === null)
+        mainHook = Interceptor.attach(api.invoke.runtimeInvokeAddress, {
+          onEnter() {
+            drainMain();
+          }
+        });
+    });
+  }
+
+  // --- Properties: parameterless getters ---------------------------------------
+
+  const propertyLists = new Map();
+
+  function classChain(klass) {
+    const chain = [];
+    for (let current = klass; !current.isNull(); current = api.types.classParent(current))
+      chain.push(current);
+    return chain;  // the class first, System.Object last
+  }
+
+  function properties(klass) {
+    // [{ name, method, static, type }] of the getters of ``klass`` and its
+    // base classes (overridden ones once); a GameObject also lists its
+    // components (``special: 'components'``). Cached.
+    const key = klass.toString();
+    let result = propertyLists.get(key);
+    if (result !== undefined)
+      return result;
+    const t = typesApi();
+    result = [];
+    if (api.invoke === null) {
+      propertyLists.set(key, result);
+      return result;
+    }
+    const seen = new Set();
+    const iterator = Memory.alloc(Process.pointerSize);
+    const chain = classChain(klass);
+    if (chain.some(current => layout(current).name === 'UnityEngine.GameObject'))
+      result.push({ name: 'GetComponents()', special: 'components', static: false,
+                    type: { kind: 0x1d, byref: false, name: 'UnityEngine.Component[]' } });
+    for (const current of chain) {
+      iterator.writePointer(NULL);
+      for (;;) {
+        const method = api.invoke.classMethods(current, iterator);
+        if (method.isNull())
+          break;
+        const name = api.invoke.methodName(method).readUtf8String();
+        if (!name.startsWith('get_') || seen.has(name))
+          continue;
+        const signature = t.methodSignature(method);
+        if (signature.isNull() || t.paramCount(signature) !== 0)
+          continue;
+        seen.add(name);
+        result.push({
+          name: name.substring(4),
+          method: method.toString(),
+          static: (api.invoke.methodFlags(method, NULL) & METHOD_STATIC) !== 0,
+          type: typeInfo(t, t.returnType(signature))
+        });
+      }
+    }
+    propertyLists.set(key, result);
+    return result;
+  }
+
+  function invoke(method, object, params) {
+    // { result, exception } of calling a managed method; main thread only.
+    const exception = Memory.alloc(Process.pointerSize);
+    exception.writePointer(NULL);
+    const result = api.invoke.runtimeInvoke(method, object, params, exception);
+    return { result, exception: exception.readPointer() };
+  }
+
+  function getProperty(object, property, isStruct) {
+    // Call a getter of ``object`` (an unboxed value for a struct).
+    if (property.special === 'components')
+      return components(object);
+    let method = ptr(property.method);
+    if (!property.static && !isStruct)
+      method = api.invoke.virtualMethod(object, method);  // the override
+    return invoke(method, property.static ? NULL : object, NULL);
+  }
+
+  function components(gameObject) {
+    // GameObject.GetComponents(typeof(Component))
+    const klass = classOf(gameObject);
+    let getComponents = null;
+    const iterator = Memory.alloc(Process.pointerSize);
+    for (const current of classChain(klass)) {
+      iterator.writePointer(NULL);
+      for (let method = api.invoke.classMethods(current, iterator); !method.isNull();
+           method = api.invoke.classMethods(current, iterator)) {
+        if (api.invoke.methodName(method).readUtf8String() !== 'GetComponents')
+          continue;
+        const signature = api.types.methodSignature(method);
+        const paramIterator = Memory.alloc(Process.pointerSize);
+        paramIterator.writePointer(NULL);
+        if (!signature.isNull() && api.types.paramCount(signature) === 1
+            && cString(api.types.typeName(api.types.params(signature, paramIterator)))
+               === 'System.Type')
+          getComponents = method;
+      }
+    }
+    if (getComponents === null)
+      throw new Error('GameObject.GetComponents(Type) not found');
+    const image = api.classImage(klass);
+    const component = api.invoke.classFromName(image, Memory.allocUtf8String('UnityEngine'),
+                                               Memory.allocUtf8String('Component'));
+    if (component.isNull())
+      throw new Error('UnityEngine.Component not found');
+    const params = Memory.alloc(Process.pointerSize);
+    params.writePointer(api.invoke.typeObject(api.currentDomain(), api.types.classType(component)));
+    return invoke(getComponents, gameObject, params);
   }
 
   const classNames = new Map();
@@ -479,7 +824,8 @@ const mono = (() => {
   refresh();
   return {
     refresh, locate, name, describe, identify, compile, assemblies, classes, prepare,
-    objectClassName, TYPE
+    objectClassName, classOf, layout, onMonoThread, unityName, onMainThread, drainMain,
+    properties, getProperty, TYPE
   };
 })();
 """
