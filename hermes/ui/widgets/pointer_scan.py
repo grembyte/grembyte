@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 from sqlalchemy.exc import SQLAlchemyError
 
+from hermes.core import logs
 from hermes.core.pointer import (
     PointerMap,
     ProcessMemory,
@@ -62,6 +63,7 @@ class PointerScanWorker(QThread):
                  max_results=10000, base_modules=None, aligned_values=True, parent=None):
         # pylint: disable=too-many-arguments
         super().__init__(parent)
+        logs.log_failures(self)
         self.pid = pid
         self.target = target
         self.chains = chains

@@ -24,13 +24,13 @@ Like the method monitor, the trace notices when Mono frees traced code
 """
 
 import queue
-import sys
 import threading
 from dataclasses import dataclass
 
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import logs
 from hermes.core import sessions
 from hermes.core.mono import MONO_AGENT_SOURCE
 from hermes.core.mono_catalog import CatalogMethod, is_framework_assembly
@@ -617,8 +617,8 @@ class MonoTraceWorker(QThread):
         if script is not None:
             try:
                 script.post({"type": "cancel"})
-            except CLEANUP_ERRORS:
-                pass
+            except CLEANUP_ERRORS as error:
+                logs.cleanup_failed(error)
 
     def requestInterruption(self):  # pylint: disable=invalid-name
         self.cancel()
@@ -659,17 +659,17 @@ class MonoTraceWorker(QThread):
             if script is not None:
                 try:
                     script.exports_sync.dispose()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
                 try:
                     script.unload()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
             if session is not None:
                 try:
                     session.detach()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
 
     def _spec(self, api, words):
         names = [a["name"] for a in api.assemblies() if not is_framework_assembly(a["name"])]
@@ -712,7 +712,7 @@ class MonoTraceWorker(QThread):
         elif kind == "trace-ended":
             self.ended.emit()
         elif kind == "agent-error":
-            print(f"[mono trace] {payload.get('error', '')}", file=sys.stderr)
+            logs.log.error("mono trace agent: %s", payload.get("error", ""))
 
     def _on_detached(self, reason, _crash):
         self._detach_reason = reason

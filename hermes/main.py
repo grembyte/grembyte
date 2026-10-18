@@ -9,6 +9,7 @@ from PyQt6.QtCore import QStandardPaths, QTimer  # pylint: disable=import-error,
 from PyQt6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import logs
 from hermes.core.sessions import SESSIONS
 from hermes.db.engine import init_db
 from hermes.ui.main_window import MainWindow
@@ -19,6 +20,11 @@ DESKTOP_FILE_NAME = "hermes-hook"
 
 def main() -> int:
     """Initialize the database and run the application event loop."""
+    try:
+        logs.setup()
+    except OSError as error:
+        print(f"Hermes cannot write its log: {error}", file=sys.stderr)
+    logs.install_exception_hooks()
     init_db()
 
     app = QApplication(sys.argv)
@@ -50,7 +56,10 @@ def main() -> int:
     finally:
         signal_check_timer.stop()
         signal.signal(signal.SIGINT, previous_sigint_handler)
+    logs.log.info("Hermes exits (code %s)", code)
     if SESSIONS.sessions():
+        logs.log.warning("exiting hard: %d session(s) did not end",
+                         len(SESSIONS.sessions()))
         # A worker hangs in a call to the target (see ShutdownDialog). Python
         # would abort destroying its running QThread: leave without that.
         sys.stdout.flush()

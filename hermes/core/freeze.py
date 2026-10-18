@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import logs
 from hermes.core.pointer import PointerChain, ProcessMemory, module_bases, read_mappings, resolve_chain
 
 
@@ -35,6 +36,7 @@ class FreezeWorker(QThread):
 
     def __init__(self, pid, parent=None):
         super().__init__(parent)
+        logs.log_failures(self)
         self.pid = pid
         self._lock = threading.Lock()
         self._entries = {}

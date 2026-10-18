@@ -41,13 +41,13 @@ before the call do not.
 """
 
 import queue
-import sys
 import threading
 from dataclasses import dataclass
 
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import logs
 from hermes.core import sessions
 from hermes.core.method_monitor import build_agent_source
 from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
@@ -186,17 +186,17 @@ class MethodHookWorker(QThread):
             if script is not None:
                 try:
                     script.exports_sync.dispose()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
                 try:
                     script.unload()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
             if session is not None:
                 try:
                     session.detach()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
 
     def _execute(self, api, action, hook_id, argument):
         try:
@@ -247,7 +247,7 @@ class MethodHookWorker(QThread):
             self.agent_warning.emit(payload.get("error", ""))
 
     def _on_log(self, level, text):
-        print(f"[method hook agent] {text}", file=sys.stderr)
+        logs.agent_log("method hook agent", level, text)
         self.agent_log.emit(level, text)
 
     def _on_detached(self, reason, _crash):

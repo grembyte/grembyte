@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 
 from PyQt6.QtCore import QObject, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import logs
+
 
 # Kinds of workers (translation keys "sessions.kind_<kind>")
 CATALOG = "catalog"
@@ -142,6 +144,7 @@ class SessionRegistry:
         frida_session = session.frida_session
         if frida_session is None:
             return False
+        logs.log.warning("cutting the Frida session of %s (pid %s)", session.kind, session.pid)
         self.stop(session)
         session.detaching = True
         threading.Thread(target=_detach, args=(frida_session,), daemon=True,
@@ -178,8 +181,8 @@ class SessionSignals(QObject):
 def _detach(frida_session):
     try:
         frida_session.detach()
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass  # gone already, or the target is: either way it is cut
+    except Exception as error:  # pylint: disable=broad-exception-caught
+        logs.cleanup_failed(error)  # gone already, or the target is: either way it is cut
 
 
 SESSIONS = SessionRegistry()
@@ -190,11 +193,16 @@ def tracked(kind):
     def decorate(run):
         @functools.wraps(run)
         def wrapper(self, *args, **kwargs):
+            if not getattr(self, "_failures_logged", False):
+                logs.log_failures(self)
+                self._failures_logged = True
             SESSIONS.add(self, kind, self.pid)
+            logs.log.info("session %s started (pid %s)", kind, self.pid)
             try:
                 return run(self, *args, **kwargs)
             finally:
                 SESSIONS.remove(self)
+                logs.log.info("session %s ended (pid %s)", kind, self.pid)
         return wrapper
     return decorate
 

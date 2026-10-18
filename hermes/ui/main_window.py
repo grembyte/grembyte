@@ -55,8 +55,9 @@ from hermes.hooks.transforms import example_templates
 from hermes.ui.widgets.catalog import CatalogDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
-from hermes.core import sessions
+from hermes.core import logs, sessions
 from hermes.ui.widgets import method_monitor, mono_trace
+from hermes.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
 from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog
 from hermes.ui.widgets.method_monitor import MethodMonitorDialog
 from hermes.ui.widgets.mono_trace import MonoTraceDialog
@@ -217,6 +218,7 @@ class MainWindow(QMainWindow):
         self._method_monitor = None
         self._mono_trace = None
         self._sessions_dialog = None
+        self._log_dialog = None
         # Whether the attached process runs a Mono runtime (C# catalog).
         self._has_mono = False
         # Database id of the program the open pointer dialogs belong to.
@@ -1081,6 +1083,34 @@ class MainWindow(QMainWindow):
             self.btn_sessions.style().unpolish(self.btn_sessions)
             self.btn_sessions.style().polish(self.btn_sessions)
 
+    def _update_log_button(self):
+        """Name the errors logged since the start, if any."""
+        count = logs.error_count()
+        self.btn_log.setText(self.translations["log.button_errors"].format(count=count)
+                             if count else self.translations["log.button"])
+        self.btn_log.setToolTip(self.translations["log.button_tooltip"].format(
+            path=logs.log_path()))
+        name = "btn_danger" if count else ""
+        if self.btn_log.objectName() != name:
+            self.btn_log.setObjectName(name)
+            self.btn_log.setFlat(not count)
+            self.btn_log.style().unpolish(self.btn_log)
+            self.btn_log.style().polish(self.btn_log)
+
+    def _open_log(self):
+        """Show the application log."""
+        dialog = self._log_dialog
+        if dialog is None:
+            dialog = LogDialog(self.translations, parent=self)
+            dialog.finished.connect(lambda _result: setattr(self, "_log_dialog", None))
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._log_dialog = dialog
+        else:
+            dialog.refresh()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     def _open_sessions(self):
         """Show the workers attached to processes, to end them if need be."""
         dialog = self._sessions_dialog
@@ -1513,6 +1543,14 @@ class MainWindow(QMainWindow):
         self.lbl_backend.setObjectName("lbl_backend")
         sb.addWidget(self.lbl_backend)
         self._update_backend_label()
+        self.btn_log = QPushButton()
+        self.btn_log.setFlat(True)
+        self.btn_log.clicked.connect(self._open_log)
+        sb.addPermanentWidget(self.btn_log)
+        self._log_signals = LogSignals(self)
+        self._log_signals.error_logged.connect(self._update_log_button)
+        self._error_reporter = ErrorReporter(self.translations, self._open_log, self)
+        self._update_log_button()
         sb.addPermanentWidget(QLabel(self.translations["app.version_status"]))
         sb.setSizeGripEnabled(False)
 

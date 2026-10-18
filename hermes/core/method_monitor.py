@@ -41,12 +41,12 @@ shows the current fields; a short-lived object may be collected by then.
 
 import itertools
 import queue
-import sys
 import threading
 
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import logs
 from hermes.core import sessions
 from hermes.core.mono import MONO_AGENT_SOURCE
 from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
@@ -1419,17 +1419,17 @@ class MethodMonitorWorker(QThread):
             if script is not None:
                 try:
                     script.exports_sync.dispose()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
                 try:
                     script.unload()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
             if session is not None:
                 try:
                     session.detach()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
 
     def _execute(self, api, action, monitor_id, argument):
         try:
@@ -1470,7 +1470,7 @@ class MethodMonitorWorker(QThread):
         elif kind == "monitor-ended":
             self.monitor_ended.emit(payload.get("monitorId", 0))
         elif kind == "agent-error":
-            print(f"[method monitor] {payload.get('error', '')}", file=sys.stderr)
+            logs.log.error("method monitor agent: %s", payload.get("error", ""))
         elif kind == "monitor-error":
             self.monitor_failed.emit(payload.get("monitorId", 0), payload.get("error", ""))
 

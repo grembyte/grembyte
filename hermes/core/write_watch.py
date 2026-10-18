@@ -12,6 +12,7 @@ import threading
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import logs
 from hermes.core import sessions
 from hermes.core.mono import MONO_AGENT_SOURCE
 from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
@@ -343,17 +344,17 @@ class WriteWatchWorker(QThread):
             if script is not None:
                 try:
                     script.exports_sync.stop()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
                 try:
                     script.unload()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
             if session is not None:
                 try:
                     session.detach()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
             self.monitor_stopped.emit()
 
     def _on_message(self, message, _data):

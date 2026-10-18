@@ -52,13 +52,13 @@ At most ``MAX_DEBUG_EVENTS`` events are sent per 100 ms; the rest is counted.
 
 import itertools
 import queue
-import sys
 import threading
 from dataclasses import dataclass, field
 
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import logs
 from hermes.core import sessions
 from hermes.core.mono import MONO_AGENT_SOURCE
 from hermes.core.pointer import PointerChain
@@ -1624,17 +1624,17 @@ class HookWorker(QThread):
             if script is not None:
                 try:
                     script.exports_sync.dispose()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
                 try:
                     script.unload()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
             if session is not None:
                 try:
                     session.detach()
-                except CLEANUP_ERRORS:
-                    pass
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
             self.worker_stopped.emit()
 
     def _execute(self, script, action, hook_id, argument):
@@ -1716,7 +1716,7 @@ class HookWorker(QThread):
             )
 
     def _on_log(self, level, text):
-        print(f"[hook agent] {text}", file=sys.stderr)
+        logs.agent_log("hook agent", level, text)
         self.agent_log.emit(level, text)
 
     def _on_session_detached(self, reason, _crash):

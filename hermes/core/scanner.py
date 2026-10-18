@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import logs
 from hermes.core.pointer import ProcessMemory, module_bases, read_mappings, resolve_chain
 from hermes.core.value_types import AUTO_VALUE_TYPES, VALUE_TYPES
 from hermes.core.value_types import value_type as lookup_value_type
@@ -207,6 +208,7 @@ class ScanWorker(QThread):
         parent=None,
     ):
         super().__init__(parent)
+        logs.log_failures(self)
         self.pid = pid
         self.value_type = value_type
         self.scan_mode = scan_mode
@@ -623,6 +625,7 @@ class ValueRefreshWorker(QThread):
 
     def __init__(self, pid, entries, parent=None):
         super().__init__(parent)
+        logs.log_failures(self)
         self.pid = pid
         self.entries = entries
 
