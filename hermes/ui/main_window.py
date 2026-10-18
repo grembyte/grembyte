@@ -18,6 +18,7 @@ from PyQt6.QtGui import QColor, QActionGroup  # pylint: disable=import-error,no-
 from hermes.ui.localization import load_translations
 from hermes.ui.styles.styles import STYLE
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.widgets.glyph_icon import glyph_icon
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.ui.widgets.table import set_row_height
 from hermes.core.pointer import (
@@ -219,7 +220,7 @@ class MainWindow(QMainWindow):
         self._mono_trace = None
         self._sessions_dialog = None
         self._log_dialog = None
-        # Whether the attached process runs a Mono runtime (C# catalog).
+        # Whether the attached process runs a Mono runtime (Mono catalog).
         self._has_mono = False
         # Database id of the program the open pointer dialogs belong to.
         self._pointer_program = None
@@ -279,7 +280,9 @@ class MainWindow(QMainWindow):
         """Create the menu bar and the watch-backend switch."""
         menu_bar = self.menuBar()
         settings_menu = menu_bar.addMenu(self.translations["menu.settings"])
-        backend_menu = settings_menu.addMenu(self.translations["menu.watch_backend"])
+        # "&&" keeps Qt from reading the "&" as a mnemonic marker.
+        backend_menu = settings_menu.addMenu(
+            self.translations["menu.watch_backend"].replace("&", "&&"))
 
         group = QActionGroup(self)
         group.setExclusive(True)
@@ -297,6 +300,25 @@ class MainWindow(QMainWindow):
             )
             group.addAction(action)
             self._backend_actions[backend] = action
+
+        view_menu = menu_bar.addMenu(self.translations["menu.view"])
+        view_menu.setToolTipsVisible(True)
+
+        self.act_templates = view_menu.addAction(
+            glyph_icon("⧉"), self.translations["menu.templates"])
+        self.act_templates.setToolTip(self.translations["templates.button_tooltip"])
+        self.act_templates.triggered.connect(self._open_template_dialog)
+
+        view_menu.addSeparator()
+
+        self.act_catalog = view_menu.addAction(
+            glyph_icon("{ }"), self.translations["menu.catalog"])
+        self.act_catalog.triggered.connect(self._open_catalog)
+
+        self.act_trace = view_menu.addAction(
+            glyph_icon("◉"), self.translations["menu.trace"])
+        self.act_trace.triggered.connect(self._open_mono_trace)
+        self._update_catalog_button()
 
     def _set_watch_backend(self, backend):
         """Apply a backend the user picked by hand and remember it."""
@@ -356,22 +378,6 @@ class MainWindow(QMainWindow):
         self.lbl_proc_info = QLabel(f"  {self._current_proc}")
         self.lbl_proc_info.setObjectName("lbl_process")
         tb.addWidget(self.lbl_proc_info)
-
-        tb.addSeparator()
-
-        self.btn_templates = QPushButton(self.translations["templates.button"])
-        self.btn_templates.setToolTip(self.translations["templates.button_tooltip"])
-        self.btn_templates.clicked.connect(self._open_template_dialog)
-        tb.addWidget(self.btn_templates)
-
-        self.btn_catalog = QPushButton(self.translations["catalog.button"])
-        self.btn_catalog.clicked.connect(self._open_catalog)
-        tb.addWidget(self.btn_catalog)
-
-        self.btn_trace = QPushButton(self.translations["trace.button"])
-        self.btn_trace.clicked.connect(self._open_mono_trace)
-        tb.addWidget(self.btn_trace)
-        self._update_catalog_button()
 
         # The memory viewer stands apart on the right.
         spacer = QWidget()
@@ -1044,15 +1050,15 @@ class MainWindow(QMainWindow):
         return len(chains)
 
     def _update_catalog_button(self):
-        """Enable the C# catalog and the trace for processes running Mono (and Frida)."""
+        """Enable the Mono catalog and the trace for processes running Mono (and Frida)."""
         if self._current_pid is not None and not self._has_mono:
             self._has_mono = (has_mono_runtime(self._current_pid)
                               and not is_wine_process(self._current_pid))
         enabled = self._current_pid is not None and self._has_mono
-        for button, tooltip in ((self.btn_catalog, "catalog.button_tooltip"),
-                                (self.btn_trace, "trace.button_tooltip")):
-            button.setEnabled(enabled)
-            button.setToolTip(self.translations[tooltip if enabled else "catalog.button_no_mono"])
+        for action, tooltip in ((self.act_catalog, "catalog.button_tooltip"),
+                                (self.act_trace, "trace.button_tooltip")):
+            action.setEnabled(enabled)
+            action.setToolTip(self.translations[tooltip if enabled else "catalog.button_no_mono"])
 
     def _open_catalog(self):
         """Show the catalog of the C# methods of the attached Mono game."""
@@ -1157,7 +1163,7 @@ class MainWindow(QMainWindow):
         monitor.activateWindow()
 
     def _close_catalog(self):
-        """Close the C# catalog, the trace and the method monitor (process gone or switched)."""
+        """Close the Mono catalog, the trace and the method monitor (process gone or switched)."""
         for name in ("_catalog", "_mono_trace", "_method_monitor"):
             dialog = getattr(self, name)
             if dialog is not None:

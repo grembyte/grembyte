@@ -169,7 +169,7 @@ Eine Manipulation ist eine JavaScript-Funktion, die im Zielprozess nach jedem Sc
 
 ### Templates pflegen
 
-Manipulationen werden als **Hook-Templates** in der Datenbank gespeichert und über die Schaltfläche **⧉ Hook-Templates** verwaltet. Beim ersten Start legt Hermes die Beispiele **Multiplikator**, **Fester Wert** und **Begrenzen** in der Sprache der Oberfläche an; sie lassen sich wie eigene Templates ändern oder löschen.
+Manipulationen werden als **Hook-Templates** in der Datenbank gespeichert und über **Ansicht → Hook-Templates** verwaltet. Beim ersten Start legt Hermes die Beispiele **Multiplikator**, **Fester Wert** und **Begrenzen** in der Sprache der Oberfläche an; sie lassen sich wie eigene Templates ändern oder löschen.
 
 Ein Template besteht aus Name, optionaler Beschreibung, der JavaScript-Funktion und Parametern. Für jeden Parameter werden Name (im Skript `ctx.params.<Name>`), Bezeichnung, Typ (**Zahl** oder **Auswahl**), Standardwert und ob er optional ist festgelegt; Auswahlwerte werden als `wert=Bezeichnung; wert=Bezeichnung` angegeben. Aus den Parametern erzeugt der Hook-Dialog das Eingabeformular. Beispiel für ein Template mit dem Zahl-Parameter `threshold`:
 
