@@ -198,6 +198,10 @@ STYLE = """
         spacing: 6px;
         padding: 4px;
     }
+    QWidget#toolbar_spacer {
+        background-color: transparent;
+    }
+
     QToolBar::separator {
         background-color: #30363d;
         width: 1px;

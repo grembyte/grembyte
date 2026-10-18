@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QPushButton, QLineEdit, QComboBox, QGroupBox,
     QHeaderView, QStatusBar, QToolBar, QDialog,
     QAbstractItemView,
-    QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox, QTabWidget,
+    QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox, QTabWidget, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QSize, QTimer, QSettings  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor, QActionGroup  # pylint: disable=import-error,no-name-in-module
@@ -37,6 +37,7 @@ from hermes.core.scanner import (
     ValueRefreshWorker,
 )
 from hermes.core.memory import write_process_value
+from hermes.core.mono import has_mono_runtime
 from hermes.core.process import is_wine_process, process_start_time
 from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES, value_type as get_value_type
 from hermes.core.write_watch import (
@@ -50,8 +51,10 @@ from hermes.db.repository.addresses import AddressRepository, address_pointer
 from hermes.db.repository.hooks import HookRepository
 from hermes.hooks.engine import HookSpec
 from hermes.hooks.transforms import example_templates
+from hermes.ui.widgets.catalog import CatalogDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
+from hermes.ui.widgets.method_monitor import MethodMonitorDialog
 from hermes.ui.widgets.pointer_scan import PointerScanDialog
 from hermes.ui.widgets.templates import TemplateDialog
 from hermes.ui.widgets.write_watch import WriteWatchDialog
@@ -200,6 +203,10 @@ class MainWindow(QMainWindow):
         self._filling_addresses = False
         self._pointer_dialogs = {}
         self._memory_viewer = None
+        self._catalog = None
+        self._method_monitor = None
+        # Whether the attached process runs a Mono runtime (C# catalog).
+        self._has_mono = False
         # Database id of the program the open pointer dialogs belong to.
         self._pointer_program = None
         self._ensure_example_templates()
@@ -342,6 +349,17 @@ class MainWindow(QMainWindow):
         self.btn_templates.setToolTip(self.translations["templates.button_tooltip"])
         self.btn_templates.clicked.connect(self._open_template_dialog)
         tb.addWidget(self.btn_templates)
+
+        self.btn_catalog = QPushButton(self.translations["catalog.button"])
+        self.btn_catalog.clicked.connect(self._open_catalog)
+        tb.addWidget(self.btn_catalog)
+        self._update_catalog_button()
+
+        # The memory viewer stands apart on the right.
+        spacer = QWidget()
+        spacer.setObjectName("toolbar_spacer")
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tb.addWidget(spacer)
 
         self.btn_memory = QPushButton(self.translations["memview.button"])
         self.btn_memory.setToolTip(self.translations["memview.button_tooltip"])
@@ -992,6 +1010,54 @@ class MainWindow(QMainWindow):
             self._refresh_timer.start()
         return len(chains)
 
+    def _update_catalog_button(self):
+        """Enable the C# catalog for processes running Mono (and Frida)."""
+        if self._current_pid is not None and not self._has_mono:
+            self._has_mono = (has_mono_runtime(self._current_pid)
+                              and not is_wine_process(self._current_pid))
+        enabled = self._current_pid is not None and self._has_mono
+        self.btn_catalog.setEnabled(enabled)
+        self.btn_catalog.setToolTip(self.translations[
+            "catalog.button_tooltip" if enabled else "catalog.button_no_mono"
+        ])
+
+    def _open_catalog(self):
+        """Show the catalog of the C# methods of the attached Mono game."""
+        if self._current_pid is None or not self._has_mono:
+            return
+        catalog = self._catalog
+        if catalog is None:
+            catalog = CatalogDialog(self.translations, self._current_pid, parent=self)
+            catalog.finished.connect(lambda _result: setattr(self, "_catalog", None))
+            catalog.monitor_requested.connect(self._monitor_method)
+            catalog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._catalog = catalog
+        catalog.show()
+        catalog.raise_()
+        catalog.activateWindow()
+
+    def _monitor_method(self, method):
+        """Log the calls of a C# method chosen in the catalog."""
+        if self._current_pid is None:
+            return
+        monitor = self._method_monitor
+        if monitor is None:
+            monitor = MethodMonitorDialog(self.translations, self._current_pid, parent=self)
+            monitor.finished.connect(lambda _result: setattr(self, "_method_monitor", None))
+            monitor.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._method_monitor = monitor
+        monitor.show()
+        monitor.add_method(method)
+        monitor.activateWindow()
+
+    def _close_catalog(self):
+        """Close the C# catalog and the method monitor (process gone or switched)."""
+        for name in ("_catalog", "_method_monitor"):
+            dialog = getattr(self, name)
+            if dialog is not None:
+                dialog.close()
+                setattr(self, name, None)
+
     def _open_memory_viewer(self, address=None):
         """Show the memory viewer, at ``address`` if given."""
         if self._current_pid is None:
@@ -1363,6 +1429,8 @@ class MainWindow(QMainWindow):
             if changed:
                 self._stop_write_monitor()
                 self._stop_freeze_worker()
+                self._close_catalog()
+                self._has_mono = False
                 self._switch_pointer_dialogs(dlg.selected_pid, process_id)
                 if self._memory_viewer is not None:
                     self._memory_viewer.set_process(dlg.selected_pid)
@@ -1385,6 +1453,7 @@ class MainWindow(QMainWindow):
             )
             if self.btn_first_scan is not None:
                 self.btn_first_scan.setEnabled(True)
+            self._update_catalog_button()
 
     def _check_process_alive(self):
         """Reset the window if the attached process has exited; return whether it runs."""
@@ -1392,6 +1461,9 @@ class MainWindow(QMainWindow):
             return False
         start_time = process_start_time(self._current_pid)
         if start_time is not None and start_time == self._process_start_time:
+            if not self._has_mono:
+                # Mono may load after attaching early during the game's start.
+                self._update_catalog_button()
             return True
         process = self._current_proc
         self._detach_process()
@@ -1422,8 +1494,11 @@ class MainWindow(QMainWindow):
             self._memory_viewer.set_process(None)
         if self.hook_panel is not None:
             self.hook_panel.set_process(None)
+        self._close_catalog()
 
         self._current_pid = None
+        self._has_mono = False
+        self._update_catalog_button()
         self._process_start_time = None
         self._process_id = None
         self._reset_scan()

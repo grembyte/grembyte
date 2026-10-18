@@ -28,6 +28,12 @@ Frida agents include ``MONO_AGENT_SOURCE``; it defines ``mono`` with:
     found: ``{image, file, token, method, offset}`` (assembly name and path,
     metadata token, ``Namespace.Class:Method (params)``, offset in its code),
     else ``null``. Token and offset stay valid while the game is unchanged.
+``mono.assemblies()`` / ``mono.classes(assembly)``
+    The catalog: the loaded assemblies (``{name, file, classes}``) and the
+    classes of one with their methods (see ``classes`` below).
+``mono.prepare(identity)`` / ``mono.objectClassName(object)``
+    For the method monitor: ``compile`` plus the method's signature, and
+    the class name of a managed object.
 ``mono.compile(identity)``
     Look up the method of an ``identify`` result, let Mono compile it (or
     return the code it has) and return ``{start, size}`` of its code.
@@ -39,6 +45,9 @@ agent's lock, which a game thread trapped in an exception handler may wait
 for. ``compile`` runs on a short-lived thread of its own instead, which
 Mono forgets again when it ends.
 """
+
+import os
+import re
 
 MONO_AGENT_SOURCE = r"""
 const mono = (() => {
@@ -85,8 +94,49 @@ const mono = (() => {
       codeStart: exported('mono_jit_info_get_code_start', 'pointer', ['pointer']),
       fullName: exported('mono_method_full_name', 'pointer', ['pointer', 'int']),
       free: free === null ? null
-        : new NativeFunction(free, 'void', ['pointer'], { scheduling: 'exclusive' })
+        : new NativeFunction(free, 'void', ['pointer'], { scheduling: 'exclusive' }),
+      // Only the catalog needs these; without them the rest still works.
+      catalog: optional(() => ({
+        assemblyForeach: exported('mono_assembly_foreach', 'void', ['pointer', 'pointer']),
+        assemblyImage: exported('mono_assembly_get_image', 'pointer', ['pointer']),
+        tableRows: exported('mono_image_get_table_rows', 'int', ['pointer', 'int']),
+        classGet: exported('mono_class_get', 'pointer', ['pointer', 'uint32']),
+        classType: exported('mono_class_get_type', 'pointer', ['pointer']),
+        typeName: exported('mono_type_get_name', 'pointer', ['pointer']),
+        classMethods: exported('mono_class_get_methods', 'pointer', ['pointer', 'pointer']),
+        methodName: exported('mono_method_get_name', 'pointer', ['pointer']),
+        methodFlags: exported('mono_method_get_flags', 'uint32', ['pointer', 'pointer']),
+        methodSignature: exported('mono_method_signature', 'pointer', ['pointer']),
+        returnType: exported('mono_signature_get_return_type', 'pointer', ['pointer'])
+      })),
+      // Only the method monitor needs these.
+      types: optional(() => ({
+        methodSignature: exported('mono_method_signature', 'pointer', ['pointer']),
+        returnType: exported('mono_signature_get_return_type', 'pointer', ['pointer']),
+        params: exported('mono_signature_get_params', 'pointer', ['pointer', 'pointer']),
+        paramCount: exported('mono_signature_get_param_count', 'uint32', ['pointer']),
+        paramNames: exported('mono_method_get_param_names', 'void', ['pointer', 'pointer']),
+        isInstance: exported('mono_signature_is_instance', 'int', ['pointer']),
+        typeKind: exported('mono_type_get_type', 'int', ['pointer']),
+        isByref: exported('mono_type_is_byref', 'int', ['pointer']),
+        typeName: exported('mono_type_get_name', 'pointer', ['pointer']),
+        typeClass: exported('mono_class_from_mono_type', 'pointer', ['pointer']),
+        classType: exported('mono_class_get_type', 'pointer', ['pointer']),
+        isEnum: exported('mono_class_is_enum', 'int', ['pointer']),
+        enumBase: exported('mono_class_enum_basetype', 'pointer', ['pointer']),
+        isValueType: exported('mono_class_is_valuetype', 'int', ['pointer']),
+        valueSize: exported('mono_class_value_size', 'int', ['pointer', 'pointer']),
+        objectClass: exported('mono_object_get_class', 'pointer', ['pointer'])
+      }))
     };
+  }
+
+  function optional(bindAll) {
+    try {
+      return bindAll();
+    } catch (_error) {
+      return null;
+    }
   }
 
   function refresh() {
@@ -229,30 +279,224 @@ const mono = (() => {
     return result;
   }
 
+  function findImage(identity) {
+    // The catalog knows assemblies by name only.
+    let image = identity.file ? api.imageLoaded(Memory.allocUtf8String(identity.file)) : NULL;
+    if (image.isNull())
+      image = api.imageLoaded(Memory.allocUtf8String(identity.image));
+    if (image.isNull() && api.catalog !== null)
+      image = loadedImages(api.catalog).find(
+        candidate => api.imageName(candidate).readUtf8String() === identity.image) || NULL;
+    if (image.isNull())
+      throw new Error(`assembly ${identity.image} is not loaded (yet)`);
+    return image;
+  }
+
+  function compileOnThread(domain, identity) {
+    const method = api.getMethod(findImage(identity), identity.token, NULL);
+    if (method.isNull() || signatureName(method) !== identity.method)
+      throw new Error(`${identity.method} is not in ${identity.image} (game updated?)`);
+    const code = api.compileMethod(method);
+    const root = api.rootDomain();
+    let info = code.isNull() ? NULL : api.findJitInfo(domain, code);
+    if (info.isNull() && !code.isNull() && !root.equals(domain))
+      info = api.findJitInfo(root, code);
+    if (info.isNull())
+      throw new Error(`Mono did not compile ${identity.method}`);
+    return { method, start: api.codeStart(info), size: api.codeSize(info) };
+  }
+
   function compile(identity) {
     if (!refresh())
       throw new Error('no Mono runtime in the process');
     return onMonoThread(domain => {
-      let image = api.imageLoaded(Memory.allocUtf8String(identity.file));
-      if (image.isNull())
-        image = api.imageLoaded(Memory.allocUtf8String(identity.image));
-      if (image.isNull())
-        throw new Error(`assembly ${identity.image} is not loaded (yet)`);
-      const method = api.getMethod(image, identity.token, NULL);
-      if (method.isNull() || signatureName(method) !== identity.method)
-        throw new Error(`${identity.method} is not in ${identity.image} (game updated?)`);
-      const code = api.compileMethod(method);
-      const root = api.rootDomain();
-      let info = code.isNull() ? NULL : api.findJitInfo(domain, code);
-      if (info.isNull() && !code.isNull() && !root.equals(domain))
-        info = api.findJitInfo(root, code);
-      if (info.isNull())
-        throw new Error(`Mono did not compile ${identity.method}`);
-      return { start: api.codeStart(info), size: api.codeSize(info) };
+      const { start, size } = compileOnThread(domain, identity);
+      return { start, size };
+    });
+  }
+
+  // --- Signatures: what the method monitor needs to decode arguments ------
+
+  const TYPE = {
+    VOID: 0x01, BOOLEAN: 0x02, CHAR: 0x03, I1: 0x04, U1: 0x05, I2: 0x06, U2: 0x07,
+    I4: 0x08, U4: 0x09, I8: 0x0a, U8: 0x0b, R4: 0x0c, R8: 0x0d, STRING: 0x0e,
+    VALUETYPE: 0x11, GENERICINST: 0x15, I: 0x18, U: 0x19
+  };
+
+  function typesApi() {
+    if (!refresh())
+      throw new Error('no Mono runtime in the process');
+    if (api.types === null)
+      throw new Error('this Mono runtime lacks the functions to read signatures');
+    return api.types;
+  }
+
+  function typeInfo(t, type) {
+    // { kind, byref, name, enumName?, structSize? }: enums become their base
+    // type, value types that are no enum are structs ('VALUETYPE').
+    const info = {
+      kind: t.typeKind(type),
+      byref: t.isByref(type) !== 0,
+      name: cString(t.typeName(type)) || '?'
+    };
+    if (info.kind === TYPE.VALUETYPE || info.kind === TYPE.GENERICINST) {
+      const klass = t.typeClass(type);
+      if (!klass.isNull() && t.isEnum(klass) !== 0) {
+        info.enumName = info.name;
+        info.kind = t.typeKind(t.enumBase(klass));
+      } else if (!klass.isNull() && t.isValueType(klass) !== 0) {
+        info.kind = TYPE.VALUETYPE;
+        info.structSize = t.valueSize(klass, NULL);
+      }
+    }
+    return info;
+  }
+
+  function prepare(identity) {
+    // Compile the method like compile() and describe its signature:
+    // { start, size, instance, params: [{ name, type }], returns: type }.
+    const t = typesApi();
+    return onMonoThread(domain => {
+      const { method, start, size } = compileOnThread(domain, identity);
+      const signature = t.methodSignature(method);
+      if (signature.isNull())
+        throw new Error(`no signature for ${identity.method}`);
+      const count = t.paramCount(signature);
+      const names = Memory.alloc(Process.pointerSize * Math.max(count, 1));
+      t.paramNames(method, names);
+      const iterator = Memory.alloc(Process.pointerSize);
+      iterator.writePointer(NULL);
+      const params = [];
+      for (let i = 0; i < count; i++) {
+        const type = t.params(signature, iterator);
+        const name = names.add(i * Process.pointerSize).readPointer();
+        params.push({
+          name: name.isNull() ? `arg${i}` : name.readUtf8String(),
+          type: typeInfo(t, type)
+        });
+      }
+      return {
+        start, size, params,
+        instance: t.isInstance(signature) !== 0,
+        returns: typeInfo(t, t.returnType(signature))
+      };
+    });
+  }
+
+  const classNames = new Map();
+
+  function objectClassName(object) {
+    // Class of a managed object; metadata only, any thread will do.
+    const t = typesApi();
+    const klass = t.objectClass(object);
+    const key = klass.toString();
+    let text = classNames.get(key);
+    if (text === undefined) {
+      text = cString(t.typeName(t.classType(klass))) || '?';
+      classNames.set(key, text);
+    }
+    return text;
+  }
+
+  // --- Catalog: the classes and methods of the loaded assemblies ----------
+
+  const TYPEDEF_TABLE = 2;
+  const TYPEDEF_TOKEN = 0x02000000;
+  const METHOD_STATIC = 0x10;
+
+  function catalogApi() {
+    if (!refresh())
+      throw new Error('no Mono runtime in the process');
+    if (api.catalog === null)
+      throw new Error('this Mono runtime lacks the functions for a catalog');
+    return api.catalog;
+  }
+
+  function loadedImages(c) {
+    const images = [];
+    const collect = new NativeCallback(assembly => {
+      images.push(c.assemblyImage(assembly));
+    }, 'void', ['pointer', 'pointer']);
+    c.assemblyForeach(collect, NULL);
+    return images;
+  }
+
+  function assemblies() {
+    // Loading classes needs a thread Mono knows.
+    const c = catalogApi();
+    return onMonoThread(() => loadedImages(c).map(image => ({
+      name: api.imageName(image).readUtf8String(),
+      file: api.imageFile(image).readUtf8String(),
+      classes: Math.max(0, c.tableRows(image, TYPEDEF_TABLE) - 1)
+    })));
+  }
+
+  function methodEntry(c, method) {
+    // [name, parameters, return type, static, token, full signature]
+    const full = signatureName(method) || '';
+    const open = full.indexOf(' (');
+    const signature = c.methodSignature(method);
+    return [
+      c.methodName(method).readUtf8String(),
+      open < 0 ? '()' : full.substring(open + 1),
+      signature.isNull() ? '' : cString(c.typeName(c.returnType(signature))) || '',
+      (c.methodFlags(method, NULL) & METHOD_STATIC) !== 0,
+      api.methodToken(method),
+      full
+    ];
+  }
+
+  function classes(assembly) {
+    // [[class name, [method entry, ...]], ...] of one assembly; row 1 of
+    // its type table is the <Module> pseudo class.
+    const c = catalogApi();
+    return onMonoThread(() => {
+      const image = loadedImages(c).find(
+        candidate => api.imageName(candidate).readUtf8String() === assembly);
+      if (image === undefined)
+        throw new Error(`assembly ${assembly} is not loaded`);
+      const iterator = Memory.alloc(Process.pointerSize);
+      const result = [];
+      const rows = c.tableRows(image, TYPEDEF_TABLE);
+      for (let row = 2; row <= rows; row++) {
+        const klass = c.classGet(image, TYPEDEF_TOKEN | row);
+        if (klass.isNull())
+          continue;
+        const methods = [];
+        iterator.writePointer(NULL);
+        for (;;) {
+          const method = c.classMethods(klass, iterator);
+          if (method.isNull())
+            break;
+          methods.push(methodEntry(c, method));
+        }
+        result.push([cString(c.typeName(c.classType(klass))), methods]);
+      }
+      return result;
     });
   }
 
   refresh();
-  return { refresh, locate, name, describe, identify, compile };
+  return {
+    refresh, locate, name, describe, identify, compile, assemblies, classes, prepare,
+    objectClassName, TYPE
+  };
 })();
 """
+
+
+# Mono runtime libraries; libmono-native.so (System.Native) is none.
+_RUNTIME_NAMES = re.compile(r"^libmono(bdwgc|sgen)?(-2\.0)?\.so")
+
+
+def has_mono_runtime(pid, proc_root="/proc"):
+    """Return whether the process has loaded a Mono runtime."""
+    try:
+        with open(f"{proc_root}/{pid}/maps", encoding="utf-8", errors="replace") as maps:
+            return any(
+                _RUNTIME_NAMES.match(os.path.basename(line.split(maxsplit=5)[-1].strip()))
+                for line in maps
+                if "/" in line
+            )
+    except OSError:
+        return False
