@@ -382,9 +382,9 @@ void *fake_code(uint32_t token) { return compile(by_token(token)); }
 
 void *mono_get_root_domain(void) { return &root_domain; }
 void *mono_domain_get(void) { return current_domain; }
-void mono_domain_foreach(void (*callback)(void *, void *), void *data) {
-    callback(&root_domain, data);
-    callback(&script_domain, data);
+void *mono_domain_get_by_id(int id) {
+    /* Like an unloaded domain: a gap before the scripts' domain */
+    return id == 0 ? (void *)&root_domain : id == 2 ? (void *)&script_domain : NULL;
 }
 void *mono_thread_attach(void *domain) { current_domain = domain; return &thread; }
 void mono_thread_detach(void *attached) { (void)attached; current_domain = NULL; }

@@ -102,7 +102,9 @@ const mono = (() => {
     const free = module.findExportByName('mono_free');
     return {
       module,
-      domainForeach: blocking('mono_domain_foreach', 'void', ['pointer', 'pointer']),
+      // Not mono_domain_foreach: old Mono (Unity's libmono.so) allocates GC
+      // memory in it, which crashes on a thread the GC does not know.
+      domainById: blocking('mono_domain_get_by_id', 'pointer', ['int']),
       threadAttach: blocking('mono_thread_attach', 'pointer', ['pointer']),
       threadDetach: blocking('mono_thread_detach', 'void', ['pointer']),
       imageLoaded: blocking('mono_image_loaded', 'pointer', ['pointer']),
@@ -294,15 +296,25 @@ const mono = (() => {
     };
   }
 
+  const DOMAIN_GAP = 16;
+  const MAX_DOMAIN_ID = 4096;
+
   function scriptDomain() {
     // Unity runs its scripts in a child domain created after the root one.
-    const domains = [];
-    const collect = new NativeCallback(domain => { domains.push(domain); }, 'void',
-      ['pointer', 'pointer']);
-    api.domainForeach(collect, NULL);
+    // Ids count up; unloaded domains leave gaps, so stop after a run of them.
     const root = api.rootDomain();
-    const children = domains.filter(domain => !domain.equals(root));
-    return children.length > 0 ? children[children.length - 1] : root;
+    let last = root;
+    for (let id = 0, missing = 0; missing < DOMAIN_GAP && id < MAX_DOMAIN_ID; id++) {
+      const domain = api.domainById(id);
+      if (domain.isNull()) {
+        missing++;
+        continue;
+      }
+      missing = 0;
+      if (!domain.equals(root))
+        last = domain;
+    }
+    return last;
   }
 
   // How often the agent's thread looks whether a Mono thread is done, and
