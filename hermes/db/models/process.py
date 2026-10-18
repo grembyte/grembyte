@@ -20,3 +20,6 @@ class Process(Base):  # pylint: disable=too-few-public-methods
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     hooks = relationship("Hook", back_populates="process", cascade="all, delete-orphan")
+    method_hooks = relationship(
+        "MethodHook", back_populates="process", cascade="all, delete-orphan"
+    )

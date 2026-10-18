@@ -58,7 +58,7 @@ def test_choices_round_trip():
 
 
 def test_dialog_lists_templates(dialog):
-    assert dialog.template_list.count() == 3
+    assert dialog.template_list.count() == 5
     assert dialog.name_input.text() == dialog.template_list.item(0).text() == "Begrenzen"
     assert dialog.param_table.rowCount() == 2
     assert not dialog.is_dirty()
@@ -79,7 +79,7 @@ def test_create_template(dialog, repository):
 
     saved = next(t for t in repository.list_templates() if t.name == "Verdoppeln")
     assert saved.parameters == (TransformParameter("factor", default=2, label="Faktor"),)
-    assert dialog.template_list.count() == 4
+    assert dialog.template_list.count() == 6
     assert dialog.template_list.currentItem().text() == "Verdoppeln"
     assert not dialog.is_dirty()
 
@@ -131,9 +131,9 @@ def test_delete_template(dialog, repository, monkeypatch):
     dialog._delete_template()
 
     assert sorted(t.name for t in repository.list_templates()) == [
-        "Fester Wert", "Multiplikator"
+        "Ergebnis × Faktor", "Fester Wert", "Methoden-Skript", "Multiplikator"
     ]
-    assert dialog.template_list.count() == 2
+    assert dialog.template_list.count() == 4
     assert dialog.name_input.text() == dialog.template_list.currentItem().text()
 
 
@@ -216,3 +216,48 @@ def test_debug_window_lists_filters_and_pauses(qt_app, translations):
     window.add_events([{"hookId": 1, "time": 0}] * hook_debug.MAX_ENTRIES)
     assert len(window.entries()) == hook_debug.MAX_ENTRIES
     assert window.table.rowCount() == hook_debug.MAX_ENTRIES
+
+
+def test_method_templates_keep_their_kind_and_code(dialog, repository):
+    # pylint: disable=protected-access
+    script = next(i for i in range(dialog.template_list.count())
+                  if dialog.template_list.item(i).text() == "Methoden-Skript")
+    dialog.template_list.setCurrentRow(script)
+    assert dialog.hook_kind_combo.currentData() == "method"
+    assert "ctx.result" in dialog.script_hint.text()
+    # The code parameter keeps its kind and its multi-line default.
+    assert dialog.param_table.cellWidget(0, 2).currentData() == "code"
+    assert dialog.save()
+    saved = next(t for t in repository.list_templates() if t.name == "Methoden-Skript")
+    assert saved.kind == "method"
+    assert saved.parameters[0].kind == "code" and "attacker" in saved.parameters[0].default
+
+    # A new template becomes a method template by choosing the kind.
+    dialog._new_template()
+    dialog.name_input.setText("Halbieren")
+    dialog.hook_kind_combo.setCurrentIndex(dialog.hook_kind_combo.findData("method"))
+    dialog.source_input.setPlainText("function (ctx) { return ctx.result / 2; }")
+    assert dialog.save()
+    assert next(t for t in repository.list_templates() if t.name == "Halbieren").kind == "method"
+
+
+def test_method_template_test_run(qt_app, translations):  # pylint: disable=unused-argument
+    # pylint: disable=import-outside-toplevel
+    from hermes.ui.widgets.templates import TemplateTestDialog
+
+    multiply = example_templates(translations)["method_multiply"]
+    dialog = TemplateTestDialog(translations, multiply)
+    dialog.result_input.setText("15")
+    result = dialog.run()
+    assert result.value == 30
+    assert "15" in dialog.result_label.text() and "30" in dialog.result_label.text()
+
+    script = example_templates(translations)["method_script"]
+    dialog = TemplateTestDialog(translations, script)
+    result = dialog.run()
+    # The example reads ctx.args.attacker, which only exists in the game.
+    assert result.kept
+
+    calling = TemplateTestDialog(translations, type(script)(
+        "x", 'function (ctx) { return ctx.call("A.B"); }', kind="method"))
+    assert "only works in the game" in calling.run().error

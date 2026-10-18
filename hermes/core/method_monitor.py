@@ -529,19 +529,26 @@ let unmapWatch = null;
 
 function onUnmap(start, length) {
   const end = start.add(length);
+  const freed = code => code.compare(start) >= 0 && code.compare(end) < 0;
   for (const monitor of Array.from(monitors.values())) {
-    const code = monitor.info.start;
-    if (code.compare(start) >= 0 && code.compare(end) < 0) {
+    if (freed(monitor.info.start)) {
       // Still mapped here: Frida can restore the code before it is gone.
       removeMonitor(monitor.id);
       send({ kind: 'monitor-ended', monitorId: monitor.id });
+    }
+  }
+  for (const hook of Array.from(methodHooks.values())) {
+    if (freed(hook.info.start)) {
+      removeMethodHook(hook.id);
+      send({ kind: 'hook-ended', hookId: hook.id });
     }
   }
 }
 
 function updateUnmapWatch() {
   // Only while there is something to protect: munmap is called often.
-  if (monitors.size > 0 && unmapWatch === null) {
+  const watched = monitors.size + methodHooks.size;
+  if (watched > 0 && unmapWatch === null) {
     unmapWatch = Interceptor.attach(Module.getGlobalExportByName('munmap'), {
       onEnter(args) {
         try {
@@ -551,13 +558,699 @@ function updateUnmapWatch() {
         }
       }
     });
-  } else if (monitors.size === 0 && unmapWatch !== null) {
+  } else if (watched === 0 && unmapWatch !== null) {
     unmapWatch.detach();
     unmapWatch = null;
   }
 }
 
+// --- Method hooks ---------------------------------------------------------------
+// A method hook runs a script when the hooked method returns; a value the
+// script returns replaces the method's result (see method_hooks.py).
+
+const methodHooks = new Map();
+const hookStats = new Map();
+const hookDebug = [];
+const hookDebugDropped = new Map();
+const MAX_HOOK_DEBUG = 200;
+
+// Objects the scripts see: a managed object (or a struct inside one).
+class ManagedObject {
+  constructor(address, klass, isStruct = false) {
+    this.address = address;
+    this.klass = klass;
+    this.isStruct = isStruct;
+  }
+
+  get className() {
+    return mono.layout(this.klass).name;
+  }
+
+  get name() {
+    // The Unity name of a GameObject or component, else null.
+    return unityNameOf(this.address, true);
+  }
+
+  field(name) {
+    const layout = mono.layout(this.klass);
+    const field = layout.fields.find(candidate => candidate.name === name && !candidate.static);
+    if (field === undefined)
+      throw new Error(`${layout.name} has no field ${name}`);
+    const base = this.isStruct ? this.address.sub(OBJECT_HEADER) : this.address;
+    return readJs(field.type, base.add(field.offset));
+  }
+
+  setField(name, value) {
+    // Change a field (in the "before the call" phase, the method sees it).
+    const layout = mono.layout(this.klass);
+    const field = layout.fields.find(candidate => candidate.name === name && !candidate.static);
+    if (field === undefined)
+      throw new Error(`${layout.name} has no field ${name}`);
+    const base = this.isStruct ? this.address.sub(OBJECT_HEADER) : this.address;
+    const address = base.add(field.offset);
+    const type = field.type;
+    if (type.kind === T.VALUETYPE)
+      throw new Error(`the struct field ${name} cannot be set as a whole`);
+    if (REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING)
+      mono.writeReference(this.isStruct ? null : this.address, address, pointerOf(type, value));
+    else
+      writeJs(type, address, value);
+    noteChange(`${shortClass(layout.name)}.${name}`, value);
+  }
+
+  get(name) {
+    const property = mono.properties(this.klass).find(candidate => candidate.name === name);
+    if (property === undefined)
+      throw new Error(`${this.className} has no property ${name}`);
+    const { result, exception } = mono.getProperty(this.address, property, this.isStruct);
+    throwIfException(exception);
+    return resultJs(property.type, result);
+  }
+
+  call(name, ...args) {
+    let method = mono.findMethod(this.klass, name, args.length, false);
+    if (!this.isStruct)
+      method = mono.virtualMethod(this.address, method);
+    return callMethod(method, this.address, args);
+  }
+
+  component(typeName) {
+    // A component of this GameObject (or of the GameObject of this component).
+    const gameObject = mono.classChain(this.klass).some(
+      klass => mono.layout(klass).name === 'UnityEngine.GameObject') ? this : this.get('gameObject');
+    if (gameObject === null)
+      return null;
+    const { result, exception } = mono.getProperty(
+      gameObject.address, { special: 'components' }, false);
+    throwIfException(exception);
+    const length = result.add(ARRAY_LENGTH).readU32();
+    for (let i = 0; i < length; i++) {
+      const element = result.add(ARRAY_DATA + i * Process.pointerSize).readPointer();
+      const klass = mono.classOf(element);
+      if (klass === null)
+        continue;
+      const name = mono.layout(klass).name;
+      if (name === typeName || name.endsWith('.' + typeName))
+        return wrap(new ManagedObject(element, klass));
+    }
+    return null;
+  }
+
+  toString() {
+    const name = unityNameOf(this.address, false);
+    return `${this.className}${name === null ? '' : ` "${name}"`}@${this.address}`;
+  }
+
+  toJSON() {
+    return this.toString();
+  }
+}
+
+// Scripts may also write object.Health or object.IsPartyMember: names the
+// wrapper does not have are looked up as a field, then as a property
+// (getter). The wrapper's own members (name, className, field(), get() …)
+// come first; .field("name") reads a game field of the same name.
+// Assigning works the same way: object.Health = 5 sets the field, else the
+// property's setter (set_Health).
+const shortcuts = {
+  get(target, key, receiver) {
+    if (typeof key !== 'string' || key in target)
+      return Reflect.get(target, key, receiver);
+    const layout = mono.layout(target.klass);
+    if (layout.fields.some(field => field.name === key && !field.static))
+      return target.field(key);
+    if (mono.properties(target.klass).some(property => property.name === key))
+      return target.get(key);
+    return undefined;
+  },
+  set(target, key, value, receiver) {
+    if (typeof key !== 'string' || key in target)
+      return Reflect.set(target, key, value, receiver);
+    const layout = mono.layout(target.klass);
+    if (layout.fields.some(field => field.name === key && !field.static)) {
+      target.setField(key, value);
+      return true;
+    }
+    let setter;
+    try {
+      setter = mono.findMethod(target.klass, `set_${key}`, 1, false);
+    } catch (_error) {
+      throw new Error(`${layout.name} has no field or property ${key} to set`);
+    }
+    callMethod(target.isStruct ? setter : mono.virtualMethod(target.address, setter),
+               target.address, [value]);
+    noteChange(`${shortClass(layout.name)}.${key}`, value);
+    return true;
+  }
+};
+
+function shortClass(name) {
+  return name.substring(name.lastIndexOf('.') + 1);
+}
+
+// What a script running before a call changed, for the hook's statistics.
+let changes = null;
+
+function noteChange(what, value) {
+  if (changes !== null)
+    changes.push(`${what}=${displayText(value)}`);
+}
+
+function wrap(object) {
+  return new Proxy(object, shortcuts);
+}
+
+function throwIfException(exception) {
+  if (!exception.isNull())
+    throw new Error(exceptionText(exception));
+}
+
+function objectJs(pointer) {
+  if (pointer.isNull())
+    return null;
+  const klass = mono.classOf(pointer);
+  if (klass === null)
+    throw new Error(`no object at ${pointer}`);
+  return wrap(new ManagedObject(pointer, klass));
+}
+
+function readJs(type, address) {
+  // A value of ``type`` stored at ``address``, as a JavaScript value.
+  switch (type.kind) {
+    case T.BOOLEAN: return address.readU8() !== 0;
+    case T.CHAR: return String.fromCharCode(address.readU16());
+    case T.I1: return address.readS8();
+    case T.U1: return address.readU8();
+    case T.I2: return address.readS16();
+    case T.U2: return address.readU16();
+    case T.I4: return address.readS32();
+    case T.U4: return address.readU32();
+    case T.I8: return address.readS64().toNumber();
+    case T.U8: return address.readU64().toNumber();
+    case T.R4: return address.readFloat();
+    case T.R8: return address.readDouble();
+    case T.I:
+    case T.U: return address.readPointer();
+    case T.VALUETYPE: return wrap(new ManagedObject(address, type.klass, true));
+    case T.STRING: {
+      const pointer = address.readPointer();
+      return pointer.isNull() ? null : stringJs(pointer);
+    }
+    default:
+      if (REFERENCE_KINDS.has(type.kind))
+        return objectJs(address.readPointer());
+      return address.readPointer();
+  }
+}
+
+function stringJs(pointer) {
+  const length = pointer.add(OBJECT_HEADER).readS32();
+  return pointer.add(OBJECT_HEADER + 4).readUtf16String(length);
+}
+
+function registerJs(type, raw) {
+  // An argument as passed in a register or stack slot, as a JavaScript value.
+  if (type.byref)
+    return readJs({ ...type, byref: false }, raw);
+  switch (type.kind) {
+    case T.BOOLEAN: return (raw.toUInt32() & 0xff) !== 0;
+    case T.CHAR: return String.fromCharCode(raw.toUInt32() & 0xffff);
+    case T.I1: return Number(integer(raw, 8, true));
+    case T.U1: return Number(integer(raw, 8, false));
+    case T.I2: return Number(integer(raw, 16, true));
+    case T.U2: return Number(integer(raw, 16, false));
+    case T.I4: return Number(integer(raw, 32, true));
+    case T.U4: return Number(integer(raw, 32, false));
+    case T.I8: return Number(integer(raw, 64, true));
+    case T.U8: return Number(integer(raw, 64, false));
+    case T.R4:
+    case T.R8: return floatValue(raw, type.kind);
+    case T.STRING: return raw.isNull() ? null : stringJs(raw);
+    case T.VALUETYPE: return undefined;  // passed in parts; not decoded
+    default:
+      if (REFERENCE_KINDS.has(type.kind))
+        return objectJs(raw);
+      return raw;
+  }
+}
+
+function resultJs(type, result) {
+  // The value mono_runtime_invoke returned (value types come boxed).
+  if (type.kind === T.VOID && !type.byref)
+    return undefined;
+  if (result.isNull())
+    return null;
+  if (type.kind === T.STRING)
+    return stringJs(result);
+  if (REFERENCE_KINDS.has(type.kind) || type.byref)
+    return objectJs(result);
+  if (type.kind === T.VALUETYPE)
+    return wrap(new ManagedObject(result.add(OBJECT_HEADER), type.klass, true));
+  return readJs(type, result.add(OBJECT_HEADER));
+}
+
+function writeJs(type, address, value) {
+  // Store a JavaScript value as ``type`` at ``address``.
+  switch (type.kind) {
+    case T.BOOLEAN: address.writeU8(value ? 1 : 0); return;
+    case T.CHAR: address.writeU16(typeof value === 'string' ? value.charCodeAt(0) : value); return;
+    case T.I1: address.writeS8(Math.trunc(value)); return;
+    case T.U1: address.writeU8(Math.trunc(value)); return;
+    case T.I2: address.writeS16(Math.trunc(value)); return;
+    case T.U2: address.writeU16(Math.trunc(value)); return;
+    case T.I4: address.writeS32(Math.trunc(value)); return;
+    case T.U4: address.writeU32(Math.trunc(value)); return;
+    case T.I8: address.writeS64(int64(String(Math.trunc(value)))); return;
+    case T.U8: address.writeU64(uint64(String(Math.trunc(value)))); return;
+    case T.R4: address.writeFloat(value); return;
+    case T.R8: address.writeDouble(value); return;
+    default: address.writePointer(pointerOf(type, value));
+  }
+}
+
+function pointerOf(type, value) {
+  // A reference (object, string) or pointer-sized value as a pointer.
+  if (value === null || value === undefined)
+    return NULL;
+  if (value instanceof ManagedObject)
+    return value.address;
+  if (type.kind === T.STRING || typeof value === 'string')
+    return mono.newString(String(value));
+  if (value instanceof NativePointer)
+    return value;
+  return ptr(value);
+}
+
+function callMethod(method, self, args) {
+  // Call game code with JavaScript arguments; returns its result.
+  const signature = mono.signatureOf(method);
+  const params = Memory.alloc(Process.pointerSize * Math.max(args.length, 1));
+  const keep = [];
+  signature.params.forEach((param, i) => {
+    let slot;
+    if (REFERENCE_KINDS.has(param.type.kind) || param.type.kind === T.STRING) {
+      slot = pointerOf(param.type, args[i]);
+      if (param.type.byref) {
+        const cell = Memory.alloc(Process.pointerSize);
+        cell.writePointer(slot);
+        slot = cell;
+      }
+    } else if (param.type.kind === T.VALUETYPE) {
+      if (!(args[i] instanceof ManagedObject))
+        throw new Error(`argument ${param.name} must be a ${param.type.name}`);
+      slot = args[i].address;  // a struct: a pointer to its data
+    } else {
+      slot = Memory.alloc(8);  // a value: a pointer to it
+      writeJs(param.type, slot, args[i]);
+    }
+    keep.push(slot);
+    params.add(i * Process.pointerSize).writePointer(slot);
+  });
+  const { result, exception } = mono.invoke(method, self === null ? NULL : self, params);
+  throwIfException(exception);
+  return resultJs(signature.returns, result);
+}
+
+function staticCall(qualifiedName, ...args) {
+  // ctx.call("Namespace.Class.Method", ...)
+  const dot = qualifiedName.lastIndexOf('.');
+  if (dot < 0)
+    throw new Error(`"${qualifiedName}" is no Class.Method`);
+  const klass = mono.findClass(qualifiedName.substring(0, dot));
+  const method = mono.findMethod(klass, qualifiedName.substring(dot + 1), args.length, true);
+  return callMethod(method, null, args);
+}
+
+function displayText(value) {
+  if (value === undefined)
+    return '';
+  if (typeof value === 'string')
+    return JSON.stringify(value);
+  return String(value);
+}
+
+function replaceResult(hook, invocation, retval, value) {
+  const type = hook.info.returns;
+  if (type.kind === T.VOID && !type.byref)
+    throw new Error('the method returns nothing (void)');
+  if (isFloat(type)) {
+    if (typeof value !== 'number' || !Number.isFinite(value))
+      throw new Error(`the result must be a number, not ${displayText(value)}`);
+    const buffer = new ArrayBuffer(16);
+    const view = new DataView(buffer);
+    if (type.kind === T.R4)
+      view.setFloat32(0, value, true);
+    else
+      view.setFloat64(0, value, true);
+    invocation.context.xmm0 = buffer;
+    return;
+  }
+  if (type.kind === T.VALUETYPE && !type.byref)
+    throw new Error(`a struct result (${type.name}) cannot be replaced`);
+  if (type.kind === T.BOOLEAN) {
+    retval.replace(ptr(value ? 1 : 0));
+    return;
+  }
+  if (REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING || type.byref) {
+    retval.replace(pointerOf(type, value));
+    return;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value))
+    throw new Error(`the result must be a number, not ${displayText(value)}`);
+  retval.replace(ptr(BigInt.asUintN(64, BigInt(Math.trunc(value))).toString()));
+}
+
+function writeArgument(context, location, type, value, raw) {
+  // Pass ``value`` to the method instead of what the caller passed.
+  if (type.byref) {
+    const inner = { ...type, byref: false };
+    if (REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING)
+      raw.writePointer(pointerOf(inner, value));  // the caller's variable, not a field
+    else if (type.kind === T.VALUETYPE)
+      throw new Error(`a struct (${type.name}) cannot be replaced`);
+    else
+      writeJs(inner, raw, value);
+    return;
+  }
+  if (location === null)
+    throw new Error('arguments after a struct cannot be changed');
+  if (type.kind === T.VALUETYPE)
+    throw new Error(`a struct (${type.name}) cannot be replaced`);
+  if (isFloat(type)) {
+    if (typeof value !== 'number' || !Number.isFinite(value))
+      throw new Error(`a number is needed, not ${displayText(value)}`);
+    if (location.xmm !== undefined) {
+      const buffer = new ArrayBuffer(16);
+      const view = new DataView(buffer);
+      if (type.kind === T.R4)
+        view.setFloat32(0, value, true);
+      else
+        view.setFloat64(0, value, true);
+      context['xmm' + location.xmm] = buffer;
+    } else {
+      writeJs(type, context.sp.add(8 * (location.stack + 1)), value);
+    }
+    return;
+  }
+  let pointer;
+  if (REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING)
+    pointer = pointerOf(type, value);
+  else if (type.kind === T.BOOLEAN)
+    pointer = ptr(value ? 1 : 0);
+  else if (typeof value === 'number' && Number.isFinite(value))
+    pointer = ptr(BigInt.asUintN(64, BigInt(Math.trunc(value))).toString());
+  else if (type.kind === T.CHAR && typeof value === 'string')
+    pointer = ptr(value.charCodeAt(0));
+  else
+    throw new Error(`a number is needed, not ${displayText(value)}`);
+  if (location.reg !== undefined)
+    context[location.reg] = pointer;
+  else
+    context.sp.add(8 * (location.stack + 1)).writePointer(pointer);
+}
+
+function hookBefore(hook, invocation) {
+  // The "before the call" phase: the script may change arguments and fields.
+  mono.drainMain();
+  if (!hook.enabled)
+    return;
+  const context = invocation.context;
+  const { info, layout } = hook;
+  const args = {};
+  const passed = [];
+  info.params.forEach((param, i) => {
+    if (layout.args[i] === null)
+      return;
+    const raw = rawValue(context, layout.args[i]);
+    args[param.name] = registerJs(param.type, raw);
+    passed.push([param, layout.args[i], raw, args[param.name]]);
+  });
+  const logs = hook.debug ? [] : null;
+  const ctx = {
+    phase: 'before',
+    args,
+    refs: {},
+    this: layout.self === null ? null : objectJs(rawValue(context, layout.self)),
+    result: undefined,
+    params: hook.transform.params,
+    state: hook.transform.state,
+    method: hook.signature,
+    hookId: hook.id,
+    threadId: invocation.threadId,
+    call: staticCall,
+    log: logs === null ? () => {} : (...items) => { logs.push(formatLog(items)); }
+  };
+  let error = null;
+  changes = [];
+  try {
+    hook.transform.fn(ctx);
+    for (const [param, location, raw, original] of passed) {
+      const value = ctx.args[param.name];
+      if (value !== original) {
+        writeArgument(context, location, param.type, value, raw);
+        noteChange(param.name, value);
+      }
+    }
+    hook.errorReported = false;
+  } catch (thrown) {
+    error = thrown;
+  }
+  const changed = changes;
+  changes = null;
+  const text = changed.join(', ');
+  const stats = hookStats.get(hook.id) || { count: 0 };
+  stats.count++;
+  stats.last = { old: '', result: text || '—', kept: changed.length === 0,
+                 error: error === null ? null : String(error) };
+  hookStats.set(hook.id, stats);
+  if (error !== null && !hook.errorReported) {
+    hook.errorReported = true;
+    send({ kind: 'transform-error', hookId: hook.id, error: String(error) });
+  }
+  if (hook.debug)
+    pushHookDebug(hook, {
+      threadId: invocation.threadId,
+      address: '',
+      caller: safely(() => ({ text: frameText(invocation.returnAddress) })).text,
+      old: '',
+      result: text,
+      kept: changed.length === 0,
+      logs,
+      error: error === null ? undefined
+        : (error && error.stack ? `${error}\n${error.stack}` : String(error))
+    });
+}
+
+function hookEnter(hook, invocation) {
+  mono.drainMain();
+  if (!hook.enabled)
+    return;
+  const context = invocation.context;
+  const { info, layout } = hook;
+  const args = {};
+  const refs = [];
+  info.params.forEach((param, i) => {
+    if (layout.args[i] === null)
+      return;
+    const raw = rawValue(context, layout.args[i]);
+    args[param.name] = registerJs(param.type, raw);
+    if (param.type.byref)
+      refs.push([param.name, param.type, raw]);
+  });
+  invocation.hookCall = {
+    args,
+    refs,
+    self: layout.self === null ? null : objectJs(rawValue(context, layout.self)),
+    caller: invocation.returnAddress
+  };
+}
+
+function hookLeave(hook, invocation, retval) {
+  const call = invocation.hookCall;
+  if (call === undefined)
+    return;
+  const type = hook.info.returns;
+  const isVoid = type.kind === T.VOID && !type.byref;
+  const result = isVoid ? undefined
+    : isFloat(type) ? floatValue(invocation.context.xmm0, type.kind) : registerJs(type, retval);
+  const refs = {};
+  for (const [name, refType, pointer] of call.refs)
+    refs[name] = readJs({ ...refType, byref: false }, pointer);
+  const logs = hook.debug ? [] : null;
+  const ctx = {
+    phase: 'after',
+    args: call.args,
+    refs,
+    this: call.self,
+    result,
+    params: hook.transform.params,
+    state: hook.transform.state,
+    method: hook.signature,
+    hookId: hook.id,
+    threadId: invocation.threadId,
+    call: staticCall,
+    log: logs === null ? () => {} : (...items) => { logs.push(formatLog(items)); }
+  };
+  let returned;
+  let error = null;
+  try {
+    returned = hook.transform.fn(ctx);
+    if (returned !== undefined && returned !== null)
+      replaceResult(hook, invocation, retval, returned);
+    hook.errorReported = false;
+  } catch (thrown) {
+    error = thrown;
+  }
+  const kept = error !== null || returned === undefined || returned === null;
+  const stats = hookStats.get(hook.id) || { count: 0 };
+  stats.count++;
+  stats.last = { old: displayText(result), result: displayText(kept ? result : returned),
+                 kept, error: error === null ? null : String(error) };
+  hookStats.set(hook.id, stats);
+  if (error !== null && !hook.errorReported) {
+    hook.errorReported = true;
+    send({ kind: 'transform-error', hookId: hook.id, error: String(error) });
+  }
+  if (hook.debug)
+    pushHookDebug(hook, {
+      threadId: invocation.threadId,
+      address: '',
+      caller: safely(() => ({ text: frameText(call.caller) })).text,
+      old: displayText(result),
+      result: displayText(kept ? result : returned),
+      kept,
+      logs,
+      error: error === null ? undefined
+        : (error && error.stack ? `${error}\n${error.stack}` : String(error))
+    });
+}
+
+function formatLog(items) {
+  return items.map(item => {
+    if (typeof item === 'string')
+      return item;
+    if (item === undefined)
+      return 'undefined';
+    try {
+      return JSON.stringify(item);
+    } catch (_error) {
+      return String(item);
+    }
+  }).join(' ');
+}
+
+function pushHookDebug(hook, entry) {
+  if (hookDebug.length >= MAX_HOOK_DEBUG) {
+    hookDebugDropped.set(hook.id, (hookDebugDropped.get(hook.id) || 0) + 1);
+    return;
+  }
+  entry.hookId = hook.id;
+  entry.time = Date.now();
+  hookDebug.push(entry);
+}
+
+function compileHookTransform(spec) {
+  const fn = (0, eval)('(' + spec.source + '\n)');
+  if (typeof fn !== 'function')
+    throw new Error(`Transform '${spec.kind}' does not evaluate to a function`);
+  return { kind: spec.kind, fn, params: spec.params || {}, state: {} };
+}
+
+function addMethodHook(spec) {
+  if (methodHooks.has(spec.id))
+    throw new Error(`Method hook ${spec.id} exists already`);
+  const transform = compileHookTransform(spec.transform);
+  const info = mono.prepare(spec.identity);
+  const hook = {
+    id: spec.id, info, layout: argumentLayout(info), transform, enabled: spec.enabled,
+    debug: false, errorReported: false, signature: spec.identity.method,
+    phase: spec.phase || 'after'
+  };
+  attachHook(hook);
+  methodHooks.set(spec.id, hook);
+  updateUnmapWatch();
+  return {
+    id: spec.id,
+    address: info.start.toString(),
+    params: info.params.map(p => `${p.type.name} ${p.name}`),
+    returns: info.returns.name,
+    undecoded: hook.layout.args.filter(location => location === null).length
+  };
+}
+
+function reportHookError(hook, error) {
+  if (!hook.errorReported) {
+    hook.errorReported = true;
+    send({ kind: 'transform-error', hookId: hook.id, error: String(error) });
+  }
+}
+
+function attachHook(hook) {
+  // Before the call only onEnter: Frida then leaves the return address alone.
+  if (hook.phase === 'before') {
+    hook.listener = Interceptor.attach(hook.info.start, {
+      onEnter() {
+        try {
+          hookBefore(hook, this);
+        } catch (error) {
+          changes = null;
+          reportHookError(hook, error);
+        }
+      }
+    });
+    return;
+  }
+  hook.listener = Interceptor.attach(hook.info.start, {
+    onEnter() {
+      try {
+        hookEnter(hook, this);
+      } catch (error) {
+        reportHookError(hook, error);
+      }
+    },
+    onLeave(retval) {
+      try {
+        hookLeave(hook, this, retval);
+      } catch (error) {
+        reportHookError(hook, error);
+      }
+    }
+  });
+}
+
+function removeMethodHook(id) {
+  const hook = methodHooks.get(id);
+  if (hook === undefined)
+    return false;
+  hook.listener.detach();
+  methodHooks.delete(id);
+  updateUnmapWatch();
+  return true;
+}
+
+function requireMethodHook(id) {
+  const hook = methodHooks.get(id);
+  if (hook === undefined)
+    throw new Error(`No method hook ${id}`);
+  return hook;
+}
+
+function flushHooks() {
+  if (hookStats.size > 0) {
+    send({ kind: 'hook-events', events: Array.from(hookStats, ([hookId, stats]) => ({
+      hookId, count: stats.count, last: stats.last
+    })) });
+    hookStats.clear();
+  }
+  if (hookDebug.length > 0 || hookDebugDropped.size > 0) {
+    send({ kind: 'hook-debug', events: hookDebug.splice(0),
+           dropped: Object.fromEntries(hookDebugDropped) });
+    hookDebugDropped.clear();
+  }
+}
+
 function flush() {
+  flushHooks();
   if (events.length === 0 && dropped.size === 0)
     return;
   send({
@@ -578,10 +1271,37 @@ rpc.exports = {
   removeMonitor,
   inspect,
   evaluate,
+  addMethodHook,
+  removeMethodHook,
+  setMethodHookEnabled(id, enabled) {
+    requireMethodHook(id).enabled = enabled;
+    return true;
+  },
+  setMethodHookTransform(id, spec) {
+    const hook = requireMethodHook(id);
+    hook.transform = compileHookTransform(spec);
+    hook.errorReported = false;
+    return true;
+  },
+  setMethodHookPhase(id, phase) {
+    const hook = requireMethodHook(id);
+    if (hook.phase !== phase) {
+      hook.listener.detach();
+      hook.phase = phase;
+      attachHook(hook);
+    }
+    return true;
+  },
+  setMethodHookDebug(id, enabled) {
+    requireMethodHook(id).debug = enabled;
+    return true;
+  },
   dispose() {
     clearInterval(flushTimer);
     for (const id of Array.from(monitors.keys()))
       removeMonitor(id);
+    for (const id of Array.from(methodHooks.keys()))
+      removeMethodHook(id);
     Interceptor.flush();
     flush();
     return true;

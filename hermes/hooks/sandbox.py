@@ -40,7 +40,9 @@ _RUNNER = r"""
   const log = (...args) => { logs.push(format(args)); };
   const previousConsole = global.console;
   global.console = { log, info: log, warn: log, error: log, debug: log };
-  const ctx = Object.assign({}, data, { state, log });
+  // Game code is out of reach here (method hooks).
+  const call = () => { throw new Error('ctx.call() only works in the game'); };
+  const ctx = Object.assign({ call }, data, { state, log });
   let result;
   let error = null;
   try {
@@ -62,7 +64,7 @@ _RUNNER = r"""
     state: stateText,
     kept: error === null && (result === undefined || result === null),
     type: typeof result,
-    value: typeof result === 'number' ? result : null,
+    value: (typeof result === 'number' || typeof result === 'boolean') ? result : null,
     text: result === undefined ? 'undefined' : String(result)
   };
 })
@@ -106,6 +108,34 @@ class TransformSandbox:
     def reset_state(self):
         """Start again with an empty ``ctx.state``."""
         self._state = self._engine.newObject()
+
+    def run_method(self, source, params, result):
+        """Call a method hook's ``source`` like the agent would for ``result``.
+
+        There are no arguments, objects or game calls here: ``ctx.args`` and
+        ``ctx.refs`` are empty, ``ctx.this`` is null and ``ctx.call`` throws.
+        """
+        fn = self._engine.evaluate(f"({source}\n)")
+        if fn.isError():
+            return SandboxResult(error=fn.toString())
+        if not fn.isCallable():
+            return SandboxResult(error="The source does not evaluate to a function")
+        data = {"phase": "after", "result": result, "args": {}, "refs": {}, "this": None,
+                "params": dict(params), "method": "Test", "hookId": 0, "threadId": 0}
+        outcome = self._runner.call([fn, self._engine.toScriptValue(data), self._state])
+        if outcome.isError():
+            return SandboxResult(error=outcome.toString())
+        outcome = outcome.toVariant()
+        sandbox_result = SandboxResult(
+            logs=list(outcome.get("logs") or []),
+            state=outcome.get("state") or "{}",
+            kept=bool(outcome.get("kept")),
+            error=outcome.get("error"),
+        )
+        if sandbox_result.error is None and not sandbox_result.kept:
+            value = outcome.get("value")
+            sandbox_result.value = outcome.get("text") if value is None else value
+        return sandbox_result
 
     def run(self, source, params, old, new, value_type="int32"):
         # pylint: disable=too-many-arguments

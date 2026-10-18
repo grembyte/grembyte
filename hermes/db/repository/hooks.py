@@ -3,7 +3,7 @@
 from sqlalchemy import select
 
 from hermes.db.engine import SESSION_LOCAL
-from hermes.db.models import Hook, HookTemplate, Process
+from hermes.db.models import Hook, HookTemplate, MethodHook, Process
 from hermes.hooks.transforms import (
     TemplateTransform,
     TransformDefinition,
@@ -18,16 +18,18 @@ def _template_definition(template):
         template.parameters,
         description=template.description,
         template_id=template.id,
+        kind=template.kind or "value",
     )
 
 
-def hook_transform(hook):
-    """Return the manipulation copied into a saved hook."""
+def hook_transform(hook, kind="value"):
+    """Return the manipulation copied into a saved hook (or method hook)."""
     definition = TransformDefinition.from_json(
         hook.transform_name,
         hook.transform_source,
         hook.transform_parameters,
         template_id=hook.template_id,
+        kind=kind,
     )
     return TemplateTransform(definition, **hook.transform_params)
 
@@ -114,6 +116,55 @@ class HookRepository:
                 hook.managed = managed
             session.commit()
 
+    # ------------------------------------------------------------------
+    # Method hooks
+    # ------------------------------------------------------------------
+    def list_method_hooks(self, process_id):
+        """Return the saved method hooks of a process in creation order."""
+        with self._sessions() as session:
+            return list(session.scalars(
+                select(MethodHook).where(MethodHook.process_id == process_id)
+                .order_by(MethodHook.id)
+            ))
+
+    def add_method_hook(self, process_id, *, label, managed, transform, enabled=True,
+                        phase="after"):
+        # pylint: disable=too-many-arguments
+        """Save a method hook and return its id."""
+        with self._sessions() as session:
+            hook = MethodHook(process_id=process_id, label=label, managed=managed,
+                              enabled=enabled, phase=phase)
+            _store_transform(hook, transform)
+            session.add(hook)
+            session.commit()
+            return hook.id
+
+    def update_method_hook(self, hook_id, *, label=None, transform=None, enabled=None,
+                           phase=None):
+        # pylint: disable=too-many-arguments
+        """Change the given fields of a saved method hook; ``None`` keeps a field."""
+        with self._sessions() as session:
+            hook = session.get(MethodHook, hook_id)
+            if hook is None:
+                return
+            if label is not None:
+                hook.label = label
+            if transform is not None:
+                _store_transform(hook, transform)
+            if enabled is not None:
+                hook.enabled = enabled
+            if phase is not None:
+                hook.phase = phase
+            session.commit()
+
+    def delete_method_hook(self, hook_id):
+        """Delete a saved method hook."""
+        with self._sessions() as session:
+            hook = session.get(MethodHook, hook_id)
+            if hook is not None:
+                session.delete(hook)
+                session.commit()
+
     def delete_hook(self, hook_id):
         """Delete a saved hook."""
         with self._sessions() as session:
@@ -156,6 +207,7 @@ class HookRepository:
             template.description = definition.description
             template.source = definition.source
             template.parameters = definition.parameters_json()
+            template.kind = definition.kind
             session.commit()
             return template.id
 
@@ -186,5 +238,6 @@ class HookRepository:
                     source=definition.source,
                     parameters=definition.parameters_json(),
                     seed_key=seed_key,
+                    kind=definition.kind,
                 ))
             session.commit()

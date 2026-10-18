@@ -43,6 +43,9 @@ Frida agents include ``MONO_AGENT_SOURCE``; it defines ``mono`` with:
 ``mono.onMainThread(work)`` / ``mono.drainMain()``
     Run game code on Unity's main thread, as soon as it runs a script
     method (a promise); ``drainMain`` runs queued work if called there.
+``mono.findClass(name)`` / ``mono.findMethod(klass, name, count, static)``
+    Look up game code by name, to call it with ``mono.invoke(method, this,
+    params)`` (main thread); ``mono.signatureOf(method)`` describes it.
 ``mono.properties(klass)`` / ``mono.getProperty(object, property, isStruct)``
     The parameterless getters of a class (and a GameObject's components),
     and calling one on the main thread: ``{result, exception}``.
@@ -165,7 +168,12 @@ const mono = (() => {
         classMethods: exported('mono_class_get_methods', 'pointer', ['pointer', 'pointer']),
         methodName: exported('mono_method_get_name', 'pointer', ['pointer']),
         methodFlags: exported('mono_method_get_flags', 'uint32', ['pointer', 'pointer'])
-      }))
+      })),
+      // Only for passing strings to game code.
+      stringNew: optional(() => blocking('mono_string_new', 'pointer', ['pointer', 'pointer'])),
+      // Storing a reference in an object tells the garbage collector.
+      writeBarrier: optional(() => exported('mono_gc_wbarrier_set_field', 'void',
+        ['pointer', 'pointer', 'pointer']))
     };
   }
 
@@ -394,32 +402,46 @@ const mono = (() => {
   function prepare(identity) {
     // Compile the method like compile() and describe its signature:
     // { start, size, instance, params: [{ name, type }], returns: type }.
-    const t = typesApi();
+    typesApi();
     return onMonoThread(domain => {
       const { method, start, size } = compileOnThread(domain, identity);
-      const signature = t.methodSignature(method);
-      if (signature.isNull())
-        throw new Error(`no signature for ${identity.method}`);
-      const count = t.paramCount(signature);
-      const names = Memory.alloc(Process.pointerSize * Math.max(count, 1));
-      t.paramNames(method, names);
-      const iterator = Memory.alloc(Process.pointerSize);
-      iterator.writePointer(NULL);
-      const params = [];
-      for (let i = 0; i < count; i++) {
-        const type = t.params(signature, iterator);
-        const name = names.add(i * Process.pointerSize).readPointer();
-        params.push({
-          name: name.isNull() ? `arg${i}` : name.readUtf8String(),
-          type: typeInfo(t, type)
-        });
-      }
-      return {
-        start, size, params,
-        instance: t.isInstance(signature) !== 0,
-        returns: typeInfo(t, t.returnType(signature))
-      };
+      return { start, size, ...signatureOf(method) };
     });
+  }
+
+  const signatures = new Map();
+
+  function signatureOf(method) {
+    // { instance, params: [{ name, type }], returns: type } of a method (cached).
+    const key = method.toString();
+    let result = signatures.get(key);
+    if (result !== undefined)
+      return result;
+    const t = typesApi();
+    const signature = t.methodSignature(method);
+    if (signature.isNull())
+      throw new Error(`no signature for method ${method}`);
+    const count = t.paramCount(signature);
+    const names = Memory.alloc(Process.pointerSize * Math.max(count, 1));
+    t.paramNames(method, names);
+    const iterator = Memory.alloc(Process.pointerSize);
+    iterator.writePointer(NULL);
+    const params = [];
+    for (let i = 0; i < count; i++) {
+      const type = t.params(signature, iterator);
+      const name = names.add(i * Process.pointerSize).readPointer();
+      params.push({
+        name: name.isNull() ? `arg${i}` : name.readUtf8String(),
+        type: typeInfo(t, type)
+      });
+    }
+    result = {
+      params,
+      instance: t.isInstance(signature) !== 0,
+      returns: typeInfo(t, t.returnType(signature))
+    };
+    signatures.set(key, result);
+    return result;
   }
 
   // --- Objects: classes, their fields, arrays -----------------------------
@@ -728,6 +750,68 @@ const mono = (() => {
     return invoke(getComponents, gameObject, params);
   }
 
+  // --- Calling game methods by name ---------------------------------------------
+
+  const classesByName = new Map();
+
+  function findClass(fullName) {
+    // A class of a loaded assembly by its full name, e.g. "Game.PartyHelper".
+    let klass = classesByName.get(fullName);
+    if (klass !== undefined)
+      return klass;
+    if (api.catalog === null || api.invoke === null)
+      throw new Error('this Mono runtime cannot look up classes');
+    const dot = fullName.lastIndexOf('.');
+    const space = Memory.allocUtf8String(dot < 0 ? '' : fullName.substring(0, dot));
+    const name = Memory.allocUtf8String(fullName.substring(dot + 1));
+    klass = null;
+    for (const image of loadedImages(api.catalog)) {
+      const found = api.invoke.classFromName(image, space, name);
+      if (!found.isNull()) {
+        klass = found;
+        break;
+      }
+    }
+    if (klass === null)
+      throw new Error(`class ${fullName} not found`);
+    classesByName.set(fullName, klass);
+    return klass;
+  }
+
+  function findMethod(klass, name, argumentCount, wantStatic) {
+    // The first method ``name`` of the class or a base class taking
+    // ``argumentCount`` arguments; ``wantStatic`` true/false or null for any.
+    const iterator = Memory.alloc(Process.pointerSize);
+    for (const current of classChain(klass)) {
+      iterator.writePointer(NULL);
+      for (let method = api.invoke.classMethods(current, iterator); !method.isNull();
+           method = api.invoke.classMethods(current, iterator)) {
+        if (api.invoke.methodName(method).readUtf8String() !== name)
+          continue;
+        const isStatic = (api.invoke.methodFlags(method, NULL) & METHOD_STATIC) !== 0;
+        if ((wantStatic === null || isStatic === wantStatic)
+            && signatureOf(method).params.length === argumentCount)
+          return method;
+      }
+    }
+    throw new Error(`${layout(klass).name} has no ${wantStatic ? 'static ' : ''}method ` +
+                    `${name} with ${argumentCount} argument(s)`);
+  }
+
+  function writeReference(object, field, value) {
+    // Store reference ``value`` in the field at ``field`` of ``object``.
+    if (api.writeBarrier !== null && object !== null)
+      api.writeBarrier(object, field, value);
+    else
+      field.writePointer(value);
+  }
+
+  function newString(text) {
+    if (api.stringNew === null)
+      throw new Error('this Mono runtime cannot create strings');
+    return api.stringNew(api.currentDomain(), Memory.allocUtf8String(text));
+  }
+
   const classNames = new Map();
 
   function objectClassName(object) {
@@ -825,7 +909,10 @@ const mono = (() => {
   return {
     refresh, locate, name, describe, identify, compile, assemblies, classes, prepare,
     objectClassName, classOf, layout, onMonoThread, unityName, onMainThread, drainMain,
-    properties, getProperty, TYPE
+    properties, getProperty, signatureOf, findClass, findMethod, newString, invoke,
+    classChain, writeReference,
+    virtualMethod: (object, method) => api.invoke.virtualMethod(object, method),
+    TYPE
   };
 })();
 """

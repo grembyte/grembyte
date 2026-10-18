@@ -1,4 +1,4 @@
-"""Dialogs and panel for creating and managing value hooks."""
+"""Dialogs and panel for creating and managing value hooks and method hooks."""
 
 import dataclasses
 
@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
@@ -28,6 +29,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from hermes.core.pointer import PointerChain
 from hermes.db.repository.hooks import hook_transform
 from hermes.hooks.engine import MAX_CALLER_DEPTH, HookSpec, create_hook_worker
+from hermes.hooks.method_hooks import PHASES, MethodHookSpec, MethodHookWorker
 from hermes.core.write_watch import BACKEND_FRIDA
 from hermes.hooks.transforms import (
     TemplateTransform,
@@ -140,25 +142,35 @@ class TransformForm(QWidget):
 class HookDialog(QDialog):
     # Dialogs expose their result through attributes after exec().
     # pylint: disable=too-few-public-methods,too-many-instance-attributes
-    """Choose a hook template and its parameters for a write hook.
+    """Choose a hook template and its parameters for a write or method hook.
 
     ``templates`` are the TransformDefinitions to choose from (the example
-    templates if omitted). When editing, the hook's own copy of its template
-    is shown; if the template has changed since, the dialog offers to adopt it.
+    templates if omitted); only those for the kind of hook are offered. When
+    editing, the hook's own copy of its template is shown; if the template
+    has changed since, the dialog offers to adopt it.
+
+    With ``method`` (a method's signature) the dialog creates a method hook:
+    ``address``, ``value_type`` and ``site`` are not shown then, and ``phase``
+    (before or after the call) can be chosen.
     """
 
     def __init__(self, translations, address, value_type, site,
-                 transform=None, label="", templates=None, pointer=None, parent=None):
+                 transform=None, label="", templates=None, pointer=None, method=None,
+                 phase="after", parent=None):
         # pylint: disable=too-many-arguments
         super().__init__(parent)
         self.translations = translations
         self.pointer = pointer
+        self.method = method
+        self.phase = phase
         self.transform = None
         self.label = label
         self.caller_depth = 1
         self._editing = transform is not None
         if templates is None:
             templates = list(example_templates(translations).values())
+        kind = "value" if method is None else "method"
+        templates = [template for template in templates if template.kind == kind]
         self._options, self._values, self._copy_index, self._template = (
             self._build_options(templates, transform)
         )
@@ -203,7 +215,8 @@ class HookDialog(QDialog):
         info = QLabel(
             self.translations["hooks.dialog_target"].format(
                 address=address, type=value_type, site=site
-            )
+            ) if self.method is None
+            else self.translations["hooks.dialog_method"].format(method=self.method)
         )
         info.setWordWrap(True)
         info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -219,7 +232,7 @@ class HookDialog(QDialog):
             target.setToolTip(self.translations["hooks.pointer_hint"])
             target.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             form.addRow(self.translations["hooks.pointer"], target)
-        elif not self._editing:
+        elif not self._editing and self.method is None:
             self.caller_depth_input = QSpinBox()
             self.caller_depth_input.setRange(0, MAX_CALLER_DEPTH)
             self.caller_depth_input.setValue(self.caller_depth)
@@ -228,6 +241,13 @@ class HookDialog(QDialog):
             )
             self.caller_depth_input.setToolTip(self.translations["hooks.caller_depth_hint"])
             form.addRow(self.translations["hooks.caller_depth"], self.caller_depth_input)
+        if self.method is not None:
+            self.phase_combo = QComboBox()
+            for phase in PHASES:
+                self.phase_combo.addItem(self.translations[f"hooks.phase_{phase}"], phase)
+            self.phase_combo.setCurrentIndex(max(self.phase_combo.findData(self.phase), 0))
+            self.phase_combo.setToolTip(self.translations["hooks.phase_tooltip"])
+            form.addRow(self.translations["hooks.phase"], self.phase_combo)
         self.template_combo = QComboBox()
         form.addRow(self.translations["hooks.template"], self.template_combo)
         layout.addLayout(form)
@@ -334,7 +354,9 @@ class HookDialog(QDialog):
             self.error_label.setText(str(error))
             return
         self.label = self.label_input.text().strip()
-        if self.pointer is not None:
+        if self.method is not None:
+            self.phase = self.phase_combo.currentData()
+        if self.pointer is not None or self.method is not None:
             self.caller_depth = 0
         elif not self._editing:
             self.caller_depth = self.caller_depth_input.value()
@@ -366,6 +388,12 @@ def managed_site(managed):
     return f"{method}+0x{managed.get('offset', 0):x}"
 
 
+def method_name(signature):
+    """``Class:Method`` of ``Namespace.Class:Method (params)``."""
+    class_name, _, method = signature.split(" (")[0].partition(":")
+    return f"{class_name.rsplit('.', 1)[-1]}:{method}"
+
+
 def spec_from_saved(saved):
     """Build the HookSpec that reinstalls a hook saved in the database.
 
@@ -395,11 +423,18 @@ class HookPanel(QGroupBox):
 
     With a ``repository`` new hooks are saved as module + offset and the saved
     hooks of a process are reinstalled whenever it is attached again.
+
+    Method hooks (C# methods of Mono games) share the table; a second worker,
+    the MethodHookWorker, runs them. Their state has ``"kind": "method"``.
     """
 
     # pylint: disable=too-many-instance-attributes
 
     count_changed = pyqtSignal(int)
+    # From the context menu: watch the target of a value hook (HookSpec, reads)
+    watch_requested = pyqtSignal(object, bool)
+    # ... or monitor the method of a method hook (its identity)
+    monitor_requested = pyqtSignal(object)
 
     _COLUMNS = (
         "hooks.column_label",
@@ -420,6 +455,7 @@ class HookPanel(QGroupBox):
         self._backend = BACKEND_FRIDA
         self._debug_window = None
         self._worker = None
+        self._method_worker = None
         self._hooks = {}
         # Hook trampolines of this process, also of removed hooks:
         # start address -> (trap pc, site) of the hooked write instruction.
@@ -475,8 +511,53 @@ class HookPanel(QGroupBox):
             header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.itemSelectionChanged.connect(self._update_buttons)
         self.table.doubleClicked.connect(self._edit_selected)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.table)
         self._update_buttons()
+
+    def _is_current(self, worker):
+        """Whether signals of ``worker`` still concern this panel."""
+        return worker is not None and worker in (self._worker, self._method_worker)
+
+    def _worker_of(self, state):
+        """The worker running a hook (None while there is none)."""
+        return self._method_worker if state.get("kind") == "method" else self._worker
+
+    def _show_context_menu(self, position):
+        """Offer to watch a value hook's target or to monitor a method hook's method."""
+        row = self.table.rowAt(position.y())
+        if row < 0:
+            return
+        self.table.selectRow(row)
+        menu = self.context_menu(self._selected_hook_id())
+        if menu is not None:
+            menu.exec(self.table.viewport().mapToGlobal(position))
+
+    def context_menu(self, hook_id):
+        """The context menu of a hook (None for an unknown id)."""
+        state = self._hooks.get(hook_id)
+        if state is None:
+            return None
+        spec = state["spec"]
+        method = state.get("kind") == "method"
+        has_target = not method and (spec.address is not None or spec.pointer is not None)
+        menu = QMenu(self)
+        # Same labels as in the address list
+        for key, reads in (("address_table.watch", False), ("address_table.watch_access", True)):
+            action = menu.addAction(
+                self.translations[key],
+                lambda reads=reads: self.watch_requested.emit(spec, reads))
+            action.setEnabled(has_target and self._pid is not None)
+            if not method and not has_target:
+                action.setToolTip(self.translations["hooks.menu_no_target"])
+        menu.addSeparator()
+        menu.addAction(
+            self.translations["hooks.menu_monitor"],
+            lambda: self.monitor_requested.emit(spec.identity),
+        ).setEnabled(method and self._pid is not None)
+        menu.setToolTipsVisible(True)
+        return menu
 
     def _row_of(self, hook_id):
         for row in range(self.table.rowCount()):
@@ -589,22 +670,142 @@ class HookPanel(QGroupBox):
         self._update_debug_hooks()
         return hook_id
 
+    def create_method_hook(self, method):
+        """Ask for a manipulation of a C# method (a CatalogMethod) and hook it."""
+        if self._pid is None:
+            return None
+        dialog = HookDialog(
+            self.translations, "", "", "", templates=self.templates(),
+            method=method.signature, parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        spec = MethodHookSpec(method.identity(), dialog.transform,
+                              label=dialog.label or method_name(method.signature),
+                              phase=dialog.phase)
+        return self.add_method_hook(spec)
+
+    def add_method_hook(self, spec, saved_id=None):
+        """Install a method hook (MethodHookSpec); saved once it is installed."""
+        worker = self._ensure_method_worker()
+        hook_id = worker.add_hook(spec)
+        self._hooks[hook_id] = {
+            "kind": "method", "spec": spec, "status": "installing", "count": 0,
+            "saved_id": saved_id,
+        }
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        label_item = QTableWidgetItem(self._label_text(spec, False))
+        label_item.setData(Qt.ItemDataRole.UserRole, hook_id)
+        self.table.setItem(row, 0, label_item)
+        self._show_method_phase(hook_id, spec)
+        self._set_cell(hook_id, 2, method_name(spec.signature), tooltip=spec.signature)
+        self._set_cell(hook_id, 3, spec.transform.describe(), "#f0883e")
+        self._set_cell(hook_id, 5, "0")
+        self._set_cell(hook_id, 6, "")
+        self._set_status(hook_id, "installing")
+        self.table.selectRow(row)
+        self.count_changed.emit(len(self._hooks))
+        self._update_debug_hooks()
+        return hook_id
+
+    def _show_method_phase(self, hook_id, spec):
+        self._set_cell(
+            hook_id, 1,
+            f"{self.translations['hooks.address_method']} · "
+            f"{self.translations[f'hooks.phase_short_{spec.phase}']}",
+            "#d2a8ff", tooltip=self.translations[f"hooks.method_tooltip_{spec.phase}"])
+
+    def _ensure_method_worker(self):
+        worker = self._method_worker
+        if worker is not None and worker.isRunning():
+            return worker
+        worker = MethodHookWorker(self._pid, self)
+        worker.hook_installed.connect(
+            lambda hook_id, info: self._on_method_installed(worker, hook_id, info))
+        worker.hook_failed.connect(
+            lambda hook_id, message: self._on_failed(worker, hook_id, message))
+        worker.hook_removed.connect(lambda hook_id: self._on_removed(worker, hook_id))
+        worker.hook_events.connect(lambda events: self._on_events(worker, events))
+        worker.hook_debug.connect(
+            lambda events, dropped: self._on_debug_events(worker, events, dropped))
+        worker.hook_ended.connect(lambda hook_id: self._on_method_ended(worker, hook_id))
+        worker.agent_log.connect(lambda level, text: self._on_agent_log(worker, level, text))
+        worker.transform_error.connect(
+            lambda hook_id, message: self._on_transform_error(worker, hook_id, message))
+        worker.agent_warning.connect(
+            lambda message: self._on_worker_message(worker, "hooks.agent_warning", message))
+        worker.worker_failed.connect(
+            lambda message: self._on_worker_message(worker, "hooks.worker_failed", message))
+        worker.finished.connect(lambda: self._on_worker_finished(worker))
+        self._method_worker = worker
+        worker.start()
+        return worker
+
+    def _on_method_installed(self, worker, hook_id, info):
+        state = self._hooks.get(hook_id)
+        if not self._is_current(worker) or state is None:
+            return
+        spec = state["spec"]
+        self._set_cell(hook_id, 2, method_name(spec.signature),
+                       tooltip=self.translations["hooks.method_site_tooltip"].format(
+                           method=spec.signature, address=info.get("address", ""),
+                           params=", ".join(info.get("params", [])) or "—",
+                           returns=info.get("returns", "")))
+        if (state["saved_id"] is None and not state.get("removing")
+                and self._repository is not None and self._process_id is not None):
+            state["saved_id"] = self._store(
+                self._repository.add_method_hook, self._process_id, label=spec.label,
+                managed=spec.identity, transform=spec.transform, enabled=spec.enabled,
+                phase=spec.phase)
+        self._set_status(hook_id, "active" if spec.enabled else "paused")
+
+    def _on_method_ended(self, worker, hook_id):
+        if self._is_current(worker) and hook_id in self._hooks:
+            self._set_status(hook_id, "disconnected", self.translations["hooks.method_ended"])
+
+    def _edit_method_hook(self, hook_id, state):
+        spec = state["spec"]
+        dialog = HookDialog(
+            self.translations, "", "", "", transform=spec.transform, label=spec.label,
+            templates=self.templates(), method=spec.signature, phase=spec.phase, parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        state["spec"] = dataclasses.replace(
+            spec, transform=dialog.transform, label=dialog.label, phase=dialog.phase)
+        self._method_worker.set_transform(hook_id, dialog.transform)
+        if dialog.phase != spec.phase:
+            self._method_worker.set_phase(hook_id, dialog.phase)
+            self._show_method_phase(hook_id, state["spec"])
+        if state["saved_id"] is not None:
+            self._store(self._repository.update_method_hook, state["saved_id"],
+                        label=dialog.label, transform=dialog.transform, phase=dialog.phase)
+        self._set_cell(hook_id, 0, self._label_text(state["spec"], state.get("debug", False)))
+        self._update_debug_hooks()
+        self._set_cell(hook_id, 3, dialog.transform.describe())
+        if state["status"] == "error":
+            self._set_status(hook_id, "active")
+
     def shutdown(self, timeout_ms=HOOK_STOP_TIMEOUT_MS):
         """Remove all hooks and stop the worker.
 
         A ``timeout_ms`` of ``None`` waits until the worker has finished;
         otherwise it finishes in the background after the bounded wait.
         """
-        worker = self._worker
-        if worker is None:
+        workers = [worker for worker in (self._worker, self._method_worker)
+                   if worker is not None]
+        if not workers:
             return
         self._worker = None
-        if worker.isRunning():
-            worker.requestInterruption()
-            if timeout_ms is None:
-                worker.wait()
-            else:
-                worker.wait(timeout_ms)
+        self._method_worker = None
+        for worker in workers:
+            if worker.isRunning():
+                worker.requestInterruption()
+                if timeout_ms is None:
+                    worker.wait()
+                else:
+                    worker.wait(timeout_ms)
         for hook_id, state in self._hooks.items():
             self._set_debug_flag(hook_id, False)
             if state["status"] != "failed":
@@ -647,9 +848,10 @@ class HookPanel(QGroupBox):
     def set_debug(self, hook_id, enabled):
         """Switch debug mode of a hook; opens the debug window when enabled."""
         state = self._hooks.get(hook_id)
-        if state is None or self._worker is None:
+        worker = None if state is None else self._worker_of(state)
+        if worker is None:
             return
-        self._worker.set_debug(hook_id, enabled)
+        worker.set_debug(hook_id, enabled)
         self._set_debug_flag(hook_id, enabled)
         if enabled:
             window = self.debug_window()
@@ -668,17 +870,18 @@ class HookPanel(QGroupBox):
         """Closing the window ends debug mode: it costs time in the game."""
         for hook_id, state in self._hooks.items():
             if state.get("debug"):
-                if self._worker is not None:
-                    self._worker.set_debug(hook_id, False)
+                worker = self._worker_of(state)
+                if worker is not None:
+                    worker.set_debug(hook_id, False)
                 self._set_debug_flag(hook_id, False)
         self._update_buttons()
 
     def _on_debug_events(self, worker, events, dropped):
-        if worker is self._worker and self._debug_window is not None:
+        if self._is_current(worker) and self._debug_window is not None:
             self._debug_window.add_events(events, dropped)
 
     def _on_agent_log(self, worker, level, text):
-        if worker is self._worker and self._debug_window is not None:
+        if self._is_current(worker) and self._debug_window is not None:
             self._debug_window.add_console(level, text)
 
     # ------------------------------------------------------------------
@@ -745,9 +948,25 @@ class HookPanel(QGroupBox):
             site = (f"{saved.module}+0x{saved.module_offset:x}" if saved.module
                     else managed_site(saved.managed) or saved.instruction_text)
             self.add_hook(spec, site, saved_id=saved.id)
-        if saved_hooks:
+        saved_method_hooks = self._store(
+            self._repository.list_method_hooks, self._process_id) or []
+        for saved in saved_method_hooks:
+            try:
+                spec = MethodHookSpec(saved.managed, hook_transform(saved, kind="method"),
+                                      enabled=saved.enabled, label=saved.label,
+                                      phase=saved.phase or "after")
+            except (TypeError, ValueError) as error:
+                self.status_label.setText(
+                    self.translations["hooks.restore_failed"].format(
+                        label=saved.label or saved.id, message=error
+                    )
+                )
+                continue
+            self.add_method_hook(spec, saved_id=saved.id)
+        if saved_hooks or saved_method_hooks:
             self.status_label.setText(
-                self.translations["hooks.restored"].format(count=len(saved_hooks))
+                self.translations["hooks.restored"].format(
+                    count=len(saved_hooks) + len(saved_method_hooks))
             )
 
     def _save_installed_hook(self, state, write):
@@ -994,7 +1213,7 @@ class HookPanel(QGroupBox):
         self._set_status(hook_id, "training", tooltip)
 
     def _on_failed(self, worker, hook_id, message):
-        if worker is not self._worker:
+        if not self._is_current(worker):
             return
         state = self._hooks.get(hook_id)
         if state is None:
@@ -1007,12 +1226,12 @@ class HookPanel(QGroupBox):
         )
 
     def _on_removed(self, worker, hook_id):
-        if worker is not self._worker:
+        if not self._is_current(worker):
             return
         self._drop_row(hook_id)
 
     def _on_events(self, worker, events):
-        if worker is not self._worker:
+        if not self._is_current(worker):
             return
         for event in events:
             hook_id = event.get("hookId")
@@ -1022,7 +1241,10 @@ class HookPanel(QGroupBox):
             state["count"] += event.get("count", 0)
             self._set_cell(hook_id, 5, str(state["count"]))
             last = event.get("last") or {}
-            if last:
+            if last and state.get("kind") == "method":
+                # The method's result and what the hook made of it
+                self._set_cell(hook_id, 6, f"{last.get('old', '')} ⇒ {last.get('result', '')}")
+            elif last:
                 self._set_cell(
                     hook_id,
                     6,
@@ -1061,7 +1283,7 @@ class HookPanel(QGroupBox):
         )
 
     def _on_transform_error(self, worker, hook_id, message):
-        if worker is not self._worker:
+        if not self._is_current(worker):
             return
         self._set_status(hook_id, "error", message)
         self.status_label.setText(
@@ -1069,16 +1291,22 @@ class HookPanel(QGroupBox):
         )
 
     def _on_worker_message(self, worker, key, message):
-        if worker is not self._worker:
+        if not self._is_current(worker):
             return
         self.status_label.setText(self.translations[key].format(message=message))
 
     def _on_worker_finished(self, worker):
         worker.deleteLater()
-        if worker is not self._worker:
+        if not self._is_current(worker):
             return
-        self._worker = None
+        method = worker is self._method_worker
+        if method:
+            self._method_worker = None
+        else:
+            self._worker = None
         for hook_id, state in self._hooks.items():
+            if (state.get("kind") == "method") != method:
+                continue
             self._set_debug_flag(hook_id, False)
             if state["status"] != "failed":
                 self._set_status(hook_id, "disconnected")
@@ -1101,6 +1329,9 @@ class HookPanel(QGroupBox):
         if state is None or state["status"] not in {"active", "paused", "error", "training"}:
             return
         spec = state["spec"]
+        if state.get("kind") == "method":
+            self._edit_method_hook(hook_id, state)
+            return
         site_item = self.table.item(self._row_of(hook_id), 2)
         dialog = HookDialog(
             self.translations,
@@ -1137,13 +1368,16 @@ class HookPanel(QGroupBox):
     def _toggle_selected(self):
         hook_id = self._selected_hook_id()
         state = self._hooks.get(hook_id)
-        if state is None or self._worker is None:
+        worker = None if state is None else self._worker_of(state)
+        if worker is None:
             return
         enable = state["status"] == "paused"
-        self._worker.set_enabled(hook_id, enable)
+        worker.set_enabled(hook_id, enable)
         state["spec"] = dataclasses.replace(state["spec"], enabled=enable)
         if state["saved_id"] is not None:
-            self._store(self._repository.update_hook, state["saved_id"], enabled=enable)
+            update = (self._repository.update_method_hook if state.get("kind") == "method"
+                      else self._repository.update_hook)
+            self._store(update, state["saved_id"], enabled=enable)
         resumed = "training" if state.get("training") else "active"
         self._set_status(hook_id, resumed if enable else "paused")
 
@@ -1154,12 +1388,15 @@ class HookPanel(QGroupBox):
             return
         state["removing"] = True
         if state["saved_id"] is not None:
-            self._store(self._repository.delete_hook, state["saved_id"])
+            delete = (self._repository.delete_method_hook if state.get("kind") == "method"
+                      else self._repository.delete_hook)
+            self._store(delete, state["saved_id"])
             state["saved_id"] = None
-        if (self._worker is not None
+        worker = self._worker_of(state)
+        if (worker is not None
                 and state["status"] in {
                     "installing", "active", "paused", "error", "training"
                 }):
-            self._worker.remove_hook(hook_id)
+            worker.remove_hook(hook_id)
         else:
             self._drop_row(hook_id)

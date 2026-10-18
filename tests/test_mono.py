@@ -1271,3 +1271,361 @@ def test_monitor_options_default_to_what_the_method_has(tmp_path, qt_app, transl
     finally:
         dialog.close()
         target.close()
+
+
+_ROLL_DAMAGE = {"image": "Assembly-CSharp", "file": None, "token": 0x06000004,
+                "method": "Game.Combat:RollDamage (int,single,string,bool,Game.DamageType,int&)"}
+
+
+def _method_transform(source, **params):
+    # pylint: disable=import-outside-toplevel
+    from hermes.hooks.transforms import TemplateTransform, TransformDefinition, TransformParameter
+
+    definition = TransformDefinition(
+        "test", source, tuple(TransformParameter(name, default=value)
+                              for name, value in params.items()), kind="method")
+    return TemplateTransform(definition, **params)
+
+
+@requires_target
+def test_method_hook_replaces_the_result(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.hooks.method_hooks import MethodHookSpec, MethodHookWorker
+
+    target = _MonoTarget(_build(tmp_path))
+    worker = MethodHookWorker(target.pid)
+    installed, failed, errors, events, debug = {}, {}, {}, [], []
+    worker.hook_installed.connect(installed.__setitem__)
+    worker.hook_failed.connect(failed.__setitem__)
+    worker.transform_error.connect(errors.__setitem__)
+    worker.hook_events.connect(events.extend)
+    worker.hook_debug.connect(lambda entries, _dropped: debug.extend(entries))
+    script = """function (ctx) {
+      const self = ctx.this;
+      ctx.log(self.name, self.get("IsPartyMember"), self.field("Health"),
+              self.component("Combat").className, ctx.args.name, ctx.args.min, ctx.refs.roll);
+      // Fields and properties also read directly; unknown names stay undefined.
+      ctx.log(self.IsPartyMember, self.Health, self.gameObject.name, self.Nothing);
+      if (self.get("IsPartyMember"))
+        return;  // keep it
+      return ctx.result * ctx.params.factor * ctx.call("Game.Combat.get_Count");
+    }"""
+    try:
+        worker.start()
+        hook_id = worker.add_hook(MethodHookSpec(
+            _ROLL_DAMAGE, _method_transform(script, factor=10), label="Damage"))
+        _wait_for(qt_app, lambda: hook_id in installed or hook_id in failed)
+        assert not failed, failed
+        worker.set_debug(hook_id, True)
+        time.sleep(0.2)
+
+        # 5 * 1.5 * 2 (crit) = 15, times 10 times Count (7)
+        assert target.send("roll", 5) == (1050, 42)
+        _wait_for(qt_app, lambda: debug and events)
+        assert not errors
+        assert debug[0]["logs"] == ['Hero false 100 Game.Combat Fireball 5 42',
+                                    'false 100 Hero undefined']
+        assert (debug[0]["old"], debug[0]["result"], debug[0]["kept"]) == ("15", "1050", False)
+        assert events[0]["hookId"] == hook_id and events[0]["count"] == 1
+
+        # Paused, the method works as without the hook.
+        worker.set_enabled(hook_id, False)
+        time.sleep(0.2)
+        assert target.send("roll", 5) == (15, 42)
+
+        # A failing script keeps the result and reports the error once.
+        worker.set_enabled(hook_id, True)
+        worker.set_transform(hook_id, _method_transform(
+            'function (ctx) { return ctx.call("Game.Nowhere.Method"); }'))
+        time.sleep(0.2)
+        assert target.send("roll", 5) == (15, 42)
+        _wait_for(qt_app, lambda: hook_id in errors)
+        assert "Game.Nowhere not found" in errors[hook_id]
+
+        removed = []
+        worker.hook_removed.connect(removed.append)
+        worker.remove_hook(hook_id)
+        _wait_for(qt_app, lambda: removed)
+        assert target.send("roll", 5) == (15, 42)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+def test_hook_dialog_offers_method_templates_for_methods(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.widgets.hooks import HookDialog
+
+    dialog = HookDialog(translations, "", "", "", method="Health:DoDamage (single)")
+    names = [dialog.template_combo.itemText(i) for i in range(dialog.template_combo.count())]
+    assert names == ["Ergebnis × Faktor", "Methoden-Skript"]
+    assert not hasattr(dialog, "caller_depth_input")
+    dialog.label_input.setText("Schaden")
+    dialog._accept()  # pylint: disable=protected-access
+    assert dialog.transform.params == {"factor": 2} and dialog.label == "Schaden"
+
+
+@requires_target
+def test_method_hooks_in_the_panel_are_saved_and_restored(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access,too-many-locals
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
+    from hermes.db.base import Base
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.hooks.method_hooks import MethodHookSpec
+    from hermes.ui.widgets.hooks import HookPanel
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    Base.metadata.create_all(engine)
+    repository = HookRepository(sessionmaker(bind=engine))
+    binary = _build(tmp_path)
+    process_id = repository.get_or_create_process("target", str(binary))
+    status = lambda panel: panel.table.item(0, 4).text()  # pylint: disable=unnecessary-lambda-assignment
+
+    target, panel = _MonoTarget(binary), HookPanel(translations, repository=repository)
+    try:
+        panel.set_process(target.pid, process_id)
+        panel.add_method_hook(MethodHookSpec(
+            _ROLL_DAMAGE, _method_transform("function (ctx) { return ctx.result * ctx.params.factor; }",
+                                            factor=3), label="Schaden"))
+        _wait_for(qt_app, lambda: status(panel) == "Aktiv")
+        assert panel.table.item(0, 1).text() == "C#-Methode · nach Aufruf"
+        assert panel.table.item(0, 2).text() == "Combat:RollDamage"
+        assert target.send("roll", 5) == (45, 42)
+        _wait_for(qt_app, lambda: panel.table.item(0, 5).text() == "1")
+        assert panel.table.item(0, 6).text() == "15 ⇒ 45"
+        saved = repository.list_method_hooks(process_id)
+        assert [(hook.label, hook.managed["method"], hook.transform_params) for hook in saved] == [
+            ("Schaden", _ROLL_DAMAGE["method"], {"factor": 3})]
+
+        # Paused it does nothing, and stays paused after a restart.
+        panel.table.selectRow(0)
+        panel._toggle_selected()
+        _wait_for(qt_app, lambda: status(panel) == "Pausiert")
+        time.sleep(0.2)
+        assert target.send("roll", 5) == (15, 42)
+        panel._toggle_selected()
+        _wait_for(qt_app, lambda: status(panel) == "Aktiv")
+    finally:
+        panel.shutdown(timeout_ms=None)
+        target.close()
+
+    # After a restart the saved hook is installed right away.
+    target, panel = _MonoTarget(binary), HookPanel(translations, repository=repository)
+    try:
+        panel.set_process(target.pid, process_id)
+        _wait_for(qt_app, lambda: panel.table.rowCount() == 1 and status(panel) == "Aktiv")
+        assert target.send("roll", 2) == (18, 42)
+        panel.table.selectRow(0)
+        panel._remove_selected()
+        _wait_for(qt_app, lambda: panel.table.rowCount() == 0)
+        assert repository.list_method_hooks(process_id) == []
+        assert target.send("roll", 2) == (6, 42)
+    finally:
+        panel.shutdown(timeout_ms=None)
+        target.close()
+        engine.dispose()
+
+
+@requires_target
+def test_monitor_offers_to_hook_a_method(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel
+    from hermes.core.mono_catalog import CatalogMethod
+    from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+
+    target = _MonoTarget(_build(tmp_path))
+    dialog = MethodMonitorDialog(translations, target.pid)
+    requested = []
+    dialog.hook_requested.connect(requested.append)
+    method = CatalogMethod("Assembly-CSharp", "Game.Combat", "RollDamage",
+                           "(int,single,string,bool,Game.DamageType,int&)", "System.Single",
+                           False, 0x06000004, _ROLL_DAMAGE["method"])
+    try:
+        dialog.add_method(method)
+        assert not dialog.hook_button.isEnabled()
+        dialog.methods_table.selectRow(0)
+        assert dialog.hook_button.isEnabled()
+        dialog.hook_button.click()
+        assert requested == [method]
+    finally:
+        dialog.close()
+        target.close()
+
+
+@requires_target
+def test_method_hook_before_the_call_changes_arguments_and_fields(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.hooks.method_hooks import MethodHookSpec, MethodHookWorker
+
+    target = _MonoTarget(_build(tmp_path))
+    worker = MethodHookWorker(target.pid)
+    installed, failed, errors, events, debug = {}, {}, {}, [], []
+    worker.hook_installed.connect(installed.__setitem__)
+    worker.hook_failed.connect(failed.__setitem__)
+    worker.transform_error.connect(errors.__setitem__)
+    worker.hook_events.connect(events.extend)
+    worker.hook_debug.connect(lambda entries, _dropped: debug.extend(entries))
+    before = """function (ctx) {
+      ctx.args.min = 10;          // int in a register
+      ctx.args.scale = 3;         // float in xmm1
+      ctx.args.crit = false;      // bool
+      ctx.args.roll = 7;          // ref int: the caller's variable
+      ctx.this.Health = 5;        // a field of the instance
+      return 1000;                // ignored before the call
+    }"""
+    after = """function (ctx) {
+      ctx.log(ctx.phase, ctx.args.min, ctx.args.scale, ctx.args.crit, ctx.this.Health);
+    }"""
+    try:
+        worker.start()
+        first = worker.add_hook(MethodHookSpec(_ROLL_DAMAGE, _method_transform(before),
+                                               phase="before"))
+        second = worker.add_hook(MethodHookSpec(_ROLL_DAMAGE, _method_transform(after)))
+        _wait_for(qt_app, lambda: {first, second} <= set(installed) | set(failed))
+        assert not failed, failed
+        for hook_id in (first, second):
+            worker.set_debug(hook_id, True)
+        time.sleep(0.2)
+
+        # 10 * 3 without crit; RollDamage itself writes roll = 42 afterwards.
+        assert target.send("roll", 5) == (30, 42)
+        _wait_for(qt_app, lambda: len(debug) == 2 and events)
+        assert not errors
+        changed = next(entry for entry in debug if entry["hookId"] == first)
+        # Fields are noted when set, arguments once the script is done.
+        assert changed["result"] == "Combat.Health=5, min=10, scale=3, crit=false, roll=7"
+        assert not changed["kept"]
+        logged = next(entry for entry in debug if entry["hookId"] == second)
+        assert logged["logs"] == ["after 10 3 false 5"]
+
+        # A typo in a field name is reported; the call goes on unchanged.
+        worker.set_transform(first, _method_transform(
+            "function (ctx) { ctx.this.Helth = 5; }"))
+        time.sleep(0.2)
+        assert target.send("roll", 5) == (15, 42)
+        _wait_for(qt_app, lambda: first in errors)
+        assert "Game.Combat has no field or property Helth to set" in errors[first]
+
+        # Switched to after the call, the same hook can replace the result.
+        worker.set_transform(first, _method_transform(
+            "function (ctx) { return ctx.phase === 'after' ? ctx.result * 2 : undefined; }"))
+        worker.set_phase(first, "after")
+        time.sleep(0.2)
+        assert target.send("roll", 5) == (30, 42)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+def test_hook_dialog_chooses_the_phase_of_method_hooks(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from hermes.ui.widgets.hooks import HookDialog
+
+    dialog = HookDialog(translations, "", "", "", method="Health:DoDamage (single)")
+    assert dialog.phase_combo.currentData() == "after"
+    assert [dialog.phase_combo.itemText(i) for i in range(2)] == [
+        "Nach dem Aufruf: Ergebnis ändern", "Vor dem Aufruf: Argumente und Felder ändern"]
+    dialog.phase_combo.setCurrentIndex(1)
+    dialog._accept()
+    assert dialog.phase == "before"
+
+    editing = HookDialog(translations, "", "", "", transform=dialog.transform,
+                         method="Health:DoDamage (single)", phase="before")
+    assert editing.phase_combo.currentData() == "before"
+    # Value hooks have no phase.
+    assert not hasattr(HookDialog(translations, "0x1000", "int32", "game+0x10"), "phase_combo")
+
+
+@requires_target
+def test_panel_saves_the_phase_of_method_hooks(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
+    from hermes.db.base import Base
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.hooks.method_hooks import MethodHookSpec
+    from hermes.ui.widgets.hooks import HookPanel
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    Base.metadata.create_all(engine)
+    repository = HookRepository(sessionmaker(bind=engine))
+    binary = _build(tmp_path)
+    process_id = repository.get_or_create_process("target", str(binary))
+    script = "function (ctx) { ctx.args.min = 1; }"
+    try:
+        for restart in (False, True):
+            target, panel = _MonoTarget(binary), HookPanel(translations, repository=repository)
+            try:
+                panel.set_process(target.pid, process_id)
+                if not restart:
+                    panel.add_method_hook(MethodHookSpec(
+                        _ROLL_DAMAGE, _method_transform(script), label="min", phase="before"))
+                _wait_for(qt_app, lambda panel=panel: panel.table.rowCount() == 1
+                          and panel.table.item(0, 4).text() == "Aktiv")
+                assert panel.table.item(0, 1).text() == "C#-Methode · vor Aufruf"
+                # min 1: 1 * 1.5 * 2
+                assert target.send("roll", 5) == (3, 42)
+            finally:
+                panel.shutdown(timeout_ms=None)
+                target.close()
+        assert [hook.phase for hook in repository.list_method_hooks(process_id)] == ["before"]
+    finally:
+        engine.dispose()
+
+
+def test_hook_context_menu_offers_what_fits_the_hook(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from hermes.core.pointer import PointerChain
+    from hermes.hooks.engine import HookSpec
+    from hermes.hooks.method_hooks import MethodHookSpec
+    from hermes.ui.widgets.hooks import HookPanel
+
+    panel = HookPanel(translations)
+    panel._pid = 1234  # a process, but no worker is needed for the menu
+    multiply = MultiplyTransform(2)
+    panel._hooks = {
+        1: {"spec": HookSpec(0x1000, "int32", multiply, trap_pc=0x10)},
+        2: {"spec": HookSpec(None, "int32", multiply, write_pc=0x10,
+                             pointer=PointerChain("game", 0x10, (0x8,)))},
+        3: {"spec": HookSpec(None, "int32", multiply, write_pc=0x10)},
+        4: {"kind": "method", "spec": MethodHookSpec(_ROLL_DAMAGE, _method_transform("x => 1"))},
+    }
+    watched, monitored = [], []
+    panel.watch_requested.connect(lambda spec, reads: watched.append((spec, reads)))
+    panel.monitor_requested.connect(monitored.append)
+
+    def actions(hook_id):
+        menu = panel.context_menu(hook_id)
+        return [(a.text(), a.isEnabled()) for a in menu.actions() if not a.isSeparator()], menu
+
+    for hook_id in (1, 2):
+        entries, menu = actions(hook_id)
+        assert entries == [("Adress-Überwachung (Schreibzugriffe)", True),
+                           ("Adress-Überwachung (alle Zugriffe)", True),
+                           ("Methoden-Überwachung", False)]
+        menu.actions()[1].trigger()
+        assert watched[-1] == (panel._hooks[hook_id]["spec"], True)
+    # A hook for every address its code writes has no address to watch.
+    entries, _menu = actions(3)
+    assert [enabled for _text, enabled in entries] == [False, False, False]
+    entries, menu = actions(4)
+    assert [enabled for _text, enabled in entries] == [False, False, True]
+    menu.actions()[-1].trigger()
+    assert monitored == [_ROLL_DAMAGE]
+
+
+def test_catalog_method_from_a_hook_identity():
+    # pylint: disable=import-outside-toplevel
+    from hermes.core.mono_catalog import catalog_method_from_identity
+
+    method = catalog_method_from_identity(_ROLL_DAMAGE)
+    assert (method.assembly, method.class_name, method.name, method.parameters) == (
+        "Assembly-CSharp", "Game.Combat", "RollDamage",
+        "(int,single,string,bool,Game.DamageType,int&)")
+    assert method.identity() == _ROLL_DAMAGE

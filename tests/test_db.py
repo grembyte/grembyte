@@ -96,10 +96,15 @@ def test_example_templates_are_created_once(repository):
     repository.ensure_templates(examples)
 
     templates = repository.list_templates()
-    assert sorted(t.name for t in templates) == ["Begrenzen", "Fester Wert", "Multiplikator"]
+    assert sorted(t.name for t in templates) == [
+        "Begrenzen", "Ergebnis × Faktor", "Fester Wert", "Methoden-Skript", "Multiplikator"]
     multiply = next(t for t in templates if t.name == "Multiplikator")
     assert multiply == examples["multiply"]
     assert multiply.parameters[1].choice_labels[0] == "Nur Erhöhungen"
+    assert multiply.kind == "value"
+    # Method hook examples keep their kind.
+    method = next(t for t in templates if t.name == "Ergebnis × Faktor")
+    assert method.kind == "method" and method == examples["method_multiply"]
 
 
 def test_example_templates_respect_existing_names(repository):
@@ -109,7 +114,7 @@ def test_example_templates_respect_existing_names(repository):
     repository.ensure_templates(examples)
 
     templates = repository.list_templates()
-    assert len(templates) == 3
+    assert len(templates) == 5
     assert next(t for t in templates if t.name == "Multiplikator").source == "ctx => 1"
 
 

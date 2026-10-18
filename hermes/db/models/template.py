@@ -28,5 +28,6 @@ class HookTemplate(Base):  # pylint: disable=too-few-public-methods
     source = Column(Text, nullable=False)                 # JavaScript function
     parameters = Column(JSON, nullable=False)             # TransformParameter.to_json()
     seed_key = Column(String, nullable=True, unique=True)  # set for example templates
+    kind = Column(String, nullable=True)                  # "method", else a value hook
     created_at = Column(DateTime, default=_now)
     updated_at = Column(DateTime, default=_now, onupdate=_now)

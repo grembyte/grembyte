@@ -38,6 +38,7 @@ from hermes.core.scanner import (
 )
 from hermes.core.memory import write_process_value
 from hermes.core.mono import has_mono_runtime
+from hermes.core.mono_catalog import catalog_method_from_identity
 from hermes.core.process import is_wine_process, process_start_time
 from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES, value_type as get_value_type
 from hermes.core.write_watch import (
@@ -407,6 +408,9 @@ class MainWindow(QMainWindow):
         self.hook_panel.setTitle("")
         self.hook_panel.setObjectName("tab_page")
         self.hook_panel.count_changed.connect(self._on_hook_count_changed)
+        self.hook_panel.watch_requested.connect(self._watch_hook_target)
+        self.hook_panel.monitor_requested.connect(
+            lambda identity: self._monitor_method(catalog_method_from_identity(identity)))
         self.bottom_tabs.addTab(self.hook_panel, self.translations["hooks.title"])
         return self.bottom_tabs
 
@@ -1043,6 +1047,8 @@ class MainWindow(QMainWindow):
         monitor = self._method_monitor
         if monitor is None:
             monitor = MethodMonitorDialog(self.translations, self._current_pid, parent=self)
+            if self.hook_panel is not None:
+                monitor.hook_requested.connect(self.hook_panel.create_method_hook)
             monitor.finished.connect(lambda _result: setattr(self, "_method_monitor", None))
             monitor.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._method_monitor = monitor
@@ -1203,6 +1209,29 @@ class MainWindow(QMainWindow):
                     lambda: self._set_pointer(row, None),
                 )
         menu.exec(table.viewport().mapToGlobal(position))
+
+    def _watch_hook_target(self, spec, reads):
+        """Watch the address a value hook targets (its pointer chain resolved now)."""
+        if self._current_pid is None:
+            return
+        address = spec.address
+        if spec.pointer is not None:
+            try:
+                with ProcessMemory(self._current_pid) as memory:
+                    address = resolve_chain(
+                        memory, module_bases(read_mappings(self._current_pid)), spec.pointer
+                    )
+            except OSError:
+                address = None
+            if address is None:
+                QMessageBox.warning(
+                    self,
+                    self.translations["hooks.title"],
+                    self.translations["hooks.pointer_unresolved"].format(
+                        chain=spec.pointer.text()),
+                )
+                return
+        self._start_write_monitor(hex(address), spec.value_type, spec.pointer, reads=reads)
 
     def _start_write_monitor(self, address, value_type, pointer=None, reads=False):
         """Start a live hardware-watchpoint monitor for one address.

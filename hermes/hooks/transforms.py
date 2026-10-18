@@ -31,7 +31,9 @@ experiments.
 
 Hook templates maintained in the database are ``TransformDefinition``
 objects (name, function source, parameters); ``TemplateTransform`` applies
-one with concrete parameter values. A hook keeps its own copy of the
+one with concrete parameter values. Their ``kind`` is ``"value"`` for the
+write hooks described above or ``"method"`` for method hooks, whose function
+gets another ``ctx`` (see ``hermes.hooks.method_hooks``). A hook keeps its own copy of the
 definition, so later template changes only reach it when they are adopted.
 """
 
@@ -111,18 +113,22 @@ class TransformDefinition:
     parameters: tuple = ()
     description: str = field(default="", compare=False)
     template_id: int | None = field(default=None, compare=False)
+    kind: str = "value"  # or "method"
 
     def parameters_json(self):
         return [parameter.to_json() for parameter in self.parameters]
 
     @classmethod
-    def from_json(cls, name, source, parameters, description="", template_id=None):
+    def from_json(cls, name, source, parameters, description="", template_id=None,
+                  kind="value"):
+        # pylint: disable=too-many-arguments
         return cls(
             name=name,
             source=source,
             parameters=tuple(TransformParameter.from_json(p) for p in parameters or []),
             description=description or "",
             template_id=template_id,
+            kind=kind or "value",
         )
 
 
@@ -366,6 +372,40 @@ def as_template_transform(transform):
 EXAMPLE_TEMPLATE_KINDS = ("multiply", "freeze", "clamp")
 
 
+# Example templates for method hooks: seed key -> (source, parameters).
+METHOD_EXAMPLES = {
+    "method_multiply": (
+        """function (ctx) {
+  // The method's result times the factor, e.g. the damage of Health:DoDamage.
+  return ctx.result * ctx.params.factor;
+}""",
+        (TransformParameter("factor", default=2),),
+    ),
+    "method_script": (
+        """function (ctx) {
+  // Runs the script typed into the hook's "script" field.
+  if (ctx.state.code !== ctx.params.code) {
+    ctx.state.code = ctx.params.code;
+    ctx.state.fn = new Function('ctx', ctx.params.code);
+  }
+  return ctx.state.fn(ctx);
+}""",
+        (TransformParameter(
+            "code", kind="code",
+            default="""// ctx.phase ("before"/"after"), ctx.args.<name>, ctx.this, ctx.result, ctx.log(...)
+// Objects: .name, .className, fields and properties directly (e.g. .IsPartyMember),
+// .field("x"), .get("property"), .call("Method", ...), .component("Type")
+// Static methods: ctx.call("Namespace.Class.Method", ...)
+// After the call: return a value to replace the result, nothing to keep it.
+// Before the call: ctx.args.x = …, obj.Field = … change what the method works with.
+const attacker = ctx.args.attacker;
+if (attacker && !/^(Player|Companion)_/.test(attacker.name))
+  return ctx.result * 2;
+"""),),
+    ),
+}
+
+
 def example_templates(translations):
     """Return the example template definitions labelled in the UI language."""
     def tr(key, fallback):
@@ -394,5 +434,20 @@ def example_templates(translations):
             source=cls.source.strip(),
             parameters=parameters,
             description=tr(f"transform.{kind}.description", ""),
+        )
+    for seed, (source, parameters) in METHOD_EXAMPLES.items():
+        examples[seed] = TransformDefinition(
+            name=tr(f"transform.{seed}", seed),
+            source=source,
+            parameters=tuple(
+                TransformParameter(
+                    name=parameter.name, kind=parameter.kind,
+                    default=tr(f"transform.{seed}.{parameter.name}_default", parameter.default),
+                    label=tr(f"transform.{seed}.{parameter.name}", parameter.name),
+                )
+                for parameter in parameters
+            ),
+            description=tr(f"transform.{seed}.description", ""),
+            kind="method",
         )
     return examples

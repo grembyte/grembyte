@@ -59,6 +59,19 @@ class CatalogMethod:
                 "method": self.signature}
 
 
+def catalog_method_from_identity(identity):
+    """A CatalogMethod for a method known by its identity (e.g. of a hook).
+
+    The return type and whether it is static are not part of the identity;
+    the method monitor learns them when it starts.
+    """
+    signature = identity["method"]
+    head, _, parameters = signature.partition(" ")
+    class_name, _, name = head.partition(":")
+    return CatalogMethod(identity["image"], class_name, name, parameters or "()", "?", False,
+                         identity["token"], signature)
+
+
 def catalog_methods(assembly, classes):
     """Turn the agent's ``classes`` answer for ``assembly`` into CatalogMethods."""
     return [

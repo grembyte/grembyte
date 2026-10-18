@@ -1,7 +1,7 @@
 """Dialog for maintaining hook templates (JavaScript manipulations)."""
 
 from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QFontDatabase  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtGui import QColor, QFontDatabase  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QComboBox,
@@ -39,7 +39,10 @@ NEW_TEMPLATE_SOURCE = """function (ctx) {
 
 # Parameter table columns
 _NAME, _LABEL, _KIND, _DEFAULT, _OPTIONAL, _CHOICES = range(6)
-_KINDS = ("number", "choice")
+_KINDS = ("number", "choice", "code")
+# What a template is for: write hooks or method hooks.
+_HOOK_KINDS = ("value", "method")
+_METHOD_COLOR = QColor("#d2a8ff")
 
 
 def format_choices(parameter):
@@ -132,6 +135,12 @@ class TemplateDialog(QDialog):
         form = QFormLayout()
         self.name_input = QLineEdit()
         form.addRow(self.translations["templates.name"], self.name_input)
+        self.hook_kind_combo = QComboBox()
+        for kind in _HOOK_KINDS:
+            self.hook_kind_combo.addItem(self.translations[f"templates.hook_kind_{kind}"], kind)
+        self.hook_kind_combo.setToolTip(self.translations["templates.hook_kind_tooltip"])
+        self.hook_kind_combo.currentIndexChanged.connect(self._update_script_hint)
+        form.addRow(self.translations["templates.hook_kind"], self.hook_kind_combo)
         self.description_input = QLineEdit()
         self.description_input.setPlaceholderText(self.translations["hooks.optional"])
         form.addRow(self.translations["templates.description"], self.description_input)
@@ -183,7 +192,8 @@ class TemplateDialog(QDialog):
         )
         self.source_input.setMinimumHeight(180)
         layout.addWidget(self.source_input, 1)
-        layout.addWidget(WrappedLabel(self.translations["hooks.script_hint"]))
+        self.script_hint = WrappedLabel(self.translations["hooks.script_hint"])
+        layout.addWidget(self.script_hint)
 
         self.error_label = WrappedLabel()
         self.error_label.setStyleSheet("color: #f85149;")
@@ -227,6 +237,11 @@ class TemplateDialog(QDialog):
         self.param_table.setItem(row, _OPTIONAL, optional)
         self.param_table.setItem(row, _CHOICES, QTableWidgetItem(format_choices(parameter)))
 
+    def _update_script_hint(self):
+        method = self.hook_kind_combo.currentData() == "method"
+        self.script_hint.setText(self.translations[
+            "hooks.method_script_hint" if method else "hooks.script_hint"])
+
     def _kind_combo(self):
         combo = QComboBox()
         for value in _KINDS:
@@ -254,7 +269,10 @@ class TemplateDialog(QDialog):
         for definition in self._templates:
             item = QListWidgetItem(definition.name)
             item.setData(Qt.ItemDataRole.UserRole, definition.template_id)
-            item.setToolTip(definition.description)
+            kind = self.translations[f"templates.hook_kind_{definition.kind}"]
+            item.setToolTip(f"{kind}\n{definition.description}".strip())
+            if definition.kind == "method":
+                item.setForeground(_METHOD_COLOR)
             self.template_list.addItem(item)
             if definition.template_id == select_id:
                 self.template_list.setCurrentItem(item)
@@ -269,6 +287,8 @@ class TemplateDialog(QDialog):
             )
         self._current_id = definition.template_id
         self.name_input.setText(definition.name)
+        self.hook_kind_combo.setCurrentIndex(max(self.hook_kind_combo.findData(definition.kind), 0))
+        self._update_script_hint()
         self.description_input.setText(definition.description)
         self.source_input.setPlainText(definition.source)
         self.param_table.setRowCount(0)
@@ -298,6 +318,7 @@ class TemplateDialog(QDialog):
             self.description_input.text().strip(),
             self.source_input.toPlainText(),
             tuple(rows),
+            self.hook_kind_combo.currentData(),
         )
 
     def is_dirty(self):
@@ -391,7 +412,7 @@ class TemplateDialog(QDialog):
 
     def editor_definition(self):  # pylint: disable=too-many-locals
         """Build a TransformDefinition from the editor; raises ValueError."""
-        name, description, source, rows = self._editor_state()
+        name, description, source, rows, hook_kind = self._editor_state()
         if not name:
             raise ValueError(self.translations["templates.name_required"])
         if not source.strip():
@@ -423,6 +444,8 @@ class TemplateDialog(QDialog):
                         )
                     )
                 value = default or values[0]
+            elif kind == "code":
+                value = default or None
             elif default:
                 try:
                     value = parse_number(default)
@@ -449,6 +472,7 @@ class TemplateDialog(QDialog):
             parameters=tuple(parameters),
             description=description,
             template_id=self._current_id,
+            kind=hook_kind,
         )
 
     def _test_template(self):
@@ -509,17 +533,24 @@ class TemplateTestDialog(QDialog):
         layout = QVBoxLayout(self)
 
         form = QFormLayout()
+        self.method = self.definition.kind == "method"
+        self.result_input = QLineEdit("10")
         self.value_type_combo = QComboBox()
         for value_type in VALUE_TYPES:
             self.value_type_combo.addItem(value_type, value_type)
         self.value_type_combo.setCurrentIndex(
             self.value_type_combo.findData(DEFAULT_VALUE_TYPE)
         )
-        form.addRow(self.translations["templates.test_value_type"], self.value_type_combo)
         self.old_input = QLineEdit("100")
-        form.addRow(self.translations["templates.test_old"], self.old_input)
         self.new_input = QLineEdit("110")
-        form.addRow(self.translations["templates.test_new"], self.new_input)
+        if self.method:
+            # Arguments, objects and game calls only exist in the game.
+            form.addRow(self.translations["templates.test_method_result"], self.result_input)
+            form.addRow(WrappedLabel(self.translations["templates.test_method_hint"]))
+        else:
+            form.addRow(self.translations["templates.test_value_type"], self.value_type_combo)
+            form.addRow(self.translations["templates.test_old"], self.old_input)
+            form.addRow(self.translations["templates.test_new"], self.new_input)
         layout.addLayout(form)
 
         if self.definition.parameters:
@@ -576,6 +607,8 @@ class TemplateTestDialog(QDialog):
 
     def run(self):
         """Call the template once with the entered values and show the outcome."""
+        if self.method:
+            return self._run_method()
         try:
             old = self._number(self.old_input, "templates.test_old")
             new = self._number(self.new_input, "templates.test_new")
@@ -603,6 +636,33 @@ class TemplateTestDialog(QDialog):
         lines += ["", f"ctx.state = {result.state}"]
         self.output.setPlainText("\n".join(lines))
         return result
+
+    def _run_method(self):
+        try:
+            result = self._number(self.result_input, "templates.test_method_result")
+            params = self.params_form.create_transform().params
+        except (TypeError, ValueError) as error:
+            self._show(self.translations["templates.test_error"].format(message=error), True)
+            return None
+        outcome = self.sandbox.run_method(self.definition.source, params, result)
+        if outcome.error is not None:
+            self._show(
+                self.translations["templates.test_error"].format(message=outcome.error), True
+            )
+        elif outcome.kept:
+            self._show(self.translations["templates.test_method_kept"].format(
+                value=format_number(result)), False)
+        else:
+            self._show(self.translations["templates.test_method_replaced"].format(
+                old=format_number(result), value=format_number(outcome.value)), False)
+        self._show_output(outcome)
+        return outcome
+
+    def _show_output(self, outcome):
+        lines = [f"{self.translations['templates.test_logs']}:"]
+        lines += [f"  {line}" for line in outcome.logs] or ["  —"]
+        lines += ["", f"ctx.state = {outcome.state}"]
+        self.output.setPlainText("\n".join(lines))
 
     def _show(self, text, error):
         self.result_label.setText(text)

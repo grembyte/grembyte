@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QPoint, Qt  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QPoint, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
@@ -151,6 +151,9 @@ class MethodMonitorDialog(QDialog):
 
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
+    # CatalogMethod to create a method hook for
+    hook_requested = pyqtSignal(object)
+
     def __init__(self, translations, pid, parent=None):
         super().__init__(parent)
         self.setModal(False)
@@ -220,6 +223,12 @@ class MethodMonitorDialog(QDialog):
         self.remove_button.setEnabled(False)
         self.remove_button.clicked.connect(self._remove_selected)
         buttons.addWidget(self.remove_button)
+        self.hook_button = QPushButton(self.translations["monitor.create_hook"])
+        self.hook_button.setObjectName("btn_primary")
+        self.hook_button.setToolTip(self.translations["monitor.create_hook_tooltip"])
+        self.hook_button.setEnabled(False)
+        self.hook_button.clicked.connect(self._request_hook)
+        buttons.addWidget(self.hook_button)
         buttons.addStretch()
         top_layout.addLayout(buttons)
         splitter.addWidget(top)
@@ -309,7 +318,7 @@ class MethodMonitorDialog(QDialog):
         arguments and the result.
         """
         for state in self._monitors.values():
-            if state["method"] == method:
+            if state["method"].signature == method.signature:
                 return
         row = self.methods_table.rowCount()
         self.methods_table.insertRow(row)
@@ -377,7 +386,19 @@ class MethodMonitorDialog(QDialog):
         self._update_buttons()
 
     def _update_buttons(self):
-        self.remove_button.setEnabled(self.methods_table.currentRow() >= 0)
+        selected = self.methods_table.currentRow() >= 0
+        self.remove_button.setEnabled(selected)
+        self.hook_button.setEnabled(selected)
+
+    def _request_hook(self):
+        row = self.methods_table.currentRow()
+        if row < 0:
+            return
+        signature = self.methods_table.item(row, _M_METHOD).toolTip()
+        state = next((state for state in self._monitors.values()
+                      if state["method"].signature == signature), None)
+        if state is not None:
+            self.hook_requested.emit(state["method"])
 
     # --- Worker ----------------------------------------------------------------
     def _on_added(self, monitor_id, info):
@@ -398,6 +419,10 @@ class MethodMonitorDialog(QDialog):
             if not info.get(has, True) and not state[option]:
                 check.setEnabled(False)
                 check.setToolTip(self.translations[key])
+        row = self._row_of(state)
+        if row >= 0 and info.get("returns"):
+            self.methods_table.item(row, _M_SIGNATURE).setText(
+                f"{state['method'].parameters} → {info['returns']}")
         text = self.translations["monitor.status_active"]
         if info.get("undecoded"):
             text = self.translations["monitor.status_undecoded"].format(
