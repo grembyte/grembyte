@@ -1,5 +1,6 @@
 """Application entry point for the Hermes Hook desktop application."""
 
+import os
 import signal
 import sys
 from pathlib import Path
@@ -8,6 +9,7 @@ from PyQt6.QtCore import QStandardPaths, QTimer  # pylint: disable=import-error,
 from PyQt6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core.sessions import SESSIONS
 from hermes.db.engine import init_db
 from hermes.ui.main_window import MainWindow
 
@@ -44,10 +46,17 @@ def main() -> int:
     signal_check_timer.timeout.connect(lambda: None)
     signal_check_timer.start()
     try:
-        return app.exec()
+        code = app.exec()
     finally:
         signal_check_timer.stop()
         signal.signal(signal.SIGINT, previous_sigint_handler)
+    if SESSIONS.sessions():
+        # A worker hangs in a call to the target (see ShutdownDialog). Python
+        # would abort destroying its running QThread: leave without that.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)  # pylint: disable=protected-access
+    return code
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ import time
 
 from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import sessions
 from hermes.core.memory import read_memory, write_process_bytes
 from hermes.core.pointer import ProcessMemory, resolve_chain
 from hermes.core.ptrace_engine import PtraceWatchpointEngine, WATCHPOINT_SLOTS
@@ -111,6 +112,7 @@ class PtraceHookWorker(PtraceWatchpointEngine):
 
     # -- worker thread ------------------------------------------------------
 
+    @sessions.tracked(sessions.PTRACE_HOOKS)
     def run(self):
         """Attach, service hook commands and watchpoint traps, then detach."""
         try:

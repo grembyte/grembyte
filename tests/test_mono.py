@@ -36,6 +36,7 @@ _FAKE_MONO_SOURCE = r"""
 #include <sys/mman.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <unistd.h>
 
 typedef struct Class Class;
 typedef struct { const char *name; int kind; int byref; Class *klass; } Type;
@@ -53,6 +54,7 @@ struct Class {
     int rank;
     Class *element;
     int element_size;
+    uint32_t type_flags;
 };
 /* Like Mono: an object starts with its vtable, the vtable with its class. */
 typedef struct { Class *klass; } VTable;
@@ -72,6 +74,8 @@ typedef struct {
     void *native;  /* "compiled" ahead: a C function */
     uint8_t *code;
     size_t size;
+    const uint8_t *il;
+    uint32_t il_size;
 } Method;
 
 #define ADD_GOLD 0x06000001u
@@ -88,7 +92,7 @@ typedef struct {
 static Image game = { "Assembly-CSharp", "/game/Assembly-CSharp.dll" };
 static Image corlib = { "mscorlib", "/game/mscorlib.dll" };
 static Image unity = { "UnityEngine.CoreModule", "/game/UnityEngine.CoreModule.dll" };
-static Class classes[14];
+static Class classes[15];
 static Type t_void = { "System.Void", 0x01 }, t_int = { "System.Int32", 0x08 },
     t_int_ref = { "System.Int32&", 0x08, 1 }, t_float = { "System.Single", 0x0c },
     t_string = { "System.String", 0x0e }, t_bool = { "System.Boolean", 0x02 },
@@ -100,7 +104,7 @@ static Type t_void = { "System.Void", 0x01 }, t_int = { "System.Int32", 0x08 },
     t_game_object = { "UnityEngine.GameObject", 0x12, 0, &classes[10] },
     t_type = { "System.Type", 0x12 };
 static Type *type_params[] = { &t_type };
-static Class classes[14] = {
+static Class classes[15] = {
     { .type = { "Game.Inventory", 0x12 }, .image = &game },
     { .type = { "Game.Loot", 0x12 }, .image = &game },
     { .type = { "System.Object", 0x1c }, .image = &corlib },
@@ -126,6 +130,9 @@ static Class classes[14] = {
     { .type = { "System.InvalidOperationException", 0x12 }, .image = &corlib,
       .parent = &classes[2], .field_count = 1, .fields = { { "_message", &t_string, 0x10 } } },
     { .type = { "Game.Loop", 0x12 }, .image = &game, .parent = &classes[2] },
+    /* [ComImport]: Mono hangs on Linux compiling code that uses it */
+    { .type = { "UnityEngine.KnownFolders", 0x12 }, .image = &unity, .parent = &classes[2],
+      .type_flags = 0x1000 },
 };
 static VTable vt_combat = { &classes[3] }, vt_info = { &classes[6] }, vt_ints = { &classes[7] },
     vt_game_object = { &classes[10] }, vt_components = { &classes[11] },
@@ -226,6 +233,12 @@ __attribute__((noipa)) float roll_damage(Object *self, int32_t min, float scale,
     return crit ? min * scale * 2 : min * scale;
 }
 
+/* IL: get_Broken creates a COM object (newobj KnownFolders::.ctor), Update
+   only does harmless things (a switch, ldstr, call AddGold) */
+static const uint8_t broken_il[] = { 0x73, 0x0d, 0x00, 0x00, 0x06, 0x26, 0x16, 0x2a };
+static const uint8_t update_il[] = {
+    0x16, 0x45, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x72, 0x01, 0x00, 0x00, 0x70, 0x26, 0x28, 0x01, 0x00, 0x00, 0x06, 0x2a };
 static Method methods[] = {
     { "Game.Inventory:AddGold", "Game.Inventory:AddGold (int&,int)", ADD_GOLD,
       &classes[0], "AddGold", STATIC, &t_void, 2, { &t_int_ref, &t_int }, { "gold", "amount" } },
@@ -247,7 +260,8 @@ static Method methods[] = {
       &classes[3], "get_IsPartyMember", 0, &t_bool, 0, { 0 }, { 0 },
       (void *)combat_is_party_member },
     { "Game.Combat:get_Broken", "Game.Combat:get_Broken ()", 0x06000008u,
-      &classes[3], "get_Broken", 0, &t_int, 0, { 0 }, { 0 }, (void *)combat_broken },
+      &classes[3], "get_Broken", 0, &t_int, 0, { 0 }, { 0 }, (void *)combat_broken,
+      .il = broken_il, .il_size = sizeof broken_il },
     { "Game.Combat:get_Count", "Game.Combat:get_Count ()", 0x06000009u,
       &classes[3], "get_Count", STATIC, &t_int, 0, { 0 }, { 0 }, (void *)combat_count },
     { "UnityEngine.Component:get_gameObject", "UnityEngine.Component:get_gameObject ()",
@@ -257,7 +271,9 @@ static Method methods[] = {
       0x0600000bu, &classes[10], "GetComponents", 0, &t_void, 1, { &t_type }, { "type" },
       (void *)game_object_get_components },
     { "Game.Loop:Update", "Game.Loop:Update ()", 0x0600000cu, &classes[13], "Update", STATIC,
-      &t_void, 0, { 0 }, { 0 }, (void *)loop_update },
+      &t_void, 0, { 0 }, { 0 }, (void *)loop_update, .il = update_il, .il_size = sizeof update_il },
+    { "UnityEngine.KnownFolders:.ctor", "UnityEngine.KnownFolders:.ctor ()", 0x0600000du,
+      &classes[14], ".ctor", 0, &t_void },
 };
 #define COUNT(array) (sizeof array / sizeof *array)
 static int root_domain, script_domain, thread;
@@ -387,6 +403,8 @@ void *mono_compile_method(void *m) {
     /* Mono only compiles for threads it knows, in the scripts' domain. */
     if (current_domain != &script_domain)
         return NULL;
+    if (getenv("FAKE_JIT_SLOW"))
+        usleep(atoi(getenv("FAKE_JIT_SLOW")) * 1000);  /* milliseconds */
     return compile(m);
 }
 
@@ -442,6 +460,14 @@ uint32_t mono_method_get_flags(Method *m, uint32_t *implementation) {
     return m->flags;
 }
 void *mono_method_signature(Method *m) { return m; }
+void *mono_method_get_header(Method *m) { return m->il ? m : NULL; }
+const uint8_t *mono_method_header_get_code(Method *m, uint32_t *size, uint32_t *max_stack) {
+    *size = m->il_size;
+    *max_stack = 8;
+    return m->il;
+}
+void mono_metadata_free_mh(void *header) { (void)header; }
+uint32_t mono_class_get_flags(Class *k) { return k->type_flags; }
 void *mono_signature_get_return_type(Method *m) { return m->returns; }
 
 /* Signatures and objects (method monitor) */
@@ -605,13 +631,15 @@ def _build(tmp_path):
 
 
 class _MonoTarget(_Target):
-    def __init__(self, binary, constant="long", updated=False):
+    def __init__(self, binary, constant="long", updated=False, slow_ms=0):
         # pylint: disable=super-init-not-called,import-outside-toplevel
         import os
 
         env = {**os.environ, "FAKE_JIT_CONSTANT": constant}
         if updated:
             env["FAKE_JIT_UPDATED"] = "1"
+        if slow_ms:
+            env["FAKE_JIT_SLOW"] = str(slow_ms)
         self.process = subprocess.Popen(
             [str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env
         )
@@ -781,7 +809,7 @@ def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
 
         found, loaded = read()
         assert [(a["name"], a["classes"]) for a in found] == [
-            ("Assembly-CSharp", 6), ("mscorlib", 5), ("UnityEngine.CoreModule", 3)]
+            ("Assembly-CSharp", 6), ("mscorlib", 5), ("UnityEngine.CoreModule", 4)]
         # Framework assemblies are only read on request.
         assert loaded == {"Assembly-CSharp": [
             CatalogMethod("Assembly-CSharp", "Game.Inventory", "AddGold", "(int&,int)",
@@ -1629,3 +1657,252 @@ def test_catalog_method_from_a_hook_identity():
         "Assembly-CSharp", "Game.Combat", "RollDamage",
         "(int,single,string,bool,Game.DamageType,int&)")
     assert method.identity() == _ROLL_DAMAGE
+
+
+@requires_target
+def test_mono_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.core.mono_trace import NEW, SAME, MonoTraceWorker, analyze, recording_calls
+
+    target = _MonoTarget(_build(tmp_path))
+    worker = MonoTraceWorker(target.pid)
+    planned, started, began, recorded, failed = [], [], [], [], []
+    worker.planned.connect(planned.append)
+    worker.started.connect(lambda methods, info: started.append((methods, info)))
+    worker.began.connect(began.append)
+    worker.recorded.connect(recorded.append)
+    worker.command_failed.connect(lambda action, message: failed.append((action, message)))
+    worker.worker_failed.connect(lambda message: failed.append(("worker", message)))
+
+    def record(phase, *commands):
+        worker.begin(phase)
+        _wait_for(qt_app, lambda: phase in began or failed)
+        began.clear()
+        for command, value in commands:
+            target.send(command, value)
+        count = len(recorded)
+        worker.finish()
+        _wait_for(qt_app, lambda: len(recorded) > count or failed)
+        assert not failed
+        return recorded[-1]
+
+    try:
+        worker.start()
+        worker.plan([])
+        _wait_for(qt_app, lambda: planned or failed)
+        assert not failed
+        assert planned[0] == {"methods": 8, "skipped": {"abstract": 0, "native": 0, "generic": 0},
+                              "assemblies": ["Assembly-CSharp"]}
+
+        worker.trace([])
+        _wait_for(qt_app, lambda: started or failed)
+        assert not failed
+        methods, info = started[0]
+        assert (info["notCompiled"], info["failed"]) == (0, 0)
+        # get_Broken uses a [ComImport] class: compiling it would hang Mono.
+        assert info["skipped"]["com"] == 1
+        assert sorted(method.name for method in methods) == [
+            "AddGold", "CalcDamage", "RollDamage", "Take", "Update", "get_Count",
+            "get_IsPartyMember"]
+        index = {method.name: i for i, method in enumerate(methods)}
+
+        # The game's frame loop is noise; looting is what we look for.
+        baseline = record("baseline", ("tick", 0), ("tick", 0), ("tick", 0))
+        assert {int(key): count for key, count in baseline["counts"].items()} == {
+            index["Update"]: 3}
+        assert baseline["events"] == []
+        scenario = record("scenario", ("tick", 0), ("loot", 5), ("tick", 0))
+        rows = analyze(scenario, baseline)
+        assert [(methods[row.method].name, row.verdict, row.calls) for row in rows] == [
+            ("Take", NEW, 1), ("AddGold", NEW, 1), ("Update", SAME, 2)]
+        # The sequence leaves out the noise; Take's JIT code calls AddGold.
+        calls = recording_calls(scenario)
+        assert [methods[call.method].name for call in calls] == ["Take", "AddGold"]
+        assert calls[0].caller.startswith("target+0x")
+        assert calls[1].caller.startswith("Game.Loot:Take+0x")
+        assert calls[0].time <= calls[1].time
+        assert calls[0].thread == target.pid
+
+        # Without a baseline everything the scenario called is new.
+        assert [row.verdict for row in analyze(scenario)] == [NEW, NEW, NEW]
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+def test_trace_analysis_compares_rates_with_the_baseline():
+    # pylint: disable=import-outside-toplevel
+    from hermes.core.mono_trace import MORE, NEW, SAME, analyze
+
+    baseline = {"phase": "baseline", "duration": 2000, "counts": {"0": 20, "1": 20, "2": 1}}
+    # one second: method 0 as usual, 1 five times as often, 2 only two more calls
+    scenario = {"phase": "scenario", "duration": 1000, "counts": {"0": 11, "1": 50, "2": 3, "3": 4},
+                "events": [[3, 1, 10, "a"], [3, 1, 20, "b"]]}
+    rows = analyze(scenario, baseline)
+    assert [(row.method, row.verdict) for row in rows] == [(3, NEW), (1, MORE), (2, SAME), (0, SAME)]
+    assert rows[0].first == 0 and rows[0].baseline_rate == 0
+    assert rows[1].factor == 5
+    assert [row.notable for row in rows] == [True, True, False, False]
+
+
+@requires_target
+def test_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.ui.widgets.mono_trace import MonoTraceDialog
+
+    target = _MonoTarget(_build(tmp_path))
+    dialog = MonoTraceDialog(translations, target.pid)
+    monitored, hooked = [], []
+    dialog.monitor_requested.connect(monitored.append)
+    dialog.hook_requested.connect(hooked.append)
+
+    def record(button, *commands):
+        button.click()
+        _wait_for(qt_app, lambda: dialog.recording_label.text()
+                  != translations["trace.recording_starting"])
+        for command, value in commands:
+            target.send(command, value)
+        button.click()
+        _wait_for(qt_app, lambda: dialog._state == 2)  # ready again
+
+    try:
+        assert not dialog.baseline_button.isEnabled()
+        dialog.filter_input.setText("game")
+        dialog.trace_button.click()
+        _wait_for(qt_app, lambda: dialog.methods or "Fehler" in dialog.status_label.text())
+        assert "7 Methoden werden beobachtet (1 übersprungen" in dialog.status_label.text()
+        assert dialog.trace_button.text() == translations["trace.stop"]
+
+        record(dialog.baseline_button, ("tick", 0), ("tick", 0))
+        assert "Grundrauschen: 1 Methoden" in dialog.status_label.text()
+        record(dialog.scenario_button, ("tick", 0), ("add", 2), ("tick", 0))
+        assert "davon 1 auffällig" in dialog.status_label.text()
+        # Update ran like in the baseline: hidden unless asked for
+        assert [dialog.row_model.data(dialog.row_model.index(row, 1))
+                for row in range(dialog.row_model.rowCount())] == ["Inventory:AddGold"]
+        assert dialog.row_model.data(dialog.row_model.index(0, 5)) == "neu"
+        dialog.notable_check.setChecked(False)
+        assert dialog.row_model.rowCount() == 2
+        assert dialog.sequence_model.rowCount() == 1
+        assert dialog.sequence_model.data(dialog.sequence_model.index(0, 3)).startswith("target+0x")
+
+        dialog.sequence_view.selectRow(0)
+        assert dialog.selection_label.text() == "Game.Inventory:AddGold (int&,int)"
+        dialog.monitor_button.click()
+        dialog.hook_button.click()
+        assert [method.signature for method in monitored + hooked] == [
+            "Game.Inventory:AddGold (int&,int)"] * 2
+
+        dialog.trace_button.click()
+        _wait_for(qt_app, lambda: dialog.trace_button.text() == translations["trace.start"]
+                  and dialog.trace_button.isEnabled())
+        assert dialog.status_label.text() == translations["trace.stopped"]
+        assert target.send("add", 1) == (103, 0)
+    finally:
+        dialog.close()
+        target.close()
+
+
+@requires_target
+def test_mono_trace_preparation_can_be_cancelled(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.core.mono_trace import MonoTraceWorker
+
+    # Compiling takes 0.3 s per method here: 2.4 s for all eight.
+    target = _MonoTarget(_build(tmp_path), slow_ms=300)
+    worker = MonoTraceWorker(target.pid)
+    progress, started, failed = [], [], []
+    worker.progress.connect(
+        lambda step, done, total, current: progress.append((step, done, total, current)))
+    worker.started.connect(lambda methods, info: started.append(methods))
+    worker.command_failed.connect(lambda action, message: failed.append((action, message)))
+    try:
+        worker.start()
+        worker.trace([])
+        _wait_for(qt_app, lambda: any(step == "compile" for step, *_rest in progress))
+        assert ("compile", 0, 7, "Game.Inventory:AddGold (int&,int)") in progress
+        began = time.monotonic()
+        worker.cancel()
+        _wait_for(qt_app, lambda: failed)
+        assert failed == [("start", "Error: cancelled")]
+        assert time.monotonic() - began < 1.5
+        assert not started
+        # The game was not disturbed.
+        assert target.send("add", 1) == (101, 0)
+    finally:
+        worker.requestInterruption()
+        assert worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_sessions_list_workers_and_cut_one_that_hangs(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.core.mono_trace import MonoTraceWorker
+    from hermes.core.sessions import SESSIONS, TRACE
+
+    target = _MonoTarget(_build(tmp_path), slow_ms=300)
+    worker = MonoTraceWorker(target.pid)
+    # As if the agent did not answer: stopping alone does not end the trace.
+    worker.cancel = lambda: None
+    progress = []
+    worker.progress.connect(lambda step, *_rest: progress.append(step))
+    try:
+        worker.start()
+        _wait_for(qt_app, lambda: any(s.frida_session for s in SESSIONS.sessions(target.pid)))
+        [session] = SESSIONS.sessions(target.pid)
+        assert (session.kind, session.worker) == (TRACE, worker)
+
+        worker.trace([])  # compiling takes 2.4 s here
+        _wait_for(qt_app, lambda: "compile" in progress)
+        SESSIONS.stop(session)
+        assert session.stopping is not None and not session.stuck()
+        assert not worker.wait(300)
+        session.stopping -= 10  # as if asked long ago
+        assert session.stuck()
+
+        began = time.monotonic()
+        assert SESSIONS.disconnect(session)
+        assert worker.wait(5000)
+        assert time.monotonic() - began < 2
+        _wait_for(qt_app, lambda: not SESSIONS.sessions(target.pid))
+        # The batch thread finished its C code: the game lives on.
+        time.sleep(2.5)
+        assert target.send("add", 1) == (101, 0)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_agent_answers_while_mono_works_on_a_thread_of_its_own(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.core.method_monitor import MethodMonitorWorker
+    from hermes.core.mono_trace import MonoTraceWorker
+
+    # Compiling a method takes 2 s; all sessions share the agent's thread.
+    target = _MonoTarget(_build(tmp_path), slow_ms=2000)
+    monitor = MethodMonitorWorker(target.pid)
+    trace = MonoTraceWorker(target.pid)
+    added, planned = [], []
+    monitor.monitor_added.connect(lambda monitor_id, _info: added.append(time.monotonic()))
+    trace.planned.connect(lambda plan: planned.append(time.monotonic()))
+    try:
+        monitor.start()
+        trace.start()
+        _wait_for(qt_app, lambda: trace._script is not None)  # pylint: disable=protected-access
+        began = time.monotonic()
+        monitor.add_monitor({"image": "Assembly-CSharp", "file": None, "token": 0x06000002,
+                             "method": "Game.Loot:Take (int&,int)"})
+        time.sleep(0.3)  # compiling now
+        trace.plan([])
+        _wait_for(qt_app, lambda: planned and added, timeout=10)
+        # The trace was answered while the monitor still waited for Mono.
+        assert planned[0] - began < 1.5 < added[0] - began
+    finally:
+        for worker in (monitor, trace):
+            worker.requestInterruption()
+            worker.wait(5000)
+        target.close()

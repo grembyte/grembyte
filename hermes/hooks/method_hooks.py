@@ -48,6 +48,7 @@ from dataclasses import dataclass
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import sessions
 from hermes.core.method_monitor import build_agent_source
 from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
@@ -150,6 +151,7 @@ class MethodHookWorker(QThread):
             raise ValueError(f"phase must be one of {', '.join(PHASES)}")
         self._commands.put(("phase", hook_id, phase))
 
+    @sessions.tracked(sessions.METHOD_HOOKS)
     def run(self):
         session = None
         script = None
@@ -157,6 +159,7 @@ class MethodHookWorker(QThread):
             if is_wine_process(self.pid):
                 raise RuntimeError(WINE_FRIDA_ERROR)
             session = frida.attach(self.pid)
+            sessions.SESSIONS.set_frida_session(self, session)
             session.on("detached", self._on_detached)
             script = session.create_script(build_agent_source())
             script.on("message", self._on_message)

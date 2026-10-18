@@ -47,6 +47,7 @@ import threading
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import sessions
 from hermes.core.mono import MONO_AGENT_SOURCE
 from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
@@ -462,11 +463,13 @@ function isObject(type) {
   return REFERENCE_KINDS.has(type.kind);  // also a ref/out argument holding one
 }
 
-function addMonitor(spec) {
+async function addMonitor(spec) {
   // spec.returns/objects: true, false, or null for "if the method has any".
   if (monitors.has(spec.id))
     throw new Error(`Monitor ${spec.id} exists already`);
-  const info = mono.prepare(spec.identity);
+  const info = await mono.prepare(spec.identity);
+  if (monitors.has(spec.id))
+    throw new Error(`Monitor ${spec.id} exists already`);
   const hasResults = (info.returns.kind !== T.VOID || info.returns.byref)
     || info.params.some(param => param.type.byref);
   const hasObjects = info.instance || isObject(info.returns)
@@ -1156,11 +1159,13 @@ function compileHookTransform(spec) {
   return { kind: spec.kind, fn, params: spec.params || {}, state: {} };
 }
 
-function addMethodHook(spec) {
+async function addMethodHook(spec) {
   if (methodHooks.has(spec.id))
     throw new Error(`Method hook ${spec.id} exists already`);
   const transform = compileHookTransform(spec.transform);
-  const info = mono.prepare(spec.identity);
+  const info = await mono.prepare(spec.identity);
+  if (methodHooks.has(spec.id))
+    throw new Error(`Method hook ${spec.id} exists already`);
   const hook = {
     id: spec.id, info, layout: argumentLayout(info), transform, enabled: spec.enabled,
     debug: false, errorReported: false, signature: spec.identity.method,
@@ -1381,6 +1386,7 @@ class MethodMonitorWorker(QThread):
     def remove_monitor(self, monitor_id):
         self._commands.put(("remove", monitor_id, None))
 
+    @sessions.tracked(sessions.MONITOR)
     def run(self):
         session = None
         script = None
@@ -1388,6 +1394,7 @@ class MethodMonitorWorker(QThread):
             if is_wine_process(self.pid):
                 raise RuntimeError(WINE_FRIDA_ERROR)
             session = frida.attach(self.pid)
+            sessions.SESSIONS.set_frida_session(self, session)
             session.on("detached", self._on_detached)
             script = session.create_script(build_agent_source())
             script.on("message", self._on_message)

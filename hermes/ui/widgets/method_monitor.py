@@ -583,3 +583,11 @@ class MethodMonitorDialog(QDialog):
 
 # Workers of closed windows, kept until they have removed their interceptors.
 _closing_workers = set()
+
+
+def wait_for_closing_workers(timeout_ms):
+    """Wait for the workers of closed windows; True if all have finished.
+
+    A QThread still running when the application exits aborts it.
+    """
+    return all(worker.wait(timeout_ms) for worker in list(_closing_workers))

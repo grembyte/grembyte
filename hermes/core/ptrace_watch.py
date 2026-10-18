@@ -11,6 +11,7 @@ import time
 
 from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import sessions
 from hermes.core.memory import read_memory
 from hermes.core.ptrace_engine import (
     MAX_INSTRUCTION_SIZE,
@@ -49,6 +50,7 @@ class PtraceWriteWatchWorker(PtraceWatchpointEngine):
         self._pending = {}
         self._access_cache = {}
 
+    @sessions.tracked(sessions.PTRACE_WATCH)
     def run(self):
         """Attach, report hits until stopped, then detach cleanly."""
         try:

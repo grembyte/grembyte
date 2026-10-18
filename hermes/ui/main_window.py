@@ -55,7 +55,11 @@ from hermes.hooks.transforms import example_templates
 from hermes.ui.widgets.catalog import CatalogDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
+from hermes.core import sessions
+from hermes.ui.widgets import method_monitor, mono_trace
+from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog
 from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+from hermes.ui.widgets.mono_trace import MonoTraceDialog
 from hermes.ui.widgets.pointer_scan import PointerScanDialog
 from hermes.ui.widgets.templates import TemplateDialog
 from hermes.ui.widgets.write_watch import WriteWatchDialog
@@ -63,6 +67,11 @@ from hermes.ui.widgets.write_watch import WriteWatchDialog
 
 # How often to check whether the attached process is still running.
 PROCESS_CHECK_INTERVAL_MS = 1000
+# How long closing the window waits for the Frida workers of the C# windows
+# (trace, method monitor) to remove their interceptors before it goes on;
+# the shutdown dialog waits for what still runs then.
+CLOSING_WORKER_TIMEOUT_MS = 3_000
+
 # Upper bound for joining a write monitor from the GUI thread.
 WRITE_WATCH_STOP_TIMEOUT_MS = 3000
 # Scan results beyond this many rows are kept but not shown in the table.
@@ -206,6 +215,8 @@ class MainWindow(QMainWindow):
         self._memory_viewer = None
         self._catalog = None
         self._method_monitor = None
+        self._mono_trace = None
+        self._sessions_dialog = None
         # Whether the attached process runs a Mono runtime (C# catalog).
         self._has_mono = False
         # Database id of the program the open pointer dialogs belong to.
@@ -354,6 +365,10 @@ class MainWindow(QMainWindow):
         self.btn_catalog = QPushButton(self.translations["catalog.button"])
         self.btn_catalog.clicked.connect(self._open_catalog)
         tb.addWidget(self.btn_catalog)
+
+        self.btn_trace = QPushButton(self.translations["trace.button"])
+        self.btn_trace.clicked.connect(self._open_mono_trace)
+        tb.addWidget(self.btn_trace)
         self._update_catalog_button()
 
         # The memory viewer stands apart on the right.
@@ -361,6 +376,18 @@ class MainWindow(QMainWindow):
         spacer.setObjectName("toolbar_spacer")
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
+
+        self.btn_sessions = QPushButton()
+        self.btn_sessions.clicked.connect(self._open_sessions)
+        tb.addWidget(self.btn_sessions)
+        self._session_signals = sessions.SessionSignals(self)
+        self._session_signals.changed.connect(self._update_sessions_button)
+        # A session asked to stop becomes "stuck" with time alone.
+        self._sessions_timer = QTimer(self)
+        self._sessions_timer.setInterval(1000)
+        self._sessions_timer.timeout.connect(self._update_sessions_button)
+        self._sessions_timer.start()
+        self._update_sessions_button()
 
         self.btn_memory = QPushButton(self.translations["memview.button"])
         self.btn_memory.setToolTip(self.translations["memview.button_tooltip"])
@@ -1015,15 +1042,15 @@ class MainWindow(QMainWindow):
         return len(chains)
 
     def _update_catalog_button(self):
-        """Enable the C# catalog for processes running Mono (and Frida)."""
+        """Enable the C# catalog and the trace for processes running Mono (and Frida)."""
         if self._current_pid is not None and not self._has_mono:
             self._has_mono = (has_mono_runtime(self._current_pid)
                               and not is_wine_process(self._current_pid))
         enabled = self._current_pid is not None and self._has_mono
-        self.btn_catalog.setEnabled(enabled)
-        self.btn_catalog.setToolTip(self.translations[
-            "catalog.button_tooltip" if enabled else "catalog.button_no_mono"
-        ])
+        for button, tooltip in ((self.btn_catalog, "catalog.button_tooltip"),
+                                (self.btn_trace, "trace.button_tooltip")):
+            button.setEnabled(enabled)
+            button.setToolTip(self.translations[tooltip if enabled else "catalog.button_no_mono"])
 
     def _open_catalog(self):
         """Show the catalog of the C# methods of the attached Mono game."""
@@ -1039,6 +1066,49 @@ class MainWindow(QMainWindow):
         catalog.show()
         catalog.raise_()
         catalog.activateWindow()
+
+    def _update_sessions_button(self):
+        """Show how many workers are attached, and whether one hangs."""
+        running = sessions.SESSIONS.sessions()
+        stuck = any(session.stuck() for session in running)
+        self.btn_sessions.setText(
+            self.translations["sessions.button"].format(count=len(running)))
+        self.btn_sessions.setToolTip(self.translations[
+            "sessions.button_stuck_tooltip" if stuck else "sessions.button_tooltip"])
+        name = "btn_danger" if stuck else ""
+        if self.btn_sessions.objectName() != name:
+            self.btn_sessions.setObjectName(name)
+            self.btn_sessions.style().unpolish(self.btn_sessions)
+            self.btn_sessions.style().polish(self.btn_sessions)
+
+    def _open_sessions(self):
+        """Show the workers attached to processes, to end them if need be."""
+        dialog = self._sessions_dialog
+        if dialog is None:
+            dialog = SessionsDialog(self.translations, lambda: self._current_pid, parent=self)
+            dialog.finished.connect(lambda _result: setattr(self, "_sessions_dialog", None))
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._sessions_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _open_mono_trace(self):
+        """Show the trace of the C# methods a scenario in the Mono game runs."""
+        if self._current_pid is None or not self._has_mono:
+            return
+        trace = self._mono_trace
+        if trace is None:
+            trace = MonoTraceDialog(self.translations, self._current_pid, parent=self)
+            trace.finished.connect(lambda _result: setattr(self, "_mono_trace", None))
+            trace.monitor_requested.connect(self._monitor_method)
+            if self.hook_panel is not None:
+                trace.hook_requested.connect(self.hook_panel.create_method_hook)
+            trace.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._mono_trace = trace
+        trace.show()
+        trace.raise_()
+        trace.activateWindow()
 
     def _monitor_method(self, method):
         """Log the calls of a C# method chosen in the catalog."""
@@ -1057,8 +1127,8 @@ class MainWindow(QMainWindow):
         monitor.activateWindow()
 
     def _close_catalog(self):
-        """Close the C# catalog and the method monitor (process gone or switched)."""
-        for name in ("_catalog", "_method_monitor"):
+        """Close the C# catalog, the trace and the method monitor (process gone or switched)."""
+        for name in ("_catalog", "_mono_trace", "_method_monitor"):
             dialog = getattr(self, name)
             if dialog is not None:
                 dialog.close()
@@ -1897,11 +1967,22 @@ class MainWindow(QMainWindow):
                 )
             worker.requestInterruption()
 
-        # A running QThread must not be destroyed, so join it fully here.
-        self._stop_write_monitor(timeout_ms=None)
+        # A running QThread must not be destroyed. The workers attached to
+        # the target remove their hooks first; that waits for the target,
+        # so the waits here are bounded and the rest happens in a dialog.
+        self._sessions_timer.stop()
+        self._close_catalog()
+        for module in (mono_trace, method_monitor):
+            module.wait_for_closing_workers(CLOSING_WORKER_TIMEOUT_MS)
+        self._stop_write_monitor()
         self._stop_freeze_worker()
         if self.hook_panel is not None:
-            self.hook_panel.shutdown(timeout_ms=None)
+            self.hook_panel.shutdown()
+        if self._sessions_dialog is not None:
+            self._sessions_dialog.close()
+        if sessions.SESSIONS.sessions():
+            # Rejected: workers still run; main() then exits hard.
+            ShutdownDialog(self.translations, parent=self).exec()
         refresh_worker = self._refresh_worker
         if refresh_worker is not None and refresh_worker.isRunning():
             refresh_worker.requestInterruption()

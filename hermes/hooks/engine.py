@@ -59,6 +59,7 @@ from dataclasses import dataclass, field
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import sessions
 from hermes.core.mono import MONO_AGENT_SOURCE
 from hermes.core.pointer import PointerChain
 from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
@@ -893,8 +894,8 @@ function managedCandidate(address, length) {
   return { bytes: hexBytes(address.readByteArray(ins.size)), context: codeContext(ins) };
 }
 
-function resolveManaged(spec) {
-  const { start, size } = mono.compile(spec.managed);
+async function resolveManaged(spec) {
+  const { start, size } = await mono.compile(spec.managed);
   const expected = spec.instructionBytes;
   const length = expected.length / 2;
   const code = new Uint8Array(start.readByteArray(size));
@@ -924,13 +925,12 @@ function resolveManaged(spec) {
   return best.address;
 }
 
-function addHook(spec) {
-  if (hooks.has(spec.id) || trainings.has(spec.id))
-    throw new Error(`Hook ${spec.id} already exists`);
+async function addHookResolving(spec) {
+  // addHook for a hook known by its C# method: find the write site first.
   if (spec.managed !== null && spec.module === null && spec.writePc === null
       && spec.trapPc === null) {
     try {
-      spec = { ...spec, writePc: resolveManaged(spec).toString() };
+      spec = { ...spec, writePc: (await resolveManaged(spec)).toString() };
     } catch (error) {
       if (spec.signature === null)
         throw error;
@@ -938,6 +938,12 @@ function addHook(spec) {
       send({ kind: 'managed-failed', hookId: spec.id, error: String(error) });
     }
   }
+  return addHook(spec);
+}
+
+function addHook(spec) {
+  if (hooks.has(spec.id) || trainings.has(spec.id))
+    throw new Error(`Hook ${spec.id} already exists`);
   if (spec.signature !== null && spec.module === null && spec.writePc === null
       && spec.trapPc === null)
     return startTraining(spec);
@@ -1311,7 +1317,7 @@ send({
 });
 
 rpc.exports = {
-  addHook,
+  addHook: addHookResolving,
   removeHook,
   setTrainingPaused,
   setTransform(id, spec) {
@@ -1571,6 +1577,7 @@ class HookWorker(QThread):
         """Report every call and skipped write of a hook via hook_debug."""
         self._commands.put(("debug", hook_id, bool(enabled)))
 
+    @sessions.tracked(sessions.HOOKS)
     def run(self):
         session = None
         script = None
@@ -1578,6 +1585,7 @@ class HookWorker(QThread):
             if is_wine_process(self.pid):
                 raise RuntimeError(WINE_FRIDA_ERROR)
             session = frida.attach(self.pid)
+            sessions.SESSIONS.set_frida_session(self, session)
             session.on("detached", self._on_session_detached)
             script = session.create_script(build_agent_source())
             script.on("message", self._on_message)
