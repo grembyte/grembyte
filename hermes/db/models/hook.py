@@ -19,6 +19,9 @@ class Hook(Base):  # pylint: disable=too-few-public-methods
     hook is found again by training: ``signature`` holds the code bytes around
     the instruction (``{"before": hex, "after": hex}``) and ``pointer`` the
     target the agent watches for a write from matching code.
+    In Mono games ``managed`` also names the C# method of such a write
+    site (see ``HookSpec.managed``); the hook is then installed right away
+    after a restart, training is the fallback.
     ``callers`` holds the learned caller signatures, each a list of
     ``caller_depth`` ``[module, offset]`` return addresses.
 
@@ -50,6 +53,7 @@ class Hook(Base):  # pylint: disable=too-few-public-methods
     callers = Column(JSON, nullable=False, default=list)
     pointer = Column(JSON, nullable=True)                # PointerChain.to_json() of the target
     signature = Column(JSON, nullable=True)              # code around a JIT write instruction
+    managed = Column(JSON, nullable=True)                # C# method of a JIT write instruction
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     process = relationship("Process", back_populates="hooks")

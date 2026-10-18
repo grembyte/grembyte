@@ -69,7 +69,8 @@ class HookRepository:
 
     def add_hook(self, process_id, *, label, module, module_offset,
                  instruction_bytes, instruction_text, value_type, transform,
-                 enabled=True, caller_depth=1, callers=(), pointer=None, signature=None):
+                 enabled=True, caller_depth=1, callers=(), pointer=None, signature=None,
+                 managed=None):
         # pylint: disable=too-many-arguments
         """Save a hook and return its id."""
         with self._sessions() as session:
@@ -86,6 +87,7 @@ class HookRepository:
                 callers=[list(map(list, frames)) for frames in callers],
                 pointer=None if pointer is None else pointer.to_json(),
                 signature=signature,
+                managed=managed,
             )
             _store_transform(hook, transform)
             session.add(hook)
@@ -93,7 +95,8 @@ class HookRepository:
             return hook.id
 
     def update_hook(self, hook_id, *, label=None, transform=None, enabled=None,
-                    callers=None):
+                    callers=None, managed=None):
+        # pylint: disable=too-many-arguments
         """Change the given fields of a saved hook; ``None`` keeps a field."""
         with self._sessions() as session:
             hook = session.get(Hook, hook_id)
@@ -107,6 +110,8 @@ class HookRepository:
                 hook.enabled = enabled
             if callers is not None:
                 hook.callers = [list(map(list, frames)) for frames in callers]
+            if managed is not None:
+                hook.managed = managed
             session.commit()
 
     def delete_hook(self, hook_id):

@@ -95,3 +95,30 @@ def test_dialog_shows_reads_and_writes_and_hooks_only_writes():
     assert dialog.hook_button.isEnabled()
     table.selectRow(1)
     assert not dialog.hook_button.isEnabled()
+
+
+def test_dialog_names_jit_code_by_its_csharp_method():
+    # pylint: disable=import-outside-toplevel
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets.write_watch import WriteWatchDialog
+
+    _app = QApplication.instance() or QApplication([])
+    dialog = WriteWatchDialog("0x1000", 4, load_translations("de"))
+    requested = []
+    dialog.hook_requested.connect(lambda pc, site: requested.append((pc, site)))
+    dialog.add_hits([{
+        "pc": "0x7f0012345678", "site": "0x7f0012345678", "write": True,
+        "method": "PlayerInventory:AddCurrency+0x3a",
+    }])
+
+    site = dialog.results_table.item(0, 2)
+    assert site.text() == "PlayerInventory:AddCurrency+0x3a"
+    assert site.toolTip() == "0x7f0012345678"
+    dialog.results_table.selectRow(0)
+    dialog._request_hook()  # pylint: disable=protected-access
+    assert requested == [(0x7f0012345678, "PlayerInventory:AddCurrency+0x3a")]

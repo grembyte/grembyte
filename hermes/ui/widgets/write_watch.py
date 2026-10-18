@@ -30,7 +30,8 @@ class WriteWatchDialog(QDialog):
 
     stop_requested = pyqtSignal()
     # trap PC (instruction after the write), module/offset description
-    hook_requested = pyqtSignal(int, str)
+    # (a Qt int has 32 bits and would cut off 64-bit addresses)
+    hook_requested = pyqtSignal(object, str)
 
     def __init__(self, address, size, translations, parent=None, reads=False):
         # pylint: disable=too-many-arguments
@@ -130,6 +131,11 @@ class WriteWatchDialog(QDialog):
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
                     item.setCheckState(Qt.CheckState.Unchecked)
 
+            if hit.get("method"):
+                # JIT code of a Mono game: the C# method says more than an address.
+                site_item = self.results_table.item(row, _SITE)
+                site_item.setText(hit["method"])
+                site_item.setToolTip(hit.get("site", pc))
             count_item = self.results_table.item(row, _COUNT)
             count_item.setText(str(int(count_item.text()) + hit.get("count", 1)))
             # Older agents report writes only.

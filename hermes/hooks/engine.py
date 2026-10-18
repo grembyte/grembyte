@@ -37,6 +37,14 @@ it is saved with the bytes of its write instruction and of the code around
 it (``signature``), and after a restart a hardware watchpoint on the target
 waits for a write from matching code and installs the hook there.
 
+In Mono games (Unity) the agent names JIT code by its C# method: the write
+site (``method`` of the write instruction, or a later ``site-method``
+message once a game thread ran it) and the callers in debug events. The
+``site-method`` message also identifies the method (``managed``). A hook
+saved with it is installed right away after a restart: Mono compiles the
+method and the agent finds the write instruction in its code. Training is
+the fallback when that fails (``managed-failed``).
+
 In debug mode a hook reports every call (values, caller, ``ctx.log()``
 output, errors with stack) and every write it skipped, with the reason.
 At most ``MAX_DEBUG_EVENTS`` events are sent per 100 ms; the rest is counted.
@@ -51,6 +59,7 @@ from dataclasses import dataclass, field
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core.mono import MONO_AGENT_SOURCE
 from hermes.core.pointer import PointerChain
 from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
 from hermes.core.write_watch import (
@@ -261,7 +270,8 @@ function describeInstruction(site) {
     bytes: site.bytes,
     context: site.context,
     text: ins.toString(),
-    size: ins.size
+    size: ins.size,
+    method: mono.name(ins.address)
   };
 }
 
@@ -459,8 +469,26 @@ function formatLog(args) {
 }
 
 function frameText(address) {
+  // Runs on the game thread, which Mono needs to name its JIT code.
   const frame = describeFrame(address);
-  return frame ? `${frame[0]}+0x${frame[1].toString(16)}` : address.toString();
+  if (frame)
+    return `${frame[0]}+0x${frame[1].toString(16)}`;
+  return mono.describe(address) || address.toString();
+}
+
+function nameSite(site) {
+  // Mono only names JIT code for its own threads, i.e. the game's.
+  const location = mono.locate(site.writeIns.address);
+  if (location === undefined)
+    return;
+  site.method = location === null ? null : mono.name(site.writeIns.address);
+  if (site.method !== null)
+    send({
+      kind: 'site-method',
+      hookIds: Array.from(site.hooks.keys()),
+      method: site.method,
+      managed: mono.identify(site.writeIns.address)
+    });
 }
 
 function callerText(hook, write) {
@@ -711,6 +739,8 @@ function pendingWrite(site, block) {
 
 function onBefore(site, block) {
   try {
+    if (site.method === undefined)
+      nameSite(site);
     const threadId = Process.getCurrentThreadId();
     const write = pendingWrite(site, block);
     for (const hook of site.hooks.values()) {
@@ -845,9 +875,69 @@ function uninstallSite(site) {
   retiredSites.push(site);
 }
 
+// --- C# methods: hooks on JIT code found again by their method ------------
+// A hook saved with the C# method of its write site (Mono games) lets Mono
+// compile that method after a restart and looks for the write instruction in
+// its code. The offset may shift a little: JIT code embeds constants whose
+// encoding can differ between runs. So every place in the method holding the
+// instruction's bytes is a candidate, the one whose surrounding code matches
+// best wins, the saved offset breaks ties.
+
+function managedCandidate(address, length) {
+  const site = sites.get(address.toString());
+  if (site !== undefined)
+    return { bytes: site.bytes, context: site.context };
+  const ins = Instruction.parse(address);
+  if (ins.size !== length || writeOperand(ins) === null)
+    return null;
+  return { bytes: hexBytes(address.readByteArray(ins.size)), context: codeContext(ins) };
+}
+
+function resolveManaged(spec) {
+  const { start, size } = mono.compile(spec.managed);
+  const expected = spec.instructionBytes;
+  const length = expected.length / 2;
+  const code = new Uint8Array(start.readByteArray(size));
+  const first = parseInt(expected.substr(0, 2), 16);
+  let best = null;
+  for (let offset = 0; offset + length <= size; offset++) {
+    const address = start.add(offset);
+    // Hooked sites hold a jmp; compare their original bytes instead.
+    if (code[offset] !== first && !sites.has(address.toString()))
+      continue;
+    let candidate;
+    try {
+      candidate = managedCandidate(address, length);
+    } catch (_error) {
+      continue;
+    }
+    if (candidate === null || candidate.bytes !== expected)
+      continue;
+    const similarity = contextSimilarity(spec.signature || {}, candidate.context);
+    const distance = Math.abs(offset - spec.managed.offset);
+    if (best === null || similarity > best.similarity
+        || (similarity === best.similarity && distance < best.distance))
+      best = { address, similarity, distance };
+  }
+  if (best === null || best.similarity < TRAINING_MIN_SIMILARITY)
+    throw new Error(`the write instruction is not in ${spec.managed.method} any more`);
+  return best.address;
+}
+
 function addHook(spec) {
   if (hooks.has(spec.id) || trainings.has(spec.id))
     throw new Error(`Hook ${spec.id} already exists`);
+  if (spec.managed !== null && spec.module === null && spec.writePc === null
+      && spec.trapPc === null) {
+    try {
+      spec = { ...spec, writePc: resolveManaged(spec).toString() };
+    } catch (error) {
+      if (spec.signature === null)
+        throw error;
+      // Not compiled or loaded yet, or the game changed: train instead.
+      send({ kind: 'managed-failed', hookId: spec.id, error: String(error) });
+    }
+  }
   if (spec.signature !== null && spec.module === null && spec.writePc === null
       && spec.trapPc === null)
     return startTraining(spec);
@@ -1132,7 +1222,8 @@ function tryTraining(training, pc) {
   stopTraining(training);
   try {
     const info = addHook({
-      ...training.spec, writePc: candidate.ins.address.toString(), signature: null
+      ...training.spec, writePc: candidate.ins.address.toString(), signature: null,
+      managed: null
     });
     hooks.get(training.id).debug = training.debug;
     info.similarity = similarity;
@@ -1208,7 +1299,10 @@ function flushStats() {
   }
 }
 
-const flushTimer = setInterval(flushStats, 100);
+const flushTimer = setInterval(() => {
+  mono.refresh();
+  flushStats();
+}, 100);
 send({
   kind: 'ready',
   arch: Process.arch,
@@ -1295,6 +1389,12 @@ class HookSpec:
     code bytes around the write instruction ``instruction_bytes``) together
     with a ``pointer`` lets the agent train: it installs the hook at the first
     write to the target from matching code.
+
+    ``managed`` (``{image, file, token, method, offset}`` from the agent's
+    ``site-method`` message) names the C# method of a write site in Mono JIT
+    code: the agent lets Mono compile it and looks for ``instruction_bytes``
+    in its code, preferring the code around it given by ``signature``. If
+    that fails it falls back to training with the ``signature``.
     """
 
     # pylint: disable=too-many-instance-attributes
@@ -1312,6 +1412,7 @@ class HookSpec:
     callers: list = field(default_factory=list)
     pointer: PointerChain | None = None
     signature: dict | None = None
+    managed: dict | None = None
     label: str = field(default="", compare=False)
 
     @property
@@ -1327,12 +1428,18 @@ class HookSpec:
         if self.training:
             if self.pointer is None or not self.instruction_bytes:
                 raise ValueError("training needs a pointer and the instruction bytes")
-        elif self.trap_pc is None and self.write_pc is None and self.module is None:
-            raise ValueError("HookSpec needs a trap_pc, a write_pc, a module or a signature")
+        elif (self.trap_pc is None and self.write_pc is None and self.module is None
+              and self.managed is None):
+            raise ValueError(
+                "HookSpec needs a trap_pc, a write_pc, a module, a method or a signature"
+            )
+        if (self.managed is not None and not self.instruction_bytes
+                and self.trap_pc is None and self.write_pc is None):
+            raise ValueError("a method location needs the instruction bytes")
         if (self.module is None) != (self.module_offset is None):
             raise ValueError("module and module_offset must be given together")
         if (self.address is None and self.write_pc is None and self.module is None
-                and not self.training):
+                and self.managed is None and not self.training):
             raise ValueError("a trap_pc can only be resolved with an address")
         if not 0 <= self.caller_depth <= MAX_CALLER_DEPTH:
             raise ValueError(f"caller_depth must be between 0 and {MAX_CALLER_DEPTH}")
@@ -1359,12 +1466,13 @@ class HookSpec:
                 "offsets": list(self.pointer.offsets),
             },
             "signature": self.signature,
+            "managed": self.managed,
             "transform": self.transform.to_agent(),
         }
 
 
 def build_agent_source():
-    return _AGENT_SOURCE
+    return MONO_AGENT_SOURCE + _AGENT_SOURCE
 
 
 def create_hook_worker(backend, pid, parent=None):
@@ -1404,6 +1512,11 @@ class HookWorker(QThread):
     # hook id, learned caller signatures (frames are [module, offset] or None)
     callers_learned = pyqtSignal(int, list)
     callers_ambiguous = pyqtSignal(int)
+    # hook ids sharing a write site in JIT code, its C# method (Mono games)
+    # and what finds it again after a restart (HookSpec.managed)
+    site_method = pyqtSignal(list, str, object)
+    # hook id, why its C# method did not lead to the write site; it trains
+    managed_failed = pyqtSignal(int, str)
     # debug events of hooks in debug mode, events dropped per hook id
     hook_debug = pyqtSignal(list, dict)
     # console.log output of the agent and its transforms: level, text
@@ -1581,6 +1694,12 @@ class HookWorker(QThread):
             self.callers_learned.emit(
                 payload.get("hookId", 0), payload.get("callers", [])
             )
+        elif kind == "site-method":
+            self.site_method.emit(
+                payload.get("hookIds", []), payload.get("method", ""), payload.get("managed")
+            )
+        elif kind == "managed-failed":
+            self.managed_failed.emit(payload.get("hookId", 0), payload.get("error", ""))
         elif kind == "callers-ambiguous":
             self.callers_ambiguous.emit(payload.get("hookId", 0))
         elif kind == "transform-error":

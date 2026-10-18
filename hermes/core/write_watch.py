@@ -3,6 +3,8 @@
 x86 watchpoints trap on writes or on any access; there is no read-only
 mode. So the agent decodes the instruction before each new trap PC to tell
 whether it reads and/or writes the target.
+
+In Mono games (Unity) a hit in JIT code names its C# method (``method``).
 """
 
 import threading
@@ -10,6 +12,7 @@ import threading
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core.mono import MONO_AGENT_SOURCE
 from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
 from hermes.core.value_types import VALUE_TYPES
 
@@ -136,6 +139,9 @@ function recordHit(threadId, context) {
     hit.time = Date.now();
     return;
   }
+  // The trapping thread runs the JIT code, so Mono can name it here.
+  if (module === null)
+    mono.locate(pc);
   pendingHits.set(key, {
     pc: key,
     site,
@@ -198,6 +204,12 @@ function flushHits() {
     return;
   const hits = Array.from(pendingHits.values());
   pendingHits.clear();
+  mono.refresh();
+  for (const hit of hits) {
+    const method = mono.name(ptr(hit.pc));
+    if (method !== null)
+      hit.method = method;
+  }
   if (!readInHandler) {
     const value = readTargetBytes();
     for (const hit of hits)
@@ -245,7 +257,7 @@ def watch_size_for_type(value_type):
 
 
 def _build_agent_source(address, size, reads=False):
-    return (
+    return MONO_AGENT_SOURCE + (
         _AGENT_SOURCE
         .replace("__ADDRESS__", hex(address))
         .replace("__SIZE__", str(size))

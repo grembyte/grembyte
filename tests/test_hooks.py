@@ -71,8 +71,14 @@ def test_custom_transforms_can_be_registered():
 
 
 def test_hook_spec_requires_a_code_location():
-    with pytest.raises(ValueError, match="needs a trap_pc, a write_pc, a module or a signature"):
+    with pytest.raises(ValueError, match="needs a trap_pc, a write_pc, a module, a method or a"):
         HookSpec(0x1000, "int32", MultiplyTransform(2))
+    managed = {"image": "Assembly-CSharp", "file": "/x.dll", "token": 0x6000001,
+               "method": "Gold:Add (int)", "offset": 0x1a}
+    with pytest.raises(ValueError, match="method location needs the instruction bytes"):
+        HookSpec(None, "int32", MultiplyTransform(2), managed=managed)
+    spec = HookSpec(None, "int32", MultiplyTransform(2), managed=managed, instruction_bytes="0137")
+    assert not spec.training and spec.to_agent(1)["managed"] == managed
     with pytest.raises(ValueError, match="training needs a pointer"):
         HookSpec(None, "int32", MultiplyTransform(2), signature={"before": "", "after": ""},
                  instruction_bytes="0137")

@@ -60,6 +60,9 @@ class PtraceHookWorker(PtraceWatchpointEngine):
     transform_error = pyqtSignal(int, str)
     callers_learned = pyqtSignal(int, list)
     callers_ambiguous = pyqtSignal(int)
+    # Frida-only; kept for interface parity
+    site_method = pyqtSignal(list, str, object)
+    managed_failed = pyqtSignal(int, str)
     hook_debug = pyqtSignal(list, dict)
     agent_log = pyqtSignal(str, str)
     agent_warning = pyqtSignal(str)

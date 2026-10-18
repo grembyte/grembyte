@@ -358,10 +358,19 @@ def describe_callers(callers):
     )
 
 
+def managed_site(managed):
+    """``Class:Method+0x1a`` of a saved C# method location, or None."""
+    if not managed:
+        return None
+    method = managed.get("method", "").split(" (")[0]
+    return f"{method}+0x{managed.get('offset', 0):x}"
+
+
 def spec_from_saved(saved):
     """Build the HookSpec that reinstalls a hook saved in the database.
 
-    A hook on JIT code (no module) is trained again via its signature.
+    A hook on JIT code (no module) is found again by its C# method if it
+    has one (Mono games), else trained again via its signature.
     """
     jit = not saved.module
     return HookSpec(
@@ -371,6 +380,7 @@ def spec_from_saved(saved):
         module=None if jit else saved.module,
         module_offset=None if jit else saved.module_offset,
         signature=saved.signature if jit else None,
+        managed=saved.managed if jit else None,
         instruction_bytes=saved.instruction_bytes,
         enabled=saved.enabled,
         caller_depth=saved.caller_depth,
@@ -733,7 +743,7 @@ class HookPanel(QGroupBox):
                 )
                 continue
             site = (f"{saved.module}+0x{saved.module_offset:x}" if saved.module
-                    else saved.instruction_text)
+                    else managed_site(saved.managed) or saved.instruction_text)
             self.add_hook(spec, site, saved_id=saved.id)
         if saved_hooks:
             self.status_label.setText(
@@ -757,6 +767,7 @@ class HookPanel(QGroupBox):
             module="" if jit else write["module"],
             module_offset=0 if jit else int(write["moduleOffset"], 0),
             signature=write["context"] if jit else None,
+            managed=(spec.managed or state.get("managed")) if jit else None,
             instruction_bytes=write["bytes"],
             instruction_text=write.get("text", ""),
             value_type=spec.value_type,
@@ -806,6 +817,13 @@ class HookPanel(QGroupBox):
         worker.callers_ambiguous.connect(
             lambda hook_id: self._on_callers_ambiguous(worker, hook_id)
         )
+        worker.site_method.connect(
+            lambda hook_ids, method, managed:
+            self._on_site_method(worker, hook_ids, method, managed)
+        )
+        worker.managed_failed.connect(
+            lambda hook_id, message: self._on_managed_failed(worker, hook_id, message)
+        )
         worker.hook_debug.connect(
             lambda events, dropped: self._on_debug_events(worker, events, dropped)
         )
@@ -834,21 +852,56 @@ class HookPanel(QGroupBox):
         write = info.get("writeInstruction", {})
         state = self._hooks[hook_id]
         state["training"] = False
+        state["installed"] = info
         self._remember_trampoline(info, write)
+        self._show_site(hook_id)
+        if state["saved_id"] is None and not state.get("removing"):
+            self._save_installed_hook(state, write)
+        self._set_status(hook_id, "active" if state["spec"].enabled else "paused")
+
+    def _show_site(self, hook_id):
+        """Show the hooked write instruction, by its C# method in Mono JIT code."""
+        state = self._hooks[hook_id]
+        info = state["installed"]
+        write = info.get("writeInstruction", {})
+        site = write.get("method") or state.get("method") or write.get("site", "")
         self._set_cell(
             hook_id,
             2,
-            f"{write.get('site', '')}   {write.get('text', '')}",
+            f"{site}   {write.get('text', '')}",
             tooltip=self.translations["hooks.site_tooltip"].format(
                 address=write.get("address", ""),
                 trampoline=info.get("trampoline", ""),
                 size=info.get("patchSize", ""),
             ),
         )
-        state = self._hooks[hook_id]
-        if state["saved_id"] is None and not state.get("removing"):
-            self._save_installed_hook(state, write)
-        self._set_status(hook_id, "active" if state["spec"].enabled else "paused")
+
+    def _on_site_method(self, worker, hook_ids, method, managed):
+        """Name the write site once the game ran it (Mono JIT code only).
+
+        A saved hook keeps the method, so it is found by it after a restart.
+        """
+        if worker is not self._worker:
+            return
+        for hook_id in hook_ids:
+            state = self._hooks.get(hook_id)
+            if state is None:
+                continue
+            # The message may overtake the installation (and the saving).
+            state["method"] = method
+            state["managed"] = managed
+            if "installed" in state:
+                self._show_site(hook_id)
+            if managed and state["saved_id"] is not None and state["spec"].managed != managed:
+                state["spec"] = dataclasses.replace(state["spec"], managed=managed)
+                self._store(self._repository.update_hook, state["saved_id"], managed=managed)
+
+    def _on_managed_failed(self, worker, hook_id, message):
+        if worker is not self._worker or hook_id not in self._hooks:
+            return
+        self.status_label.setText(self.translations["hooks.managed_failed"].format(
+            label=self._hooks[hook_id]["spec"].label or hook_id, message=message
+        ))
 
     def _remember_trampoline(self, info, write):
         try:
