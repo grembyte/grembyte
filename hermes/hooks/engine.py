@@ -36,7 +36,9 @@ therefore only counts
   within a module, and into generated code (JIT) from anywhere;
 - and if it lies above the function's frame: where the function's start is
   known (symbol or direct call), its prologue (``push``, ``sub rsp``) tells
-  how much stack it took below its return address at least.
+  how much stack it took below its return address at least. With a symbol
+  the scan starts right there: ``CALLER_SCAN_SLOTS`` would not reach past
+  a frame with kilobytes of locals.
 
 Learned callers that fail the first check (learned before it existed) are
 dropped when the hook is installed. The same caller signature can still
@@ -474,34 +476,48 @@ function frameSize(start, stop) {
   return remember(frameCache, key, size);
 }
 
+function callerFrame(frameRsp, inside) {
+  // The return address of the function running at ``inside`` with its stack
+  // at ``frameRsp``, and the slot holding it; null if not found.
+  const symbolStart = functionStart(inside);
+  const known = symbolStart === null ? null : frameSize(symbolStart, inside);
+  // A known frame is skipped: its locals only hold stale return addresses,
+  // and a large one (kilobytes of locals) would use up the slots to scan.
+  let cursor = known === null ? frameRsp : frameRsp.add(known);
+  for (let slot = 0; slot < CALLER_SCAN_SLOTS; slot++, cursor = cursor.add(Process.pointerSize)) {
+    let value;
+    try {
+      value = cursor.readPointer();
+    } catch (_error) {
+      return null;
+    }
+    const start = calledStart(value, inside);
+    if (start === null)
+      continue;
+    if (known === null && start !== true) {
+      const below = frameSize(start, inside);
+      if (below !== null && cursor.sub(frameRsp).compare(ptr(below)) < 0)
+        continue;  // inside the frame the call made
+    }
+    return { value, slot: cursor };
+  }
+  return null;
+}
+
 function callerSignature(rsp, depth, pc) {
   // The return addresses of the ``depth`` calls that led to ``pc``, innermost first.
   const frames = [];
   let inside = pc;
   let frameRsp = rsp;
-  let symbolStart = functionStart(inside);
-  let cursor = rsp;
-  for (let slot = 0; slot < CALLER_SCAN_SLOTS && frames.length < depth; slot++) {
-    let value;
-    try {
-      value = cursor.readPointer();
-    } catch (_error) {
-      break;
-    }
-    const start = calledStart(value, inside);
-    if (start !== null) {
-      const known = symbolStart !== null ? symbolStart : start === true ? null : start;
-      const below = known === null ? null : frameSize(known, inside);
-      if (below === null || cursor.sub(frameRsp).compare(ptr(below)) >= 0) {
-        frames.push(value.toString());
-        inside = value;
-        frameRsp = cursor.add(Process.pointerSize);  // the caller's after the return
-        symbolStart = functionStart(inside);
-      }
-    }
-    cursor = cursor.add(Process.pointerSize);
+  while (frames.length < depth) {
+    const found = callerFrame(frameRsp, inside);
+    if (found === null)
+      return null;
+    frames.push(found.value.toString());
+    inside = found.value;
+    frameRsp = found.slot.add(Process.pointerSize);  // the caller's after the return
   }
-  return frames.length === depth ? frames.join(',') : null;
+  return frames.join(',');
 }
 
 function plausibleCallers(addresses, pc) {

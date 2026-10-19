@@ -39,7 +39,7 @@ __attribute__((noinline)) void noise(int value) {
 }
 
 __attribute__((noinline)) void add_gold(Character *c, int32_t amount) {
-    volatile char scratch[1024];
+    volatile char scratch[3000];  /* more than the slots scanned (2 KB) */
     scratch[0] = 1;
     c->gold += amount;
     g_sink = scratch[0];
