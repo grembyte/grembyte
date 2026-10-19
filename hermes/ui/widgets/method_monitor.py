@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
-from hermes.core.method_monitor import MethodMonitorWorker
+from hermes.features.monitor import MethodMonitorWorker
 from hermes.ui.widgets.object_inspector import ObjectInspectorDialog, link_label, link_width
 from hermes.ui.widgets.table import set_row_height
 

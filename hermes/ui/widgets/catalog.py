@@ -15,7 +15,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QVBoxLayout,
 )
 
-from hermes.core.mono_catalog import CatalogWorker, is_framework_assembly
+from hermes.engines.registry import resolve_engine
+from hermes.features.catalog import CatalogWorker
 
 
 _CLASS, _METHOD, _RETURN, _STATIC, _ASSEMBLY = range(5)
@@ -42,9 +43,10 @@ def matches(words, method):
 class CatalogModel(QAbstractTableModel):
     """All methods read so far; shows those matching the search."""
 
-    def __init__(self, translations, parent=None):
+    def __init__(self, translations, engine, parent=None):
         super().__init__(parent)
         self.translations = translations
+        self.engine = engine
         self.methods = []
         self.visible = []
         self._words = []
@@ -95,7 +97,7 @@ class CatalogModel(QAbstractTableModel):
         self.beginResetModel()
         self.visible = [
             method for method in self.methods
-            if (self._framework or not is_framework_assembly(method.assembly))
+            if (self._framework or not self.engine.is_framework_assembly(method.assembly))
             and matches(self._words, method)
         ]
         self.endResetModel()
@@ -113,18 +115,19 @@ class CatalogDialog(QDialog):
     # CatalogMethod to log the calls of (double click or "Monitor")
     monitor_requested = pyqtSignal(object)
 
-    def __init__(self, translations, pid, parent=None):
+    def __init__(self, translations, pid, parent=None, engine=None):
         super().__init__(parent)
         self.setModal(False)
         self.translations = translations
         self.pid = pid
-        self.model = CatalogModel(translations, self)
+        self.engine = resolve_engine(pid, engine)
+        self.model = CatalogModel(translations, self.engine, self)
         self._assemblies = []
         self._loaded = set()
         self._failed = {}
         self._error = None
         self._worker = None
-        self.setWindowTitle(translations["catalog.title"])
+        self.setWindowTitle(translations["catalog.title"].format(engine=self.engine.display_name))
         self.resize(1000, 640)
         self._build_ui()
         self._filter_timer = QTimer(self)
@@ -207,7 +210,7 @@ class CatalogDialog(QDialog):
         self._start_worker(None)
 
     def _start_worker(self, assemblies):
-        worker = CatalogWorker(self.pid, assemblies)
+        worker = CatalogWorker(self.pid, assemblies, engine=self.engine)
         worker.assemblies_found.connect(self._on_assemblies_found)
         worker.assembly_loaded.connect(self._on_assembly_loaded)
         worker.assembly_failed.connect(self._on_assembly_failed)
@@ -216,7 +219,8 @@ class CatalogDialog(QDialog):
         self._worker = worker
         _running_workers.add(worker)
         self.reload_button.setEnabled(False)
-        self.status_label.setText(self.translations["catalog.starting"])
+        self.status_label.setText(
+            self.translations["catalog.starting"].format(engine=self.engine.display_name))
         worker.start()
 
     def _stop_worker(self):
@@ -252,7 +256,7 @@ class CatalogDialog(QDialog):
 
     def _toggle_framework(self, shown):
         missing = [a["name"] for a in self._assemblies
-                   if is_framework_assembly(a["name"]) and a["name"] not in self._loaded]
+                   if self.engine.is_framework_assembly(a["name"]) and a["name"] not in self._loaded]
         if shown and missing and self._worker is None:
             self._start_worker(missing)
         self._apply_filter()
@@ -266,7 +270,8 @@ class CatalogDialog(QDialog):
     def _show_progress(self):
         pending = [a["name"] for a in self._assemblies
                    if a["name"] not in self._loaded and a["name"] not in self._failed
-                   and (self.framework_check.isChecked() or not is_framework_assembly(a["name"]))]
+                   and (self.framework_check.isChecked()
+                        or not self.engine.is_framework_assembly(a["name"]))]
         if pending:
             self.status_label.setText(self.translations["catalog.loading"].format(
                 assembly=pending[0], done=len(self._loaded), total=len(self._loaded) + len(pending)

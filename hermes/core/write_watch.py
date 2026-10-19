@@ -14,8 +14,8 @@ from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-
 
 from hermes.core import logs
 from hermes.core import sessions
-from hermes.core.mono import MONO_AGENT_SOURCE
-from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
+from hermes.engines.registry import ENGINE_AGENT_SOURCE
+from hermes.core.frida_attach import attach_session
 from hermes.core.value_types import VALUE_TYPES
 
 
@@ -143,7 +143,7 @@ function recordHit(threadId, context) {
   }
   // The trapping thread runs the JIT code, so Mono can name it here.
   if (module === null)
-    mono.locate(pc);
+    engine.locate(pc);
   pendingHits.set(key, {
     pc: key,
     site,
@@ -206,9 +206,9 @@ function flushHits() {
     return;
   const hits = Array.from(pendingHits.values());
   pendingHits.clear();
-  mono.refresh();
+  engine.refresh();
   for (const hit of hits) {
-    const method = mono.name(ptr(hit.pc));
+    const method = engine.name(ptr(hit.pc));
     if (method !== null)
       hit.method = method;
   }
@@ -259,7 +259,7 @@ def watch_size_for_type(value_type):
 
 
 def _build_agent_source(address, size, reads=False):
-    return MONO_AGENT_SOURCE + (
+    return ENGINE_AGENT_SOURCE + (
         _AGENT_SOURCE
         .replace("__ADDRESS__", hex(address))
         .replace("__SIZE__", str(size))
@@ -297,9 +297,7 @@ class WriteWatchWorker(QThread):
         session = None
         script = None
         try:
-            if is_wine_process(self.pid):
-                raise RuntimeError(WINE_FRIDA_ERROR)
-            session = frida.attach(self.pid)
+            session = attach_session(self.pid)
             sessions.SESSIONS.set_frida_session(self, session)
             session.on("detached", self._on_session_detached)
             script = session.create_script(

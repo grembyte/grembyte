@@ -17,7 +17,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
-from hermes.core.mono_trace import MORE, NEW, MonoTraceWorker, analyze, recording_calls
+from hermes.engines.registry import resolve_engine
+from hermes.features.trace import MORE, NEW, TraceWorker, analyze, recording_calls
 from hermes.ui.widgets.method_monitor import short_name
 
 
@@ -139,7 +140,7 @@ class TraceSequenceModel(_TableModel):
         return call.caller
 
 
-class MonoTraceDialog(QDialog):
+class TraceDialog(QDialog):
     """Hook many C# methods, record a baseline and a scenario, compare.
 
     Not modal. The worker and its Frida session live as long as the window;
@@ -152,11 +153,12 @@ class MonoTraceDialog(QDialog):
     monitor_requested = pyqtSignal(object)
     hook_requested = pyqtSignal(object)
 
-    def __init__(self, translations, pid, parent=None):
+    def __init__(self, translations, pid, parent=None, engine=None):
         super().__init__(parent)
         self.setModal(False)
         self.translations = translations
         self.pid = pid
+        self.engine = resolve_engine(pid, engine)
         self.methods = []
         self.baseline = None
         self.scenario = None
@@ -164,10 +166,10 @@ class MonoTraceDialog(QDialog):
         self._state = _IDLE
         self._recording = None
         self._selected = None
-        self.setWindowTitle(translations["trace.title"])
+        self.setWindowTitle(self._title())
         self.resize(1100, 720)
         self._build_ui()
-        self._worker = MonoTraceWorker(pid)
+        self._worker = TraceWorker(pid, engine=self.engine)
         self._worker.planned.connect(self._on_planned)
         self._worker.started.connect(self._on_started)
         self._worker.progress.connect(self._on_progress)
@@ -324,10 +326,13 @@ class MonoTraceDialog(QDialog):
             self._set_state(_PREPARING)
             self._worker.stop()
 
+    def _title(self):
+        return self.translations["trace.title"].format(engine=self.engine.display_name)
+
     def _confirm_large(self, count):
         """Whether to trace ``count`` methods, more than LARGE_TRACE."""
         answer = QMessageBox.question(
-            self, self.translations["trace.title"],
+            self, self._title(),
             self.translations["trace.confirm_large"].format(count=count))
         return answer == QMessageBox.StandardButton.Yes
 

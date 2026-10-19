@@ -212,10 +212,25 @@ def frida_agents(pid, proc_root="/proc"):
 
     Every Hermes process uses one agent for all its sessions; one left by an
     earlier Hermes that did not end cleanly stays until the target exits.
+    Frida's gadget in a Wine game counts as an agent too.
     """
+    return _mapped_files(pid, ("frida-agent", "frida-gadget"), proc_root)
+
+
+def frida_gadgets(pid, proc_root="/proc"):
+    """How many Frida gadgets a Wine game has loaded (0 if unknown).
+
+    Unlike an agent, the gadget is never stale: every Hermes run reuses it.
+    """
+    return _mapped_files(pid, ("frida-gadget",), proc_root)
+
+
+def _mapped_files(pid, markers, proc_root):
+    # Count the files mapped from offset 0 whose path holds one of ``markers``.
     try:
         with open(f"{proc_root}/{pid}/maps", encoding="utf-8", errors="replace") as maps:
             return sum(1 for line in maps
-                       if "frida-agent" in line and line.split()[2] == "00000000")
+                       if any(marker in line for marker in markers)
+                       and line.split()[2] == "00000000")
     except (OSError, IndexError):
         return 0

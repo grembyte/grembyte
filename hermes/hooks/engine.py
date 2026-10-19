@@ -60,9 +60,9 @@ from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-
 
 from hermes.core import logs
 from hermes.core import sessions
-from hermes.core.mono import MONO_AGENT_SOURCE
+from hermes.engines.registry import ENGINE_AGENT_SOURCE
 from hermes.core.pointer import PointerChain
-from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
+from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import (
     BACKEND_PTRACE,
     CLEANUP_ERRORS,
@@ -272,7 +272,7 @@ function describeInstruction(site) {
     context: site.context,
     text: ins.toString(),
     size: ins.size,
-    method: mono.name(ins.address)
+    method: engine.name(ins.address)
   };
 }
 
@@ -474,21 +474,21 @@ function frameText(address) {
   const frame = describeFrame(address);
   if (frame)
     return `${frame[0]}+0x${frame[1].toString(16)}`;
-  return mono.describe(address) || address.toString();
+  return engine.describe(address) || address.toString();
 }
 
 function nameSite(site) {
   // Mono only names JIT code for its own threads, i.e. the game's.
-  const location = mono.locate(site.writeIns.address);
+  const location = engine.locate(site.writeIns.address);
   if (location === undefined)
     return;
-  site.method = location === null ? null : mono.name(site.writeIns.address);
+  site.method = location === null ? null : engine.name(site.writeIns.address);
   if (site.method !== null)
     send({
       kind: 'site-method',
       hookIds: Array.from(site.hooks.keys()),
       method: site.method,
-      managed: mono.identify(site.writeIns.address)
+      managed: engine.identify(site.writeIns.address)
     });
 }
 
@@ -895,7 +895,7 @@ function managedCandidate(address, length) {
 }
 
 async function resolveManaged(spec) {
-  const { start, size } = await mono.compile(spec.managed);
+  const { start, size } = await engine.compile(spec.managed);
   const expected = spec.instructionBytes;
   const length = expected.length / 2;
   const code = new Uint8Array(start.readByteArray(size));
@@ -1306,7 +1306,7 @@ function flushStats() {
 }
 
 const flushTimer = setInterval(() => {
-  mono.refresh();
+  engine.refresh();
   flushStats();
 }, 100);
 send({
@@ -1478,7 +1478,7 @@ class HookSpec:
 
 
 def build_agent_source():
-    return MONO_AGENT_SOURCE + _AGENT_SOURCE
+    return ENGINE_AGENT_SOURCE + _AGENT_SOURCE
 
 
 def create_hook_worker(backend, pid, parent=None):
@@ -1582,9 +1582,7 @@ class HookWorker(QThread):
         session = None
         script = None
         try:
-            if is_wine_process(self.pid):
-                raise RuntimeError(WINE_FRIDA_ERROR)
-            session = frida.attach(self.pid)
+            session = attach_session(self.pid)
             sessions.SESSIONS.set_frida_session(self, session)
             session.on("detached", self._on_session_detached)
             script = session.create_script(build_agent_source())

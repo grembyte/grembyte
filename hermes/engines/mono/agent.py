@@ -3,10 +3,14 @@
 Mono compiles C# methods into anonymous memory, so a code address there has
 no module + offset. The Mono runtime knows which method it belongs to. The
 agent snippet below asks it through Mono's embedding API, which the runtime
-library (``libmonobdwgc-2.0.so``, ``libmonosgen-2.0.so``, ``libmono.so``)
+library (``libmonobdwgc-2.0.so``, ``libmonosgen-2.0.so``, ``libmono.so``;
+under Wine/Proton ``mono-2.0-bdwgc.dll``, ``mono-2.0-sgen.dll``, ``mono.dll``)
 exports.
 
-Frida agents include ``MONO_AGENT_SOURCE``; it defines ``mono`` with:
+``MONO_AGENT_SOURCE`` is the Mono engine adapter of the agent: it defines
+``mono`` and registers it (see hermes/engines/base.py for the contract the
+features use through ``engine``; ``onMonoThread`` is exported there as
+``onRuntimeThread``). ``mono`` has:
 
 ``mono.refresh()``
     Look for the Mono runtime (again, at most every two seconds) and return
@@ -72,11 +76,11 @@ for. ``compile`` runs on a short-lived thread of its own instead, which
 Mono forgets again when it ends.
 """
 
-import os
-import re
 
 MONO_AGENT_SOURCE = r"""
 const mono = (() => {
+  // The runtime library: libmono*.so natively, mono*.dll under Wine.
+  const RUNTIME_NAME = /^libmono|^mono(-2\.0-(bdwgc|sgen))?\.dll$/i;
   const SEARCH_INTERVAL = 2000;
   const MAX_CACHE = 4096;
   let api = null;
@@ -207,7 +211,7 @@ const mono = (() => {
       return false;
     lastSearch = now;
     for (const module of Process.enumerateModules()) {
-      if (!module.name.startsWith('libmono')
+      if (!RUNTIME_NAME.test(module.name)
           || module.findExportByName('mono_jit_info_table_find') === null)
         continue;
       try {
@@ -288,6 +292,7 @@ const mono = (() => {
       return null;
     const image = api.classImage(api.methodClass(location.method));
     return {
+      engine: 'mono',
       image: api.imageName(image).readUtf8String(),
       file: api.imageFile(image).readUtf8String(),
       token: api.methodToken(location.method),
@@ -321,7 +326,6 @@ const mono = (() => {
   // how long a finished one may still need to leave our callback.
   const MONO_THREAD_POLL = 5;
   const MONO_THREAD_LEAVE = 200;
-  let threadFunctions = null;
 
   function onMonoThread(work) {
     // A promise of work(domain), run on a thread of our own: Mono compiles
@@ -332,13 +336,6 @@ const mono = (() => {
     // that thread for the JavaScript the other one runs, and both would wait
     // forever, blocking every script of the agent. It keeps running its
     // event loop instead and looks now and then whether the work is done.
-    if (threadFunctions === null)
-      threadFunctions = {
-        create: new NativeFunction(Module.getGlobalExportByName('pthread_create'),
-          'int', ['pointer', 'pointer', 'pointer', 'pointer']),
-        detach: new NativeFunction(Module.getGlobalExportByName('pthread_detach'),
-          'int', ['pointer'])
-      };
     const state = { done: false, result: undefined, failure: null };
     const body = new NativeCallback(() => {
       try {
@@ -355,11 +352,11 @@ const mono = (() => {
       state.done = true;
       return NULL;
     }, 'pointer', ['pointer']);
-    const handle = Memory.alloc(Process.pointerSize);
-    const code = threadFunctions.create(handle, NULL, body, NULL);
-    if (code !== 0)
-      return Promise.reject(new Error(`pthread_create failed (${code})`));
-    threadFunctions.detach(handle.readPointer());
+    try {
+      spawnThread(body, NULL);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     // Cutting the session must not unload the code the thread runs.
     Script.pin();
     return new Promise((resolve, reject) => {
@@ -623,13 +620,7 @@ gpointer run_batch (gpointer data) {
                           'mono_class_get_image', 'mono_get_method', 'mono_class_get'])
         symbols[name] = api.module.getExportByName(name);
       const cm = new CModule(BATCH_SOURCE, symbols);
-      batchCode = {
-        cm,
-        create: new NativeFunction(Module.getGlobalExportByName('pthread_create'),
-          'int', ['pointer', 'pointer', 'pointer', 'pointer']),
-        detach: new NativeFunction(Module.getGlobalExportByName('pthread_detach'),
-          'int', ['pointer'])
-      };
+      batchCode = { cm };
     }
     return batchCode;
   }
@@ -652,11 +643,11 @@ gpointer run_batch (gpointer data) {
     batch.add(B_INPUT).writePointer(input);
     batch.add(B_FIRST).writePointer(first);
     batch.add(B_SECOND).writePointer(second);
-    const handle = Memory.alloc(Process.pointerSize);
-    const error = code.create(handle, NULL, code.cm.run_batch, batch);
-    if (error !== 0)
-      return Promise.reject(new Error(`pthread_create failed (${error})`));
-    code.detach(handle.readPointer());
+    try {
+      spawnThread(code.cm.run_batch, batch);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     // Should the session be cut meanwhile, Frida must not unload the C code
     // the batch thread runs: the script stays until the batch has finished.
     Script.pin();
@@ -1308,30 +1299,16 @@ gpointer run_batch (gpointer data) {
 
   refresh();
   return {
+    id: 'mono',
     refresh, locate, name, describe, identify, compile, assemblies, classes, methods,
     checkAll, compileAll, describeAll, cancelBatches, batchesRunning, prepare,
-    objectClassName, classOf, layout, onMonoThread, unityName, onMainThread, drainMain,
-    properties, getProperty, signatureOf, findClass, findMethod, newString, invoke,
-    classChain, writeReference,
-    virtualMethod: (object, method) => api.invoke.virtualMethod(object, method),
-    TYPE
+    objectClassName, classOf, layout, onRuntimeThread: onMonoThread, unityName,
+    onMainThread, drainMain, properties, getProperty, signatureOf, findClass, findMethod,
+    newString, invoke, classChain, writeReference,
+    virtualMethod: (object, method) => api.invoke.virtualMethod(object, method)
   };
 })();
+
+registerEngine(mono);
 """
 
-
-# Mono runtime libraries; libmono-native.so (System.Native) is none.
-_RUNTIME_NAMES = re.compile(r"^libmono(bdwgc|sgen)?(-2\.0)?\.so")
-
-
-def has_mono_runtime(pid, proc_root="/proc"):
-    """Return whether the process has loaded a Mono runtime."""
-    try:
-        with open(f"{proc_root}/{pid}/maps", encoding="utf-8", errors="replace") as maps:
-            return any(
-                _RUNTIME_NAMES.match(os.path.basename(line.split(maxsplit=5)[-1].strip()))
-                for line in maps
-                if "/" in line
-            )
-    except OSError:
-        return False

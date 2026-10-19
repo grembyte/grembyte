@@ -1,4 +1,6 @@
-"""Method hooks: scripts that change what C# methods of Mono games do.
+"""Method hooks: scripts that change what C# methods of a game do.
+
+They work through the engine adapter of the game (see hermes/engines).
 
 A method hook runs a JavaScript function (a ``"method"`` hook template, see
 ``hermes.hooks.transforms``) on the game thread that calls the hooked method,
@@ -33,7 +35,7 @@ properties can also be read and assigned directly (``roller.IsPartyMember``,
 the wrapper has a member of that name. Calling game code
 is only allowed on Unity's main thread, where most game logic runs.
 
-Hooks live in the method monitor's agent (``hermes.core.method_monitor``)
+Hooks live in the method monitor's agent (``hermes.features.monitor``)
 and are found again after a restart by their method (``HookSpec.managed``).
 Hooks after the call need Frida to swap the return address of each call, so
 an exception passing through the hooked method can crash the game; hooks
@@ -49,8 +51,8 @@ from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-
 
 from hermes.core import logs
 from hermes.core import sessions
-from hermes.core.method_monitor import build_agent_source
-from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
+from hermes.features.monitor import build_agent_source
+from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
 from hermes.hooks.engine import HookWorker
 from hermes.hooks.transforms import ValueTransform
@@ -156,9 +158,7 @@ class MethodHookWorker(QThread):
         session = None
         script = None
         try:
-            if is_wine_process(self.pid):
-                raise RuntimeError(WINE_FRIDA_ERROR)
-            session = frida.attach(self.pid)
+            session = attach_session(self.pid)
             sessions.SESSIONS.set_frida_session(self, session)
             session.on("detached", self._on_detached)
             script = session.create_script(build_agent_source())

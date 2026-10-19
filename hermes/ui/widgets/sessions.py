@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QVBoxLayout,
 )
 
-from hermes.core.sessions import SESSIONS, SessionSignals, frida_agents
+from hermes.core.sessions import SESSIONS, SessionSignals, frida_agents, frida_gadgets
 from hermes.ui.widgets.table import set_row_height
 
 
@@ -149,8 +149,10 @@ class SessionsDialog(QDialog):
             self.agents_label.setText("")
             return
         count = frida_agents(pid)
-        # All sessions of this Hermes share one agent.
+        # All sessions of this Hermes share one agent; a gadget (Wine games)
+        # is shared by every Hermes run, so it is never stale.
         ours = 1 if any(s.pid == pid and s.frida_session is not None for s in self._shown) else 0
+        ours = max(ours, frida_gadgets(pid))
         text = self.translations["sessions.agents"].format(pid=pid, count=count)
         if count > ours:
             text += " " + self.translations["sessions.agents_stale"].format(stale=count - ours)

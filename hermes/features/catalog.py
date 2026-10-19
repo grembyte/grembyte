@@ -1,9 +1,10 @@
-"""Catalog of the C# classes and methods a Mono game has loaded.
+"""Catalog of the classes and methods a game's managed runtime has loaded.
 
-A short Frida session asks the Mono runtime for the loaded assemblies and,
-assembly by assembly, for their classes and methods. Reading a class makes
-Mono load it, so framework assemblies (mscorlib, System, UnityEngine, ...)
-are only read when asked for: they are large and rarely what one looks for.
+A short Frida session asks the engine adapter (see hermes/engines) for the
+loaded assemblies and, assembly by assembly, for their classes and methods.
+Reading a class may make the runtime load it, so framework assemblies (for
+Mono: mscorlib, System, UnityEngine, ...) are only read when asked for: they
+are large and rarely what one looks for.
 """
 
 import threading
@@ -14,31 +15,21 @@ from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-
 
 from hermes.core import logs
 from hermes.core import sessions
-from hermes.core.mono import MONO_AGENT_SOURCE
-from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
+from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
+from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
 
 
-FRAMEWORK_PREFIXES = (
-    "mscorlib", "netstandard", "System", "Microsoft.", "Mono.", "UnityEngine", "Unity.",
-    "UnityScript", "Boo.", "I18N", "Accessibility", "Novell.", "SMDiagnostics",
-)
-
-_AGENT_SOURCE = MONO_AGENT_SOURCE + r"""
+_AGENT_SOURCE = ENGINE_AGENT_SOURCE + r"""
 rpc.exports = {
   assemblies() {
-    return mono.assemblies();
+    return engine.assemblies();
   },
   classes(assembly) {
-    return mono.classes(assembly);
+    return engine.classes(assembly);
   }
 };
 """
-
-
-def is_framework_assembly(name):
-    """Whether an assembly belongs to .NET, Mono or Unity rather than the game."""
-    return name.startswith(FRAMEWORK_PREFIXES)
 
 
 @dataclass(frozen=True)
@@ -52,13 +43,14 @@ class CatalogMethod:
     return_type: str
     static: bool
     token: int
-    # ``Namespace.Class:Method (int,single)`` as Mono names it
+    # ``Namespace.Class:Method (int,single)`` as the runtime names it
     signature: str
+    engine: str = "mono"
 
     def identity(self):
         """What finds the method in the running game (see HookSpec.managed)."""
-        return {"image": self.assembly, "file": None, "token": self.token,
-                "method": self.signature}
+        return {"engine": self.engine, "image": self.assembly, "file": None,
+                "token": self.token, "method": self.signature}
 
 
 def catalog_method_from_identity(identity):
@@ -71,14 +63,14 @@ def catalog_method_from_identity(identity):
     head, _, parameters = signature.partition(" ")
     class_name, _, name = head.partition(":")
     return CatalogMethod(identity["image"], class_name, name, parameters or "()", "?", False,
-                         identity["token"], signature)
+                         identity["token"], signature, identity.get("engine") or "mono")
 
 
-def catalog_methods(assembly, classes):
+def catalog_methods(assembly, classes, engine="mono"):
     """Turn the agent's ``classes`` answer for ``assembly`` into CatalogMethods."""
     return [
         CatalogMethod(assembly, class_name, name, parameters, return_type, bool(static), token,
-                      signature)
+                      signature, engine)
         for class_name, methods in classes
         for name, parameters, return_type, static, token, signature in methods
     ]
@@ -89,7 +81,8 @@ class CatalogWorker(QThread):
 
     Emits ``assemblies_found`` with all loaded assemblies first, then
     ``assembly_loaded`` for each one it reads: those named in ``assemblies``,
-    or else every assembly that is not part of the framework.
+    or else every assembly that is not part of the framework. ``engine`` is
+    the adapter (see hermes/engines), detected if not given.
     """
 
     assemblies_found = pyqtSignal(list)
@@ -99,10 +92,11 @@ class CatalogWorker(QThread):
     assembly_failed = pyqtSignal(str, str)
     catalog_failed = pyqtSignal(str)
 
-    def __init__(self, pid, assemblies=None, parent=None):
+    def __init__(self, pid, assemblies=None, parent=None, engine=None):
         super().__init__(parent)
         self.pid = pid
         self.assemblies = assemblies
+        self.engine = resolve_engine(pid, engine)
         self._detached = threading.Event()
 
     @sessions.tracked(sessions.CATALOG)
@@ -110,9 +104,7 @@ class CatalogWorker(QThread):
         session = None
         script = None
         try:
-            if is_wine_process(self.pid):
-                raise RuntimeError(WINE_FRIDA_ERROR)
-            session = frida.attach(self.pid)
+            session = attach_session(self.pid)
             sessions.SESSIONS.set_frida_session(self, session)
             session.on("detached", lambda _reason, _crash: self._detached.set())
             script = session.create_script(_AGENT_SOURCE)
@@ -122,12 +114,14 @@ class CatalogWorker(QThread):
             self.assemblies_found.emit(found)
             names = self.assemblies
             if names is None:
-                names = [a["name"] for a in found if not is_framework_assembly(a["name"])]
+                names = [a["name"] for a in found
+                         if not self.engine.is_framework_assembly(a["name"])]
             for name in names:
                 if self.isInterruptionRequested() or self._detached.is_set():
                     break
                 try:
-                    self.assembly_loaded.emit(name, catalog_methods(name, api.classes(name)))
+                    self.assembly_loaded.emit(
+                        name, catalog_methods(name, api.classes(name), self.engine.id))
                 except frida.RPCException as error:
                     self.assembly_failed.emit(name, str(error))
         except FRIDA_ERRORS + (frida.RPCException, OSError, RuntimeError) as error:

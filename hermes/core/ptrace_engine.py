@@ -330,7 +330,7 @@ class PtraceWatchpointEngine(QThread):
         stop_signal = os.WSTOPSIG(status)
         deliver = 0
         if stop_signal == signal.SIGTRAP:
-            self._dispatch_trap(tid)
+            deliver = self._dispatch_trap(tid) or 0
         elif stop_signal != signal.SIGSTOP:
             deliver = stop_signal  # pass the target's own signals through
         try:
@@ -340,6 +340,7 @@ class PtraceWatchpointEngine(QThread):
         return True
 
     def _dispatch_trap(self, tid):
+        """Handle a SIGTRAP stop; return a signal to deliver, or None."""
         try:
             dr6 = _peek_user(tid, DR6)
         except OSError:

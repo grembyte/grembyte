@@ -1,6 +1,8 @@
-"""Method monitor: log the calls of C# methods in Mono games (e.g. Unity).
+"""Method monitor: log the calls of C# methods (e.g. Unity games with Mono).
 
-Mono compiles the method (see ``mono.prepare``), and a Frida interceptor on
+It works through the engine adapter of the game (see hermes/engines).
+
+Mono compiles the method (see ``engine.prepare``), and a Frida interceptor on
 its native code reports every call with its arguments, the calling method
 and, if asked for, the return value.
 
@@ -14,8 +16,9 @@ on their fields, so arguments after a struct are not decoded.
 When the game frees the memory of monitored code (Unity does so on exit,
 when Mono releases its JIT code), the monitor is removed first: Frida would
 otherwise write the original bytes back into unmapped memory when it is
-unloaded, and abort the game. The agent watches ``munmap`` for that and
-reports ``monitor-ended``.
+unloaded, and abort the game. The agent watches unmapping for that
+(``watchUnmaps``: ``munmap``, or ntdll's calls under Wine) and reports
+``monitor-ended``.
 
 The return value needs Frida to replace the return address of every call
 with its own code. Mono cannot walk the stack through that code, so an
@@ -35,7 +38,7 @@ contents at the time of the call (like ``inspect`` returns them, or
 
 Properties (parameterless getters, and a GameObject's components) are game
 code that Unity only allows on its main thread. ``evaluate`` queues the call
-until the main thread runs a script method (see ``mono.onMainThread``). The inspector
+until the main thread runs a script method (see ``engine.onMainThread``). The inspector
 shows the current fields; a short-lived object may be collected by then.
 """
 
@@ -48,13 +51,13 @@ from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-
 
 from hermes.core import logs
 from hermes.core import sessions
-from hermes.core.mono import MONO_AGENT_SOURCE
-from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
+from hermes.engines.registry import ENGINE_AGENT_SOURCE
+from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
 
 
-_AGENT_SOURCE = MONO_AGENT_SOURCE + r"""
-const T = mono.TYPE;
+_AGENT_SOURCE = ENGINE_AGENT_SOURCE + r"""
+const T = engine.TYPE;
 const INT_REGS = ['rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9'];
 const FLOAT_REGS = 8;
 const MAX_STRUCT_IN_REGS = 16;
@@ -168,7 +171,7 @@ function unityNameOf(pointer, ask) {
   if (ask) {
     let name = null;
     try {
-      name = mono.unityName(pointer);
+      name = engine.unityName(pointer);
     } catch (_error) {
     }
     if (name !== null) {
@@ -185,10 +188,10 @@ function objectValue(pointer, ask = false) {
   // ``ask``: on the game thread of a call, Unity may be asked for names.
   if (pointer.isNull())
     return { text: 'null' };
-  const klass = mono.classOf(pointer);
+  const klass = engine.classOf(pointer);
   if (klass === null)
     return { text: `${pointer} (no object)` };
-  const layout = mono.layout(klass);
+  const layout = engine.layout(klass);
   const name = unityNameOf(pointer, ask);
   if (name !== null)
     return { text: `${layout.name} ${JSON.stringify(name)}@${pointer}`,
@@ -281,11 +284,11 @@ function contents(target) {
     klass = ptr(target.klass);
     base = address.sub(OBJECT_HEADER);  // struct field offsets count a header
   } else {
-    klass = mono.classOf(address);
+    klass = engine.classOf(address);
     if (klass === null)
       throw new Error(`no object at ${address} (any more)`);
   }
-  const layout = mono.layout(klass);
+  const layout = engine.layout(klass);
   const result = { name: layout.name, address: address.toString(), fields: [] };
   if (layout.rank > 0) {
     const length = address.add(ARRAY_LENGTH).readU32();
@@ -299,7 +302,7 @@ function contents(target) {
       });
     return result;
   }
-  result.properties = mono.properties(klass).map(property => ({
+  result.properties = engine.properties(klass).map(property => ({
     name: property.name, type: property.type.name, static: property.static
   }));
   for (const field of layout.fields)
@@ -334,10 +337,10 @@ function resultValue(type, result) {
 
 function exceptionText(exception) {
   // "System.NullReferenceException: Object reference not set …"
-  const klass = mono.classOf(exception);
+  const klass = engine.classOf(exception);
   if (klass === null)
     return 'exception';
-  const layout = mono.layout(klass);
+  const layout = engine.layout(klass);
   const message = layout.fields.find(field => field.name === '_message' || field.name === 'message');
   let text = '';
   if (message !== undefined) {
@@ -350,16 +353,16 @@ function exceptionText(exception) {
 function evaluate(target, names) {
   // The values of the named properties of an object, read on Unity's main
   // thread: [{ name, value }], value.error set if the getter threw.
-  return mono.onMainThread(() => {
+  return engine.onMainThread(() => {
     const address = ptr(target.address);
-    const klass = target.klass ? ptr(target.klass) : mono.classOf(address);
+    const klass = target.klass ? ptr(target.klass) : engine.classOf(address);
     if (klass === null)
       throw new Error(`no object at ${address} (any more)`);
-    return mono.properties(klass).filter(property => names.includes(property.name))
+    return engine.properties(klass).filter(property => names.includes(property.name))
       .map(property => {
         let value;
         try {
-          const { result, exception } = mono.getProperty(address, property, !!target.klass);
+          const { result, exception } = engine.getProperty(address, property, !!target.klass);
           value = exception.isNull() ? resultValue(property.type, result)
             : { text: exceptionText(exception), error: true };
         } catch (error) {
@@ -372,15 +375,15 @@ function evaluate(target, names) {
 
 function inspect(target) {
   // Called on the agent's thread; class layouts are read by a thread Mono
-  // knows (see mono.onMonoThread).
-  return mono.onMonoThread(() => contents(target));
+  // knows (see engine.onRuntimeThread).
+  return engine.onRuntimeThread(() => contents(target));
 }
 
 function frameText(address) {
   const module = Process.findModuleByAddress(address);
   if (module !== null)
     return `${module.name}+${address.sub(module.base)}`;
-  return mono.describe(address) || address.toString();
+  return engine.describe(address) || address.toString();
 }
 
 // --- Calls --------------------------------------------------------------------
@@ -401,7 +404,7 @@ function argumentValue(monitor, type, raw) {
 
 function onEnter(monitor, invocation) {
   // Already on a game thread: run waiting property reads if it is the main one.
-  mono.drainMain();
+  engine.drainMain();
   const context = invocation.context;
   const { info, layout } = monitor;
   const pointers = [];
@@ -467,7 +470,7 @@ async function addMonitor(spec) {
   // spec.returns/objects: true, false, or null for "if the method has any".
   if (monitors.has(spec.id))
     throw new Error(`Monitor ${spec.id} exists already`);
-  const info = await mono.prepare(spec.identity);
+  const info = await engine.prepare(spec.identity);
   if (monitors.has(spec.id))
     throw new Error(`Monitor ${spec.id} exists already`);
   const hasResults = (info.returns.kind !== T.VOID || info.returns.byref)
@@ -530,8 +533,7 @@ function removeMonitor(id) {
 
 let unmapWatch = null;
 
-function onUnmap(start, length) {
-  const end = start.add(length);
+function onUnmap(start, end) {
   const freed = code => code.compare(start) >= 0 && code.compare(end) < 0;
   for (const monitor of Array.from(monitors.values())) {
     if (freed(monitor.info.start)) {
@@ -549,16 +551,14 @@ function onUnmap(start, length) {
 }
 
 function updateUnmapWatch() {
-  // Only while there is something to protect: munmap is called often.
+  // Only while there is something to protect: unmapping is frequent.
   const watched = monitors.size + methodHooks.size;
   if (watched > 0 && unmapWatch === null) {
-    unmapWatch = Interceptor.attach(Module.getGlobalExportByName('munmap'), {
-      onEnter(args) {
-        try {
-          onUnmap(args[0], args[1]);
-        } catch (error) {
-          send({ kind: 'agent-error', error: `munmap: ${error}` });
-        }
+    unmapWatch = watchUnmaps((start, end) => {
+      try {
+        onUnmap(start, end);
+      } catch (error) {
+        send({ kind: 'agent-error', error: `unmap: ${error}` });
       }
     });
   } else if (watched === 0 && unmapWatch !== null) {
@@ -586,7 +586,7 @@ class ManagedObject {
   }
 
   get className() {
-    return mono.layout(this.klass).name;
+    return engine.layout(this.klass).name;
   }
 
   get name() {
@@ -595,7 +595,7 @@ class ManagedObject {
   }
 
   field(name) {
-    const layout = mono.layout(this.klass);
+    const layout = engine.layout(this.klass);
     const field = layout.fields.find(candidate => candidate.name === name && !candidate.static);
     if (field === undefined)
       throw new Error(`${layout.name} has no field ${name}`);
@@ -605,7 +605,7 @@ class ManagedObject {
 
   setField(name, value) {
     // Change a field (in the "before the call" phase, the method sees it).
-    const layout = mono.layout(this.klass);
+    const layout = engine.layout(this.klass);
     const field = layout.fields.find(candidate => candidate.name === name && !candidate.static);
     if (field === undefined)
       throw new Error(`${layout.name} has no field ${name}`);
@@ -615,44 +615,44 @@ class ManagedObject {
     if (type.kind === T.VALUETYPE)
       throw new Error(`the struct field ${name} cannot be set as a whole`);
     if (REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING)
-      mono.writeReference(this.isStruct ? null : this.address, address, pointerOf(type, value));
+      engine.writeReference(this.isStruct ? null : this.address, address, pointerOf(type, value));
     else
       writeJs(type, address, value);
     noteChange(`${shortClass(layout.name)}.${name}`, value);
   }
 
   get(name) {
-    const property = mono.properties(this.klass).find(candidate => candidate.name === name);
+    const property = engine.properties(this.klass).find(candidate => candidate.name === name);
     if (property === undefined)
       throw new Error(`${this.className} has no property ${name}`);
-    const { result, exception } = mono.getProperty(this.address, property, this.isStruct);
+    const { result, exception } = engine.getProperty(this.address, property, this.isStruct);
     throwIfException(exception);
     return resultJs(property.type, result);
   }
 
   call(name, ...args) {
-    let method = mono.findMethod(this.klass, name, args.length, false);
+    let method = engine.findMethod(this.klass, name, args.length, false);
     if (!this.isStruct)
-      method = mono.virtualMethod(this.address, method);
+      method = engine.virtualMethod(this.address, method);
     return callMethod(method, this.address, args);
   }
 
   component(typeName) {
     // A component of this GameObject (or of the GameObject of this component).
-    const gameObject = mono.classChain(this.klass).some(
-      klass => mono.layout(klass).name === 'UnityEngine.GameObject') ? this : this.get('gameObject');
+    const gameObject = engine.classChain(this.klass).some(
+      klass => engine.layout(klass).name === 'UnityEngine.GameObject') ? this : this.get('gameObject');
     if (gameObject === null)
       return null;
-    const { result, exception } = mono.getProperty(
+    const { result, exception } = engine.getProperty(
       gameObject.address, { special: 'components' }, false);
     throwIfException(exception);
     const length = result.add(ARRAY_LENGTH).readU32();
     for (let i = 0; i < length; i++) {
       const element = result.add(ARRAY_DATA + i * Process.pointerSize).readPointer();
-      const klass = mono.classOf(element);
+      const klass = engine.classOf(element);
       if (klass === null)
         continue;
-      const name = mono.layout(klass).name;
+      const name = engine.layout(klass).name;
       if (name === typeName || name.endsWith('.' + typeName))
         return wrap(new ManagedObject(element, klass));
     }
@@ -679,28 +679,28 @@ const shortcuts = {
   get(target, key, receiver) {
     if (typeof key !== 'string' || key in target)
       return Reflect.get(target, key, receiver);
-    const layout = mono.layout(target.klass);
+    const layout = engine.layout(target.klass);
     if (layout.fields.some(field => field.name === key && !field.static))
       return target.field(key);
-    if (mono.properties(target.klass).some(property => property.name === key))
+    if (engine.properties(target.klass).some(property => property.name === key))
       return target.get(key);
     return undefined;
   },
   set(target, key, value, receiver) {
     if (typeof key !== 'string' || key in target)
       return Reflect.set(target, key, value, receiver);
-    const layout = mono.layout(target.klass);
+    const layout = engine.layout(target.klass);
     if (layout.fields.some(field => field.name === key && !field.static)) {
       target.setField(key, value);
       return true;
     }
     let setter;
     try {
-      setter = mono.findMethod(target.klass, `set_${key}`, 1, false);
+      setter = engine.findMethod(target.klass, `set_${key}`, 1, false);
     } catch (_error) {
       throw new Error(`${layout.name} has no field or property ${key} to set`);
     }
-    callMethod(target.isStruct ? setter : mono.virtualMethod(target.address, setter),
+    callMethod(target.isStruct ? setter : engine.virtualMethod(target.address, setter),
                target.address, [value]);
     noteChange(`${shortClass(layout.name)}.${key}`, value);
     return true;
@@ -731,7 +731,7 @@ function throwIfException(exception) {
 function objectJs(pointer) {
   if (pointer.isNull())
     return null;
-  const klass = mono.classOf(pointer);
+  const klass = engine.classOf(pointer);
   if (klass === null)
     throw new Error(`no object at ${pointer}`);
   return wrap(new ManagedObject(pointer, klass));
@@ -838,7 +838,7 @@ function pointerOf(type, value) {
   if (value instanceof ManagedObject)
     return value.address;
   if (type.kind === T.STRING || typeof value === 'string')
-    return mono.newString(String(value));
+    return engine.newString(String(value));
   if (value instanceof NativePointer)
     return value;
   return ptr(value);
@@ -846,7 +846,7 @@ function pointerOf(type, value) {
 
 function callMethod(method, self, args) {
   // Call game code with JavaScript arguments; returns its result.
-  const signature = mono.signatureOf(method);
+  const signature = engine.signatureOf(method);
   const params = Memory.alloc(Process.pointerSize * Math.max(args.length, 1));
   const keep = [];
   signature.params.forEach((param, i) => {
@@ -869,7 +869,7 @@ function callMethod(method, self, args) {
     keep.push(slot);
     params.add(i * Process.pointerSize).writePointer(slot);
   });
-  const { result, exception } = mono.invoke(method, self === null ? NULL : self, params);
+  const { result, exception } = engine.invoke(method, self === null ? NULL : self, params);
   throwIfException(exception);
   return resultJs(signature.returns, result);
 }
@@ -879,8 +879,8 @@ function staticCall(qualifiedName, ...args) {
   const dot = qualifiedName.lastIndexOf('.');
   if (dot < 0)
     throw new Error(`"${qualifiedName}" is no Class.Method`);
-  const klass = mono.findClass(qualifiedName.substring(0, dot));
-  const method = mono.findMethod(klass, qualifiedName.substring(dot + 1), args.length, true);
+  const klass = engine.findClass(qualifiedName.substring(0, dot));
+  const method = engine.findMethod(klass, qualifiedName.substring(dot + 1), args.length, true);
   return callMethod(method, null, args);
 }
 
@@ -974,7 +974,7 @@ function writeArgument(context, location, type, value, raw) {
 
 function hookBefore(hook, invocation) {
   // The "before the call" phase: the script may change arguments and fields.
-  mono.drainMain();
+  engine.drainMain();
   if (!hook.enabled)
     return;
   const context = invocation.context;
@@ -1045,7 +1045,7 @@ function hookBefore(hook, invocation) {
 }
 
 function hookEnter(hook, invocation) {
-  mono.drainMain();
+  engine.drainMain();
   if (!hook.enabled)
     return;
   const context = invocation.context;
@@ -1163,7 +1163,7 @@ async function addMethodHook(spec) {
   if (methodHooks.has(spec.id))
     throw new Error(`Method hook ${spec.id} exists already`);
   const transform = compileHookTransform(spec.transform);
-  const info = await mono.prepare(spec.identity);
+  const info = await engine.prepare(spec.identity);
   if (methodHooks.has(spec.id))
     throw new Error(`Method hook ${spec.id} exists already`);
   const hook = {
@@ -1269,7 +1269,7 @@ function flush() {
 }
 
 const flushTimer = setInterval(flush, 100);
-send({ kind: 'ready', mono: mono.refresh() });
+send({ kind: 'ready', engine: engine.refresh() ? engine.id : null });
 
 rpc.exports = {
   addMonitor,
@@ -1391,9 +1391,7 @@ class MethodMonitorWorker(QThread):
         session = None
         script = None
         try:
-            if is_wine_process(self.pid):
-                raise RuntimeError(WINE_FRIDA_ERROR)
-            session = frida.attach(self.pid)
+            session = attach_session(self.pid)
             sessions.SESSIONS.set_frida_session(self, session)
             session.on("detached", self._on_detached)
             script = session.create_script(build_agent_source())

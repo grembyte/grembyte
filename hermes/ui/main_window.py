@@ -38,9 +38,11 @@ from hermes.core.scanner import (
     ValueRefreshWorker,
 )
 from hermes.core.memory import write_process_value
-from hermes.core.mono import has_mono_runtime
-from hermes.core.mono_catalog import catalog_method_from_identity
+from hermes.engines import base as engine_base
+from hermes.engines.registry import ENGINES, detect_engine
+from hermes.features.catalog import catalog_method_from_identity
 from hermes.core.process import is_wine_process, process_start_time
+from hermes.core.wine_gadget import wine_bits
 from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES, value_type as get_value_type
 from hermes.core.write_watch import (
     WATCH_BACKENDS,
@@ -57,11 +59,11 @@ from hermes.ui.widgets.catalog import CatalogDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
 from hermes.core import logs, sessions
-from hermes.ui.widgets import method_monitor, mono_trace
+from hermes.ui.widgets import method_monitor, trace as trace_dialog
 from hermes.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
 from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog
 from hermes.ui.widgets.method_monitor import MethodMonitorDialog
-from hermes.ui.widgets.mono_trace import MonoTraceDialog
+from hermes.ui.widgets.trace import TraceDialog
 from hermes.ui.widgets.pointer_scan import PointerScanDialog
 from hermes.ui.widgets.templates import TemplateDialog
 from hermes.ui.widgets.write_watch import WriteWatchDialog
@@ -217,11 +219,11 @@ class MainWindow(QMainWindow):
         self._memory_viewer = None
         self._catalog = None
         self._method_monitor = None
-        self._mono_trace = None
+        self._trace_dialog = None
         self._sessions_dialog = None
         self._log_dialog = None
-        # Whether the attached process runs a Mono runtime (Mono catalog).
-        self._has_mono = False
+        # The engine adapter of the attached game, once its runtime is found.
+        self._engine = None
         # Database id of the program the open pointer dialogs belong to.
         self._pointer_program = None
         self._ensure_example_templates()
@@ -317,7 +319,7 @@ class MainWindow(QMainWindow):
 
         self.act_trace = view_menu.addAction(
             glyph_icon("◉"), self.translations["menu.trace"])
-        self.act_trace.triggered.connect(self._open_mono_trace)
+        self.act_trace.triggered.connect(self._open_trace)
         self._update_catalog_button()
 
     def _set_watch_backend(self, backend):
@@ -341,8 +343,13 @@ class MainWindow(QMainWindow):
         self._update_backend_label()
 
     def _auto_select_backend(self, pid):
-        """Pick ptrace for Wine/Proton processes, Frida for native ones."""
-        backend = BACKEND_PTRACE if is_wine_process(pid) else BACKEND_FRIDA
+        """Pick Frida, except for 32-bit Wine/Proton games: ptrace.
+
+        Frida reaches 64-bit Wine games through its Windows gadget
+        (wine_gadget.py), which cannot be loaded into 32-bit ones yet.
+        """
+        wine_32bit = is_wine_process(pid) and wine_bits(pid) == 32
+        backend = BACKEND_PTRACE if wine_32bit else BACKEND_FRIDA
         self._apply_backend(backend, persist=False)
 
     def _update_backend_label(self):
@@ -1050,23 +1057,27 @@ class MainWindow(QMainWindow):
         return len(chains)
 
     def _update_catalog_button(self):
-        """Enable the Mono catalog and the trace for processes running Mono (and Frida)."""
-        if self._current_pid is not None and not self._has_mono:
-            self._has_mono = (has_mono_runtime(self._current_pid)
-                              and not is_wine_process(self._current_pid))
-        enabled = self._current_pid is not None and self._has_mono
-        for action, tooltip in ((self.act_catalog, "catalog.button_tooltip"),
-                                (self.act_trace, "trace.button_tooltip")):
+        """Enable the catalog and the trace for games whose engine hermes supports."""
+        if self._current_pid is not None and self._engine is None:
+            self._engine = detect_engine(self._current_pid)
+        unsupported = self.translations["catalog.button_no_engine"].format(
+            engines=", ".join(engine.display_name for engine in ENGINES))
+        for action, tooltip, capability in (
+                (self.act_catalog, "catalog.button_tooltip", engine_base.CATALOG),
+                (self.act_trace, "trace.button_tooltip", engine_base.TRACE)):
+            enabled = (self._current_pid is not None and self._engine is not None
+                       and self._engine.supports(capability))
             action.setEnabled(enabled)
-            action.setToolTip(self.translations[tooltip if enabled else "catalog.button_no_mono"])
+            action.setToolTip(self.translations[tooltip] if enabled else unsupported)
 
     def _open_catalog(self):
-        """Show the catalog of the C# methods of the attached Mono game."""
-        if self._current_pid is None or not self._has_mono:
+        """Show the catalog of the C# methods of the attached game (see hermes/engines)."""
+        if self._current_pid is None or self._engine is None:
             return
         catalog = self._catalog
         if catalog is None:
-            catalog = CatalogDialog(self.translations, self._current_pid, parent=self)
+            catalog = CatalogDialog(self.translations, self._current_pid, parent=self,
+                                    engine=self._engine)
             catalog.finished.connect(lambda _result: setattr(self, "_catalog", None))
             catalog.monitor_requested.connect(self._monitor_method)
             catalog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -1129,19 +1140,20 @@ class MainWindow(QMainWindow):
         dialog.raise_()
         dialog.activateWindow()
 
-    def _open_mono_trace(self):
-        """Show the trace of the C# methods a scenario in the Mono game runs."""
-        if self._current_pid is None or not self._has_mono:
+    def _open_trace(self):
+        """Show the trace of the C# methods a scenario in the game runs."""
+        if self._current_pid is None or self._engine is None:
             return
-        trace = self._mono_trace
+        trace = self._trace_dialog
         if trace is None:
-            trace = MonoTraceDialog(self.translations, self._current_pid, parent=self)
-            trace.finished.connect(lambda _result: setattr(self, "_mono_trace", None))
+            trace = TraceDialog(self.translations, self._current_pid, parent=self,
+                                engine=self._engine)
+            trace.finished.connect(lambda _result: setattr(self, "_trace_dialog", None))
             trace.monitor_requested.connect(self._monitor_method)
             if self.hook_panel is not None:
                 trace.hook_requested.connect(self.hook_panel.create_method_hook)
             trace.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-            self._mono_trace = trace
+            self._trace_dialog = trace
         trace.show()
         trace.raise_()
         trace.activateWindow()
@@ -1163,8 +1175,8 @@ class MainWindow(QMainWindow):
         monitor.activateWindow()
 
     def _close_catalog(self):
-        """Close the Mono catalog, the trace and the method monitor (process gone or switched)."""
-        for name in ("_catalog", "_mono_trace", "_method_monitor"):
+        """Close the catalog, the trace and the method monitor (process gone or switched)."""
+        for name in ("_catalog", "_trace_dialog", "_method_monitor"):
             dialog = getattr(self, name)
             if dialog is not None:
                 dialog.close()
@@ -1573,7 +1585,7 @@ class MainWindow(QMainWindow):
                 self._stop_write_monitor()
                 self._stop_freeze_worker()
                 self._close_catalog()
-                self._has_mono = False
+                self._engine = None
                 self._switch_pointer_dialogs(dlg.selected_pid, process_id)
                 if self._memory_viewer is not None:
                     self._memory_viewer.set_process(dlg.selected_pid)
@@ -1604,8 +1616,8 @@ class MainWindow(QMainWindow):
             return False
         start_time = process_start_time(self._current_pid)
         if start_time is not None and start_time == self._process_start_time:
-            if not self._has_mono:
-                # Mono may load after attaching early during the game's start.
+            if self._engine is None:
+                # The runtime may load after attaching early during the game's start.
                 self._update_catalog_button()
             return True
         process = self._current_proc
@@ -1640,7 +1652,7 @@ class MainWindow(QMainWindow):
         self._close_catalog()
 
         self._current_pid = None
-        self._has_mono = False
+        self._engine = None
         self._update_catalog_button()
         self._process_start_time = None
         self._process_id = None
@@ -2016,7 +2028,7 @@ class MainWindow(QMainWindow):
         # so the waits here are bounded and the rest happens in a dialog.
         self._sessions_timer.stop()
         self._close_catalog()
-        for module in (mono_trace, method_monitor):
+        for module in (trace_dialog, method_monitor):
             module.wait_for_closing_workers(CLOSING_WORKER_TIMEOUT_MS)
         self._stop_write_monitor()
         self._stop_freeze_worker()

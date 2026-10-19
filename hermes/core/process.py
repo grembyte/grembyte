@@ -35,13 +35,3 @@ def is_wine_process(pid, proc_root="/proc"):
     return name in {"wine", "wine64"} or (
         name.startswith("wine") and name.endswith("-preloader"))
 
-
-# Frida's agent looks up the main program through the program headers that
-# the kernel recorded for the preloader. The preloader loads Wine itself, so
-# nothing is mapped there and the agent crashes the target before any script
-# runs (seen with Frida 17.23 and 17.24 on Proton 11).
-WINE_FRIDA_ERROR = (
-  "Frida cannot attach to Wine/Proton processes: its agent crashes the game "
-  "during injection. Switch the watch backend to ptrace "
-  "(Settings → Watch backend) to monitor this process instead."
-)

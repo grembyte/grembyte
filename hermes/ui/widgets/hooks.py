@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from hermes.core.pointer import PointerChain
 from hermes.db.repository.hooks import hook_transform
 from hermes.hooks.engine import MAX_CALLER_DEPTH, HookSpec, create_hook_worker
-from hermes.hooks.method_hooks import PHASES, MethodHookSpec, MethodHookWorker
+from hermes.features.method_hooks import PHASES, MethodHookSpec, MethodHookWorker
 from hermes.core.write_watch import BACKEND_FRIDA
 from hermes.hooks.transforms import (
     TemplateTransform,

@@ -33,7 +33,7 @@ Hook templates maintained in the database are ``TransformDefinition``
 objects (name, function source, parameters); ``TemplateTransform`` applies
 one with concrete parameter values. Their ``kind`` is ``"value"`` for the
 write hooks described above or ``"method"`` for method hooks, whose function
-gets another ``ctx`` (see ``hermes.hooks.method_hooks``). A hook keeps its own copy of the
+gets another ``ctx`` (see ``hermes.features.method_hooks``). A hook keeps its own copy of the
 definition, so later template changes only reach it when they are adopted.
 """
 

@@ -746,6 +746,7 @@ def test_hook_is_found_by_its_method_after_a_restart(tmp_path, qt_app, translati
         _wait_for(qt_app, lambda: repository.list_hooks(process_id)[0].managed is not None)
         managed = repository.list_hooks(process_id)[0].managed
         assert managed == {
+            "engine": "mono",
             "image": "Assembly-CSharp", "file": "/game/Assembly-CSharp.dll",
             "token": 0x06000001, "method": "Game.Inventory:AddGold (int&,int)",
             "offset": 0xe,
@@ -787,13 +788,13 @@ def test_hook_is_found_by_its_method_after_a_restart(tmp_path, qt_app, translati
 @requires_target
 def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.core.mono import has_mono_runtime
-    from hermes.core.mono_catalog import CatalogMethod, CatalogWorker
+    from hermes.engines.registry import detect_engine
+    from hermes.features.catalog import CatalogMethod, CatalogWorker
 
     target = _MonoTarget(_build(tmp_path))
     try:
-        assert has_mono_runtime(target.pid)
-        assert not has_mono_runtime(os.getpid())
+        assert detect_engine(target.pid).id == "mono"
+        assert detect_engine(os.getpid()) is None
 
         def read(assemblies=None):
             found, loaded, failed = [], {}, []
@@ -873,7 +874,7 @@ def test_catalog_dialog_searches_methods(tmp_path, qt_app, translations):
 @requires_target
 def test_method_monitor_logs_arguments_caller_and_result(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.core.method_monitor import MethodMonitorWorker
+    from hermes.features.monitor import MethodMonitorWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodMonitorWorker(target.pid)
@@ -927,7 +928,7 @@ def test_method_monitor_logs_arguments_caller_and_result(tmp_path, qt_app):
 @requires_target
 def test_method_monitor_lets_the_game_free_its_code_and_exit(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.core.method_monitor import MethodMonitorWorker
+    from hermes.features.monitor import MethodMonitorWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodMonitorWorker(target.pid)
@@ -961,7 +962,7 @@ _CALC_DAMAGE = {"image": "Assembly-CSharp", "file": None, "token": 0x06000005,
 @requires_target
 def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel,too-many-locals
-    from hermes.core.method_monitor import MethodMonitorWorker
+    from hermes.features.monitor import MethodMonitorWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodMonitorWorker(target.pid)
@@ -1034,7 +1035,7 @@ def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
 @requires_target
 def test_monitor_window_opens_objects_in_the_inspector(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.core.mono_catalog import CatalogMethod
+    from hermes.features.catalog import CatalogMethod
     from hermes.ui.widgets.method_monitor import MethodMonitorDialog
 
     target = _MonoTarget(_build(tmp_path))
@@ -1090,7 +1091,7 @@ def test_monitor_window_opens_objects_in_the_inspector(tmp_path, qt_app, transla
 @requires_target
 def test_method_monitor_asks_unity_for_names_only_on_its_main_thread(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.core.method_monitor import MethodMonitorWorker
+    from hermes.features.monitor import MethodMonitorWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodMonitorWorker(target.pid)
@@ -1150,7 +1151,7 @@ def test_inspector_shows_recorded_fields_without_reading_again(qt_app, translati
 @requires_target
 def test_properties_are_evaluated_on_the_main_thread(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel,too-many-locals
-    from hermes.core.method_monitor import MethodMonitorWorker
+    from hermes.features.monitor import MethodMonitorWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodMonitorWorker(target.pid)
@@ -1214,7 +1215,7 @@ def test_properties_are_evaluated_on_the_main_thread(tmp_path, qt_app):
 @requires_target
 def test_inspector_evaluates_properties(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.core.mono_catalog import CatalogMethod
+    from hermes.features.catalog import CatalogMethod
     from hermes.ui.widgets.method_monitor import MethodMonitorDialog
 
     target = _MonoTarget(_build(tmp_path))
@@ -1258,7 +1259,7 @@ def test_inspector_evaluates_properties(tmp_path, qt_app, translations):
 @requires_target
 def test_monitor_options_default_to_what_the_method_has(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.core.mono_catalog import CatalogMethod
+    from hermes.features.catalog import CatalogMethod
     from hermes.ui.widgets.method_monitor import MethodMonitorDialog
 
     target = _MonoTarget(_build(tmp_path))
@@ -1301,7 +1302,7 @@ def test_monitor_options_default_to_what_the_method_has(tmp_path, qt_app, transl
         target.close()
 
 
-_ROLL_DAMAGE = {"image": "Assembly-CSharp", "file": None, "token": 0x06000004,
+_ROLL_DAMAGE = {"engine": "mono", "image": "Assembly-CSharp", "file": None, "token": 0x06000004,
                 "method": "Game.Combat:RollDamage (int,single,string,bool,Game.DamageType,int&)"}
 
 
@@ -1318,7 +1319,7 @@ def _method_transform(source, **params):
 @requires_target
 def test_method_hook_replaces_the_result(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.hooks.method_hooks import MethodHookSpec, MethodHookWorker
+    from hermes.features.method_hooks import MethodHookSpec, MethodHookWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodHookWorker(target.pid)
@@ -1403,7 +1404,7 @@ def test_method_hooks_in_the_panel_are_saved_and_restored(tmp_path, qt_app, tran
     from hermes.db import models  # noqa: F401  pylint: disable=unused-import
     from hermes.db.base import Base
     from hermes.db.repository.hooks import HookRepository
-    from hermes.hooks.method_hooks import MethodHookSpec
+    from hermes.features.method_hooks import MethodHookSpec
     from hermes.ui.widgets.hooks import HookPanel
 
     engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
@@ -1461,7 +1462,7 @@ def test_method_hooks_in_the_panel_are_saved_and_restored(tmp_path, qt_app, tran
 @requires_target
 def test_monitor_offers_to_hook_a_method(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel
-    from hermes.core.mono_catalog import CatalogMethod
+    from hermes.features.catalog import CatalogMethod
     from hermes.ui.widgets.method_monitor import MethodMonitorDialog
 
     target = _MonoTarget(_build(tmp_path))
@@ -1486,7 +1487,7 @@ def test_monitor_offers_to_hook_a_method(tmp_path, qt_app, translations):
 @requires_target
 def test_method_hook_before_the_call_changes_arguments_and_fields(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.hooks.method_hooks import MethodHookSpec, MethodHookWorker
+    from hermes.features.method_hooks import MethodHookSpec, MethodHookWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodHookWorker(target.pid)
@@ -1577,7 +1578,7 @@ def test_panel_saves_the_phase_of_method_hooks(tmp_path, qt_app, translations):
     from hermes.db import models  # noqa: F401  pylint: disable=unused-import
     from hermes.db.base import Base
     from hermes.db.repository.hooks import HookRepository
-    from hermes.hooks.method_hooks import MethodHookSpec
+    from hermes.features.method_hooks import MethodHookSpec
     from hermes.ui.widgets.hooks import HookPanel
 
     engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
@@ -1611,7 +1612,7 @@ def test_hook_context_menu_offers_what_fits_the_hook(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from hermes.core.pointer import PointerChain
     from hermes.hooks.engine import HookSpec
-    from hermes.hooks.method_hooks import MethodHookSpec
+    from hermes.features.method_hooks import MethodHookSpec
     from hermes.ui.widgets.hooks import HookPanel
 
     panel = HookPanel(translations)
@@ -1650,7 +1651,7 @@ def test_hook_context_menu_offers_what_fits_the_hook(qt_app, translations):
 
 def test_catalog_method_from_a_hook_identity():
     # pylint: disable=import-outside-toplevel
-    from hermes.core.mono_catalog import catalog_method_from_identity
+    from hermes.features.catalog import catalog_method_from_identity
 
     method = catalog_method_from_identity(_ROLL_DAMAGE)
     assert (method.assembly, method.class_name, method.name, method.parameters) == (
@@ -1662,10 +1663,10 @@ def test_catalog_method_from_a_hook_identity():
 @requires_target
 def test_mono_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.core.mono_trace import NEW, SAME, MonoTraceWorker, analyze, recording_calls
+    from hermes.features.trace import NEW, SAME, TraceWorker, analyze, recording_calls
 
     target = _MonoTarget(_build(tmp_path))
-    worker = MonoTraceWorker(target.pid)
+    worker = TraceWorker(target.pid)
     planned, started, began, recorded, failed = [], [], [], [], []
     worker.planned.connect(planned.append)
     worker.started.connect(lambda methods, info: started.append((methods, info)))
@@ -1733,7 +1734,7 @@ def test_mono_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
 
 def test_trace_analysis_compares_rates_with_the_baseline():
     # pylint: disable=import-outside-toplevel
-    from hermes.core.mono_trace import MORE, NEW, SAME, analyze
+    from hermes.features.trace import MORE, NEW, SAME, analyze
 
     baseline = {"phase": "baseline", "duration": 2000, "counts": {"0": 20, "1": 20, "2": 1}}
     # one second: method 0 as usual, 1 five times as often, 2 only two more calls
@@ -1749,10 +1750,10 @@ def test_trace_analysis_compares_rates_with_the_baseline():
 @requires_target
 def test_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.ui.widgets.mono_trace import MonoTraceDialog
+    from hermes.ui.widgets.trace import TraceDialog
 
     target = _MonoTarget(_build(tmp_path))
-    dialog = MonoTraceDialog(translations, target.pid)
+    dialog = TraceDialog(translations, target.pid)
     monitored, hooked = [], []
     dialog.monitor_requested.connect(monitored.append)
     dialog.hook_requested.connect(hooked.append)
@@ -1807,11 +1808,11 @@ def test_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, translati
 @requires_target
 def test_mono_trace_preparation_can_be_cancelled(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.core.mono_trace import MonoTraceWorker
+    from hermes.features.trace import TraceWorker
 
     # Compiling takes 0.3 s per method here: 2.4 s for all eight.
     target = _MonoTarget(_build(tmp_path), slow_ms=300)
-    worker = MonoTraceWorker(target.pid)
+    worker = TraceWorker(target.pid)
     progress, started, failed = [], [], []
     worker.progress.connect(
         lambda step, done, total, current: progress.append((step, done, total, current)))
@@ -1839,11 +1840,11 @@ def test_mono_trace_preparation_can_be_cancelled(tmp_path, qt_app):
 @requires_target
 def test_sessions_list_workers_and_cut_one_that_hangs(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.core.mono_trace import MonoTraceWorker
+    from hermes.features.trace import TraceWorker
     from hermes.core.sessions import SESSIONS, TRACE
 
     target = _MonoTarget(_build(tmp_path), slow_ms=300)
-    worker = MonoTraceWorker(target.pid)
+    worker = TraceWorker(target.pid)
     # As if the agent did not answer: stopping alone does not end the trace.
     worker.cancel = lambda: None
     progress = []
@@ -1879,13 +1880,13 @@ def test_sessions_list_workers_and_cut_one_that_hangs(tmp_path, qt_app):
 @requires_target
 def test_agent_answers_while_mono_works_on_a_thread_of_its_own(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.core.method_monitor import MethodMonitorWorker
-    from hermes.core.mono_trace import MonoTraceWorker
+    from hermes.features.monitor import MethodMonitorWorker
+    from hermes.features.trace import TraceWorker
 
     # Compiling a method takes 2 s; all sessions share the agent's thread.
     target = _MonoTarget(_build(tmp_path), slow_ms=2000)
     monitor = MethodMonitorWorker(target.pid)
-    trace = MonoTraceWorker(target.pid)
+    trace = TraceWorker(target.pid)
     added, planned = [], []
     monitor.monitor_added.connect(lambda monitor_id, _info: added.append(time.monotonic()))
     trace.planned.connect(lambda plan: planned.append(time.monotonic()))

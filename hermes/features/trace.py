@@ -1,4 +1,8 @@
-"""Mono trace: which C# methods a scenario in a Mono game (e.g. Unity) runs.
+"""Trace: which C# methods a scenario in a game runs (e.g. Unity with Mono).
+
+It works through the engine adapter of the game (see hermes/engines). While
+it adds or removes its hooks, the game's threads are paused where the
+platform needs it (Wine, see ``pauseThreads``).
 
 The trace hooks many methods at once, e.g. all methods of the game's
 assemblies, to find the one worth monitoring or hooking:
@@ -32,9 +36,9 @@ from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-
 
 from hermes.core import logs
 from hermes.core import sessions
-from hermes.core.mono import MONO_AGENT_SOURCE
-from hermes.core.mono_catalog import CatalogMethod, is_framework_assembly
-from hermes.core.process import WINE_FRIDA_ERROR, is_wine_process
+from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
+from hermes.features.catalog import CatalogMethod
+from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
 
 
@@ -49,7 +53,7 @@ MIN_EXTRA_CALLS = 3
 
 NEW, MORE, SAME = "new", "more", "same"
 
-_AGENT_SOURCE = MONO_AGENT_SOURCE + r"""
+_AGENT_SOURCE = ENGINE_AGENT_SOURCE + r"""
 const EVENT_CAPACITY = EVENT_CAPACITY_VALUE;
 const EVENT_SIZE = 32;
 const METHOD_ABSTRACT = 0x0400;
@@ -106,6 +110,20 @@ void on_enter (GumInvocationContext * ic) {
 let trace = null;
 // CModules of stopped traces: a game thread may still be in their code.
 const retired = [];
+// The agent's own thread (RPCs run there); hooks run on game threads.
+const AGENT_THREAD = Process.getCurrentThreadId();
+
+function pauseForHooking() {
+  // Many hooks change at once: stop the game's threads meanwhile, so none
+  // enters code Frida is still changing (see pauseThreads). Never from a game
+  // thread: it may hold locks the others need.
+  return Process.getCurrentThreadId() === AGENT_THREAD ? pauseThreads() : null;
+}
+
+function resumeAfterHooking(paused) {
+  Interceptor.flush();  // write the pending changes before the game runs on
+  resumeThreads(paused);
+}
 
 function matches(words, text) {
   const lower = text.toLowerCase();
@@ -132,7 +150,7 @@ async function select(spec) {
   const chosen = [];
   const skipped = { abstract: 0, native: 0, generic: 0 };
   for (const assembly of spec.assemblies) {
-    for (const found of await mono.methods(assembly)) {
+    for (const found of await engine.methods(assembly)) {
       if (!matches(spec.words, `${found.className}:${found.entry[0]} ${assembly}`))
         continue;
       const reason = untraceable(found);
@@ -187,12 +205,12 @@ async function prepare(spec) {
   const selected = await select(spec);
   const skipped = { ...selected.skipped, com: 0 };
   // Compiling code that uses COM interop hangs Mono on Linux: leave it out.
-  const usesCom = await mono.checkAll(selected.chosen.map(found => found.method),
+  const usesCom = await engine.checkAll(selected.chosen.map(found => found.method),
     reporter('check', selected.chosen.length, done => selected.chosen[done].entry[5]));
   const chosen = selected.chosen.filter((_found, i) => !usesCom[i]);
   skipped.com = selected.chosen.length - chosen.length;
   const total = chosen.length;
-  const codes = await mono.compileAll(chosen.map(found => found.method),
+  const codes = await engine.compileAll(chosen.map(found => found.method),
     reporter('compile', total, done => chosen[done].entry[5]));
   const size = Math.max(total, 1);
   const memory = {
@@ -206,6 +224,21 @@ async function prepare(spec) {
     ...memory, cm, now: new NativeFunction(cm.now, 'int64', []),
     methods: [], listeners: [], starts: [], phase: null, baseline: null
   };
+  const paused = pauseForHooking();
+  let counts;
+  try {
+    counts = await attachAll(codes, chosen, cm);
+  } finally {
+    resumeAfterHooking(paused);
+  }
+  trace.starts.sort((a, b) => a.compare(b));
+  updateUnmapWatch();
+  return { methods: trace.methods, skipped, ...counts };
+}
+
+async function attachAll(codes, chosen, cm) {
+  // Hook the code of every method; returns { notCompiled, failed }.
+  const total = codes.length;
   const seen = new Set();
   let notCompiled = 0;
   let failed = 0;
@@ -238,9 +271,7 @@ async function prepare(spec) {
     const found = chosen[i];
     trace.methods.push([found.assembly, found.className, ...found.entry]);
   }
-  trace.starts.sort((a, b) => a.compare(b));
-  updateUnmapWatch();
-  return { methods: trace.methods, skipped, notCompiled, failed };
+  return { notCompiled, failed };
 }
 
 function requireTrace() {
@@ -287,7 +318,7 @@ async function callerTexts(addresses) {
   const jit = addresses.filter((_address, i) => texts[i] === null);
   let names = [];
   try {
-    names = jit.length > 0 ? await mono.describeAll(jit) : [];
+    names = jit.length > 0 ? await engine.describeAll(jit) : [];
   } catch (_error) {
     // names stay unknown
   }
@@ -367,8 +398,13 @@ function stop() {
   const t = trace;
   trace = null;
   t.state.writeS32(0);
-  for (const listener of t.listeners)
-    listener.detach();
+  const paused = pauseForHooking();
+  try {
+    for (const listener of t.listeners)
+      listener.detach();
+  } finally {
+    resumeAfterHooking(paused);
+  }
   retired.push(t.cm);
   updateUnmapWatch();
   return true;
@@ -395,17 +431,15 @@ function tracesCodeIn(start, end) {
 
 function updateUnmapWatch() {
   if (trace !== null && unmapWatch === null) {
-    unmapWatch = Interceptor.attach(Module.getGlobalExportByName('munmap'), {
-      onEnter(args) {
-        try {
-          // Still mapped here: Frida can restore the code before it is gone.
-          if (trace !== null && tracesCodeIn(args[0], args[0].add(args[1]))) {
-            stop();
-            send({ kind: 'trace-ended' });
-          }
-        } catch (error) {
-          send({ kind: 'agent-error', error: `munmap: ${error}` });
+    unmapWatch = watchUnmaps((start, end) => {
+      try {
+        // Still mapped here: Frida can restore the code before it is gone.
+        if (trace !== null && tracesCodeIn(start, end)) {
+          stop();
+          send({ kind: 'trace-ended' });
         }
+      } catch (error) {
+        send({ kind: 'agent-error', error: `unmap: ${error}` });
       }
     });
   } else if (trace === null && unmapWatch !== null) {
@@ -418,17 +452,17 @@ function updateUnmapWatch() {
 function onCancel() {
   // A message rather than an RPC: it arrives while start() is still busy.
   cancelled = true;
-  mono.cancelBatches();
+  engine.cancelBatches();
   recv('cancel', onCancel);
 }
 recv('cancel', onCancel);
 
 const liveTimer = setInterval(live, 500);
-send({ kind: 'ready', mono: mono.refresh() });
+send({ kind: 'ready', engine: engine.refresh() ? engine.id : null });
 
 rpc.exports = {
   assemblies() {
-    return mono.assemblies();
+    return engine.assemblies();
   },
   plan,
   start,
@@ -438,11 +472,11 @@ rpc.exports = {
   async dispose() {
     clearInterval(liveTimer);
     cancelled = true;
-    mono.cancelBatches();
+    engine.cancelBatches();
     // The batch thread runs our C code: wait until it is out of it (it
     // checks after each method), but not forever should Mono hang.
     const deadline = Date.now() + DISPOSE_TIMEOUT;
-    while ((mono.batchesRunning() || starting) && Date.now() < deadline)
+    while ((engine.batchesRunning() || starting) && Date.now() < deadline)
       await new Promise(resolve => setTimeout(resolve, 20));
     stop();
     if (unmapWatch !== null) {
@@ -460,11 +494,11 @@ def build_agent_source():
     return _AGENT_SOURCE
 
 
-def trace_methods(rows):
+def trace_methods(rows, engine="mono"):
     """CatalogMethods of the agent's ``start`` answer, in index order."""
     return [
         CatalogMethod(assembly, class_name, name, parameters, return_type, bool(static), token,
-                      signature)
+                      signature, engine)
         for assembly, class_name, name, parameters, return_type, static, token, signature in rows
     ]
 
@@ -552,7 +586,7 @@ def analyze(scenario, baseline=None):
     return rows
 
 
-class MonoTraceWorker(QThread):
+class TraceWorker(QThread):
     """Keep a Frida session open for a trace; see the module documentation.
 
     The public methods are safe to call from the GUI thread; results come
@@ -579,9 +613,10 @@ class MonoTraceWorker(QThread):
     command_failed = pyqtSignal(str, str)
     worker_failed = pyqtSignal(str)
 
-    def __init__(self, pid, parent=None):
+    def __init__(self, pid, parent=None, engine=None):
         super().__init__(parent)
         self.pid = pid
+        self.engine = resolve_engine(pid, engine)
         self._commands = queue.Queue()
         self._ready = threading.Event()
         self._agent_error = None
@@ -629,9 +664,7 @@ class MonoTraceWorker(QThread):
         session = None
         script = None
         try:
-            if is_wine_process(self.pid):
-                raise RuntimeError(WINE_FRIDA_ERROR)
-            session = frida.attach(self.pid)
+            session = attach_session(self.pid)
             sessions.SESSIONS.set_frida_session(self, session)
             session.on("detached", self._on_detached)
             script = session.create_script(build_agent_source())
@@ -672,7 +705,8 @@ class MonoTraceWorker(QThread):
                     logs.cleanup_failed(error)
 
     def _spec(self, api, words):
-        names = [a["name"] for a in api.assemblies() if not is_framework_assembly(a["name"])]
+        names = [a["name"] for a in api.assemblies()
+                 if not self.engine.is_framework_assembly(a["name"])]
         return {"assemblies": names, "words": [word.lower() for word in words]}
 
     def _execute(self, api, action, argument):
@@ -682,7 +716,7 @@ class MonoTraceWorker(QThread):
                 self.planned.emit({**api.plan(spec), "assemblies": spec["assemblies"]})
             elif action == "start":
                 answer = api.start(self._spec(api, argument))
-                self.started.emit(trace_methods(answer.pop("methods")), answer)
+                self.started.emit(trace_methods(answer.pop("methods"), self.engine.id), answer)
             elif action == "begin":
                 api.begin(argument)
                 self.began.emit(argument)
@@ -712,7 +746,7 @@ class MonoTraceWorker(QThread):
         elif kind == "trace-ended":
             self.ended.emit()
         elif kind == "agent-error":
-            logs.log.error("mono trace agent: %s", payload.get("error", ""))
+            logs.log.error("trace agent: %s", payload.get("error", ""))
 
     def _on_detached(self, reason, _crash):
         self._detach_reason = reason
