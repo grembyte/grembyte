@@ -146,7 +146,9 @@ function untraceable(found) {
 }
 
 async function select(spec) {
-  // The methods of spec.assemblies matching spec.words that can be traced.
+  // The methods of spec.assemblies matching spec.words that can be traced;
+  // with spec.methods ([[assembly, token], ...]) only those.
+  const wanted = spec.methods ? new Set(spec.methods.map(([a, token]) => `${a}\t${token}`)) : null;
   const chosen = [];
   const skipped = { abstract: 0, native: 0, generic: 0 };
   for (const assembly of spec.assemblies) {
@@ -156,7 +158,7 @@ async function select(spec) {
       const reason = untraceable(found);
       if (reason !== null)
         skipped[reason]++;
-      else
+      else if (wanted === null || wanted.has(`${assembly}\t${found.entry[4]}`))
         chosen.push({ assembly, ...found });
     }
   }
@@ -166,6 +168,14 @@ async function select(spec) {
 async function plan(spec) {
   const { chosen, skipped } = await select(spec);
   return { methods: chosen.length, skipped };
+}
+
+async function candidates(spec) {
+  // Every method a trace of spec could hook, with its signature, to choose
+  // from (see trace_filters.py); nothing is compiled.
+  const { chosen, skipped } = await select(spec);
+  return { methods: chosen.map(found => [found.assembly, found.className, ...found.entry]),
+           skipped };
 }
 
 // Interceptors set at a time before other scripts of the agent get a turn
@@ -465,6 +475,7 @@ rpc.exports = {
     return engine.assemblies();
   },
   plan,
+  candidates,
   start,
   begin,
   finish,
@@ -595,6 +606,8 @@ class TraceWorker(QThread):
 
     # {methods, skipped: {abstract, native, generic}, assemblies}
     planned = pyqtSignal(dict)
+    # every method a trace could hook (CatalogMethods), {abstract, native, generic}
+    candidates_found = pyqtSignal(list, dict)
     # CatalogMethods in index order, {skipped: {abstract, native, generic, com},
     # notCompiled, failed}
     started = pyqtSignal(list, dict)
@@ -630,6 +643,19 @@ class TraceWorker(QThread):
     def trace(self, words):
         """Hook the methods of the game's assemblies matching ``words``."""
         self._commands.put(("start", list(words)))
+
+    def candidates(self):
+        """List every method a trace could hook; expect candidates_found."""
+        self._commands.put(("candidates", []))
+
+    def trace_selection(self, methods, words=()):
+        """Hook exactly ``methods`` (CatalogMethods, e.g. from candidates_found).
+
+        ``words`` (the free-text filter they were chosen with) only make the
+        skipped methods count like ``trace`` counts them.
+        """
+        self._commands.put(("start", {"methods": [[m.assembly, m.token] for m in methods],
+                                      "words": list(words)}))
 
     def begin(self, phase):
         """Record ``"baseline"`` or ``"scenario"`` until ``finish``."""
@@ -704,16 +730,26 @@ class TraceWorker(QThread):
                 except CLEANUP_ERRORS as error:
                     logs.cleanup_failed(error)
 
-    def _spec(self, api, words):
+    def _spec(self, api, argument):
+        """The agent's spec: words, or {"methods": [[assembly, token], ...]}."""
+        if isinstance(argument, dict):
+            methods = argument["methods"]
+            return {"assemblies": sorted({assembly for assembly, _token in methods}),
+                    "words": [word.lower() for word in argument.get("words", [])],
+                    "methods": methods}
         names = [a["name"] for a in api.assemblies()
                  if not self.engine.is_framework_assembly(a["name"])]
-        return {"assemblies": names, "words": [word.lower() for word in words]}
+        return {"assemblies": names, "words": [word.lower() for word in argument]}
 
     def _execute(self, api, action, argument):
         try:
             if action == "plan":
                 spec = self._spec(api, argument)
                 self.planned.emit({**api.plan(spec), "assemblies": spec["assemblies"]})
+            elif action == "candidates":
+                answer = api.candidates(self._spec(api, argument))
+                self.candidates_found.emit(trace_methods(answer["methods"], self.engine.id),
+                                           answer["skipped"])
             elif action == "start":
                 answer = api.start(self._spec(api, argument))
                 self.started.emit(trace_methods(answer.pop("methods"), self.engine.id), answer)

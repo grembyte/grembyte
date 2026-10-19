@@ -53,6 +53,7 @@ from hermes.core.write_watch import (
 )
 from hermes.db.repository.addresses import AddressRepository, address_pointer
 from hermes.db.repository.hooks import HookRepository
+from hermes.db.repository.trace_filters import TraceFilterRepository
 from hermes.hooks.engine import HookSpec
 from hermes.hooks.transforms import example_templates
 from hermes.ui.widgets.catalog import CatalogDialog
@@ -211,6 +212,7 @@ class MainWindow(QMainWindow):
         self._current_pid = None
         self._process_start_time = None
         self._hook_repository = HookRepository()
+        self._trace_filter_repository = TraceFilterRepository()
         self._address_repository = AddressRepository()
         self._process_id = None
         self._address_keys = itertools.count(1)
@@ -1147,7 +1149,8 @@ class MainWindow(QMainWindow):
         trace = self._trace_dialog
         if trace is None:
             trace = TraceDialog(self.translations, self._current_pid, parent=self,
-                                engine=self._engine)
+                                engine=self._engine,
+                                filter_repository=self._trace_filter_repository)
             trace.finished.connect(lambda _result: setattr(self, "_trace_dialog", None))
             trace.monitor_requested.connect(self._monitor_method)
             if self.hook_panel is not None:

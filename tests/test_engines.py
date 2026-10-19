@@ -55,6 +55,7 @@ def test_mono_adapter_capabilities_and_framework_filter():
     for capability in (base.NAMING, base.CATALOG, base.TRACE, base.MONITOR, base.METHOD_HOOKS):
         assert mono.supports(capability)
     assert mono.is_framework_assembly("UnityEngine.CoreModule")
+    assert mono.is_framework_assembly("Rewired_Core") and mono.is_framework_assembly("Steamworks")
     assert not mono.is_framework_assembly("Assembly-CSharp")
 
 

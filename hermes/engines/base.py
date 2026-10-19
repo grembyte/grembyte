@@ -57,6 +57,17 @@ The platform helpers an adapter may use (``spawnThread``, ``watchUnmaps``,
 
 import os
 
+# Libraries many games ship that are not the game itself (input, tweening,
+# store and platform SDKs, consoles, serializers). Adapters add them to their
+# framework assemblies, so the catalog and the trace leave them out by default.
+MIDDLEWARE_PREFIXES = (
+    "Rewired", "Steamworks", "com.rlabrecque.steamworks", "Facepunch.Steamworks",
+    "GalaxyCSharp", "DOTween", "DG.Tweening", "LeanTween", "HeathenEngineering",
+    "IngameDebugConsole", "GooglePlayGames", "Newtonsoft.", "Sirenix.", "Photon",
+    "PlayFab", "Firebase.", "Facebook.", "InControl", "Cinemachine", "FMOD", "AK.Wwise",
+    "Zenject", "UniRx", "UniTask", "Mirror",
+)
+
 # Capabilities (what the UI offers for a game with that engine)
 NAMING = "naming"
 CATALOG = "catalog"

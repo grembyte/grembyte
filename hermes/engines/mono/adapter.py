@@ -23,7 +23,7 @@ class MonoAdapter(base.EngineAdapter):
     framework_prefixes = (
         "mscorlib", "netstandard", "System", "Microsoft.", "Mono.", "UnityEngine", "Unity.",
         "UnityScript", "Boo.", "I18N", "Accessibility", "Novell.", "SMDiagnostics",
-    )
+    ) + base.MIDDLEWARE_PREFIXES
 
     def is_runtime_file(self, name):
         return _RUNTIME_NAMES.match(name) is not None

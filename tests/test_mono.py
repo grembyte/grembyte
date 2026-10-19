@@ -1806,6 +1806,42 @@ def test_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, translati
 
 
 @requires_target
+def test_trace_dialog_traces_a_preselection(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from hermes.ui.widgets.trace import TraceDialog
+
+    target = _MonoTarget(_build(tmp_path))
+    dialog = TraceDialog(translations, target.pid)
+    try:
+        _wait_for(qt_app, lambda: dialog.filter_panel.candidates is not None)
+        panel = dialog.filter_panel
+        total = len(panel.candidates)
+        assert dialog.choice_label.text() == translations["trace.filters_count"].format(
+            count=total, total=total)
+        # Under Wine the dialog refuses more than its limit (here: one method)
+        dialog.limit = 1
+        dialog.trace_button.click()
+        assert dialog.status_label.text() == translations["trace.wine_limit"].format(
+            count=total, limit=1)
+        assert dialog._state == 0 and not dialog.methods  # idle, nothing hooked
+
+        money = next(row for row in range(panel.list.count())
+                     if panel.list.item(row).text().startswith("Geld"))
+        panel.list.item(money).setCheckState(Qt.CheckState.Checked)
+        assert dialog.choice_label.text().startswith(
+            translations["trace.filters_count"].format(count=1, total=total))
+        dialog.trace_button.click()
+        _wait_for(qt_app, lambda: dialog.methods or "Fehler" in dialog.status_label.text())
+        assert [method.signature for method in dialog.methods] == [
+            "Game.Inventory:AddGold (int&,int)"]
+        assert not panel.isEnabled()  # no changes while tracing
+    finally:
+        dialog.close()
+        target.close()
+
+
+@requires_target
 def test_mono_trace_preparation_can_be_cancelled(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
     from hermes.features.trace import TraceWorker

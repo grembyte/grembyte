@@ -17,13 +17,19 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
+from hermes.core.process import is_wine_process
 from hermes.engines.registry import resolve_engine
 from hermes.features.trace import MORE, NEW, TraceWorker, analyze, recording_calls
 from hermes.ui.widgets.method_monitor import short_name
+from hermes.ui.widgets.trace_filters import TraceFilterPanel
 
 
 # Above this many methods the trace asks first: Mono compiles them all.
 LARGE_TRACE = 5000
+# Under Wine/Proton no more than this: compiling and hooking tens of
+# thousands of methods there froze or crashed the game (Mono's garbage
+# collector waiting in SuspendThread; Frida's Windows gadget).
+WINE_TRACE_LIMIT = 5000
 
 _R_ORDER, _R_METHOD, _R_CALLS, _R_RATE, _R_BASELINE, _R_VERDICT = range(6)
 _ROW_COLUMNS = (
@@ -153,12 +159,15 @@ class TraceDialog(QDialog):
     monitor_requested = pyqtSignal(object)
     hook_requested = pyqtSignal(object)
 
-    def __init__(self, translations, pid, parent=None, engine=None):
+    def __init__(self, translations, pid, parent=None, engine=None, filter_repository=None):
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
         self.translations = translations
         self.pid = pid
         self.engine = resolve_engine(pid, engine)
+        self.limit = WINE_TRACE_LIMIT if is_wine_process(pid) else None
+        self._filter_repository = filter_repository
         self.methods = []
         self.baseline = None
         self.scenario = None
@@ -180,7 +189,9 @@ class TraceDialog(QDialog):
         self._worker.ended.connect(self._on_ended)
         self._worker.command_failed.connect(self._on_command_failed)
         self._worker.worker_failed.connect(self._on_worker_failed)
+        self._worker.candidates_found.connect(self._on_candidates)
         self._worker.start()
+        self._worker.candidates()
         self._set_state(_IDLE)
 
     # --- UI ------------------------------------------------------------------
@@ -203,6 +214,14 @@ class TraceDialog(QDialog):
         self.trace_button.clicked.connect(self._toggle_trace)
         scope.addWidget(self.trace_button)
         layout.addLayout(scope)
+
+        self.filter_panel = TraceFilterPanel(self.translations, self._filter_repository, self)
+        self.filter_panel.selection_changed.connect(self._show_choice)
+        layout.addWidget(self.filter_panel)
+        self.choice_label = QLabel(self.translations["trace.filters_loading"])
+        self.choice_label.setStyleSheet("color: #8b949e;")
+        layout.addWidget(self.choice_label)
+        self.filter_input.textChanged.connect(lambda _text: self._show_choice())
 
         steps = QHBoxLayout()
         self.baseline_button = QPushButton(self.translations["trace.baseline"])
@@ -298,6 +317,7 @@ class TraceDialog(QDialog):
         self._state = state
         tracing = state in (_READY, _RECORDING)
         self.filter_input.setEnabled(state == _IDLE)
+        self.filter_panel.setEnabled(state == _IDLE)
         self.trace_button.setEnabled(state in (_IDLE, _PREPARING, _READY))
         self.trace_button.setText(self.translations[
             "trace.cancel" if state == _PREPARING else "trace.stop" if tracing else "trace.start"])
@@ -316,9 +336,22 @@ class TraceDialog(QDialog):
 
     def _toggle_trace(self):
         if self._state == _IDLE:
+            chosen = self.filter_panel.selection(self._words())
+            if chosen is None:
+                # The method list is still loading: let the agent choose by words.
+                self._set_state(_PREPARING)
+                self.status_label.setText(self.translations["trace.planning"])
+                self._worker.plan(self._words())
+                return
+            if not chosen:
+                self.status_label.setText(self.translations["trace.filters_nothing"])
+                return
+            if not self._may_trace(len(chosen)):
+                return
             self._set_state(_PREPARING)
-            self.status_label.setText(self.translations["trace.planning"])
-            self._worker.plan(self._words())
+            self.status_label.setText(self.translations["trace.preparing"].format(
+                count=len(chosen)))
+            self._worker.trace_selection(chosen, self._words())
         elif self._state == _PREPARING:
             self.trace_button.setEnabled(False)
             self._worker.cancel()
@@ -328,6 +361,31 @@ class TraceDialog(QDialog):
 
     def _title(self):
         return self.translations["trace.title"].format(engine=self.engine.display_name)
+
+    def _may_trace(self, count):
+        """Whether ``count`` methods may be traced: within the limit, and confirmed."""
+        if self.limit is not None and count > self.limit:
+            self.status_label.setText(self.translations["trace.wine_limit"].format(
+                count=count, limit=self.limit))
+            return False
+        if count > LARGE_TRACE and not self._confirm_large(count):
+            self.status_label.setText("")
+            return False
+        return True
+
+    def _on_candidates(self, methods, _skipped):
+        self.filter_panel.set_candidates(methods)
+
+    def _show_choice(self):
+        chosen = self.filter_panel.selection(self._words())
+        if chosen is None:
+            self.choice_label.setText(self.translations["trace.filters_loading"])
+            return
+        text = self.translations["trace.filters_count"].format(
+            count=len(chosen), total=len(self.filter_panel.candidates))
+        if self.limit is not None and len(chosen) > self.limit:
+            text += " " + self.translations["trace.filters_over_limit"].format(limit=self.limit)
+        self.choice_label.setText(text)
 
     def _confirm_large(self, count):
         """Whether to trace ``count`` methods, more than LARGE_TRACE."""
@@ -343,9 +401,8 @@ class TraceDialog(QDialog):
             self.status_label.setText(self.translations["trace.nothing"].format(
                 assemblies=", ".join(plan.get("assemblies", [])) or "—"))
             return
-        if count > LARGE_TRACE and not self._confirm_large(count):
+        if not self._may_trace(count):
             self._set_state(_IDLE)
-            self.status_label.setText("")
             return
         self.status_label.setText(self.translations["trace.preparing"].format(count=count))
         self._worker.trace(self._words())
