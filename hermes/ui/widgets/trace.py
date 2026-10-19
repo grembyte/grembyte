@@ -19,7 +19,14 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core.process import is_wine_process
 from hermes.engines.registry import resolve_engine
-from hermes.features.trace import MORE, NEW, TraceWorker, analyze, recording_calls
+from hermes.features.trace import (
+    MORE,
+    NEW,
+    TraceWorker,
+    analyze,
+    calls_filter,
+    recording_calls,
+)
 from hermes.ui.widgets.method_monitor import short_name
 from hermes.ui.widgets.trace_filters import TraceFilterPanel
 
@@ -83,10 +90,41 @@ class _TableModel(QAbstractTableModel):
 
 
 class TraceRowModel(_TableModel):
-    """The methods the scenario called (TraceRows)."""
+    """The methods the scenario called (TraceRows).
+
+    Sorts by a column when the view asks; column -1 is the order of ``analyze``.
+    """
 
     def __init__(self, translations, parent=None):
         super().__init__(translations, _ROW_COLUMNS, parent)
+        self._unsorted = []
+        self._sort_column = -1
+        self._sort_order = Qt.SortOrder.AscendingOrder
+
+    def set_items(self, methods, items):
+        self._unsorted = list(items)
+        self.methods = methods  # the method names sort by them
+        super().set_items(methods, self._sorted(self._unsorted))
+
+    def sort(self, column, order=Qt.SortOrder.AscendingOrder):
+        self._sort_column = column
+        self._sort_order = order
+        self.set_items(self.methods, self._unsorted)
+
+    def _sorted(self, rows):
+        column = self._sort_column
+        if column < 0 or column >= len(self.columns):
+            return rows
+        keys = {
+            _R_ORDER: lambda row: (row.first is None, row.first or 0),
+            _R_METHOD: lambda row: self.method_name(row.method).lower(),
+            _R_CALLS: lambda row: row.calls,
+            _R_RATE: lambda row: row.rate,
+            _R_BASELINE: lambda row: (row.baseline_rate is not None, row.baseline_rate or 0),
+            _R_VERDICT: lambda row: ({NEW: 2, MORE: 1}.get(row.verdict, 0), row.factor or 0),
+        }
+        return sorted(rows, key=keys[column],
+                      reverse=self._sort_order == Qt.SortOrder.DescendingOrder)
 
     def verdict_text(self, row):
         if row.verdict == NEW:
@@ -146,8 +184,12 @@ class TraceSequenceModel(_TableModel):
         return call.caller
 
 
-def trace_table(model, stretch_column):
-    """A table of trace results: whole rows, one at a time."""
+def trace_table(model, stretch_column, sortable=False):
+    """A table of trace results: whole rows, one at a time.
+
+    ``sortable``: a click on a column header sorts by it; until then the
+    rows keep the model's order.
+    """
     view = QTableView()
     view.setModel(model)
     view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -159,7 +201,51 @@ def trace_table(model, stretch_column):
         header.setSectionResizeMode(
             column, QHeaderView.ResizeMode.Stretch if column == stretch_column
             else QHeaderView.ResizeMode.Interactive)
+    if sortable:
+        header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        view.setSortingEnabled(True)
     return view
+
+
+class RowFilterBar(QWidget):
+    """Narrow the rows of a trace down: by words in the name, by call count."""
+
+    changed = pyqtSignal()
+
+    def __init__(self, translations, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText(translations["trace.rows_name_placeholder"])
+        self.name_input.setToolTip(translations["trace.rows_name_tooltip"])
+        self.name_input.setClearButtonEnabled(True)
+        self.name_input.textChanged.connect(lambda _text: self.changed.emit())
+        layout.addWidget(self.name_input, 3)
+        self.calls_input = QLineEdit()
+        self.calls_input.setPlaceholderText(translations["trace.rows_calls_placeholder"])
+        self.calls_input.setToolTip(translations["trace.rows_calls_tooltip"])
+        self.calls_input.setClearButtonEnabled(True)
+        self.calls_input.textChanged.connect(self._on_calls_changed)
+        layout.addWidget(self.calls_input, 1)
+        self._calls = None
+
+    def _on_calls_changed(self, text):
+        try:
+            self._calls = calls_filter(text)
+            self.calls_input.setStyleSheet("")
+        except ValueError:
+            # Keep the last valid filter while the text is being typed.
+            self.calls_input.setStyleSheet("border: 1px solid #f85149;")
+            return
+        self.changed.emit()
+
+    def accepts(self, row, text):
+        """Whether to show ``row`` (a TraceRow), its function or method described by ``text``."""
+        if self._calls is not None and not self._calls(row.calls):
+            return False
+        text = text.lower()
+        return all(word in text for word in self.name_input.text().lower().split())
 
 
 class TraceDialog(QDialog):
@@ -267,8 +353,11 @@ class TraceDialog(QDialog):
         self.notable_check.toggled.connect(lambda _checked: self._show_rows())
         rows_bar.addWidget(self.notable_check)
         top_layout.addLayout(rows_bar)
+        self.row_filter = RowFilterBar(self.translations, self)
+        self.row_filter.changed.connect(self._show_rows)
+        top_layout.addWidget(self.row_filter)
         self.row_model = TraceRowModel(self.translations, self)
-        self.rows_view = self._table(self.row_model, _R_METHOD)
+        self.rows_view = self._table(self.row_model, _R_METHOD, sortable=True)
         header = self.rows_view.horizontalHeader()
         header.resizeSection(_R_ORDER, 60)
         header.resizeSection(_R_CALLS, 80)
@@ -314,8 +403,8 @@ class TraceDialog(QDialog):
         layout.addWidget(self.status_label)
         self._show_selection()
 
-    def _table(self, model, stretch_column):
-        view = trace_table(model, stretch_column)
+    def _table(self, model, stretch_column, sortable=False):
+        view = trace_table(model, stretch_column, sortable)
         view.doubleClicked.connect(lambda _index: self._request_monitor())
         return view
 
@@ -503,7 +592,9 @@ class TraceDialog(QDialog):
         self._show_rows()
 
     def _show_rows(self):
-        rows = [row for row in self.rows if row.notable or not self.notable_check.isChecked()]
+        notable_only = self.notable_check.isChecked()
+        rows = [row for row in self.rows if (row.notable or not notable_only)
+                and self.row_filter.accepts(row, self.methods[row.method].signature)]
         self.row_model.set_items(self.methods, rows)
         self._selected = None
         self._show_selection()

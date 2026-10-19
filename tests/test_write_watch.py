@@ -95,6 +95,12 @@ def test_dialog_shows_reads_and_writes_and_hooks_only_writes():
     assert dialog.hook_button.isEnabled()
     table.selectRow(1)
     assert not dialog.hook_button.isEnabled()
+    # Reads and writes alike can be monitored: the instruction after the access
+    assert dialog.monitor_button.isEnabled()
+    monitored = []
+    dialog.monitor_requested.connect(monitored.append)
+    dialog.monitor_button.click()
+    assert monitored == [0x402000]
 
 
 def test_dialog_names_jit_code_by_its_csharp_method():

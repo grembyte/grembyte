@@ -60,10 +60,16 @@ from hermes.ui.widgets.catalog import CatalogDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
 from hermes.core import logs, sessions
-from hermes.ui.widgets import method_monitor, native_trace, trace as trace_dialog
+from hermes.ui.widgets import (
+    method_monitor,
+    native_monitor,
+    native_trace,
+    trace as trace_dialog,
+)
 from hermes.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
 from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog
 from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+from hermes.ui.widgets.native_monitor import NativeMonitorDialog
 from hermes.ui.widgets.native_trace import NativeTraceDialog
 from hermes.ui.widgets.trace import TraceDialog
 from hermes.ui.widgets.pointer_scan import PointerScanDialog
@@ -224,6 +230,7 @@ class MainWindow(QMainWindow):
         self._method_monitor = None
         self._trace_dialog = None
         self._native_trace_dialog = None
+        self._native_monitor = None
         self._sessions_dialog = None
         self._log_dialog = None
         # The engine adapter of the attached game, once its runtime is found.
@@ -328,6 +335,10 @@ class MainWindow(QMainWindow):
         self.act_native_trace = view_menu.addAction(
             glyph_icon("◎"), self.translations["menu.native_trace"])
         self.act_native_trace.triggered.connect(self._open_native_trace)
+
+        self.act_native_monitor = view_menu.addAction(
+            glyph_icon("◇"), self.translations["menu.native_monitor"])
+        self.act_native_monitor.triggered.connect(lambda: self._monitor_native_function())
         self._update_catalog_button()
 
     def _set_watch_backend(self, backend):
@@ -1080,6 +1091,8 @@ class MainWindow(QMainWindow):
         # Needs no engine: it follows the machine code.
         self.act_native_trace.setEnabled(self._current_pid is not None)
         self.act_native_trace.setToolTip(self.translations["native_trace.button_tooltip"])
+        self.act_native_monitor.setEnabled(self._current_pid is not None)
+        self.act_native_monitor.setToolTip(self.translations["native_monitor.button_tooltip"])
 
     def _open_catalog(self):
         """Show the catalog of the C# methods of the attached game (see hermes/engines)."""
@@ -1179,11 +1192,39 @@ class MainWindow(QMainWindow):
             trace = NativeTraceDialog(self.translations, self._current_pid, parent=self)
             trace.finished.connect(lambda _result: setattr(self, "_native_trace_dialog", None))
             trace.memory_requested.connect(self._open_memory_viewer)
+            trace.monitor_requested.connect(self._monitor_native_function)
             trace.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._native_trace_dialog = trace
         trace.show()
         trace.raise_()
         trace.activateWindow()
+
+    def _monitor_native_address(self, address):
+        """Monitor the instruction at ``address`` (e.g. a write watch's trap PC)."""
+        monitor = self._monitor_native_function()
+        if monitor is not None:
+            monitor.add_address(address)
+
+    def _monitor_native_function(self, function=None):
+        """Log the calls of a native function (a NativeFunction of the native trace).
+
+        Returns the monitor window, or None without a process.
+        """
+        if self._current_pid is None:
+            return None
+        monitor = self._native_monitor
+        if monitor is None:
+            monitor = NativeMonitorDialog(self.translations, self._current_pid, parent=self)
+            monitor.memory_requested.connect(self._open_memory_viewer)
+            monitor.finished.connect(lambda _result: setattr(self, "_native_monitor", None))
+            monitor.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._native_monitor = monitor
+        monitor.show()
+        if function is not None:
+            monitor.add_function(function)
+        monitor.raise_()
+        monitor.activateWindow()
+        return monitor
 
     def _monitor_method(self, method):
         """Log the calls of a C# method chosen in the catalog."""
@@ -1203,7 +1244,8 @@ class MainWindow(QMainWindow):
 
     def _close_catalog(self):
         """Close the catalog, the traces and the method monitor (process gone or switched)."""
-        for name in ("_catalog", "_trace_dialog", "_native_trace_dialog", "_method_monitor"):
+        for name in ("_catalog", "_trace_dialog", "_native_trace_dialog", "_method_monitor",
+                     "_native_monitor"):
             dialog = getattr(self, name)
             if dialog is not None:
                 dialog.close()
@@ -1455,6 +1497,7 @@ class MainWindow(QMainWindow):
                 address_value, value_type, trap_pc, site, pointer
             )
         )
+        dialog.monitor_requested.connect(self._monitor_native_address)
         dialog.finished.connect(
               lambda: self._on_write_watch_dialog_finished(dialog, worker)
         )
@@ -2055,7 +2098,7 @@ class MainWindow(QMainWindow):
         # so the waits here are bounded and the rest happens in a dialog.
         self._sessions_timer.stop()
         self._close_catalog()
-        for module in (trace_dialog, native_trace, method_monitor):
+        for module in (trace_dialog, native_trace, method_monitor, native_monitor):
             module.wait_for_closing_workers(CLOSING_WORKER_TIMEOUT_MS)
         self._stop_write_monitor()
         self._stop_freeze_worker()

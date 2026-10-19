@@ -597,6 +597,42 @@ def analyze(scenario, baseline=None):
     return rows
 
 
+def calls_filter(text):
+    """A test of call counts for ``text``, or None to keep every count.
+
+    Alternatives are separated by commas: ``3`` exactly, ``3-10`` a range,
+    ``>5``, ``>=5``, ``<5``, ``<=5`` bounds, ``%3`` multiples. A scenario
+    repeated three times shows its functions with 3, 6, 9 … calls: ``%3``.
+    Raises ValueError for text that is none of these.
+    """
+    tests = []
+    for part in text.replace(" ", "").split(","):
+        if not part:
+            continue
+        if part.startswith("%"):
+            divisor = int(part[1:])
+            if divisor <= 0:
+                raise ValueError(part)
+            tests.append(lambda calls, d=divisor: calls % d == 0)
+        elif part.startswith((">=", "<=")):
+            bound = int(part[2:])
+            tests.append((lambda calls, b=bound: calls >= b) if part[0] == ">"
+                         else (lambda calls, b=bound: calls <= b))
+        elif part.startswith((">", "<")):
+            bound = int(part[1:])
+            tests.append((lambda calls, b=bound: calls > b) if part[0] == ">"
+                         else (lambda calls, b=bound: calls < b))
+        elif "-" in part:
+            low, high = (int(value) for value in part.split("-", 1))
+            tests.append(lambda calls, lo=low, hi=high: lo <= calls <= hi)
+        else:
+            exact = int(part)
+            tests.append(lambda calls, e=exact: calls == e)
+    if not tests:
+        return None
+    return lambda calls: any(test(calls) for test in tests)
+
+
 class AgentWorker(QThread):
     """Keep a Frida session with one agent open and run commands on it.
 

@@ -30,6 +30,7 @@ from hermes.ui.widgets.trace import (
     _S_METHOD,
     _S_THREAD,
     _S_TIME,
+    RowFilterBar,
     TraceRowModel,
     TraceSequenceModel,
     trace_table,
@@ -83,6 +84,8 @@ class NativeTraceDialog(QDialog):
 
     # address (int) to show in the memory viewer
     memory_requested = pyqtSignal(object)
+    # NativeFunction whose calls to monitor
+    monitor_requested = pyqtSignal(object)
 
     def __init__(self, translations, pid, parent=None):
         super().__init__(parent)
@@ -184,8 +187,11 @@ class NativeTraceDialog(QDialog):
         self.notable_check.toggled.connect(lambda _checked: self._show_rows())
         rows_bar.addWidget(self.notable_check)
         top_layout.addLayout(rows_bar)
+        self.row_filter = RowFilterBar(t, self)
+        self.row_filter.changed.connect(self._show_rows)
+        top_layout.addWidget(self.row_filter)
         self.row_model = NativeRowModel(t, self)
-        self.rows_view = self._table(self.row_model, _R_METHOD)
+        self.rows_view = self._table(self.row_model, _R_METHOD, sortable=True)
         header = self.rows_view.horizontalHeader()
         header.resizeSection(_R_ORDER, 60)
         header.resizeSection(_R_CALLS, 80)
@@ -216,6 +222,11 @@ class NativeTraceDialog(QDialog):
         self.selection_label = QLabel("")
         self.selection_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         actions.addWidget(self.selection_label, 1)
+        self.monitor_button = QPushButton(t["native_trace.monitor"])
+        self.monitor_button.setObjectName("btn_primary")
+        self.monitor_button.setToolTip(t["native_trace.monitor_tooltip"])
+        self.monitor_button.clicked.connect(self._request_monitor)
+        actions.addWidget(self.monitor_button)
         self.memory_button = QPushButton(t["native_trace.show_memory"])
         self.memory_button.setToolTip(t["native_trace.show_memory_tooltip"])
         self.memory_button.clicked.connect(self._request_memory)
@@ -230,8 +241,8 @@ class NativeTraceDialog(QDialog):
         layout.addWidget(self.status_label)
         self._show_selection()
 
-    def _table(self, model, stretch_column):
-        view = trace_table(model, stretch_column)
+    def _table(self, model, stretch_column, sortable=False):
+        view = trace_table(model, stretch_column, sortable)
         view.doubleClicked.connect(lambda _index: self._request_memory())
         return view
 
@@ -402,7 +413,9 @@ class NativeTraceDialog(QDialog):
         self._show_rows()
 
     def _show_rows(self):
-        rows = [row for row in self.rows if row.notable or not self.notable_check.isChecked()]
+        notable_only = self.notable_check.isChecked()
+        rows = [row for row in self.rows if (row.notable or not notable_only)
+                and self.row_filter.accepts(row, self.functions[row.method].signature)]
         self.row_model.set_items(self.functions, rows)
         self._selected = None
         self._show_selection()
@@ -430,9 +443,15 @@ class NativeTraceDialog(QDialog):
 
     def _show_selection(self):
         function = self.selected_function()
+        self.monitor_button.setEnabled(function is not None)
         self.memory_button.setEnabled(function is not None)
         self.copy_button.setEnabled(function is not None)
         self.selection_label.setText(function.signature if function is not None else "")
+
+    def _request_monitor(self):
+        function = self.selected_function()
+        if function is not None:
+            self.monitor_requested.emit(function)
 
     def _request_memory(self):
         function = self.selected_function()

@@ -65,6 +65,12 @@ Nächste Schritte:
   mit Aufrufstelle (auch genauer als die 25-ms-Reihenfolge)
 - Anschluss an vorhandene Werkzeuge: Disassembler-Ansicht der Funktion, Hook auf die
   Funktion, später Byte-Signatur (Punkt 5)
+- **Erledigt (19.10.2026):** Ergebnisse sortier- und filterbar (Name, Aufrufzahl, `%3`).
+  Nativer Funktions-Monitor (`hermes/features/native_monitor.py`): Interceptor auf eine
+  Funktion aus dem Trace oder per Adresse/Modul+Offset/Symbol; protokolliert Argumente,
+  Ergebnis, Aufrufer und vergleicht den Speicher hinter Zeiger-Argumenten vor/nach dem
+  Aufruf (bei C++-Methoden: welche Felder von `this` gesetzt werden). In Baldur's Gate
+  (nativ, Linux) noch nicht ausprobiert.
 - Threads, die während des Trace entstehen, werden nicht verfolgt
 
 ### 2. „Welche Adressen fasst diese Instruktion an?"

@@ -32,6 +32,8 @@ class WriteWatchDialog(QDialog):
     # trap PC (instruction after the write), module/offset description
     # (a Qt int has 32 bits and would cut off 64-bit addresses)
     hook_requested = pyqtSignal(object, str)
+    # trap PC to monitor in the native function monitor
+    monitor_requested = pyqtSignal(object)
 
     def __init__(self, address, size, translations, parent=None, reads=False):
         # pylint: disable=too-many-arguments
@@ -102,6 +104,11 @@ class WriteWatchDialog(QDialog):
         self.hook_button.setEnabled(False)
         self.hook_button.clicked.connect(self._request_hook)
         buttons.addWidget(self.hook_button)
+        self.monitor_button = QPushButton(self.translations["watch.monitor"])
+        self.monitor_button.setToolTip(self.translations["watch.monitor_tooltip"])
+        self.monitor_button.setEnabled(False)
+        self.monitor_button.clicked.connect(self._request_monitor)
+        buttons.addWidget(self.monitor_button)
         buttons.addStretch()
         self.stop_button = QPushButton(self.translations["watch.stop"])
         self.stop_button.clicked.connect(self._request_stop)
@@ -189,6 +196,14 @@ class WriteWatchDialog(QDialog):
     def _update_hook_button(self):
         # Only writes can be hooked: the hook rewrites the written value.
         self.hook_button.setEnabled(self._selected_writes())
+        self.monitor_button.setEnabled(self.results_table.currentRow() >= 0
+                                       and self.results_table.selectionModel().hasSelection())
+
+    def _request_monitor(self):
+        row = self.results_table.currentRow()
+        pc_item = self.results_table.item(row, _PC) if row >= 0 else None
+        if pc_item is not None:
+            self.monitor_requested.emit(int(pc_item.text(), 16))
 
     def _request_hook(self):
         row = self.results_table.currentRow()

@@ -270,3 +270,64 @@ def test_thread_activity_is_cpu_share_and_wakeups(tmp_path):
         thread(tid, 0)
     activity = thread_activity(7, [7, 8, 9, 10], seconds=2, proc_root=str(tmp_path), sleep=later)
     assert activity == {7: (0.5, True), 8: (0.0, True), 9: (0.0, False)}
+
+
+def test_calls_filter_reads_counts_ranges_bounds_and_multiples():
+    # pylint: disable=import-outside-toplevel
+    import pytest
+
+    from hermes.features.trace import calls_filter
+
+    assert calls_filter("") is None
+    assert calls_filter(" , ") is None
+    assert [calls for calls in range(13) if calls_filter("%3")(calls)] == [0, 3, 6, 9, 12]
+    assert [calls for calls in range(9) if calls_filter("2-4, >=7")(calls)] == [2, 3, 4, 7, 8]
+    assert [calls for calls in range(6) if calls_filter("<2, 5")(calls)] == [0, 1, 5]
+    for text in ("x", "%0", "3-", ">"):
+        with pytest.raises(ValueError):
+            calls_filter(text)
+
+
+def test_rows_sort_by_column_and_filter_by_name_and_calls(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.features.trace import NEW, SAME, TraceRow
+    from hermes.ui.widgets.native_trace import NativeRowModel
+    from hermes.ui.widgets.trace import RowFilterBar
+
+    functions = [NativeFunction(0x401000, "game", 0x1000, "roll_dice"),
+                 NativeFunction(0x402000, "game", 0x2000, "draw_ui"),
+                 NativeFunction(0x7f0000, "", None)]
+    rows = [TraceRow(0, 3, 1.0, None, NEW, 0), TraceRow(1, 600, 200.0, 190.0, SAME, None),
+            TraceRow(2, 7, 2.3, None, NEW, 1)]
+    model = NativeRowModel(translations)
+
+    def labels():
+        return [model.data(model.index(row, 1)) for row in range(model.rowCount())]
+
+    model.set_items(functions, rows)
+    assert labels() == ["roll_dice", "draw_ui", "0x7f0000"]  # as analyze ordered them
+    model.sort(2, Qt.SortOrder.DescendingOrder)
+    assert labels() == ["draw_ui", "0x7f0000", "roll_dice"]
+    model.set_items(functions, rows[:1] + rows[2:])  # the sort stays
+    assert labels() == ["0x7f0000", "roll_dice"]
+    model.sort(1)
+    assert labels() == ["0x7f0000", "roll_dice"]
+
+    bar = RowFilterBar(translations)
+    changes = []
+    bar.changed.connect(lambda: changes.append(True))
+
+    def shown():
+        return [row.method for row in rows if bar.accepts(row, functions[row.method].signature)]
+
+    bar.calls_input.setText("%3")
+    assert shown() == [0, 1]
+    bar.calls_input.setText("%3x")  # invalid: the last valid filter stays
+    assert shown() == [0, 1] and len(changes) == 1
+    bar.calls_input.setText("")
+    bar.name_input.setText("GAME+0x")
+    assert shown() == [0, 1]
+    bar.name_input.setText("roll game")
+    assert shown() == [0]
