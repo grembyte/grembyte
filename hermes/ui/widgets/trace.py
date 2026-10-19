@@ -146,6 +146,22 @@ class TraceSequenceModel(_TableModel):
         return call.caller
 
 
+def trace_table(model, stretch_column):
+    """A table of trace results: whole rows, one at a time."""
+    view = QTableView()
+    view.setModel(model)
+    view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+    view.setWordWrap(False)
+    view.verticalHeader().setVisible(False)
+    header = view.horizontalHeader()
+    for column in range(model.columnCount()):
+        header.setSectionResizeMode(
+            column, QHeaderView.ResizeMode.Stretch if column == stretch_column
+            else QHeaderView.ResizeMode.Interactive)
+    return view
+
+
 class TraceDialog(QDialog):
     """Hook many C# methods, record a baseline and a scenario, compare.
 
@@ -299,17 +315,7 @@ class TraceDialog(QDialog):
         self._show_selection()
 
     def _table(self, model, stretch_column):
-        view = QTableView()
-        view.setModel(model)
-        view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        view.setWordWrap(False)
-        view.verticalHeader().setVisible(False)
-        header = view.horizontalHeader()
-        for column in range(model.columnCount()):
-            header.setSectionResizeMode(
-                column, QHeaderView.ResizeMode.Stretch if column == stretch_column
-                else QHeaderView.ResizeMode.Interactive)
+        view = trace_table(model, stretch_column)
         view.doubleClicked.connect(lambda _index: self._request_monitor())
         return view
 

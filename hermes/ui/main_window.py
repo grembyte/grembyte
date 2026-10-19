@@ -60,10 +60,11 @@ from hermes.ui.widgets.catalog import CatalogDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
 from hermes.core import logs, sessions
-from hermes.ui.widgets import method_monitor, trace as trace_dialog
+from hermes.ui.widgets import method_monitor, native_trace, trace as trace_dialog
 from hermes.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
 from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog
 from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+from hermes.ui.widgets.native_trace import NativeTraceDialog
 from hermes.ui.widgets.trace import TraceDialog
 from hermes.ui.widgets.pointer_scan import PointerScanDialog
 from hermes.ui.widgets.templates import TemplateDialog
@@ -222,6 +223,7 @@ class MainWindow(QMainWindow):
         self._catalog = None
         self._method_monitor = None
         self._trace_dialog = None
+        self._native_trace_dialog = None
         self._sessions_dialog = None
         self._log_dialog = None
         # The engine adapter of the attached game, once its runtime is found.
@@ -322,6 +324,10 @@ class MainWindow(QMainWindow):
         self.act_trace = view_menu.addAction(
             glyph_icon("◉"), self.translations["menu.trace"])
         self.act_trace.triggered.connect(self._open_trace)
+
+        self.act_native_trace = view_menu.addAction(
+            glyph_icon("◎"), self.translations["menu.native_trace"])
+        self.act_native_trace.triggered.connect(self._open_native_trace)
         self._update_catalog_button()
 
     def _set_watch_backend(self, backend):
@@ -1071,6 +1077,9 @@ class MainWindow(QMainWindow):
                        and self._engine.supports(capability))
             action.setEnabled(enabled)
             action.setToolTip(self.translations[tooltip] if enabled else unsupported)
+        # Needs no engine: it follows the machine code.
+        self.act_native_trace.setEnabled(self._current_pid is not None)
+        self.act_native_trace.setToolTip(self.translations["native_trace.button_tooltip"])
 
     def _open_catalog(self):
         """Show the catalog of the C# methods of the attached game (see hermes/engines)."""
@@ -1161,6 +1170,21 @@ class MainWindow(QMainWindow):
         trace.raise_()
         trace.activateWindow()
 
+    def _open_native_trace(self):
+        """Show the trace of the native functions a scenario in the game runs."""
+        if self._current_pid is None:
+            return
+        trace = self._native_trace_dialog
+        if trace is None:
+            trace = NativeTraceDialog(self.translations, self._current_pid, parent=self)
+            trace.finished.connect(lambda _result: setattr(self, "_native_trace_dialog", None))
+            trace.memory_requested.connect(self._open_memory_viewer)
+            trace.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._native_trace_dialog = trace
+        trace.show()
+        trace.raise_()
+        trace.activateWindow()
+
     def _monitor_method(self, method):
         """Log the calls of a C# method chosen in the catalog."""
         if self._current_pid is None:
@@ -1178,8 +1202,8 @@ class MainWindow(QMainWindow):
         monitor.activateWindow()
 
     def _close_catalog(self):
-        """Close the catalog, the trace and the method monitor (process gone or switched)."""
-        for name in ("_catalog", "_trace_dialog", "_method_monitor"):
+        """Close the catalog, the traces and the method monitor (process gone or switched)."""
+        for name in ("_catalog", "_trace_dialog", "_native_trace_dialog", "_method_monitor"):
             dialog = getattr(self, name)
             if dialog is not None:
                 dialog.close()
@@ -2031,7 +2055,7 @@ class MainWindow(QMainWindow):
         # so the waits here are bounded and the rest happens in a dialog.
         self._sessions_timer.stop()
         self._close_catalog()
-        for module in (trace_dialog, method_monitor):
+        for module in (trace_dialog, native_trace, method_monitor):
             module.wait_for_closing_workers(CLOSING_WORKER_TIMEOUT_MS)
         self._stop_write_monitor()
         self._stop_freeze_worker()

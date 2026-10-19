@@ -24,6 +24,7 @@ from hermes.core import logs
 CATALOG = "catalog"
 MONITOR = "monitor"
 TRACE = "trace"
+NATIVE_TRACE = "native_trace"
 METHOD_HOOKS = "method_hooks"
 HOOKS = "hooks"
 WRITE_WATCH = "write_watch"

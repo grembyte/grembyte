@@ -401,6 +401,19 @@ def test_pointer_scan_dialog_scans_filters_and_picks(binary, qt_app, sessions):
         second.close()
 
 
+def _delete_window(window):
+    """Close and delete a MainWindow now.
+
+    Left to the garbage collector, its children would run their Python
+    ``destroyed`` handlers in the middle of a collection, which can crash the
+    interpreter in a later test.
+    """
+    from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module,import-outside-toplevel
+
+    window.close()
+    sip.delete(window)
+
+
 @requires_target
 def test_address_list_survives_restart(binary, qt_app, sessions, monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access
@@ -472,7 +485,7 @@ def test_address_list_survives_restart(binary, qt_app, sessions, monkeypatch):
         assert [entry.label for entry in saved] == ["Gold"] and saved[0].pointer is None
     finally:
         second.close()
-        window.close()
+        _delete_window(window)
 
 
 
@@ -625,7 +638,7 @@ def test_pointer_dialog_stays_open_while_scanning(binary, qt_app, sessions, monk
         assert entry_id not in window._pointer_dialogs
     finally:
         target.close()
-        window.close()
+        _delete_window(window)
 
 
 @requires_target
@@ -752,7 +765,7 @@ def test_pointer_dialog_survives_a_restart_of_the_program(binary, qt_app, sessio
         first.close()
         if second is not None:
             second.close()
-        window.close()
+        _delete_window(window)
 
 
 def test_worker_finishing_after_its_dialog_was_deleted_is_harmless(qt_app, monkeypatch):

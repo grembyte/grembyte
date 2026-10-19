@@ -597,7 +597,172 @@ def analyze(scenario, baseline=None):
     return rows
 
 
-class TraceWorker(QThread):
+class AgentWorker(QThread):
+    """Keep a Frida session with one agent open and run commands on it.
+
+    The base of the traces: the commands queue up from the GUI thread and run
+    one after another as the agent's RPCs on the worker's thread (see
+    ``_execute``); the agent's messages turn into signals (see ``_on_payload``).
+    Subclasses decorate ``run`` with ``sessions.tracked`` and call
+    ``_run_agent``.
+    """
+
+    # step, done, total, item at hand (e.g. the method Mono compiles)
+    progress = pyqtSignal(str, int, int, str)
+    # recording of the phase ("baseline", "scenario") has begun
+    began = pyqtSignal(str)
+    # {phase, calls, methods, events} while recording
+    live = pyqtSignal(dict)
+    # a ``finish`` answer: {phase, duration, counts, events, dropped}
+    recorded = pyqtSignal(dict)
+    stopped = pyqtSignal()
+    # a command failed: what was asked, message
+    command_failed = pyqtSignal(str, str)
+    worker_failed = pyqtSignal(str)
+
+    # What failed to load, for the error message
+    agent_name = "trace"
+
+    def __init__(self, pid, parent=None):
+        super().__init__(parent)
+        self.pid = pid
+        self._commands = queue.Queue()
+        self._ready = threading.Event()
+        self._agent_error = None
+        self._detach_reason = None
+        self._script = None
+        self._session = None
+
+    def agent_source(self):
+        raise NotImplementedError
+
+    def begin(self, phase):
+        """Record ``"baseline"`` or ``"scenario"`` until ``finish``."""
+        self._commands.put(("begin", phase))
+
+    def finish(self):
+        self._commands.put(("finish", None))
+
+    def stop(self):
+        """Remove the trace; the session stays open for another one."""
+        self._commands.put(("stop", None))
+
+    def cancel(self):
+        """Stop preparing a trace as soon as possible.
+
+        A message rather than a command: the worker is busy with the start
+        until then.
+        """
+        script = self._script
+        if script is not None:
+            try:
+                script.post({"type": "cancel"})
+            except CLEANUP_ERRORS as error:
+                logs.cleanup_failed(error)
+
+    def requestInterruption(self):  # pylint: disable=invalid-name
+        self.cancel()
+        super().requestInterruption()
+
+    def _run_agent(self):
+        session = None
+        try:
+            session = attach_session(self.pid)
+            self._session = session
+            sessions.SESSIONS.set_frida_session(self, session)
+            session.on("detached", self._on_detached)
+            self._load_script(session)
+            while (not self.isInterruptionRequested() and self._detach_reason is None
+                   and self._agent_error is None):
+                try:
+                    action, argument = self._commands.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+                if self._script is None:
+                    break  # a fresh agent failed to load
+                self._execute(self._script.exports_sync, action, argument)
+            if self._agent_error and not self.isInterruptionRequested():
+                raise RuntimeError(self._agent_error)
+            if self._detach_reason and not self.isInterruptionRequested():
+                raise RuntimeError(f"Target process detached: {self._detach_reason}")
+        except FRIDA_ERRORS + (OSError, RuntimeError) as error:
+            if not self.isInterruptionRequested():
+                self.worker_failed.emit(str(error))
+        finally:
+            self._unload_script()
+            if session is not None:
+                try:
+                    session.detach()
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
+
+    def _load_script(self, session):
+        self._ready.clear()
+        script = session.create_script(self.agent_source())
+        script.on("message", self._on_message)
+        script.load()
+        self._script = script
+        if not self._ready.wait(5):
+            raise RuntimeError(f"Timed out while loading the {self.agent_name}")
+
+    def _unload_script(self):
+        script = self._script
+        self._script = None
+        if script is None:
+            return
+        try:
+            script.exports_sync.dispose()
+        except CLEANUP_ERRORS as error:
+            logs.cleanup_failed(error)
+        try:
+            script.unload()
+        except CLEANUP_ERRORS as error:
+            logs.cleanup_failed(error)
+
+    def _execute(self, api, action, argument):
+        try:
+            self._run_command(api, action, argument)
+        except frida.RPCException as error:
+            # Without the agent's stack trace
+            self.command_failed.emit(action, str(error).split("\n", 1)[0])
+
+    def _run_command(self, api, action, argument):
+        if action == "begin":
+            api.begin(argument)
+            self.began.emit(argument)
+        elif action == "finish":
+            self.recorded.emit(api.finish())
+        elif action == "stop":
+            api.stop()
+            self.stopped.emit()
+
+    def _on_message(self, message, _data):
+        if message.get("type") == "error":
+            self._agent_error = message.get("stack", f"{self.agent_name} agent failed")
+            self._ready.set()
+            return
+        payload = message.get("payload", {})
+        kind = payload.get("kind")
+        if kind == "ready":
+            self._ready.set()
+        elif kind == "progress":
+            self.progress.emit(payload.get("step", ""), payload.get("done", 0),
+                               payload.get("total", 0), payload.get("current", ""))
+        elif kind == "live":
+            self.live.emit(payload)
+        elif kind == "agent-error":
+            logs.log.error("%s agent: %s", self.agent_name, payload.get("error", ""))
+        else:
+            self._on_payload(kind, payload)
+
+    def _on_payload(self, kind, payload):
+        """A message of the agent the base does not know."""
+
+    def _on_detached(self, reason, _crash):
+        self._detach_reason = reason
+
+
+class TraceWorker(AgentWorker):
     """Keep a Frida session open for a trace; see the module documentation.
 
     The public methods are safe to call from the GUI thread; results come
@@ -611,30 +776,17 @@ class TraceWorker(QThread):
     # CatalogMethods in index order, {skipped: {abstract, native, generic, com},
     # notCompiled, failed}
     started = pyqtSignal(list, dict)
-    # step ("check", "compile", "attach"), done, total, method at hand
-    progress = pyqtSignal(str, int, int, str)
-    # recording of the phase ("baseline", "scenario") has begun
-    began = pyqtSignal(str)
-    # {phase, calls, methods, events} while recording
-    live = pyqtSignal(dict)
-    # a ``finish`` answer: {phase, duration, counts, events, dropped}
-    recorded = pyqtSignal(dict)
-    stopped = pyqtSignal()
     # the game freed traced code (e.g. while exiting); the trace was removed
     ended = pyqtSignal()
-    # a command failed: what was asked, message
-    command_failed = pyqtSignal(str, str)
-    worker_failed = pyqtSignal(str)
+
+    agent_name = "Mono trace"
 
     def __init__(self, pid, parent=None, engine=None):
-        super().__init__(parent)
-        self.pid = pid
+        super().__init__(pid, parent)
         self.engine = resolve_engine(pid, engine)
-        self._commands = queue.Queue()
-        self._ready = threading.Event()
-        self._agent_error = None
-        self._detach_reason = None
-        self._script = None
+
+    def agent_source(self):
+        return build_agent_source()
 
     def plan(self, words):
         """Count the methods a trace of ``words`` would hook; expect planned."""
@@ -657,78 +809,9 @@ class TraceWorker(QThread):
         self._commands.put(("start", {"methods": [[m.assembly, m.token] for m in methods],
                                       "words": list(words)}))
 
-    def begin(self, phase):
-        """Record ``"baseline"`` or ``"scenario"`` until ``finish``."""
-        self._commands.put(("begin", phase))
-
-    def finish(self):
-        self._commands.put(("finish", None))
-
-    def stop(self):
-        """Remove the interceptors; the session stays open for another trace."""
-        self._commands.put(("stop", None))
-
-    def cancel(self):
-        """Stop preparing a trace (compiling, hooking) as soon as possible.
-
-        A message rather than a command: the worker is busy with ``trace``
-        until then.
-        """
-        script = self._script
-        if script is not None:
-            try:
-                script.post({"type": "cancel"})
-            except CLEANUP_ERRORS as error:
-                logs.cleanup_failed(error)
-
-    def requestInterruption(self):  # pylint: disable=invalid-name
-        self.cancel()
-        super().requestInterruption()
-
     @sessions.tracked(sessions.TRACE)
     def run(self):
-        session = None
-        script = None
-        try:
-            session = attach_session(self.pid)
-            sessions.SESSIONS.set_frida_session(self, session)
-            session.on("detached", self._on_detached)
-            script = session.create_script(build_agent_source())
-            script.on("message", self._on_message)
-            script.load()
-            self._script = script
-            if not self._ready.wait(5):
-                raise RuntimeError("Timed out while loading the Mono trace")
-            while (not self.isInterruptionRequested() and self._detach_reason is None
-                   and self._agent_error is None):
-                try:
-                    action, argument = self._commands.get(timeout=0.05)
-                except queue.Empty:
-                    continue
-                self._execute(script.exports_sync, action, argument)
-            if self._agent_error and not self.isInterruptionRequested():
-                raise RuntimeError(self._agent_error)
-            if self._detach_reason and not self.isInterruptionRequested():
-                raise RuntimeError(f"Target process detached: {self._detach_reason}")
-        except FRIDA_ERRORS + (OSError, RuntimeError) as error:
-            if not self.isInterruptionRequested():
-                self.worker_failed.emit(str(error))
-        finally:
-            self._script = None
-            if script is not None:
-                try:
-                    script.exports_sync.dispose()
-                except CLEANUP_ERRORS as error:
-                    logs.cleanup_failed(error)
-                try:
-                    script.unload()
-                except CLEANUP_ERRORS as error:
-                    logs.cleanup_failed(error)
-            if session is not None:
-                try:
-                    session.detach()
-                except CLEANUP_ERRORS as error:
-                    logs.cleanup_failed(error)
+        self._run_agent()
 
     def _spec(self, api, argument):
         """The agent's spec: words, or {"methods": [[assembly, token], ...]}."""
@@ -741,48 +824,20 @@ class TraceWorker(QThread):
                  if not self.engine.is_framework_assembly(a["name"])]
         return {"assemblies": names, "words": [word.lower() for word in argument]}
 
-    def _execute(self, api, action, argument):
-        try:
-            if action == "plan":
-                spec = self._spec(api, argument)
-                self.planned.emit({**api.plan(spec), "assemblies": spec["assemblies"]})
-            elif action == "candidates":
-                answer = api.candidates(self._spec(api, argument))
-                self.candidates_found.emit(trace_methods(answer["methods"], self.engine.id),
-                                           answer["skipped"])
-            elif action == "start":
-                answer = api.start(self._spec(api, argument))
-                self.started.emit(trace_methods(answer.pop("methods"), self.engine.id), answer)
-            elif action == "begin":
-                api.begin(argument)
-                self.began.emit(argument)
-            elif action == "finish":
-                self.recorded.emit(api.finish())
-            elif action == "stop":
-                api.stop()
-                self.stopped.emit()
-        except frida.RPCException as error:
-            # Without the agent's stack trace
-            self.command_failed.emit(action, str(error).split("\n", 1)[0])
+    def _run_command(self, api, action, argument):
+        if action == "plan":
+            spec = self._spec(api, argument)
+            self.planned.emit({**api.plan(spec), "assemblies": spec["assemblies"]})
+        elif action == "candidates":
+            answer = api.candidates(self._spec(api, argument))
+            self.candidates_found.emit(trace_methods(answer["methods"], self.engine.id),
+                                       answer["skipped"])
+        elif action == "start":
+            answer = api.start(self._spec(api, argument))
+            self.started.emit(trace_methods(answer.pop("methods"), self.engine.id), answer)
+        else:
+            super()._run_command(api, action, argument)
 
-    def _on_message(self, message, _data):
-        if message.get("type") == "error":
-            self._agent_error = message.get("stack", "Mono trace agent failed")
-            self._ready.set()
-            return
-        payload = message.get("payload", {})
-        kind = payload.get("kind")
-        if kind == "ready":
-            self._ready.set()
-        elif kind == "progress":
-            self.progress.emit(payload.get("step", ""), payload.get("done", 0),
-                               payload.get("total", 0), payload.get("current", ""))
-        elif kind == "live":
-            self.live.emit(payload)
-        elif kind == "trace-ended":
+    def _on_payload(self, kind, payload):
+        if kind == "trace-ended":
             self.ended.emit()
-        elif kind == "agent-error":
-            logs.log.error("trace agent: %s", payload.get("error", ""))
-
-    def _on_detached(self, reason, _crash):
-        self._detach_reason = reason
