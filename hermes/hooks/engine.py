@@ -23,8 +23,24 @@ the caller: a fixed-address hook learns the first ``caller_depth`` return
 addresses on the stack of every write that hits its address. After a restart
 the address-less hook only runs for writes with one of those learned callers.
 Return addresses are found by scanning the stack for values that follow a
-call instruction, so the same caller signature can show up for other
-addresses; the agent reports that as ambiguous.
+call instruction. Without frame pointers the stack also holds stale ones,
+left by calls that returned long ago (e.g. into libc or the graphics
+driver), in the local variables of the functions running now. A candidate
+therefore only counts
+
+- if its call leads to the function it returns from: a direct call's target
+  (or where a PLT stub or thunk jumps) must lie in the same module (or both
+  in generated code), at most ``MAX_FUNCTION_SIZE`` before the address in
+  the function, and not before its start where a symbol tells it. An
+  indirect call (``call rax``, virtual methods) cannot be followed; it counts
+  within a module, and into generated code (JIT) from anywhere;
+- and if it lies above the function's frame: where the function's start is
+  known (symbol or direct call), its prologue (``push``, ``sub rsp``) tells
+  how much stack it took below its return address at least.
+
+Learned callers that fail the first check (learned before it existed) are
+dropped when the hook is installed. The same caller signature can still
+show up for other addresses; the agent reports that as ambiguous.
 
 A hook with a pointer chain (``module + base_offset``, then dereference and
 add each offset) resolves it on every write and only applies to writes of the
@@ -157,7 +173,17 @@ const CALLER_SCAN_SLOTS = 256;
 const MAX_CALLERS = 64;
 const CALL_SIZES = [5, 2, 3, 6, 7, 4];
 const MAX_DEBUG_EVENTS = 200;
-const returnAddressCache = new Map();
+// Largest distance from a function's start to code in it (for code without symbols).
+const MAX_FUNCTION_SIZE = 0x40000;
+// Jumps followed from a call's target: PLT stub, thunk, a patch of another tool.
+const THUNK_HOPS = 3;
+const WINDOWS = Process.platform === 'windows';
+const callCache = new Map();
+const startCache = new Map();
+const verifiedCache = new Map();
+const frameCache = new Map();
+// Instructions of a prologue looked at for its frame size
+const PROLOGUE_INSTRUCTIONS = 24;
 const debugEvents = [];
 const debugDropped = new Map();
 const hooks = new Map();
@@ -300,33 +326,160 @@ function describeFrame(address) {
   return module ? [module.name, parseInt(address.sub(module.base).toString(), 16)] : null;
 }
 
-function isReturnAddress(address) {
+function remember(cache, key, value) {
+  if (cache.size >= 4096)
+    cache.clear();
+  cache.set(key, value);
+  return value;
+}
+
+function callBefore(address) {
+  // The call a return address follows: { target } (null for an indirect call), or null.
   const key = address.toString();
-  let result = returnAddressCache.get(key);
-  if (result !== undefined)
-    return result;
-  result = false;
+  const known = callCache.get(key);
+  if (known !== undefined)
+    return known;
+  let result = null;
   const range = Process.findRangeByAddress(address);
   if (range !== null && range.protection.includes('x')) {
     for (const size of CALL_SIZES) {
       try {
         const ins = Instruction.parse(address.sub(size));
         if (ins.mnemonic === 'call' && ins.next.equals(address)) {
-          result = true;
+          const operand = ins.operands[0];
+          result = { target: operand.type === 'imm' ? ptr(operand.value.toString()) : null };
           break;
         }
       } catch (_error) {
       }
     }
   }
-  if (returnAddressCache.size >= 4096)
-    returnAddressCache.clear();
-  returnAddressCache.set(key, result);
-  return result;
+  return remember(callCache, key, result);
 }
 
-function callerSignature(rsp, depth) {
+function jumpTargets(target) {
+  // The target and where jumps from it lead: a PLT stub, a thunk, a patch.
+  const targets = [target];
+  let at = target;
+  for (let hop = 0; hop < THUNK_HOPS; hop++) {
+    try {
+      let ins = Instruction.parse(at);
+      if (ins.mnemonic === 'endbr64')
+        ins = Instruction.parse(ins.next);
+      if (!ins.mnemonic.endsWith('jmp'))
+        break;
+      const operand = ins.operands[0];
+      if (operand.type === 'imm')
+        at = ptr(operand.value.toString());
+      else if (operand.type === 'mem' && operand.value.base === 'rip' && !operand.value.index)
+        at = ins.next.add(operand.value.disp).readPointer();
+      else
+        break;
+    } catch (_error) {
+      break;
+    }
+    targets.push(at);
+  }
+  return targets;
+}
+
+function functionStart(address) {
+  // Where the function holding ``address`` starts, by its symbol, or null.
+  // Frida names an address inside a function "name+0x…", one without a symbol "0x…".
+  if (WINDOWS)
+    return null;  // dbghelp under Wine: unreliable
+  const key = address.toString();
+  const known = startCache.get(key);
+  if (known !== undefined)
+    return known;
+  let start = null;
+  try {
+    const name = DebugSymbol.fromAddress(address).name;
+    if (name !== null && !name.startsWith('0x')) {
+      const inside = /\+0x([0-9a-f]+)$/.exec(name);
+      start = inside === null ? address : address.sub(parseInt(inside[1], 16));
+    }
+  } catch (_error) {
+  }
+  return remember(startCache, key, start);
+}
+
+function sameRegion(a, b) {
+  // Both in the same module, or both in generated code (JIT).
+  const module = Process.findModuleByAddress(a);
+  if (module === null)
+    return Process.findModuleByAddress(b) === null;
+  return b.compare(module.base) >= 0 && b.compare(module.base.add(module.size)) < 0;
+}
+
+function leadsTo(target, address) {
+  // Whether a call of ``target`` can have run the code at ``address``.
+  if (!sameRegion(address, target) || target.compare(address) > 0
+      || address.sub(target).compare(ptr(MAX_FUNCTION_SIZE)) > 0)
+    return false;
+  const start = functionStart(address);
+  return start === null || target.compare(start) >= 0;
+}
+
+function calledStart(returnAddress, address) {
+  // The function a call before ``returnAddress`` ran to reach ``address``:
+  // its start for a direct call, true for an indirect one, null if it did not.
+  const call = callBefore(returnAddress);
+  if (call === null)
+    return null;  // most stack slots: no return address at all
+  const key = `${returnAddress}>${address}`;
+  const known = verifiedCache.get(key);
+  if (known !== undefined)
+    return known;
+  let result = null;
+  if (call.target === null) {
+    if (sameRegion(returnAddress, address) || Process.findModuleByAddress(address) === null)
+      result = true;
+  } else {
+    result = jumpTargets(call.target).find(target => leadsTo(target, address)) || null;
+  }
+  return remember(verifiedCache, key, result);
+}
+
+function frameSize(start, stop) {
+  // Stack a function's prologue takes below its return address before ``stop``,
+  // at least; null if it realigns the stack.
+  const key = `${start}>${stop}`;
+  const known = frameCache.get(key);
+  if (known !== undefined)
+    return known;
+  let size = 0;
+  let at = start;
+  try {
+    for (let i = 0; i < PROLOGUE_INSTRUCTIONS && at.compare(stop) < 0; i++) {
+      const ins = Instruction.parse(at);
+      const [first, second] = ins.operands;
+      const toRsp = first !== undefined && first.type === 'reg' && first.value === 'rsp';
+      if (ins.mnemonic === 'push') {
+        size += Process.pointerSize;
+      } else if (ins.mnemonic === 'sub' && toRsp && second.type === 'imm') {
+        size += Number(second.value.toString());
+        break;  // the frame is complete
+      } else if (ins.mnemonic === 'and' && toRsp) {
+        size = null;  // realigned: the distance is not fixed
+        break;
+      } else if (ins.mnemonic !== 'endbr64'
+                 && !(ins.mnemonic === 'mov' && first.type === 'reg' && second.type === 'reg')) {
+        break;  // the body begins
+      }
+      at = ins.next;
+    }
+  } catch (_error) {
+  }
+  return remember(frameCache, key, size);
+}
+
+function callerSignature(rsp, depth, pc) {
+  // The return addresses of the ``depth`` calls that led to ``pc``, innermost first.
   const frames = [];
+  let inside = pc;
+  let frameRsp = rsp;
+  let symbolStart = functionStart(inside);
   let cursor = rsp;
   for (let slot = 0; slot < CALLER_SCAN_SLOTS && frames.length < depth; slot++) {
     let value;
@@ -335,15 +488,38 @@ function callerSignature(rsp, depth) {
     } catch (_error) {
       break;
     }
-    if (isReturnAddress(value))
-      frames.push(value.toString());
+    const start = calledStart(value, inside);
+    if (start !== null) {
+      const known = symbolStart !== null ? symbolStart : start === true ? null : start;
+      const below = known === null ? null : frameSize(known, inside);
+      if (below === null || cursor.sub(frameRsp).compare(ptr(below)) >= 0) {
+        frames.push(value.toString());
+        inside = value;
+        frameRsp = cursor.add(Process.pointerSize);  // the caller's after the return
+        symbolStart = functionStart(inside);
+      }
+    }
     cursor = cursor.add(Process.pointerSize);
   }
   return frames.length === depth ? frames.join(',') : null;
 }
 
-function resolveCallers(callers) {
+function plausibleCallers(addresses, pc) {
+  // Whether learned frames form a chain of calls that leads to ``pc``.
+  let inside = pc;
+  for (const address of addresses) {
+    const frame = ptr(address);
+    if (calledStart(frame, inside) === null)
+      return false;
+    inside = frame;
+  }
+  return true;
+}
+
+function resolveCallers(callers, pc) {
+  // Learned callers by key; those that fail the check are dropped (see the top).
   const keys = new Map();
+  let dropped = 0;
   for (const frames of callers || []) {
     const addresses = [];
     for (const [name, offset] of frames) {
@@ -352,10 +528,14 @@ function resolveCallers(callers) {
         break;
       addresses.push(module.base.add(offset).toString());
     }
-    if (addresses.length === frames.length)
+    if (addresses.length !== frames.length)
+      continue;
+    if (plausibleCallers(addresses, pc))
       keys.set(addresses.join(','), frames);
+    else
+      dropped++;
   }
-  return keys;
+  return { keys, dropped };
 }
 
 function reportCallers(hook) {
@@ -732,7 +912,7 @@ function pendingWrite(site, block) {
     },
     signature(depth) {
       if (!signatures.has(depth))
-        signatures.set(depth, callerSignature(registers().rsp, depth));
+        signatures.set(depth, callerSignature(registers().rsp, depth, site.writeIns.address));
       return signatures.get(depth);
     }
   };
@@ -974,6 +1154,7 @@ function addHook(spec) {
   }
 
   const site = installSite(writeIns, writeOp);
+  const learned = resolveCallers(spec.callers, writeIns.address);
   const hook = {
     id: spec.id,
     site,
@@ -989,7 +1170,7 @@ function addHook(spec) {
       base: null
     },
     callerDepth: spec.callerDepth,
-    callers: resolveCallers(spec.callers),
+    callers: learned.keys,
     foreignCallers: new Set(),
     ambiguousReported: false,
     transform,
@@ -1001,6 +1182,10 @@ function addHook(spec) {
   };
   site.hooks.set(spec.id, hook);
   hooks.set(spec.id, hook);
+  if (learned.dropped > 0) {
+    reportCallers(hook);  // saved without them
+    send({ kind: 'callers-dropped', hookId: spec.id, count: learned.dropped });
+  }
 
   return {
     id: spec.id,
@@ -1518,6 +1703,8 @@ class HookWorker(QThread):
     # hook id, learned caller signatures (frames are [module, offset] or None)
     callers_learned = pyqtSignal(int, list)
     callers_ambiguous = pyqtSignal(int)
+    # hook id, number of learned callers dropped as stale return addresses
+    callers_dropped = pyqtSignal(int, int)
     # hook ids sharing a write site in JIT code, its C# method (Mono games)
     # and what finds it again after a restart (HookSpec.managed)
     site_method = pyqtSignal(list, str, object)
@@ -1708,6 +1895,8 @@ class HookWorker(QThread):
             self.managed_failed.emit(payload.get("hookId", 0), payload.get("error", ""))
         elif kind == "callers-ambiguous":
             self.callers_ambiguous.emit(payload.get("hookId", 0))
+        elif kind == "callers-dropped":
+            self.callers_dropped.emit(payload.get("hookId", 0), payload.get("count", 0))
         elif kind == "transform-error":
             self.transform_error.emit(
                 payload.get("hookId", 0), payload.get("error", "")

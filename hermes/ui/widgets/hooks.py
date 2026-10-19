@@ -906,6 +906,9 @@ class HookPanel(QGroupBox):
             tooltip = self.translations["hooks.callers_tooltip"].format(
                 callers=describe_callers(spec.callers)
             )
+        elif spec.address is None:
+            # Restored without callers: it has no address to learn them by.
+            tooltip = self.translations["hooks.callers_none_dynamic"]
         else:
             tooltip = self.translations["hooks.callers_none"]
         self._set_cell(hook_id, 1, self._address_text(spec), tooltip=tooltip)
@@ -1035,6 +1038,9 @@ class HookPanel(QGroupBox):
         )
         worker.callers_ambiguous.connect(
             lambda hook_id: self._on_callers_ambiguous(worker, hook_id)
+        )
+        worker.callers_dropped.connect(
+            lambda hook_id, count: self._on_callers_dropped(worker, hook_id, count)
         )
         worker.site_method.connect(
             lambda hook_ids, method, managed:
@@ -1280,6 +1286,17 @@ class HookPanel(QGroupBox):
             self.translations["hooks.callers_ambiguous"].format(
                 label=state["spec"].label or hook_id
             )
+        )
+
+    def _on_callers_dropped(self, worker, hook_id, count):
+        if worker is not self._worker:
+            return
+        state = self._hooks.get(hook_id)
+        if state is None:
+            return
+        key = "hooks.callers_dropped" if state["spec"].callers else "hooks.callers_dropped_all"
+        self.status_label.setText(
+            self.translations[key].format(label=state["spec"].label or hook_id, count=count)
         )
 
     def _on_transform_error(self, worker, hook_id, message):
