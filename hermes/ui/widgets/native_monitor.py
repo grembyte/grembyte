@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
-from hermes.core.process import is_wine_process
+from hermes.platform import is_wine_process
 from hermes.features.native_monitor import (
     AUTO,
     DEFAULT_ARGUMENTS,

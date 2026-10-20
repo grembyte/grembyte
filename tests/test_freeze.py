@@ -21,14 +21,11 @@ class FakeMemory:
         self.position = 0
         self.pointers = pointers or {}
 
-    def seek(self, address):
+    def write(self, address, data):
         if address < self.base_address:
             raise OSError("bad address")
-        self.position = address - self.base_address
-
-    def write(self, data):
-        self.contents[self.position:self.position + len(data)] = data
-        return len(data)
+        offset = address - self.base_address
+        self.contents[offset:offset + len(data)] = data
 
     def read_pointer(self, address):
         return self.pointers.get(address)
@@ -48,7 +45,7 @@ def test_write_once_writes_fixed_and_pointer_entries(monkeypatch):
         value_type("uint8").pack(200), pointer=PointerChain("game", 0x10, (0x8,)),
     ))
 
-    worker.write_once(memory, memory)
+    worker.write_once(memory)
 
     assert memory.read(0x1004, 2) == value_type("int16").pack(-2)
     assert memory.read(0x1028, 1) == bytes([200])
@@ -63,7 +60,7 @@ def test_write_once_skips_unresolved_pointers_and_removed_entries(monkeypatch):
     worker.set_entry(2, FrozenValue(b"\x02", address=0x1000))
     worker.remove_entry(2)
 
-    worker.write_once(memory, memory)
+    worker.write_once(memory)
 
     assert memory.contents == bytearray(0x10)
 
@@ -75,13 +72,13 @@ def test_failing_entry_is_reported_once():
     worker.write_failed.connect(messages.append)
     worker.set_entry(1, FrozenValue(b"\x01", address=0x10))
 
-    worker.write_once(memory, memory)
-    worker.write_once(memory, memory)
+    worker.write_once(memory)
+    worker.write_once(memory)
     assert len(messages) == 1 and "0x10" in messages[0]
 
     # Changing the entry reports again.
     worker.set_entry(1, FrozenValue(b"\x02", address=0x10))
-    worker.write_once(memory, memory)
+    worker.write_once(memory)
     assert len(messages) == 2
 
 

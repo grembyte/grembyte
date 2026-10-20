@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
-from hermes.core.process import is_wine_process
+from hermes.platform import is_wine_process
 from hermes.features.native_trace import NativeTraceWorker, apply_names
 from hermes.features.trace import analyze, recording_calls
 from hermes.ui.widgets.trace import (

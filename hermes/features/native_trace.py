@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import sessions
-from hermes.core.process import is_wine_process
+from hermes.platform import is_wine_process
 from hermes.features.trace import AgentWorker
 
 

@@ -4,6 +4,7 @@ import os
 import shutil
 from pathlib import Path
 
+from PyQt6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
@@ -14,14 +15,16 @@ LEGACY_DB_PATH = Path(__file__).parent.parent.parent / "data" / "hermes.db"
 
 
 def default_db_path():
-    """Return ``$HERMES_DB`` or ``$XDG_DATA_HOME/hermes-hook/hermes.db``.
+    """Return ``$HERMES_DB`` or ``hermes-hook/hermes.db`` in the user's data directory.
 
-    ``XDG_DATA_HOME`` defaults to ``~/.local/share``.
+    That is ``$XDG_DATA_HOME`` or ``~/.local/share`` on Linux,
+    ``%LOCALAPPDATA%`` on Windows.
     """
     override = os.environ.get("HERMES_DB")
     if override:
         return Path(override).expanduser()
-    data_home = os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
+    data_home = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.GenericDataLocation)
     return Path(data_home) / "hermes-hook" / "hermes.db"
 
 

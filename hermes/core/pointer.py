@@ -31,10 +31,11 @@ A first scan usually finds many chains. Chains that still lead to the value
 after the game was restarted (``filter_chains``) are the stable ones.
 """
 
-import os
 from dataclasses import dataclass
 
 import numpy as np
+
+from hermes.platform import ProcessMemory, read_mappings
 
 
 POINTER_SIZE = 8
@@ -43,29 +44,10 @@ _CHUNK_SIZE = 16 * 1024 * 1024
 MAX_EDGES = 20_000_000
 # Pointers looked up at once; bounds the temporary arrays of a search level.
 _EDGE_BATCH = 1_000_000
-_EXCLUDED = {"[vvar]", "[vvar_vclock]", "[vsyscall]", "[vdso]"}
 
 
 class ScanCancelled(Exception):
     """Raised when a pointer scan is cancelled."""
-
-
-@dataclass(frozen=True)
-class Mapping:
-    """One line of /proc/<pid>/maps."""
-
-    start: int
-    end: int
-    permissions: str
-    path: str
-
-    @property
-    def writable(self):
-        """Private writable memory, where data and pointers live."""
-        return (
-            "r" in self.permissions and "w" in self.permissions and "p" in self.permissions
-            and not self.path.startswith("/dev/") and self.path not in _EXCLUDED
-        )
 
 
 @dataclass(frozen=True)
@@ -92,75 +74,22 @@ class PointerChain:
                    tuple(int(offset) for offset in data.get("offsets", ())))
 
 
-def read_mappings(pid):
-    """Parse /proc/<pid>/maps."""
-    mappings = []
-    with open(f"/proc/{pid}/maps", encoding="utf-8", errors="replace") as maps_file:
-        for line in maps_file:
-            fields = line.split(maxsplit=5)
-            if len(fields) < 5:
-                continue
-            start, end = (int(bound, 16) for bound in fields[0].split("-"))
-            path = fields[5].strip() if len(fields) == 6 else ""
-            mappings.append(Mapping(start, end, fields[1], path))
-    return mappings
-
-
-def module_name(path):
-    """Name used for a module in chains (the file name)."""
-    return os.path.basename(path)
-
-
-def main_module(pid):
-    """Return the module name of the program itself, or None if unknown."""
-    try:
-        path = os.readlink(f"/proc/{pid}/exe")
-    except OSError:
-        return None
-    return module_name(path.removesuffix(" (deleted)"))
-
-
-def _module_paths(mappings):
-    """Return the paths of loaded modules: files with executable code.
-
-    Other mapped files, e.g. /dev/dri/renderD128 or game assets, are not
-    modules; Frida does not know them either.
-    """
-    return {
-        mapping.path for mapping in mappings
-        if mapping.path.startswith("/") and "x" in mapping.permissions
-    }
-
-
 def module_bases(mappings):
     """Return ``{module name: load address}`` of the loaded modules."""
-    modules = _module_paths(mappings)
     bases = {}
     for mapping in mappings:
-        if mapping.path in modules:
-            name = module_name(mapping.path)
-            bases[name] = min(bases.get(name, mapping.start), mapping.start)
+        if mapping.module is not None:
+            bases[mapping.module] = min(bases.get(mapping.module, mapping.start), mapping.start)
     return bases
 
 
 def static_regions(mappings):
-    """Return ``[(start, end, module)]`` of writable module memory.
-
-    That is a module's file-backed writable mapping (.data) and an anonymous
-    writable mapping right behind it (.bss, if it does not fit the file).
-    """
-    modules = _module_paths(mappings)
-    regions = []
-    previous = None
-    for mapping in sorted(mappings, key=lambda m: m.start):
-        if mapping.writable:
-            if mapping.path in modules:
-                regions.append((mapping.start, mapping.end, module_name(mapping.path)))
-            elif not mapping.path and previous is not None and previous.path in modules \
-                    and previous.end == mapping.start:
-                regions.append((mapping.start, mapping.end, module_name(previous.path)))
-        previous = mapping
-    return regions
+    """Return ``[(start, end, module)]`` of writable module memory (.data, .bss)."""
+    return [
+        (mapping.start, mapping.end, mapping.module)
+        for mapping in sorted(mappings, key=lambda m: m.start)
+        if mapping.writable and mapping.module is not None
+    ]
 
 
 def static_location(regions, address):
@@ -169,40 +98,6 @@ def static_location(regions, address):
         if start <= address < end:
             return module
     return None
-
-
-class ProcessMemory:
-    """Read pointers and values of a process via /proc/<pid>/mem."""
-
-    def __init__(self, pid):
-        self.pid = pid
-        self._file = open(f"/proc/{pid}/mem", "rb", buffering=0)  # pylint: disable=consider-using-with
-
-    def close(self):
-        """Close the memory file."""
-        self._file.__exit__(None, None, None)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_exc):
-        self.close()
-
-    def read(self, address, size):
-        """Return ``size`` bytes or None if the memory cannot be read."""
-        if address < 0:
-            return None
-        try:
-            self._file.seek(address)
-            data = self._file.read(size)
-        except (OSError, OverflowError, ValueError):
-            return None
-        return data if len(data) == size else None
-
-    def read_pointer(self, address):
-        """Return the 8-byte pointer at ``address`` or None."""
-        data = self.read(address, POINTER_SIZE)
-        return None if data is None else int.from_bytes(data, "little")
 
 
 def resolve_chain(memory, bases, chain):
@@ -267,18 +162,14 @@ class PointerMap:
         total = sum(m.end - m.start for m in writable) or 1
         done = 0
         values, locations = [], []
-        with open(f"/proc/{pid}/mem", "rb", buffering=0) as memory:
+        with ProcessMemory(pid) as memory:
             for mapping in writable:
                 position = mapping.start
                 while position < mapping.end:
                     if cancelled is not None and cancelled():
                         raise ScanCancelled()
                     size = min(_CHUNK_SIZE, mapping.end - position)
-                    try:
-                        memory.seek(position)
-                        block = memory.read(size)
-                    except OSError:
-                        block = b""
+                    block = memory.read_available(position, size)
                     count = len(block) // POINTER_SIZE
                     if count:
                         words = np.frombuffer(block, dtype="<u8", count=count)

@@ -36,10 +36,11 @@ from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-m
 
 from hermes.core import sessions
 from hermes.core.memory import read_memory, write_process_bytes
-from hermes.core.pointer import ProcessMemory, resolve_chain
+from hermes.core.pointer import resolve_chain
 from hermes.core.ptrace_engine import PtraceWatchpointEngine, WATCHPOINT_SLOTS
 from hermes.core.value_types import VALUE_TYPES
 from hermes.hooks.sandbox import TransformSandbox
+from hermes.platform import ProcessMemory
 
 
 class PtraceHookWorker(PtraceWatchpointEngine):

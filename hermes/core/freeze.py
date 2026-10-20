@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs
-from hermes.core.pointer import PointerChain, ProcessMemory, module_bases, read_mappings, resolve_chain
+from hermes.core.pointer import PointerChain, module_bases, resolve_chain
+from hermes.platform import ProcessMemory, read_mappings
 
 
 @dataclass(frozen=True)
@@ -55,12 +56,8 @@ class FreezeWorker(QThread):
             self._entries.pop(key, None)
             self._reported.discard(key)
 
-    def write_once(self, reader, writer):
-        """Write all frozen values once.
-
-        ``reader`` is a ProcessMemory for resolving pointers, ``writer`` the
-        process memory file opened for writing.
-        """
+    def write_once(self, memory):
+        """Write all frozen values once to ``memory``, a writable ProcessMemory."""
         with self._lock:
             entries = list(self._entries.items())
         if not entries:
@@ -73,14 +70,11 @@ class FreezeWorker(QThread):
         for key, entry in entries:
             address = entry.address
             if entry.pointer is not None:
-                address = resolve_chain(reader, self._bases, entry.pointer)
+                address = resolve_chain(memory, self._bases, entry.pointer)
             if address is None:
                 continue
             try:
-                writer.seek(address)
-                written = writer.write(entry.data)
-                if written != len(entry.data):
-                    raise OSError(f"wrote {written} of {len(entry.data)} bytes")
+                memory.write(address, entry.data)
             except (OSError, OverflowError, ValueError) as error:
                 self._report(key, f"0x{address:X}: {error}")
 
@@ -93,10 +87,9 @@ class FreezeWorker(QThread):
 
     def run(self):
         try:
-            with ProcessMemory(self.pid) as reader, \
-                    open(f"/proc/{self.pid}/mem", "r+b", buffering=0) as writer:
+            with ProcessMemory(self.pid, writable=True) as memory:
                 while not self.isInterruptionRequested():
-                    self.write_once(reader, writer)
+                    self.write_once(memory)
                     self.msleep(self.INTERVAL_MS)
         except OSError as error:
             if not self.isInterruptionRequested():

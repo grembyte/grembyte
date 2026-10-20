@@ -9,18 +9,16 @@ import pytest
 
 from hermes.core import pointer as pointer_module
 from hermes.core.pointer import (
-    Mapping,
     PointerChain,
     PointerMap,
-    ProcessMemory,
     chain_for_static_address,
     filter_chains,
-    main_module,
     module_bases,
-    read_mappings,
     resolve_chain,
     static_regions,
 )
+from hermes.platform import Mapping, ProcessMemory, main_module, read_mappings
+from hermes.platform.linux import parse_maps
 from tests.test_hooks import requires_target
 
 
@@ -138,14 +136,14 @@ def test_chain_text_and_json():
 
 
 def test_static_regions_include_bss_behind_a_module():
-    mappings = [
-        Mapping(0x1000, 0x2000, "r--p", "/opt/game/game"),
-        Mapping(0x2000, 0x3000, "r-xp", "/opt/game/game"),
-        Mapping(0x3000, 0x4000, "rw-p", "/opt/game/game"),
-        Mapping(0x4000, 0x6000, "rw-p", ""),          # .bss
-        Mapping(0x8000, 0x9000, "rw-p", ""),          # heap-like, not adjacent
-        Mapping(0xA000, 0xB000, "rw-p", "[heap]"),
-    ]
+    mappings = parse_maps([
+        "1000-2000 r--p 00000000 08:01 1 /opt/game/game",
+        "2000-3000 r-xp 00001000 08:01 1 /opt/game/game",
+        "3000-4000 rw-p 00002000 08:01 1 /opt/game/game",
+        "4000-6000 rw-p 00000000 00:00 0",            # .bss
+        "8000-9000 rw-p 00000000 00:00 0",            # heap-like, not adjacent
+        "a000-b000 rw-p 00000000 00:00 0 [heap]",
+    ])
 
     assert static_regions(mappings) == [(0x3000, 0x4000, "game"), (0x4000, 0x6000, "game")]
     assert module_bases(mappings) == {"game": 0x1000}
@@ -155,14 +153,14 @@ def test_static_regions_include_bss_behind_a_module():
 
 def test_memory_behind_mapped_files_that_are_no_modules_is_not_static():
     # Unity maps the GPU device right in front of anonymous (managed) heap.
-    mappings = [
-        Mapping(0x1000, 0x2000, "r-xp", "/opt/game/game"),
-        Mapping(0x2000, 0x3000, "rw-p", "/opt/game/game"),
-        Mapping(0x10000, 0x11000, "rw-s", "/dev/dri/renderD128"),
-        Mapping(0x11000, 0x20000, "rw-p", ""),
-        Mapping(0x20000, 0x21000, "r--p", "/opt/game/Data/level0"),
-        Mapping(0x21000, 0x22000, "rw-p", ""),
-    ]
+    mappings = parse_maps([
+        "1000-2000 r-xp 00000000 08:01 1 /opt/game/game",
+        "2000-3000 rw-p 00001000 08:01 1 /opt/game/game",
+        "10000-11000 rw-s 00000000 00:05 2 /dev/dri/renderD128",
+        "11000-20000 rw-p 00000000 00:00 0",
+        "20000-21000 r--p 00000000 08:01 3 /opt/game/Data/level0",
+        "21000-22000 rw-p 00000000 00:00 0",
+    ])
 
     assert static_regions(mappings) == [(0x2000, 0x3000, "game")]
     assert module_bases(mappings) == {"game": 0x1000}
@@ -273,7 +271,7 @@ def test_chains_can_be_limited_to_the_main_module(binary):
 
 
 def test_pointer_map_ignores_unaligned_values_by_default(monkeypatch):
-    mappings = [Mapping(0x1000, 0x1020, "rw-p", "")]
+    mappings = [Mapping(0x1000, 0x1020, "rw-p", writable=True)]
     memory = struct.pack("<4Q", 0x1008, 0x1004, 0x2000, 0)
 
     def fake_open(path, mode="r", **_kwargs):

@@ -21,13 +21,7 @@ from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.glyph_icon import glyph_icon
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.ui.widgets.table import set_row_height
-from hermes.core.pointer import (
-    ProcessMemory,
-    chain_for_static_address,
-    module_bases,
-    read_mappings,
-    resolve_chain,
-)
+from hermes.core.pointer import chain_for_static_address, module_bases, resolve_chain
 from hermes.core.freeze import FreezeWorker, FrozenValue
 from hermes.core.scanner import (
     FLOAT_ROUNDING_MODES,
@@ -41,8 +35,8 @@ from hermes.core.memory import write_process_value
 from hermes.engines import base as engine_base
 from hermes.engines.registry import ENGINES, detect_engine
 from hermes.features.catalog import catalog_method_from_identity
-from hermes.core.process import is_wine_process, process_start_time
 from hermes.core.wine_gadget import wine_bits
+from hermes.platform import ProcessMemory, is_wine_process, process_start_time, read_mappings
 from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES, value_type as get_value_type
 from hermes.core.write_watch import (
     WATCH_BACKENDS,

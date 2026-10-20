@@ -3,7 +3,7 @@
 import os
 import subprocess
 
-from hermes.core.process import is_wine_process, process_start_time
+from hermes.platform.linux import is_wine_process, process_start_time
 
 
 def _write_stat(root, pid, name, state, start_time):

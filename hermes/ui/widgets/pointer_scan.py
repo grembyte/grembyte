@@ -24,14 +24,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from hermes.core import logs
 from hermes.core.pointer import (
     PointerMap,
-    ProcessMemory,
     ScanCancelled,
     chain_for_static_address,
-    main_module,
     module_bases,
-    read_mappings,
     resolve_chain,
 )
+from hermes.platform import ProcessMemory, main_module, read_mappings
 from hermes.db.repository.addresses import SavedPointerScan
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.table import set_row_height

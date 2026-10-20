@@ -1,8 +1,10 @@
-"""Helpers for reading and writing Linux process memory."""
+"""Helpers for reading and writing process memory."""
 
+import os
 import re
 
 from hermes.core.pointer import module_bases
+from hermes.platform import ProcessMemory
 from hermes.core.value_types import value_type as get_value_type
 
 PAGE_SIZE = 4096
@@ -21,18 +23,12 @@ def read_memory(pid, address, size):
     readable = bytearray(size)
     if size <= 0:
         return bytes(data), readable
-    with open(f"/proc/{pid}/mem", "rb", buffering=0) as memory:
+    with ProcessMemory(pid) as memory:
         position = address
         end = address + size
         while position < end:
             chunk = min(end, (position // PAGE_SIZE + 1) * PAGE_SIZE) - position
-            block = b""
-            if position >= 0:
-                try:
-                    memory.seek(position)
-                    block = memory.read(chunk)
-                except (OSError, OverflowError, ValueError):
-                    block = b""
+            block = memory.read_available(position, chunk)
             if block:
                 start = position - address
                 data[start:start + len(block)] = block
@@ -64,26 +60,20 @@ def describe_address(mappings, address):
     """Return where ``address`` lies, e.g. ``game+0x1f0 (rw-p)``, or None."""
     for mapping in mappings:
         if mapping.start <= address < mapping.end:
-            if mapping.path.startswith("/"):
-                name = mapping.path.rsplit("/", 1)[-1]
-                base = module_bases(mappings).get(name, mapping.start)
-                where = f"{name}+{address - base:#x}"
+            if mapping.module is not None:
+                base = module_bases(mappings)[mapping.module]
+                where = f"{mapping.module}+{address - base:#x}"
             else:
-                where = f"{mapping.path or '[anon]'}+{address - mapping.start:#x}"
+                name = os.path.basename(mapping.path) or "[anon]"
+                where = f"{name}+{address - mapping.start:#x}"
             return f"{where} ({mapping.permissions})"
     return None
 
 
 def write_process_bytes(pid, address, data):
     """Write raw bytes to a process address."""
-    with open(f"/proc/{pid}/mem", "r+b", buffering=0) as memory:
-        memory.seek(address)
-        bytes_written = memory.write(data)
-
-    if bytes_written != len(data):
-        raise OSError(
-            f"Incomplete memory write: wrote {bytes_written} of {len(data)} bytes"
-        )
+    with ProcessMemory(pid, writable=True) as memory:
+        memory.write(address, data)
 
 
 def write_process_value(pid, address, value, value_type):

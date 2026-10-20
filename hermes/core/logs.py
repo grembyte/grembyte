@@ -1,8 +1,8 @@
 """The application log: a file of what went wrong, and hooks that fill it.
 
 ``setup`` writes the ``hermes`` loggers to a rotating ``hermes.log`` in
-``$XDG_STATE_HOME/hermes-hook`` (``~/.local/state/hermes-hook``; or
-``HERMES_LOG_DIR``), lets ``faulthandler`` write the Python stack of every
+``hermes-hook`` in the user's state directory (``$XDG_STATE_HOME`` or
+``~/.local/state`` on Linux; or ``HERMES_LOG_DIR``), lets ``faulthandler`` write the Python stack of every
 thread to ``crash.log`` should the process crash or abort, and routes Qt's
 messages into the log.
 
@@ -27,7 +27,7 @@ import time
 import traceback
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QtMsgType, pyqtBoundSignal, qInstallMessageHandler  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import QStandardPaths, Qt, QtMsgType, pyqtBoundSignal, qInstallMessageHandler  # pylint: disable=import-error,no-name-in-module
 
 
 LOG_NAME = "hermes.log"
@@ -52,7 +52,7 @@ def log_dir():
     """Where the log files go (not created here)."""
     if os.environ.get("HERMES_LOG_DIR"):
         return Path(os.environ["HERMES_LOG_DIR"])
-    state = os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state"
+    state = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericStateLocation)
     return Path(state) / "hermes-hook"
 
 

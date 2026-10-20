@@ -29,7 +29,8 @@ from capstone import (  # pylint: disable=import-error
 )
 from PyQt6.QtCore import QThread  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core.pointer import module_bases, module_name, read_mappings
+from hermes.core.pointer import module_bases
+from hermes.platform import read_mappings
 
 
 # ptrace request numbers (see <sys/ptrace.h>).
@@ -196,10 +197,8 @@ class PtraceWatchpointEngine(QThread):
     def _site(self, pc):
         """Return ``module+offset`` for ``pc``, or its hex address."""
         for mapping in self._mappings:
-            if mapping.start <= pc < mapping.end and mapping.path.startswith("/"):
-                name = module_name(mapping.path)
-                base = self._bases.get(name, mapping.start)
-                return f"{name}+{pc - base:#x}"
+            if mapping.start <= pc < mapping.end and mapping.module is not None:
+                return f"{mapping.module}+{pc - self._bases[mapping.module]:#x}"
         return hex(pc)
 
     @staticmethod

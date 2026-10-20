@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 
 from hermes.core.memory import describe_address, parse_address, read_memory
-from hermes.core.pointer import read_mappings
+from hermes.platform import read_mappings
 from hermes.core.value_types import VALUE_TYPES
 
 BYTES_PER_ROW = 16

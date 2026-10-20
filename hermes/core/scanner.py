@@ -1,4 +1,4 @@
-"""Background worker for scanning a Linux process' memory."""
+"""Background worker for scanning a process' memory."""
 
 import itertools
 import struct
@@ -9,7 +9,8 @@ import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs
-from hermes.core.pointer import ProcessMemory, module_bases, read_mappings, resolve_chain
+from hermes.core.pointer import module_bases, resolve_chain
+from hermes.platform import ProcessMemory, read_mappings
 from hermes.core.value_types import AUTO_VALUE_TYPES, VALUE_TYPES
 from hermes.core.value_types import value_type as lookup_value_type
 
@@ -255,8 +256,7 @@ class ScanWorker(QThread):
         if self.isInterruptionRequested():
             return None
 
-        with open(f"/proc/{self.pid}/maps", encoding="ascii") as maps_file:
-            mappings = self._writable_mappings(maps_file)
+        mappings = self._scan_ranges(read_mappings(self.pid))
 
         total_bytes = sum(end - start for start, end in mappings)
         if not total_bytes:
@@ -271,7 +271,7 @@ class ScanWorker(QThread):
         max_value_size = max(
             struct.calcsize(value_format) for value_format in formats.values()
         )
-        with open(f"/proc/{self.pid}/mem", "rb", buffering=0) as memory:
+        with ProcessMemory(self.pid) as memory:
             for start, end in mappings:
                 position = start
                 while position < end:
@@ -282,11 +282,7 @@ class ScanWorker(QThread):
                         chunk_size + max_value_size - 1,
                         end - position,
                     )
-                    try:
-                        memory.seek(position)
-                        block = memory.read(read_size)
-                    except OSError:
-                        block = b""
+                    block = memory.read_available(position, read_size)
 
                     for value_type, value_format in formats.items():
                         value_size = struct.calcsize(value_format)
@@ -338,7 +334,7 @@ class ScanWorker(QThread):
         snapshot_blocks = []
         processed_bytes = 0
         last_progress = -1
-        with open(f"/proc/{self.pid}/mem", "rb", buffering=0) as memory:
+        with ProcessMemory(self.pid) as memory:
             for start, end in mappings:
                 blocks = self._read_blocks(memory, start, end)
                 if blocks is None:
@@ -366,11 +362,7 @@ class ScanWorker(QThread):
             if self.isInterruptionRequested():
                 return None
             size = min(self._CHUNK_SIZE, end - position)
-            try:
-                memory.seek(position)
-                data = memory.read(size)
-            except OSError:
-                data = b""
+            data = memory.read_available(position, size)
             if data:
                 if block_start is None:
                     block_start = position
@@ -391,16 +383,12 @@ class ScanWorker(QThread):
         total_bytes = sum(len(data) for _start, data, _mask in snapshot.blocks)
         processed_bytes = 0
         last_progress = -1
-        with open(f"/proc/{self.pid}/mem", "rb", buffering=0) as memory:
+        with ProcessMemory(self.pid) as memory:
             for start, data, mask in snapshot.blocks:
                 if self.isInterruptionRequested():
                     return None
                 processed_bytes += len(data)
-                try:
-                    memory.seek(start)
-                    current_data = memory.read(len(data))
-                except OSError:
-                    current_data = b""
+                current_data = memory.read_available(start, len(data))
                 previous, _base = snapshot.values(start, data)
                 current, _base = snapshot.values(start, current_data)
                 count = len(current)
@@ -434,7 +422,7 @@ class ScanWorker(QThread):
         targets = {value_type: self._scan_targets(value_type) for value_type in value_types}
         results = []
 
-        with open(f"/proc/{self.pid}/mem", "rb", buffering=0) as memory:
+        with ProcessMemory(self.pid) as memory:
             total = len(self.previous_results)
             last_progress = -1
             for index, previous in enumerate(self.previous_results, start=1):
@@ -445,15 +433,10 @@ class ScanWorker(QThread):
                     previous["type"] if self.value_type == "auto" else self.value_type
                 )
                 value_format = formats[value_type]
-                value_size = struct.calcsize(value_format)
-                try:
-                    memory.seek(address)
-                    block = memory.read(value_size)
-                    if len(block) != value_size:
-                        continue
-                    current = struct.unpack(value_format, block)[0]
-                except OSError:
+                block = memory.read(address, struct.calcsize(value_format))
+                if block is None:
                     continue
+                current = struct.unpack(value_format, block)[0]
 
                 if value_format[-1] in "fd" and not np.isfinite(current):
                     continue
@@ -519,24 +502,9 @@ class ScanWorker(QThread):
             raise ValueError(f"Unsupported data type: {value_type}") from error
 
     @staticmethod
-    def _writable_mappings(maps_file):
-        """Return private writable mappings, including the .data/.bss of binaries."""
-        mappings = []
-        for line in maps_file:
-            fields = line.split(maxsplit=5)
-            if len(fields) < 5:
-                continue
-            bounds, permissions = fields[:2]
-            pathname = fields[5].strip() if len(fields) == 6 else ""
-            # Static/global variables live in file-backed rw-p mappings of the
-            # executable and its libraries, so those must be scanned as well.
-            is_excluded = pathname.startswith("/dev/") or pathname in {
-                "[vvar]", "[vvar_vclock]", "[vsyscall]", "[vdso]"
-            }
-            if not is_excluded and all(flag in permissions for flag in "rwp"):
-                start, end = (int(bound, 16) for bound in bounds.split("-"))
-                mappings.append((start, end))
-        return mappings
+    def _scan_ranges(mappings):
+        """Return ``(start, end)`` of the writable mappings, the modules' .data/.bss included."""
+        return [(mapping.start, mapping.end) for mapping in mappings if mapping.writable]
 
     @staticmethod
     def _parse_scan_value(value, value_format):

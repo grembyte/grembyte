@@ -11,7 +11,7 @@ once and every worker then shares.
 import frida
 
 from hermes.core import wine_gadget
-from hermes.core.process import is_wine_process
+from hermes.platform import is_wine_process
 
 
 def attach_session(pid):

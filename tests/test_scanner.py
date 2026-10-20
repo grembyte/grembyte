@@ -11,6 +11,7 @@ import numpy as np
 
 from hermes.core.scanner import MemorySnapshot, ScanWorker, ValueRange, ValueRefreshWorker
 from hermes.core.value_types import VALUE_TYPES
+from hermes.platform.linux import parse_maps
 
 
 class FakeMemory:
@@ -161,7 +162,7 @@ def test_first_scan_does_not_duplicate_candidates_at_chunk_boundary(monkeypatch)
 
 
 def test_first_scan_keeps_private_writable_mappings():
-    maps = io.StringIO(
+    maps = parse_maps(io.StringIO(
         "1000-1004 rw-p 00000000 00:00 0\n"
         "2000-2004 rw-p 00000000 00:00 0 [heap]\n"
         "3000-3004 rw-p 00000000 00:00 0 [stack]\n"
@@ -170,9 +171,9 @@ def test_first_scan_keeps_private_writable_mappings():
         "6000-6004 rw-p 00000000 00:00 0 /usr/lib/example.so\n"
         "7000-7004 rw-s 00000000 00:00 0 /memfd:shared\n"
         "8000-8004 rw-p 00000000 00:00 0 /dev/dri/card0\n"
-    )
+    ))
 
-    assert ScanWorker._writable_mappings(maps) == [
+    assert ScanWorker._scan_ranges(maps) == [
         (0x1000, 0x1004),
         (0x2000, 0x2004),
         (0x3000, 0x3004),

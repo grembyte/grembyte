@@ -9,7 +9,8 @@ import struct
 import pytest
 
 from hermes.core.memory import describe_address, parse_address, read_memory
-from hermes.core.pointer import Mapping, read_mappings
+from hermes.platform import read_mappings
+from hermes.platform.linux import parse_maps
 
 
 @pytest.fixture(name="qt_app", scope="module")
@@ -55,10 +56,10 @@ def test_read_memory_marks_unmapped_bytes():
      ("libfoo.so.6 + 10", 0x7F0010)],
 )
 def test_parse_address(text, expected):
-    mappings = [
-        Mapping(0x40000, 0x41000, "r-xp", "/opt/game/game"),
-        Mapping(0x7F0000, 0x7F1000, "r-xp", "/usr/lib/libfoo.so.6"),
-    ]
+    mappings = parse_maps([
+        "40000-41000 r-xp 00000000 08:01 1 /opt/game/game",
+        "7f0000-7f1000 r-xp 00000000 08:01 2 /usr/lib/libfoo.so.6",
+    ])
 
     assert parse_address(text, mappings) == expected
 
@@ -70,11 +71,11 @@ def test_parse_address_rejects_invalid_input(text):
 
 
 def test_describe_address():
-    mappings = [
-        Mapping(0x40000, 0x41000, "r-xp", "/opt/game/game"),
-        Mapping(0x41000, 0x42000, "rw-p", "/opt/game/game"),
-        Mapping(0x50000, 0x60000, "rw-p", "[heap]"),
-    ]
+    mappings = parse_maps([
+        "40000-41000 r-xp 00000000 08:01 1 /opt/game/game",
+        "41000-42000 rw-p 00001000 08:01 1 /opt/game/game",
+        "50000-60000 rw-p 00000000 00:00 0 [heap]",
+    ])
 
     assert describe_address(mappings, 0x41010) == "game+0x1010 (rw-p)"
     assert describe_address(mappings, 0x50020) == "[heap]+0x20 (rw-p)"
