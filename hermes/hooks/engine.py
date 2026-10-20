@@ -741,6 +741,15 @@ function isWatchTrap(error) {
   return /breakpoint|single.?step/i.test(String(error));
 }
 
+// Debug view of a write the hook skips: null if the value cannot be read.
+function peekTarget(io, target) {
+  try {
+    return readTarget(io, target);
+  } catch (_error) {
+    return null;
+  }
+}
+
 function readTarget(io, target) {
   try {
     return io.read(target);
@@ -820,7 +829,7 @@ function applyTransform(hook, threadId, pending) {
     pushDebug(hook, entry);
   }
   hook.stats.count += 1;
-  hook.stats.last = { old: oldValue, new: current, result, threadId };
+  hook.stats.last = { old: oldValue, new: current, result, threadId, address: target.toString() };
 }
 
 function emitCallback(w, callback) {
@@ -953,12 +962,20 @@ function onBefore(site, block) {
         });
       } else if (hook.debug) {
         const address = write.address();
-        pushDebug(hook, {
+        const entry = {
           threadId,
           skipped: skip,
           address: address === null ? null : toPointer(address).toString(),
           caller: callerText(hook, write)
-        });
+        };
+        if (address === null) {
+          pushDebug(hook, entry);
+        } else {
+          // Show the value before and after the write, as for applied calls.
+          const target = toPointer(address);
+          entry.old = peekTarget(hook.io, target);
+          hook.pending.set(threadId, { target, skipped: entry });
+        }
       }
     }
   } catch (error) {
@@ -974,7 +991,12 @@ function onAfter(site, _block) {
       if (pending === undefined)
         continue;
       hook.pending.delete(threadId);
-      applyTransform(hook, threadId, pending);
+      if (pending.skipped !== undefined) {
+        pending.skipped.new = peekTarget(hook.io, pending.target);
+        pushDebug(hook, pending.skipped);
+      } else {
+        applyTransform(hook, threadId, pending);
+      }
     }
   } catch (error) {
     reportAgentError(`after ${site.writeIns.address}`, error);

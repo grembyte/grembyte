@@ -12,6 +12,14 @@ PAGE_SIZE = 4096
 _MODULE_ADDRESS = re.compile(r"^(?P<module>.+?)\s*\+\s*(?P<offset>(0x)?[0-9a-fA-F]+)$")
 
 
+class UnknownModuleError(ValueError):
+    """An address names a module the process has not loaded."""
+
+    def __init__(self, module):
+        super().__init__(f"Unknown module: {module}")
+        self.module = module
+
+
 def read_memory(pid, address, size):
     """Read ``size`` bytes at ``address`` page by page.
 
@@ -48,7 +56,7 @@ def parse_address(text, mappings=None):
         bases = module_bases(mappings or [])
         base = bases.get(match["module"])
         if base is None:
-            raise ValueError(f"Unknown module: {match['module']}")
+            raise UnknownModuleError(match["module"])
         return base + int(match["offset"], 16)
     try:
         return int(text, 16)

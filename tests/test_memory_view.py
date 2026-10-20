@@ -151,3 +151,29 @@ def test_viewer_shows_unreadable_memory(qt_app):
         assert dialog.model.data(dialog.model.index(0, 0)) == "??"
     finally:
         dialog.close()
+
+
+def test_address_dialog_parses_hex_and_module_addresses(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.localization import load_translations
+    from hermes.ui.main_window import AddressInputDialog
+
+    translations = load_translations("de")
+    mappings = parse_maps(["40000-41000 r-xp 00000000 08:01 1 /opt/game/game"])
+    dialog = AddressInputDialog(lambda text: parse_address(text, mappings), "int16",
+                                translations=translations)
+    assert dialog.type_combo.currentData() == "int16"
+
+    dialog.address_input.setText("nonsense!")
+    dialog._accept()
+    assert dialog.result_entry is None
+    assert dialog.error_label.text() == translations["address_dialog.invalid"]
+
+    dialog.address_input.setText("other+0x10")
+    dialog._accept()
+    assert "„other“" in dialog.error_label.text()
+
+    dialog.address_input.setText("game+0x1f0")
+    dialog.description_input.setText("Gold")
+    dialog._accept()
+    assert dialog.result_entry == ("Gold", 0x401F0, "int16")

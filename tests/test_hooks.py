@@ -834,6 +834,13 @@ def test_debug_mode_reports_calls_and_skipped_writes(tmp_path, qt_app, translati
         assert applied["caller"].count("target+0x") == 2
         assert skipped["skipped"] == "address"
         assert skipped["caller"] != applied["caller"]
+        # Skipped writes show their values too, and go to the address list.
+        assert (skipped["old"], skipped["new"]) == (999, 1000)
+        requested = []
+        panel.address_requested.connect(lambda *args: requested.append(args))
+        window.context_menu(skipped).actions()[0].trigger()
+        assert requested == [(int(skipped["address"], 16), "int32",
+                              f"Gold · {skipped['caller']}")]
 
         window.close()
         assert not panel.btn_debug.isChecked()

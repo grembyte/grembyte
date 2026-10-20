@@ -125,6 +125,89 @@ class ValueRange:
         return (current - previous - self.low) % 2**64 <= span
 
 
+class ScanResults:
+    """Scan candidates as arrays instead of one dict per address.
+
+    ``groups`` maps each value type to ``(addresses, values)``: ascending
+    addresses (uint64) and the values found there (in the type's dtype). A
+    result dict costs about 240 bytes and a microsecond to create, which made
+    scans for a common value slow and memory-hungry.
+
+    Iterating, slicing and comparing with a list behave like the list of
+    result dicts ``{"address", "type", "value"}``, ordered by address.
+    """
+
+    def __init__(self, groups=None):
+        self.groups = {
+            value_type: group for value_type, group in (groups or {}).items() if len(group[0])
+        }
+
+    @classmethod
+    def join(cls, parts):
+        """Build from ``{value_type: (address arrays, value arrays)}`` collected in address order."""
+        return cls({
+            value_type: (np.concatenate(addresses), np.concatenate(values))
+            for value_type, (addresses, values) in parts.items() if addresses
+        })
+
+    @classmethod
+    def from_dicts(cls, entries):
+        """Build from result dicts."""
+        by_type = {}
+        for entry in entries:
+            by_type.setdefault(entry["type"], []).append(entry)
+        groups = {}
+        for value_type, typed in by_type.items():
+            addresses = np.array([entry["address"] for entry in typed], dtype=np.uint64)
+            values = np.array([entry["value"] for entry in typed], dtype=_NUMPY_DTYPES[value_type])
+            order = np.argsort(addresses, kind="stable")
+            groups[value_type] = (addresses[order], values[order])
+        return cls(groups)
+
+    def __len__(self):
+        return sum(len(addresses) for addresses, _values in self.groups.values())
+
+    def __iter__(self):
+        types = list(self.groups)
+        if not types:
+            return
+        if len(types) == 1:
+            positions = zip(itertools.repeat(0), range(len(self)))
+        else:
+            # Merge the groups by address; equal addresses keep the type order.
+            kinds = np.concatenate([
+                np.full(len(addresses), kind, dtype=np.uint8)
+                for kind, (addresses, _values) in enumerate(self.groups.values())
+            ])
+            indexes = np.concatenate([
+                np.arange(len(addresses)) for addresses, _values in self.groups.values()
+            ])
+            order = np.argsort(
+                np.concatenate([addresses for addresses, _values in self.groups.values()]),
+                kind="stable",
+            )
+            positions = zip(kinds[order].tolist(), indexes[order].tolist())
+        for kind, index in positions:
+            addresses, values = self.groups[types[kind]]
+            yield {
+                "address": int(addresses[index]),
+                "type": types[kind],
+                "value": values[index].item(),
+            }
+
+    def __getitem__(self, item):
+        if not isinstance(item, slice):
+            raise TypeError("ScanResults only supports slicing")
+        return list(itertools.islice(self, item.start, item.stop, item.step))
+
+    def __eq__(self, other):
+        if isinstance(other, (list, ScanResults)):
+            return list(self) == list(other)
+        return NotImplemented
+
+    __hash__ = None
+
+
 class MemorySnapshot:
     """Raw copy of process memory standing in for a huge candidate list.
 
@@ -179,11 +262,21 @@ class MemorySnapshot:
             raise TypeError("MemorySnapshot only supports slicing")
         return list(itertools.islice(self, item.start, item.stop, item.step))
 
+    def to_results(self):
+        """Return the remaining candidates as ScanResults."""
+        addresses, values = [], []
+        for start, data, mask in self.blocks:
+            block_values, base = self.values(start, data)
+            indexes = np.flatnonzero(mask) if mask is not None else np.arange(len(block_values))
+            addresses.append(np.uint64(base) + indexes.astype(np.uint64) * np.uint64(self.stride))
+            values.append(block_values[indexes])
+        return ScanResults.join({self.value_type: (addresses, values)})
+
 
 class ScanWorker(QThread):
     """Scan readable process mappings without blocking the UI thread."""
 
-    # Either a list of result dicts or a MemorySnapshot.
+    # ScanResults or a MemorySnapshot.
     results_ready = pyqtSignal(object)
     scan_failed = pyqtSignal(str)
     scan_cancelled = pyqtSignal()
@@ -192,8 +285,10 @@ class ScanWorker(QThread):
     _VALUE_FORMATS = _VALUE_FORMATS
     _NUMPY_DTYPES = _NUMPY_DTYPES
     _CHUNK_SIZE = 1024 * 1024
-    # Snapshots shrinking to this many candidates become a plain result list.
+    # Snapshots shrinking to this many candidates become ScanResults.
     _LIST_THRESHOLD = 100_000
+    # Follow-up scans read candidates at most this far apart in one go.
+    _GAP = 4096
 
     def __init__(
         self,
@@ -252,7 +347,7 @@ class ScanWorker(QThread):
             for value_type in value_types
         }
         targets = {value_type: self._scan_targets(value_type) for value_type in value_types}
-        results = []
+        found = {value_type: ([], []) for value_type in value_types}
         if self.isInterruptionRequested():
             return None
 
@@ -261,7 +356,7 @@ class ScanWorker(QThread):
         total_bytes = sum(end - start for start, end in mappings)
         if not total_bytes:
             self.progress_changed.emit(100)
-            return results
+            return ScanResults()
 
         if self.scan_mode == "unknown_start":
             return self._snapshot_scan(mappings, total_bytes)
@@ -307,14 +402,13 @@ class ScanWorker(QThread):
                         if values.dtype.kind == "f":
                             matches &= np.isfinite(values)
                         offsets = np.flatnonzero(matches)
-                        results.extend(
-                            {
-                                "address": position + first_offset + int(offset) * stride,
-                                "type": value_type,
-                                "value": values[offset].item(),
-                            }
-                            for offset in offsets
-                        )
+                        if offsets.size:
+                            addresses, found_values = found[value_type]
+                            addresses.append(
+                                np.uint64(position + first_offset)
+                                + offsets.astype(np.uint64) * np.uint64(stride)
+                            )
+                            found_values.append(values[offsets])
 
                     position += chunk_size
                     processed_bytes += chunk_size
@@ -323,7 +417,7 @@ class ScanWorker(QThread):
                         self.progress_changed.emit(progress)
                         last_progress = progress
 
-        return results
+        return ScanResults.join(found)
 
     def _snapshot_scan(self, mappings, total_bytes):
         """Copy all candidate memory instead of materializing every address."""
@@ -406,56 +500,89 @@ class ScanWorker(QThread):
 
         self.progress_changed.emit(100)
         results = MemorySnapshot(snapshot.value_type, snapshot.stride, blocks)
-        return list(results) if len(results) <= self._LIST_THRESHOLD else results
+        return results.to_results() if len(results) <= self._LIST_THRESHOLD else results
 
     def _refine_scan(self):
         if isinstance(self.previous_results, MemorySnapshot):
             return self._refine_snapshot(self.previous_results)
-        value_types = {
-            entry["type"] if self.value_type == "auto" else self.value_type
-            for entry in self.previous_results
-        }
-        formats = {
-            value_type: self._get_value_format_for(value_type)
-            for value_type in value_types
-        }
-        targets = {value_type: self._scan_targets(value_type) for value_type in value_types}
-        results = []
-
+        previous = self.previous_results
+        if not isinstance(previous, ScanResults):
+            previous = ScanResults.from_dicts(previous)
+        candidates = self._candidates(previous)
+        found = {}
+        total = max(1, len(previous))
+        processed = 0
+        last_progress = -1
         with ProcessMemory(self.pid) as memory:
-            total = len(self.previous_results)
-            last_progress = -1
-            for index, previous in enumerate(self.previous_results, start=1):
-                if self.isInterruptionRequested():
-                    return None
-                address = previous["address"]
-                value_type = (
-                    previous["type"] if self.value_type == "auto" else self.value_type
-                )
-                value_format = formats[value_type]
-                block = memory.read(address, struct.calcsize(value_format))
-                if block is None:
-                    continue
-                current = struct.unpack(value_format, block)[0]
+            for value_type, (addresses, previous_values) in candidates.items():
+                targets = self._scan_targets(value_type)
+                dtype = self._get_numpy_dtype_for(value_type)
+                kept_addresses, kept_values = [], []
+                for begin, current in self._read_candidates(memory, addresses, dtype):
+                    if self.isInterruptionRequested():
+                        return None
+                    end = begin + len(current)
+                    matches = self._matches_array(current, *targets, previous_values[begin:end])
+                    if current.dtype.kind == "f":
+                        matches &= np.isfinite(current)
+                    hits = np.flatnonzero(matches)
+                    kept_addresses.append(addresses[begin:end][hits])
+                    kept_values.append(current[hits])
+                    progress = (processed + end) * 100 // total
+                    if progress != last_progress:
+                        self.progress_changed.emit(progress)
+                        last_progress = progress
+                found[value_type] = (kept_addresses, kept_values)
+                processed += len(addresses)
 
-                if value_format[-1] in "fd" and not np.isfinite(current):
-                    continue
-                previous_value = previous["value"]
-                if self._matches(current, *targets[value_type], previous_value):
-                    results.append({
-                        "address": address,
-                        "type": value_type,
-                        "value": current,
-                    })
-                progress = index * 100 // total
-                if progress != last_progress:
-                    self.progress_changed.emit(progress)
-                    last_progress = progress
+        self.progress_changed.emit(100)
+        return ScanResults.join(found)
 
-        if not self.previous_results:
-            self.progress_changed.emit(100)
+    def _candidates(self, previous):
+        """Return ``{value type: (addresses, previous values)}`` to compare now.
 
-        return results
+        A chosen data type reads every candidate as that type; "auto" keeps
+        the type each one was found as.
+        """
+        if self.value_type == "auto" or not previous.groups:
+            return previous.groups
+        self._get_numpy_dtype_for(self.value_type)
+        groups = list(previous.groups.values())
+        if len(groups) == 1:
+            return {self.value_type: groups[0]}
+        addresses = np.concatenate([addresses for addresses, _values in groups])
+        values = np.concatenate([values for _addresses, values in groups])
+        order = np.argsort(addresses, kind="stable")
+        return {self.value_type: (addresses[order], values[order])}
+
+    def _read_candidates(self, memory, addresses, dtype):
+        """Yield ``(begin, values)``: the current values from ``addresses[begin]`` on.
+
+        Candidates close together are read in one go. Unreadable ones are
+        left out, so the values cover only part of the remaining addresses.
+        """
+        size = dtype.itemsize
+        # Index of the last candidate before each wide gap.
+        gaps = np.flatnonzero(np.diff(addresses) > np.uint64(self._GAP))
+        count = len(addresses)
+        begin = 0
+        while begin < count:
+            start = int(addresses[begin])
+            limit = min(start + max(self._CHUNK_SIZE - size, 0), 2**64 - 1)
+            end = max(begin + 1, int(np.searchsorted(addresses, np.uint64(limit), side="right")))
+            gap = int(np.searchsorted(gaps, begin))
+            if gap < len(gaps):
+                end = min(end, int(gaps[gap]) + 1)
+            block = memory.read_available(start, int(addresses[end - 1]) - start + size)
+            offsets = (addresses[begin:end] - np.uint64(start)).astype(np.int64)
+            readable = int(np.searchsorted(offsets + size, len(block), side="right"))
+            if not readable:
+                begin += 1
+                continue
+            raw = np.frombuffer(block, dtype=np.uint8)
+            current = raw[offsets[:readable, None] + np.arange(size)].view(dtype).reshape(-1)
+            yield begin, current
+            begin += readable
 
     def _scan_targets(self, value_type):
         """Return ``(target, upper)`` of the search value(s) for a value type.
@@ -517,36 +644,6 @@ class ScanWorker(QThread):
             return struct.unpack(value_format, struct.pack(value_format, parsed))[0]
         except (AttributeError, OverflowError, TypeError, ValueError, struct.error) as error:
             raise ValueError(f"Invalid scan value: {value!r}") from error
-
-    def _matches(self, current, target, upper, previous=None):
-        if self.scan_mode == "unknown_start":
-            return True
-        if self.scan_mode == "changed":
-            return current != previous
-        if self.scan_mode == "unchanged":
-            return current == previous
-        if self.scan_mode == "increased":
-            return current > previous
-        if self.scan_mode == "decreased":
-            return current < previous
-        if self.scan_mode == "increased_by":
-            return bool(target.contains_change(current, previous))
-        if self.scan_mode == "decreased_by":
-            return bool(target.contains_change(previous, current))
-        if self.scan_mode == "changed_by":
-            return bool(
-                target.contains_change(current, previous)
-                or target.contains_change(previous, current)
-            )
-        if self.scan_mode == "exact":
-            return bool(target.contains(current))
-        if self.scan_mode == "greater_than":
-            return current > target
-        if self.scan_mode == "less_than":
-            return current < target
-        if self.scan_mode == "between":
-            return target <= current <= upper
-        raise ValueError(f"Unsupported scan mode: {self.scan_mode}")
 
     def _matches_array(self, values, target, upper, previous=None):
         if self.scan_mode == "unknown_start":

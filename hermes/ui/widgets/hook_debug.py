@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -67,6 +68,8 @@ class HookDebugWindow(QDialog):
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
     closed = pyqtSignal()
+    # From the context menu: put the address of an entry on the address list
+    add_address_requested = pyqtSignal(object)
 
     def __init__(self, translations, parent=None):
         super().__init__(parent)
@@ -123,6 +126,8 @@ class HookDebugWindow(QDialog):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(len(_COLUMNS) - 1, QHeaderView.ResizeMode.Stretch)
         self.table.itemSelectionChanged.connect(self._show_details)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
         splitter.addWidget(self.table)
 
         self.details = QPlainTextEdit()
@@ -167,6 +172,15 @@ class HookDebugWindow(QDialog):
             "level": level,
             "logs": [text],
         }])
+
+    def context_menu(self, entry):
+        """The context menu of a debug entry."""
+        menu = QMenu(self)
+        menu.addAction(
+            self.translations["debug.add_address"],
+            lambda: self.add_address_requested.emit(entry),
+        ).setEnabled(bool(entry.get("address")) and entry.get("hookId") != CONSOLE)
+        return menu
 
     def entries(self):
         """Return the stored debug entries, oldest first."""
@@ -264,6 +278,15 @@ class HookDebugWindow(QDialog):
             if column == len(values) - 1 and kind in _COLORS:
                 item.setForeground(QColor(_COLORS[kind]))
             self.table.setItem(row, column, item)
+
+    def _show_context_menu(self, position):
+        row = self.table.rowAt(position.y())
+        item = self.table.item(row, 0) if row >= 0 else None
+        if item is None:
+            return
+        self.table.selectRow(row)
+        self.context_menu(item.data(Qt.ItemDataRole.UserRole)).exec(
+            self.table.viewport().mapToGlobal(position))
 
     def _show_details(self):
         row = self.table.currentRow()

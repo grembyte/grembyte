@@ -435,6 +435,9 @@ class HookPanel(QGroupBox):
     watch_requested = pyqtSignal(object, bool)
     # ... or monitor the method of a method hook (its identity)
     monitor_requested = pyqtSignal(object)
+    # From the debug window: add an address to the address list
+    # (address, value type, description)
+    address_requested = pyqtSignal(int, str, str)
 
     _COLUMNS = (
         "hooks.column_label",
@@ -541,15 +544,25 @@ class HookPanel(QGroupBox):
             return None
         spec = state["spec"]
         method = state.get("kind") == "method"
-        has_target = not method and (spec.address is not None or spec.pointer is not None)
+        dynamic = not method and spec.address is None and spec.pointer is None
+        suffix = ""
+        if dynamic:
+            # A hook for every address its code writes: watch the one it
+            # wrote last, as a fixed address.
+            last = state.get("last_address")
+            spec = None if last is None else dataclasses.replace(spec, address=last)
+            suffix = " · " + (
+                self.translations["hooks.menu_no_write"] if last is None
+                else self.translations["hooks.menu_last_address"].format(address=f"0x{last:X}")
+            )
         menu = QMenu(self)
         # Same labels as in the address list
         for key, reads in (("address_table.watch", False), ("address_table.watch_access", True)):
             action = menu.addAction(
-                self.translations[key],
+                self.translations[key] + suffix,
                 lambda reads=reads: self.watch_requested.emit(spec, reads))
-            action.setEnabled(has_target and self._pid is not None)
-            if not method and not has_target:
+            action.setEnabled(not method and spec is not None and self._pid is not None)
+            if dynamic:
                 action.setToolTip(self.translations["hooks.menu_no_target"])
         menu.addSeparator()
         menu.addAction(
@@ -836,6 +849,7 @@ class HookPanel(QGroupBox):
         if self._debug_window is None:
             self._debug_window = HookDebugWindow(self.translations, self)
             self._debug_window.closed.connect(self._on_debug_window_closed)
+            self._debug_window.add_address_requested.connect(self._on_debug_add_address)
         self._update_debug_hooks()
         return self._debug_window
 
@@ -844,6 +858,18 @@ class HookPanel(QGroupBox):
             self._debug_window.set_hooks(
                 {hook_id: self._hook_name(hook_id) for hook_id in self._hooks}
             )
+
+    def _on_debug_add_address(self, entry):
+        """Offer the address of a debug entry for the address list, typed like its hook."""
+        hook_id = entry.get("hookId")
+        state = self._hooks.get(hook_id)
+        if state is None or state.get("kind") == "method" or not entry.get("address"):
+            return
+        label = state["spec"].label or self._hook_name(hook_id)
+        if entry.get("caller"):
+            label = self.translations["debug.address_label"].format(
+                hook=label, caller=entry["caller"])
+        self.address_requested.emit(int(entry["address"], 16), state["spec"].value_type, label)
 
     def set_debug(self, hook_id, enabled):
         """Switch debug mode of a hook; opens the debug window when enabled."""
@@ -1247,6 +1273,8 @@ class HookPanel(QGroupBox):
             state["count"] += event.get("count", 0)
             self._set_cell(hook_id, 5, str(state["count"]))
             last = event.get("last") or {}
+            if last.get("address"):
+                state["last_address"] = int(last["address"], 16)
             if last and state.get("kind") == "method":
                 # The method's result and what the hook made of it
                 self._set_cell(hook_id, 6, f"{last.get('old', '')} ⇒ {last.get('result', '')}")

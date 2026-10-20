@@ -9,7 +9,10 @@ import struct
 import pytest
 import numpy as np
 
-from hermes.core.scanner import MemorySnapshot, ScanWorker, ValueRange, ValueRefreshWorker
+from hermes.core import scanner
+from hermes.core.scanner import (
+    MemorySnapshot, ScanResults, ScanWorker, ValueRange, ValueRefreshWorker,
+)
 from hermes.core.value_types import VALUE_TYPES
 from hermes.platform.linux import parse_maps
 
@@ -80,8 +83,12 @@ def install_fake_process(monkeypatch, maps, base_address, contents):
 )
 def test_matches_scan_modes(mode, current, target, upper, previous, expected):
     worker = ScanWorker(123, "int32", mode)
+    if previous is not None:
+        previous = np.array([previous], dtype=np.int32)
 
-    assert worker._matches(current, target, upper, previous) is expected
+    matches = worker._matches_array(np.array([current], dtype=np.int32), target, upper, previous)
+
+    assert matches.tolist() == [expected]
 
 
 @pytest.mark.parametrize(
@@ -522,3 +529,108 @@ def test_refine_snapshot_finds_floats_decreased_by_amount(monkeypatch):
     )
 
     assert [result["address"] for result in worker._refine_scan()] == [0x1000, 0x1004]
+
+
+class FakeRegions:
+    """ProcessMemory stand-in with readable regions ``{start: bytes}`` and holes between."""
+
+    def __init__(self, regions):
+        self.regions = regions
+
+    def __call__(self, _pid):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read_available(self, address, size):
+        for start, data in self.regions.items():
+            if start <= address < start + len(data):
+                return data[address - start:address - start + size]
+        return b""
+
+    def read(self, address, size):
+        data = self.read_available(address, size)
+        return data if len(data) == size else None
+
+
+@pytest.mark.parametrize("chunk_size", [8, ScanWorker._CHUNK_SIZE])
+def test_refine_reads_candidates_in_blocks_and_skips_unreadable_ones(monkeypatch, chunk_size):
+    monkeypatch.setattr(scanner, "ProcessMemory", FakeRegions({
+        0x1000: struct.pack("<ii", 1, 2),
+        0x2000: struct.pack("<ii", 3, 4),
+        0x100000: struct.pack("<i", 5),
+    }))
+    # 0x1800 lies in the hole between the first two regions, close enough to
+    # be read together with them; 0x100000 is far away.
+    addresses = [0x1000, 0x1004, 0x1800, 0x2000, 0x2004, 0x100000]
+    previous = ScanResults.from_dicts(
+        {"address": address, "type": "int32", "value": 0} for address in addresses
+    )
+    worker = ScanWorker(123, "int32", "changed", previous_results=previous)
+    worker._CHUNK_SIZE = chunk_size
+
+    results = worker._refine_scan()
+
+    assert isinstance(results, ScanResults)
+    assert [(result["address"], result["value"]) for result in results] == [
+        (0x1000, 1), (0x1004, 2), (0x2000, 3), (0x2004, 4), (0x100000, 5),
+    ]
+
+
+def test_refine_reads_candidates_as_the_newly_chosen_type(monkeypatch):
+    monkeypatch.setattr(scanner, "ProcessMemory", FakeRegions({
+        0x1000: struct.pack("<hhhh", 7, 1, 9, 1),
+    }))
+    previous = [
+        {"address": 0x1000, "type": "int32", "value": 7 + (1 << 16)},
+        {"address": 0x1004, "type": "int32", "value": 9 + (1 << 16)},
+    ]
+    worker = ScanWorker(123, "int16", "exact", "9", previous_results=previous)
+
+    assert worker._refine_scan() == [{"address": 0x1004, "type": "int16", "value": 9}]
+
+
+def test_auto_refine_keeps_each_type_and_orders_by_address(monkeypatch):
+    monkeypatch.setattr(scanner, "ProcessMemory", FakeRegions({
+        0x1000: struct.pack("<if", 5, 2.5) + struct.pack("<q", 5),
+    }))
+    previous = [
+        {"address": 0x1008, "type": "int64", "value": 4},
+        {"address": 0x1000, "type": "int32", "value": 4},
+        {"address": 0x1004, "type": "float", "value": 2.5},
+    ]
+    worker = ScanWorker(123, "auto", "increased", previous_results=previous)
+
+    assert worker._refine_scan() == [
+        {"address": 0x1000, "type": "int32", "value": 5},
+        {"address": 0x1008, "type": "int64", "value": 5},
+    ]
+
+
+def test_scan_results_behave_like_a_result_list():
+    entries = [
+        {"address": 0x2000, "type": "int32", "value": 2},
+        {"address": 0x1000, "type": "double", "value": 1.5},
+        {"address": 0x3000, "type": "int32", "value": 3},
+    ]
+    results = ScanResults.from_dicts(entries)
+
+    assert len(results) == 3 and results
+    assert results == sorted(entries, key=lambda entry: entry["address"])
+    assert results[1:] == [entries[0], entries[2]]
+    assert not ScanResults() and list(ScanResults()) == []
+
+
+def test_small_snapshot_becomes_scan_results():
+    contents = struct.pack("<iii", 1, 2, 3)
+    mask = np.array([True, False, True])
+    snapshot = MemorySnapshot("int32", 4, [(0x1000, contents, mask)])
+
+    assert snapshot.to_results() == [
+        {"address": 0x1000, "type": "int32", "value": 1},
+        {"address": 0x1008, "type": "int32", "value": 3},
+    ]

@@ -1640,9 +1640,22 @@ def test_hook_context_menu_offers_what_fits_the_hook(qt_app, translations):
                            ("Methoden-Überwachung", False)]
         menu.actions()[1].trigger()
         assert watched[-1] == (panel._hooks[hook_id]["spec"], True)
-    # A hook for every address its code writes has no address to watch.
+    # A hook for every address its code writes watches the one it wrote last.
     entries, _menu = actions(3)
-    assert [enabled for _text, enabled in entries] == [False, False, False]
+    assert entries == [("Adress-Überwachung (Schreibzugriffe) · noch kein Schreibzugriff", False),
+                       ("Adress-Überwachung (alle Zugriffe) · noch kein Schreibzugriff", False),
+                       ("Methoden-Überwachung", False)]
+    panel._hooks[3]["count"] = 0
+    panel._hooks[3]["status"] = "active"
+    panel._worker = worker = object()
+    panel._on_events(worker, [{"hookId": 3, "count": 1,
+                             "last": {"old": 1, "new": 2, "result": 4, "address": "0x2000"}}])
+    entries, menu = actions(3)
+    assert entries[0] == ("Adress-Überwachung (Schreibzugriffe) · zuletzt 0x2000", True)
+    menu.actions()[0].trigger()
+    spec, reads = watched[-1]
+    assert (spec.address, spec.pointer, spec.write_pc, reads) == (0x2000, None, 0x10, False)
+    assert panel._hooks[3]["spec"].address is None
     entries, menu = actions(4)
     assert [enabled for _text, enabled in entries] == [False, False, True]
     menu.actions()[-1].trigger()

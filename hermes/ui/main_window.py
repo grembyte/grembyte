@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QSplitter, QTableWidget, QTableWidgetItem, QLabel,
     QPushButton, QLineEdit, QComboBox, QGroupBox,
     QHeaderView, QStatusBar, QToolBar, QDialog,
-    QAbstractItemView,
+    QAbstractItemView, QFormLayout,
     QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox, QTabWidget, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QSize, QTimer, QSettings  # pylint: disable=import-error,no-name-in-module
@@ -28,10 +28,11 @@ from hermes.core.scanner import (
     FUZZY_MODES,
     PREVIOUS_VALUE_MODES,
     MemorySnapshot,
+    ScanResults,
     ScanWorker,
     ValueRefreshWorker,
 )
-from hermes.core.memory import write_process_value
+from hermes.core.memory import UnknownModuleError, parse_address, write_process_value
 from hermes.engines import base as engine_base
 from hermes.engines.registry import ENGINES, detect_engine
 from hermes.features.catalog import catalog_method_from_identity
@@ -93,7 +94,7 @@ class ScanRequest:
     scan_mode: str
     value: str
     value2: str = ""
-    previous_results: list[dict[str, int | float | str]] | MemorySnapshot | None = None
+    previous_results: ScanResults | MemorySnapshot | None = None
     aligned: bool = True
     tolerance: str = ""
     float_rounding: str = "exact"
@@ -190,6 +191,75 @@ class DescriptionInputDialog(QDialog):
     def _accept(self):
         """Store the entered description and accept the dialog."""
         self.new_description = self.input.text().strip()
+        self.accept()
+
+
+# ---------------------------------------------------------------------------
+# Dialog: add an address by hand
+# ---------------------------------------------------------------------------
+class AddressInputDialog(QDialog):
+    # Dialogs expose behavior through Qt signals rather than public methods.
+    # pylint: disable=too-few-public-methods
+    """Dialog for putting an address on the address list by hand.
+
+    ``parse(text)`` turns the entered address into a number or raises
+    ValueError; it also accepts ``module+0x…``.
+    """
+
+    def __init__(self, parse, value_type, parent=None, translations=None):
+        super().__init__(parent)
+        self.translations = translations or load_translations()
+        self.setWindowTitle(self.translations["address_dialog.title"])
+        self.setMinimumWidth(420)
+        self._parse = parse
+        # (description, address, value type) once accepted
+        self.result_entry = None
+        self._build_ui(value_type)
+
+    def _build_ui(self, value_type):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        form = QFormLayout()
+        self.address_input = QLineEdit()
+        self.address_input.setPlaceholderText(
+            self.translations["address_dialog.address_placeholder"])
+        form.addRow(self.translations["address_table.address"], self.address_input)
+        self.type_combo = QComboBox()
+        for name in VALUE_TYPES:
+            self.type_combo.addItem(name, name)
+        self.type_combo.setCurrentIndex(max(self.type_combo.findData(value_type), 0))
+        form.addRow(self.translations["address_table.type"], self.type_combo)
+        self.description_input = QLineEdit(self.translations["address_table.new_address"])
+        form.addRow(self.translations["address_table.description"], self.description_input)
+        layout.addLayout(form)
+
+        self.error_label = QLabel()
+        self.error_label.setStyleSheet("color: #f85149;")
+        self.error_label.setWordWrap(True)
+        self.error_label.hide()
+        layout.addWidget(self.error_label)
+
+        layout.addLayout(dialog_button_row(
+            self.translations, "button.add", self._accept, self.reject
+        ))
+
+    def _accept(self):
+        try:
+            address = self._parse(self.address_input.text())
+        except UnknownModuleError as error:
+            self.error_label.setText(
+                self.translations["address_dialog.unknown_module"].format(module=error.module))
+            self.error_label.show()
+            self.address_input.setFocus()
+            return
+        except ValueError:
+            self.error_label.setText(self.translations["address_dialog.invalid"])
+            self.error_label.show()
+            self.address_input.setFocus()
+            return
+        description = (self.description_input.text().strip()
+                       or self.translations["address_table.new_address"])
+        self.result_entry = (description, address, self.type_combo.currentData())
         self.accept()
 
 
@@ -464,6 +534,12 @@ class MainWindow(QMainWindow):
         self.hook_panel.setObjectName("tab_page")
         self.hook_panel.count_changed.connect(self._on_hook_count_changed)
         self.hook_panel.watch_requested.connect(self._watch_hook_target)
+        self.hook_panel.address_requested.connect(
+            lambda address, value_type, label: self._add_tracked_address(
+                {"address": f"0x{address:X}", "address_value": address,
+                 "type": value_type, "value": ""},
+                label,
+            ))
         self.hook_panel.monitor_requested.connect(
             lambda identity: self._monitor_method(catalog_method_from_identity(identity)))
         self.bottom_tabs.addTab(self.hook_panel, self.translations["hooks.title"])
@@ -742,6 +818,10 @@ class MainWindow(QMainWindow):
 
         # Table toolbar
         ctrl = QHBoxLayout()
+        btn_add = QPushButton(self.translations["address_table.add"])
+        btn_add.setToolTip(self.translations["address_table.add_tooltip"])
+        btn_add.clicked.connect(self._add_address_by_hand)
+        ctrl.addWidget(btn_add)
         btn_write = QPushButton(self.translations["address_table.write"])
         btn_write.clicked.connect(self._write_value)
         btn_freeze = QPushButton(self.translations["address_table.freeze"])
@@ -2160,13 +2240,42 @@ class MainWindow(QMainWindow):
             if data:
                 self._add_tracked_address(data)
 
-    def _add_tracked_address(self, data):
+    def _add_address_by_hand(self):
+        """Ask for an address (hex or module+offset) and put it on the address list."""
+        if self._current_pid is None:
+            QMessageBox.warning(
+                self,
+                self.translations["warning.no_process_title"],
+                self.translations["warning.select_process"],
+            )
+            return
+        pid = self._current_pid
+
+        def parse(text):
+            try:
+                mappings = read_mappings(pid)
+            except OSError:
+                mappings = []
+            return parse_address(text, mappings)
+
+        value_type = self.combo_type.currentData() if self.combo_type is not None else None
+        dialog = AddressInputDialog(parse, value_type, self, self.translations)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.result_entry is None:
+            return
+        label, address, value_type = dialog.result_entry
+        self._add_tracked_address(
+            {"address": f"0x{address:X}", "address_value": address,
+             "type": value_type, "value": ""},
+            label,
+        )
+
+    def _add_tracked_address(self, data, label=None):
         """Add a scan result to the address list and save it for the program.
 
         An address inside a module's static data is saved as module + offset,
         so it is found again after a restart without a pointer scan.
         """
-        label = self.translations["address_table.new_address"]
+        label = label or self.translations["address_table.new_address"]
         address = data["address_value"]
         pointer = None
         try:
@@ -2183,6 +2292,8 @@ class MainWindow(QMainWindow):
             label, data["address"], data["type"], data["value"],
             saved_id=saved_id, pointer=pointer,
         )
+        if self._current_pid is not None and self._scan_worker is None:
+            self._refresh_timer.start()
 
     def _edit_description(self):
         """Prompt for a new description of the selected tracked address."""
