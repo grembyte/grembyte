@@ -36,7 +36,7 @@ LARGE_TRACE = 5000
 # Under Wine/Proton no more than this: compiling and hooking tens of
 # thousands of methods there froze or crashed the game (Mono's garbage
 # collector waiting in SuspendThread; Frida's Windows gadget).
-WINE_TRACE_LIMIT = 50000
+WINE_TRACE_LIMIT = 5000
 
 _R_ORDER, _R_METHOD, _R_CALLS, _R_RATE, _R_BASELINE, _R_VERDICT = range(6)
 _ROW_COLUMNS = (
