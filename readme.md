@@ -82,6 +82,10 @@ Starte die Anwendung nicht vorsorglich als root und lockere `ptrace_scope` nicht
 sudo sysctl kernel.yama.ptrace_scope=0
 ```
 
+### Wine- und Proton-Spiele
+
+`frida.attach` bringt Wine-Prozesse zum Absturz. hermes lädt stattdessen Fridas Windows-Gadget (`frida-gadget.dll`, wird einmalig nach `~/.local/share/hermes-hook/gadget/` geladen) in das Spiel. Das übernimmt ein kleines Windows-Programm, `hermes/core/inject/hermes-inject-*.exe`, das hermes mit dem Wine und dem Prefix des Spiels startet. Gelingt das nicht, nutzt hermes bei 64-Bit-Spielen ptrace als Rückfallweg. Die beiden `.exe` liegen fertig gebaut im Repository und lassen sich mit `hermes/core/inject/build.sh` neu bauen (`mingw64-gcc` und `mingw32-gcc`, alternativ `pip install ziglang`).
+
 ## Beispiel: Gold-Multiplikator für das Test-Spiel
 
 `test_app/dummy_game.c` ist ein minimales GTK-Spiel mit Buttons für „Gold +100“, „Gold -100“, „New game“ sowie Mana, Erfahrung und Schatzsuche zum Testen unscharfer Scans (siehe [unten](#unscharfe-scans-toleranz-und-gerundete-floats)). Wie in echten Spielen liegt der Spieler auf dem Heap hinter Zeigern (`g_game → player → gold`), seine Adresse ändert sich also bei jedem Start und bei jedem „New game“. Das Spiel gibt seine PID, die Pointer-Chain und die aktuelle Adresse des Golds aus, sodass sich die Ergebnisse von Scanner und Pointer-Suche prüfen lassen. Es dürfen mehrere Instanzen gleichzeitig laufen.

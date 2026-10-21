@@ -6,17 +6,20 @@ program behind ``wine-preloader``). The Windows build of Frida's gadget,
 Windows threads and the Win64 ABI the way the game does, and exposes a Frida
 session over a local TCP port.
 
-To load it into an already-running game this module calls ``LoadLibraryW`` on
-one of the game's own threads via ptrace, the same mechanism Frida's own
-injector uses natively. It parks a thread at a Windows function the game calls
-often (a hardware execution breakpoint; no code is patched), points the thread
-at ``LoadLibraryW`` with the gadget path, lets it return to an ``int3`` trap,
-then restores the saved registers and detaches. hermes then connects with
+To load it into an already-running game, hermes first runs a small Windows
+helper inside the game's wineserver (wine_helper.py), which loads the DLL with
+``CreateRemoteThread`` on ``LoadLibraryW``. Should that fail, it falls back to
+calling ``LoadLibraryW`` on one of the game's own threads via ptrace (64-bit
+games only): it parks a thread at a Windows function the game calls often (a
+software ``int3``), points the thread at ``LoadLibraryW`` with the gadget path,
+lets it return to an ``int3`` trap, then restores the saved registers and
+detaches. Either way hermes then connects with
 ``add_remote_device("127.0.0.1:<port>")``.
 """
 
 import ctypes
 import json
+import logging
 import lzma
 import os
 import re
@@ -31,6 +34,8 @@ from pathlib import Path
 
 import frida
 
+from hermes.core import wine_helper
+from hermes.platform import process_start_time
 from hermes.core.ptrace_engine import (
     DR6,
     DR7,
@@ -42,6 +47,12 @@ from hermes.core.ptrace_engine import (
 )
 
 _MACHINE_I386 = 0x14C
+
+log = logging.getLogger("hermes.wine_gadget")
+
+METHOD_AUTO = "auto"
+METHOD_HELPER = "helper"
+METHOD_PTRACE = "ptrace"
 
 PTRACE_GETREGS = 12
 PTRACE_SETREGS = 13
@@ -450,18 +461,18 @@ def _hot_points(memory, images, extra=()):
     return points
 
 
-def load_gadget(pid, timeout=20.0, download=True, hot_points=()):
+def load_gadget(pid, timeout=20.0, download=True, hot_points=(), method=METHOD_AUTO):
     """Load frida-gadget.dll into Wine process ``pid``; return its device URL.
 
     Returns ``"127.0.0.1:<port>"`` for ``frida.get_device_manager()
     .add_remote_device(...)``. Raises :class:`GadgetError` on failure. The game
-    keeps running throughout; only the one borrowed thread is briefly diverted.
+    keeps running throughout.
 
-    Neither hardware watchpoints nor execution breakpoints are usable here --
-    the former would need Frida, the latter do not fire under Wine -- so the
-    thread is caught with a software ``int3`` on a hot function and its return
-    with another, the way gdb breakpoints Wine processes. ``hot_points`` adds
-    ``(module, function)`` pairs tried before the built-in set.
+    ``method`` picks the loader: ``"helper"`` (the Windows helper, see
+    wine_helper.py), ``"ptrace"`` (a borrowed thread, 64-bit only) or
+    ``"auto"``, the helper with ptrace as fallback. ``hot_points`` adds
+    ``(module, function)`` pairs the ptrace loader tries before its built-in
+    set.
     """
     memory = _Memory(pid)
     try:
@@ -469,38 +480,96 @@ def load_gadget(pid, timeout=20.0, download=True, hot_points=()):
         if not images:
             raise GadgetError("No PE modules found; is this really a Wine process?")
         main = next((img for img in images if img.name.endswith(".exe")), images[0])
-        if main.bits != 64:
-            raise GadgetError(
-                "Frida over the Windows gadget supports 64-bit Wine games only "
-                "for now. Use the ptrace backend for this 32-bit game.")
-        load_library = _load_library_address(memory, images)
-        trap = _trap_site(memory, images, load_library)
-        hot = _hot_points(memory, images, hot_points)
-        if not hot:
-            raise GadgetError("No hot function found to borrow a thread at")
+        # A 32-bit game under the new WoW64 also maps 64-bit system DLLs of the
+        # same names; only the game's own architecture is of use.
+        images = [img for img in images if img.bits == main.bits]
 
         dll = ensure_gadget(main.bits, download=download)
         port = _free_port()
         write_config(dll, port)
-        wide = (_windows_path(dll) + "\0").encode("utf-16-le")
+        url = f"127.0.0.1:{port}"
 
-        tracee = _Tracee(pid)
-        tracee.attach()
-        try:
-            tracee.set_breakpoints(memory, hot)
-            tid, _addr = tracee.catch_breakpoint(timeout)
-            tracee.clear_breakpoints(memory)
-            if tid is None:
-                raise GadgetError(
-                    "No thread reached a hot function in time. The game may be "
-                    "idle; try again once it is interacting.")
-            _call_load_library(memory, tid, load_library, trap, wide, timeout)
-        finally:
-            tracee.clear_breakpoints(memory)
-            tracee.detach()
+        helper_error = None
+        if method in (METHOD_AUTO, METHOD_HELPER):
+            try:
+                _load_with_helper(pid, memory, images, main, dll)
+                _remember_loader(pid, METHOD_HELPER)
+                return url
+            except wine_helper.HelperError as error:
+                if method == METHOD_HELPER:
+                    raise GadgetError(str(error)) from error
+                helper_error = error
+                log.warning("Windows helper could not load the gadget, "
+                            "trying ptrace: %s", error)
+        if main.bits != 64:
+            raise GadgetError(
+                "The Frida gadget could not be loaded into this 32-bit game "
+                f"({helper_error}). Use the ptrace backend.")
+        _load_with_ptrace(pid, memory, images, dll, timeout, hot_points)
+        _remember_loader(pid, METHOD_PTRACE)
     finally:
         memory.close()
-    return f"127.0.0.1:{port}"
+    return url
+
+
+# The loader that put the gadget into a process, by (pid, start time) so a
+# later process with a reused PID is not mistaken for it.
+_LOADERS = {}
+
+
+def _remember_loader(pid, method):
+    _LOADERS[(pid, process_start_time(pid))] = method
+
+
+def gadget_loader(pid):
+    """Return how this hermes loaded the gadget into ``pid``.
+
+    ``"helper"`` or ``"ptrace"``; None if it did not load one, for instance
+    when the gadget came from an earlier hermes run.
+    """
+    return _LOADERS.get((pid, process_start_time(pid)))
+
+
+def _load_with_helper(pid, memory, images, main, dll):
+    """Load ``dll`` through the Windows helper in the game's wineserver."""
+    helper = wine_helper.Helper(pid, main.bits)
+    windows_pid = helper.windows_pid(main.name)
+    try:
+        load_library = _load_library_address(memory, images)
+    except GadgetError:
+        load_library = None  # the helper falls back to its own LoadLibraryW
+    helper.inject(windows_pid, _windows_path(dll), load_library)
+
+
+def _load_with_ptrace(pid, memory, images, dll, timeout, hot_points):
+    """Load ``dll`` on a game thread borrowed via ptrace.
+
+    Neither hardware watchpoints nor execution breakpoints are usable here --
+    the former would need Frida, the latter do not fire under Wine -- so the
+    thread is caught with a software ``int3`` on a hot function and its return
+    with another, the way gdb breakpoints Wine processes.
+    """
+    load_library = _load_library_address(memory, images)
+    trap = _trap_site(memory, images, load_library)
+    hot = _hot_points(memory, images, hot_points)
+    if not hot:
+        raise GadgetError("No hot function found to borrow a thread at")
+    wide = (_windows_path(dll) + "\0").encode("utf-16-le")
+
+    tracee = _Tracee(pid)
+    tracee.attach()
+    try:
+        tracee.set_breakpoints(memory, hot)
+        tid, _addr = tracee.catch_breakpoint(timeout)
+        tracee.clear_breakpoints(memory)
+        if tid is None:
+            raise GadgetError(
+                "No thread reached a hot function in time. The game may be "
+                "idle; try again once it is interacting.")
+        _call_load_library(memory, tid, load_library, trap, wide, timeout)
+    finally:
+        tracee.clear_breakpoints(memory)
+        tracee.detach()
 
 
 def _call_load_library(memory, tid, load_library, trap, wide, timeout):

@@ -36,7 +36,7 @@ from hermes.core.memory import UnknownModuleError, parse_address, write_process_
 from hermes.engines import base as engine_base
 from hermes.engines.registry import ENGINES, detect_engine
 from hermes.features.catalog import catalog_method_from_identity
-from hermes.core.wine_gadget import wine_bits
+from hermes.core.wine_gadget import gadget_loader, gadget_port, wine_bits
 from hermes.platform import ProcessMemory, is_wine_process, process_start_time, read_mappings
 from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES, value_type as get_value_type
 from hermes.core.write_watch import (
@@ -440,7 +440,20 @@ class MainWindow(QMainWindow):
         if getattr(self, "lbl_backend", None) is None:
             return
         name = self.translations[f"status.backend_{self._watch_backend}"]
-        self.lbl_backend.setText(self.translations["status.backend"].format(backend=name))
+        text = self.translations["status.backend"].format(backend=name)
+        self.lbl_backend.setText(text + self._gadget_note())
+
+    def _gadget_note(self):
+        """Say whether Frida reaches the attached Wine game through its gadget.
+
+        Checked on every process check, because the gadget is only loaded
+        once a Frida feature first needs it.
+        """
+        pid = self._current_pid
+        if pid is None or not is_wine_process(pid) or gadget_port(pid) is None:
+            return ""
+        loader = gadget_loader(pid)
+        return self.translations[f"status.gadget_{loader}" if loader else "status.gadget"]
 
     # ------------------------------------------------------------------
     # Toolbar
@@ -1763,6 +1776,7 @@ class MainWindow(QMainWindow):
             if self._engine is None:
                 # The runtime may load after attaching early during the game's start.
                 self._update_catalog_button()
+            self._update_backend_label()
             return True
         process = self._current_proc
         self._detach_process()
@@ -1805,6 +1819,7 @@ class MainWindow(QMainWindow):
             self.addr_table.setRowCount(0)
         self._current_proc = self.translations["app.no_process"]
         self.lbl_proc_info.setText(f"  {self._current_proc}")
+        self._update_backend_label()
 
     def _ensure_example_templates(self):
         """Create the example hook templates that do not exist yet."""

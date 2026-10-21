@@ -151,29 +151,25 @@ Schritt, **IL2CPP** der naheliegendste für Unity-Spiele ohne Mono.
   Code ab (Schreibzugriff auf den Header von `OPENGL32.dll` an `0x7BEB0000`). Umgangen
   durch Vorauswahl-Filter und eine Obergrenze (`WINE_TRACE_LIMIT`), nicht behoben.
   Kandidat für einen Bug-Report an Frida mit Minidump.
-- **32-Bit-Wine-Spiele:** Der Gadget-Loader kann nur 64-Bit. Für 32-Bit braucht es das
-  x86-Gadget und eine 32-Bit-Variante des Ladens (stdcall, 32-Bit-Register).
-- **Gadget-Loader:** Fängt einen Thread per Software-Breakpoint an einer häufig
-  aufgerufenen Windows-Funktion (Message-Pump, Timing). Spiele, die keine dieser
+- **32-Bit-Wine-Spiele:** Das Windows-Hilfsprogramm lädt das x86-Gadget auch in 32-Bit-Spiele
+  (mit 32-Bit-`ping.exe` geprüft). Die automatische Backend-Wahl nimmt für sie aber weiter
+  ptrace, denn die Agents (Mono-Adapter, Monitor, Hooks) sind unter 32-Bit-Windows
+  ungetestet und gehen teils von Win64 aus.
+- **Gadget per Windows-Hilfsprogramm (umgesetzt):** `hermes/core/inject/inject.c`, gebaut mit
+  `build.sh` (MinGW oder zig) als `hermes-inject-x86_64.exe` bzw. `-x86.exe`, lädt das Gadget
+  per `VirtualAllocEx`/`WriteProcessMemory`/`CreateRemoteThread` + `LoadLibraryW`.
+  `hermes/core/wine_helper.py` startet es mit dem `wine` des Spiels (neben bzw. über dessen
+  Preloader) und dessen `WINEPREFIX` und Sync-Variablen. Die Windows-PID ermittelt es über
+  Exe-Name und Erstellzeit. Vorher prüft es, ob der wineserver-Socket des Prefixes in `/tmp`
+  existiert, damit kein zweiter Server startet. `load_gadget` versucht zuerst das
+  Hilfsprogramm und fällt bei 64-Bit auf den ptrace-Loader zurück.
+  - Geprüft im eigenen Prefix mit Protons Wine (64- und 32-Bit-`ping.exe`, mehrere
+    gleichnamige Prozesse).
+  - Offen: ein echtes Steam-Spiel im Steam-Linux-Runtime-Container (Kathy Rain 2). Das
+    Hilfsprogramm läuft außerhalb des Containers und braucht das gemeinsame `/tmp` und
+    `/dev/shm`. Scheitert das, wäre `nsenter` in die Namespaces des Spiels der nächste Schritt.
+- **Gadget-Loader (ptrace, Rückfallweg):** Fängt einen Thread per Software-Breakpoint an einer
+  häufig aufgerufenen Windows-Funktion (Message-Pump, Timing). Spiele, die keine dieser
   Funktionen aufrufen, brauchen eigene `hot_points`.
-- **Idee: Gadget per Windows-Hilfsprogramm laden statt per ptrace.** Nicht hermes selbst
-  unter Wine laufen lassen (das bräuchte pro Spiel Windows-Python, PyQt6 und Frida im
-  Proton-Prefix, sähe keine nativen Linux-Spiele mehr und ließe die Probleme *nach* dem
-  Einstieg unverändert, da derselbe Windows-Agent im Spiel läuft), sondern nur den
-  Einstieg:
-  - Ein kleines Windows-Programm (z. B. mit MinGW gebaut) lädt `frida-gadget.dll` per
-    `VirtualAllocEx`/`WriteProcessMemory`/`CreateRemoteThread` + `LoadLibraryW` in das
-    Spiel und beendet sich.
-  - hermes startet es mit dem Wine/Proton und dem `WINEPREFIX` des laufenden Spiels
-    (aus `/proc/<pid>/environ` und der Kommandozeile), denn prozessübergreifende
-    Windows-Aufrufe gehen nur innerhalb desselben wineservers. Die Windows-PID des Spiels
-    muss dafür ermittelt werden (z. B. über die Prozessliste im Prefix).
-  - hermes bleibt nativ und verbindet sich wie bisher per `add_remote_device` mit dem
-    Gadget.
-  - Gewinn: kein ptrace/`int3`, keine Abhängigkeit von „heißen“ Windows-Funktionen, und
-    32-Bit-Spiele über eine 32-Bit-Variante des Hilfsprogramms mit dem x86-Gadget.
-  - Erst prüfen: ob Wines `CreateRemoteThread` über den wineserver zuverlässig
-    funktioniert (Spike mit dem `ping.exe`-Szenario, dann Kathy Rain 2). Der bestehende
-    Loader bleibt als Rückfallweg.
 - **Test-Suite:** Ein Durchlauf ist einmal mit einem Speicherabzug abgebrochen; weitere
   Durchläufe liefen sauber. Ursache nicht untersucht, möglicherweise flaky.

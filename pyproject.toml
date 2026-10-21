@@ -27,6 +27,7 @@ include = ["hermes*"]
 
 [tool.setuptools.package-data]
 "hermes.ui" = ["localization/*.json", "resources/*.svg"]
+"hermes.core" = ["inject/*.exe", "inject/inject.c", "inject/build.sh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
