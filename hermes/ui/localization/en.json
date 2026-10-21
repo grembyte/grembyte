@@ -366,6 +366,8 @@
   "trace.filter_new": "New …",
   "trace.filter_edit": "Edit …",
   "trace.filter_delete": "Delete",
+  "trace.filter_check_all": "Tick all",
+  "trace.filter_uncheck_all": "Untick all",
   "trace.filter_generated": "Include generated code",
   "trace.filter_generated_tooltip": "Methods the compiler made (lambdas, closures, iterators: names with “<”). Rarely wanted, but many.",
   "trace.filter_money": "Money",

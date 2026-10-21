@@ -366,6 +366,8 @@
   "trace.filter_new": "Neu …",
   "trace.filter_edit": "Bearbeiten …",
   "trace.filter_delete": "Löschen",
+  "trace.filter_check_all": "Alle markieren",
+  "trace.filter_uncheck_all": "Alle abwählen",
   "trace.filter_generated": "Generierten Code einbeziehen",
   "trace.filter_generated_tooltip": "Vom Compiler erzeugte Methoden (Lambdas, Closures, Iteratoren: Namen mit „<“). Selten gesucht, aber zahlreich.",
   "trace.filter_money": "Geld",

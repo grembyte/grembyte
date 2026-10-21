@@ -93,7 +93,10 @@ class TraceFilterPanel(QWidget):
         self.edit_button.clicked.connect(self._edit)
         self.delete_button = QPushButton(self.translations["trace.filter_delete"])
         self.delete_button.clicked.connect(self._delete)
-        for button in (self.new_button, self.edit_button, self.delete_button):
+        self.check_all_button = QPushButton(self.translations["trace.filter_check_all"])
+        self.check_all_button.clicked.connect(self._toggle_all)
+        for button in (self.new_button, self.edit_button, self.delete_button,
+                       self.check_all_button):
             right.addWidget(button)
         self.generated_check = QCheckBox(self.translations["trace.filter_generated"])
         self.generated_check.setToolTip(self.translations["trace.filter_generated_tooltip"])
@@ -143,9 +146,24 @@ class TraceFilterPanel(QWidget):
         current = self._current()
         self.edit_button.setEnabled(current is not None)
         self.delete_button.setEnabled(current is not None and not current.builtin)
+        key = "trace.filter_uncheck_all" if self._all_checked() else "trace.filter_check_all"
+        self.check_all_button.setText(self.translations[key])
+
+    def _all_checked(self):
+        return self.list.count() > 0 and len(self.checked_filters()) == self.list.count()
+
+    def _toggle_all(self):
+        """Tick every filter, or untick them all when every one is ticked already."""
+        state = Qt.CheckState.Unchecked if self._all_checked() else Qt.CheckState.Checked
+        self.list.blockSignals(True)
+        for row in range(self.list.count()):
+            self.list.item(row).setCheckState(state)
+        self.list.blockSignals(False)
+        self._changed()
 
     def _changed(self):
         self._update_counts()
+        self._update_buttons()
         self.selection_changed.emit()
 
     # --- State ---------------------------------------------------------------
