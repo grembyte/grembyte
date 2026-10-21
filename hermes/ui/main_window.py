@@ -37,7 +37,9 @@ from hermes.engines import base as engine_base
 from hermes.engines.registry import ENGINES, detect_engine
 from hermes.features.catalog import catalog_method_from_identity
 from hermes.core.wine_gadget import gadget_loader, gadget_port, wine_bits
-from hermes.platform import ProcessMemory, is_wine_process, process_start_time, read_mappings
+from hermes.platform import (
+    ProcessMemory, is_wine_process, process_start_time, program_bits, read_mappings,
+)
 from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES, value_type as get_value_type
 from hermes.core.write_watch import (
     WATCH_BACKENDS,
@@ -282,6 +284,9 @@ class MainWindow(QMainWindow):
 
         self._current_pid = None
         self._process_start_time = None
+        # Name and bitness (32/64, None if unknown) of the attached program
+        self._current_name = None
+        self._process_bits = None
         self._hook_repository = HookRepository()
         self._trace_filter_repository = TraceFilterRepository()
         self._address_repository = AddressRepository()
@@ -1166,6 +1171,8 @@ class MainWindow(QMainWindow):
         """Enable the catalog and the trace for games whose engine hermes supports."""
         if self._current_pid is not None and self._engine is None:
             self._engine = detect_engine(self._current_pid)
+            if self._engine is not None:
+                self._show_attached()
         unsupported = self.translations["catalog.button_no_engine"].format(
             engines=", ".join(engine.display_name for engine in ENGINES))
         for action, tooltip, capability in (
@@ -1175,11 +1182,39 @@ class MainWindow(QMainWindow):
                        and self._engine.supports(capability))
             action.setEnabled(enabled)
             action.setToolTip(self.translations[tooltip] if enabled else unsupported)
-        # Needs no engine: it follows the machine code.
-        self.act_native_trace.setEnabled(self._current_pid is not None)
-        self.act_native_trace.setToolTip(self.translations["native_trace.button_tooltip"])
-        self.act_native_monitor.setEnabled(self._current_pid is not None)
-        self.act_native_monitor.setToolTip(self.translations["native_monitor.button_tooltip"])
+        # Needs no engine: it follows the machine code. Some engines do not bear it.
+        native = self._native_tools_allowed()
+        for action, tooltip in ((self.act_native_trace, "native_trace.button_tooltip"),
+                                (self.act_native_monitor, "native_monitor.button_tooltip")):
+            action.setEnabled(native)
+            action.setToolTip(self.translations[tooltip] if native or self._engine is None
+                              else self._native_blocked_text())
+
+    def _native_tools_allowed(self):
+        """Whether the native trace and monitor may run in the attached game."""
+        return self._current_pid is not None and (
+            self._engine is None or self._engine.native_tools)
+
+    def _native_blocked_text(self):
+        return self.translations["native.blocked_engine"].format(
+            engine=self._engine.display_name)
+
+    def _show_attached(self):
+        """Show the attached program with its bitness and engine in the status bar."""
+        pid = self._current_pid
+        if pid is None:
+            return
+        if self._process_bits is None:
+            self._process_bits = wine_bits(pid) if is_wine_process(pid) else program_bits(pid)
+        details = []
+        if self._process_bits is not None:
+            details.append(self.translations["status.bits"].format(bits=self._process_bits))
+        if self._engine is not None:
+            details.append(self._engine.display_name)
+        process = (self.translations["app.process_display_details"].format(
+            name=self._current_name, pid=pid, details=", ".join(details))
+            if details else self._current_proc)
+        self.lbl_status.setText(self.translations["app.process_attached"].format(process=process))
 
     def _open_catalog(self):
         """Show the catalog of the C# methods of the attached game (see hermes/engines)."""
@@ -1274,6 +1309,10 @@ class MainWindow(QMainWindow):
         """Show the trace of the native functions a scenario in the game runs."""
         if self._current_pid is None:
             return
+        if not self._native_tools_allowed():
+            QMessageBox.information(self, self.translations["menu.native_trace"],
+                                    self._native_blocked_text())
+            return
         trace = self._native_trace_dialog
         if trace is None:
             trace = NativeTraceDialog(self.translations, self._current_pid, parent=self)
@@ -1298,6 +1337,10 @@ class MainWindow(QMainWindow):
         Returns the monitor window, or None without a process.
         """
         if self._current_pid is None:
+            return None
+        if not self._native_tools_allowed():
+            QMessageBox.information(self, self.translations["menu.native_monitor"],
+                                    self._native_blocked_text())
             return None
         monitor = self._native_monitor
         if monitor is None:
@@ -1753,19 +1796,19 @@ class MainWindow(QMainWindow):
             self._current_pid = dlg.selected_pid
             if changed:
                 self._process_start_time = process_start_time(dlg.selected_pid)
+                self._process_bits = None
                 self._process_timer.start()
                 self._process_id = process_id
                 self._load_saved_addresses()
             self._current_proc = self.translations["app.process_display"].format(
                 name=dlg.selected_name, pid=dlg.selected_pid
             )
+            self._current_name = dlg.selected_name
             self.lbl_proc_info.setText(f"  ⬢  {self._current_proc}")
-            self.lbl_status.setText(
-                self.translations["app.process_attached"].format(process=self._current_proc)
-            )
             if self.btn_first_scan is not None:
                 self.btn_first_scan.setEnabled(True)
             self._update_catalog_button()
+            self._show_attached()
 
     def _check_process_alive(self):
         """Reset the window if the attached process has exited; return whether it runs."""
@@ -1811,6 +1854,8 @@ class MainWindow(QMainWindow):
 
         self._current_pid = None
         self._engine = None
+        self._current_name = None
+        self._process_bits = None
         self._update_catalog_button()
         self._process_start_time = None
         self._process_id = None

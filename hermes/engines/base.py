@@ -88,6 +88,9 @@ class EngineAdapter:
     agent_source = ""
     # Code units of the runtime and its frameworks rather than of the game
     framework_prefixes = ()
+    # Whether the native trace and the native monitor are safe in its games:
+    # they rewrite machine code the runtime may have to recognise.
+    native_tools = True
 
     def detect(self, pid, proc_root="/proc"):
         """Return whether the process has loaded this engine's runtime."""

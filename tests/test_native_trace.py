@@ -4,10 +4,13 @@ import subprocess
 
 from hermes.features.native_trace import (
     NativeFunction,
+    TraceModule,
     apply_names,
+    foreign_code,
     thread_activity,
 )
 
+from hermes.platform.linux import parse_maps
 from tests.test_hooks import (  # pylint: disable=unused-import
     _Target,
     _wait_for,
@@ -245,6 +248,19 @@ def test_functions_are_named_by_symbol_or_location():
                             "names": {"1": "jit"}})
     assert [function.label for function in functions] == ["buy_item", "jit", "game+0x1200"]
     assert functions[2] == NativeFunction(0x401200, "game", 0x1200)
+
+
+def test_wine_unix_code_outside_the_followed_modules_runs_natively():
+    mappings = parse_maps([
+        "140000000-140400000 r-xp 00000000 08:01 1 /games/BG/Baldur.exe",
+        "6fff0000-70000000 r-xp 00000000 08:01 2 /proton/lib/wine/x86_64-windows/user32.dll",
+        "7f0000000000-7f0000100000 r-xp 00000000 08:01 3 /proton/lib/wine/x86_64-unix/ntdll.so",
+        "7f0000200000-7f0000300000 rw-p 00000000 08:01 3 /proton/lib/wine/x86_64-unix/ntdll.so",
+        "7f0000400000-7f0000500000 rwxp 00000000 00:00 0 ",
+    ])
+    followed = [TraceModule("Baldur.exe", "Z:\\games\\BG\\Baldur.exe", 0x140000000, 0x400000, True)]
+    assert foreign_code(mappings, followed) == [
+        ["0x6fff0000", 0x10000], ["0x7f0000000000", 0x100000]]
 
 
 def test_thread_activity_is_cpu_share_and_wakeups(tmp_path):

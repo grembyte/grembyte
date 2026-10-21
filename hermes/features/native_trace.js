@@ -38,7 +38,7 @@ function inventory() {
 }
 
 function start(spec) {
-  // spec: { threads: [ids], modules: [names to follow] }
+  // spec: { threads: [ids], modules: [names to follow], ranges: [[base, size]] to run natively }
   if (trace !== null)
     throw new Error('a trace is running already');
   if (modules === null)
@@ -50,6 +50,13 @@ function start(spec) {
       included.push(module);
     else
       Stalker.exclude(module);  // runs natively: only calls into it are seen
+  }
+  // Code Frida knows no module of (Wine's Unix side): runs natively as well.
+  // A 32-bit game cannot reach the 64-bit libraries of the new WoW64.
+  for (const [base, size] of spec.ranges || []) {
+    if (Process.pointerSize === 4 && uint64(base).add(size).compare(uint64('0x100000000')) > 0)
+      continue;
+    Stalker.exclude({ base: ptr(base), size });
   }
   Stalker.queueDrainInterval = DRAIN_INTERVAL_MS;
   Stalker.queueCapacity = QUEUE_CAPACITY;
@@ -69,7 +76,8 @@ function start(spec) {
     firsts: new Set(),
     dropped: 0,
     saturated: 0,           // sums of a full queue: calls were lost
-    threads: []
+    threads: [],
+    entered: new Set()      // threads that run in Stalker's code by now
   };
   const failed = [];
   for (const id of spec.threads) {
@@ -106,7 +114,13 @@ function functionNumber(target) {
 function record(thread, summary) {
   // Runs on the agent's thread with the calls one followed thread made.
   const t = trace;
-  if (t === null || t.phase === null)
+  if (t === null)
+    return;
+  if (WINDOWS && !t.entered.has(thread)) {
+    t.entered.add(thread);
+    clearEntryBreakpoints([thread]);
+  }
+  if (t.phase === null)
     return;
   const scenario = t.phase === 'scenario';
   const time = (Date.now() - t.began) * 1000;
@@ -242,12 +256,37 @@ function live() {
   send({ kind: 'live', phase: t.phase, calls, methods, events: t.events.length });
 }
 
+function clearEntryBreakpoints(ids) {
+  // Under Windows Stalker enters a thread through a hardware breakpoint at
+  // the instruction it stands at (1 and 2 serve it too in 32-bit programs),
+  // and removes it by writing the old debug registers into the exception's
+  // context. Wine hands over that context with debug registers of zero, so
+  // nothing changes and the breakpoint stays: once Stalker forgot the
+  // thread, its next pass there (a system call's return) ended Baldur's
+  // Gate under Proton with EXCEPTION_SINGLE_STEP.
+  const slots = Process.pointerSize === 4 ? [0, 1, 2] : [0];
+  const wanted = new Set(ids);
+  for (const thread of Process.enumerateThreads()) {
+    if (!wanted.has(thread.id))
+      continue;
+    for (const slot of slots) {
+      try {
+        thread.unsetHardwareBreakpoint(slot);
+      } catch (_error) {
+        // ended meanwhile
+      }
+    }
+  }
+}
+
 function stop() {
   // Exclusions stay with the Stalker: Python loads a fresh agent for the next trace.
   if (trace === null)
     return false;
   const t = trace;
   trace = null;
+  if (WINDOWS)
+    clearEntryBreakpoints(t.threads);
   for (const id of t.threads) {
     try {
       Stalker.unfollow(id);

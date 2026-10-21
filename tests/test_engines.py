@@ -57,6 +57,8 @@ def test_mono_adapter_capabilities_and_framework_filter():
     assert mono.is_framework_assembly("UnityEngine.CoreModule")
     assert mono.is_framework_assembly("Rewired_Core") and mono.is_framework_assembly("Steamworks")
     assert not mono.is_framework_assembly("Assembly-CSharp")
+    # The native trace crashed a Mono game: hermes keeps both native tools away.
+    assert not mono.native_tools and base.EngineAdapter.native_tools
 
 
 def test_agent_source_registers_adapters_before_the_facade():

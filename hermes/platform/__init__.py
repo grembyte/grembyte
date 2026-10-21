@@ -12,6 +12,8 @@ regions and asks about processes through these names only:
     ``write``.
 ``main_module(pid)``
     Module name of the program itself, or None.
+``program_bits(pid)``
+    32 or 64 for the program's executable, or None.
 ``process_start_time(pid)``
     A value that changes when the PID belongs to a new process; None once it
     has exited.
@@ -32,6 +34,7 @@ if sys.platform.startswith("linux"):
         is_wine_process,
         main_module,
         process_start_time,
+        program_bits,
         read_mappings,
     )
 else:
@@ -43,5 +46,6 @@ __all__ = [
     "is_wine_process",
     "main_module",
     "process_start_time",
+    "program_bits",
     "read_mappings",
 ]

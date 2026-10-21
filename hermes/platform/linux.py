@@ -136,6 +136,23 @@ def process_start_time(pid, proc_root="/proc"):
     return int(fields[19])
 
 
+def program_bits(pid, proc_root="/proc"):
+    """Return 32 or 64 for the ELF program ``pid`` runs, or None if unknown.
+
+    Under Wine that is the loader's; the Windows program's own is
+    ``wine_bits`` (hermes.core.wine_gadget).
+    """
+    try:
+        with open(f"{proc_root}/{pid}/exe", "rb") as exe:
+            ident = exe.read(5)
+    except OSError:
+        return None
+    if ident[:4] != b"\x7fELF":
+        return None
+    # EI_CLASS: ELFCLASS32 or ELFCLASS64
+    return {1: 32, 2: 64}.get(ident[4])
+
+
 def is_wine_process(pid, proc_root="/proc"):
     """Return True if ``pid`` runs under Wine or Proton.
 

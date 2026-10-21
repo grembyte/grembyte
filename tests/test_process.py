@@ -3,7 +3,7 @@
 import os
 import subprocess
 
-from hermes.platform.linux import is_wine_process, process_start_time
+from hermes.platform.linux import is_wine_process, process_start_time, program_bits
 
 
 def _write_stat(root, pid, name, state, start_time):
@@ -59,3 +59,15 @@ def test_detects_wine_and_proton_loaders(tmp_path):
     assert not is_wine_process(5, tmp_path)
     assert not is_wine_process(6, tmp_path)
     assert not is_wine_process(os.getpid())
+
+
+def test_reads_the_bitness_of_the_program(tmp_path):
+    for pid, header in ((1, b"\x7fELF\x01"), (2, b"\x7fELF\x02"), (3, b"MZ\x90\x00\x03")):
+        (tmp_path / str(pid)).mkdir()
+        (tmp_path / str(pid) / "exe").write_bytes(header + b"\0" * 59)
+
+    assert program_bits(1, tmp_path) == 32
+    assert program_bits(2, tmp_path) == 64
+    assert program_bits(3, tmp_path) is None
+    assert program_bits(4, tmp_path) is None
+    assert program_bits(os.getpid()) == 64

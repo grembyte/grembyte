@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import sessions
-from hermes.platform import is_wine_process
+from hermes.platform import is_wine_process, read_mappings
 from hermes.features.trace import AgentWorker
 from hermes.core.agent_source import load_agent_source
 
@@ -129,6 +129,21 @@ class TraceModule:
     game: bool
 
 
+def foreign_code(mappings, followed):
+    """[base, size] of the executable files mapped outside the ``followed`` TraceModules.
+
+    Under Wine Frida knows only the PE modules: Wine's Unix side (ntdll.so,
+    win32u.so, winex11.so, libc, the GL driver) is no module to exclude, so
+    Stalker would recompile every system call down into the driver, Wine's
+    syscall dispatcher included. Even one followed thread froze Baldur's Gate
+    under Proton. Anonymous code stays followed: Stalker's own lies there.
+    """
+    spans = [(module.base, module.base + module.size) for module in followed]
+    return [[hex(mapping.start), mapping.end - mapping.start] for mapping in mappings
+            if "x" in mapping.permissions and mapping.path.startswith("/")
+            and not any(mapping.start < end and start < mapping.end for start, end in spans)]
+
+
 def _thread_times(pid, tid, proc_root="/proc"):
     """(CPU time in clock ticks, context switches) of a thread, or None."""
     task = f"{proc_root}/{pid}/task/{tid}"
@@ -185,7 +200,10 @@ class NativeTraceWorker(AgentWorker):
     def __init__(self, pid, parent=None):
         super().__init__(pid, parent)
         # Under Wine the agent sees Windows thread ids, which /proc does not know.
-        self._measure_load = not is_wine_process(pid)
+        self._wine = is_wine_process(pid)
+        self._measure_load = not self._wine
+        # TraceModules of the last inventory
+        self._modules = []
         # Agents of earlier traces: their Stalker keeps its exclusions, and
         # unloading one waits for threads still blocked in its code.
         self._retired = []
@@ -218,6 +236,7 @@ class NativeTraceWorker(AgentWorker):
             modules = [TraceModule(module["name"], module["path"], int(module["base"], 16),
                                    module["size"], module["game"])
                        for module in answer["modules"]]
+            self._modules = modules
             self.inventory_found.emit(threads, modules, answer["platform"])
         elif action == "start":
             if self._traced:
@@ -227,6 +246,11 @@ class NativeTraceWorker(AgentWorker):
                 self._load_script(self._session)
                 api = self._script.exports_sync
             self._traced = True
+            if self._wine:
+                followed = [module for module in self._modules
+                            if module.name in argument["modules"]]
+                argument = {**argument,
+                            "ranges": foreign_code(read_mappings(self.pid), followed)}
             self.started.emit(api.start(argument))
         else:
             super()._run_command(api, action, argument)
