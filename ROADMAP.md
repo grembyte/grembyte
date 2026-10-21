@@ -142,19 +142,23 @@ Schritt, **IL2CPP** der naheliegendste für Unity-Spiele ohne Mono.
 ## Offene Punkte aus der Wine/Proton-Arbeit
 
 - **Methoden-Monitor und Methoden-Hooks unter Wine:** `hermes/features/monitor.py` ordnet
-  Argumente nach der System-V-Aufrufkonvention zu (`rdi, rsi, …`). Unter Wine kompiliert
-  Mono nach der Win64-Konvention (`rcx, rdx, r8, r9` bzw. `xmm0–3` nach Position,
-  32 Byte Shadow-Space, andere Struct-Übergabe). Bis das in der Plattform-Schicht
-  berücksichtigt ist, sind Argument- und Rückgabewerte dort unter Wine falsch.
+  Argumente jetzt nach der Konvention der Plattform zu: System V (Linux x86-64), Win64 (rcx,
+  rdx, r8, r9 bzw. xmm0–3 nach Position, 32 Byte Shadow-Space) und x86 (alles auf dem Stack).
+  Unter 32-Bit liegen Float-Ergebnisse in st0 und 64-Bit-Ergebnisse in edx:eax; sie werden
+  gelesen bzw. als nicht lesbar gemeldet, aber nicht ersetzt. Am echten Spiel noch zu prüfen:
+  Win64 mit Kathy Rain 2, x86 mit Shadowrun Returns, besonders Methoden mit Structs und Floats.
 - **Große Traces unter Wine:** Bei Zehntausenden Methoden fror das Spiel beim Kompilieren
   ein (Monos Garbage Collector hing in `SuspendThread`) oder stürzte beim Hooken in Fridas
   Code ab (Schreibzugriff auf den Header von `OPENGL32.dll` an `0x7BEB0000`). Umgangen
   durch Vorauswahl-Filter und eine Obergrenze (`WINE_TRACE_LIMIT`), nicht behoben.
   Kandidat für einen Bug-Report an Frida mit Minidump.
-- **32-Bit-Wine-Spiele:** Das Windows-Hilfsprogramm lädt das x86-Gadget auch in 32-Bit-Spiele
-  (mit 32-Bit-`ping.exe` geprüft). Die automatische Backend-Wahl nimmt für sie aber weiter
-  ptrace, denn die Agents (Mono-Adapter, Monitor, Hooks) sind unter 32-Bit-Windows
-  ungetestet und gehen teils von Win64 aus.
+- **32-Bit-Wine-Spiele:** Das Windows-Hilfsprogramm lädt das x86-Gadget auch in 32-Bit-Spiele.
+  Die Agents nahmen an drei Stellen 64-Bit an: die Batch-Struktur des Mono-Agents (Shadowrun
+  Returns stürzte bei der COM-Interop-Prüfung ab), `MEMORY_BASIC_INFORMATION` in `watchUnmaps`
+  und `CONTEXT` in `pauseThreads`. Das ist behoben und in einem 32-Bit-Prozess geprüft. Die
+  automatische Backend-Wahl nimmt für 32-Bit-Spiele weiter ptrace. Das betrifft aber nur
+  Überwachung und Hooks; Mono-Funktionen laufen immer über das Gadget. Weitere Annahmen für
+  64-Bit (Monitor-Argumente nach Win64-Konvention, Hook-Engine) sind möglich.
 - **Gadget per Windows-Hilfsprogramm (umgesetzt):** `hermes/core/inject/inject.c`, gebaut mit
   `build.sh` (MinGW oder zig) als `hermes-inject-x86_64.exe` bzw. `-x86.exe`, lädt das Gadget
   per `VirtualAllocEx`/`WriteProcessMemory`/`CreateRemoteThread` + `LoadLibraryW`.

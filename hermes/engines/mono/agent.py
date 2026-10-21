@@ -602,9 +602,12 @@ gpointer run_batch (gpointer data) {
   return NULL;
 }
 `;
-  // Offsets in Batch
-  const B_DOMAIN = 0, B_KIND = 8, B_COUNT = 12, B_INPUT = 16, B_FIRST = 24, B_SECOND = 32,
-    B_DONE = 40, B_CANCEL = 44, B_FINISHED = 48, B_SIZE = 56;
+  // Offsets in Batch: pointers are 4 bytes in a 32-bit game (Wine), 8 otherwise.
+  const P = Process.pointerSize;
+  const B_DOMAIN = 0, B_KIND = P, B_COUNT = P + 4, B_INPUT = P === 8 ? 16 : 12,
+    B_FIRST = B_INPUT + P, B_SECOND = B_FIRST + P, B_DONE = B_SECOND + P,
+    B_CANCEL = B_DONE + 4, B_FINISHED = B_CANCEL + 4,
+    B_SIZE = Math.ceil((B_FINISHED + 4) / P) * P;
   let batchCode = null;
   const batches = new Set();
 
@@ -951,7 +954,7 @@ gpointer run_batch (gpointer data) {
   // Game code that Unity only allows on its main thread (Unity API, game
   // logic) runs there via onMainThread: the next time the main thread starts
   // a script method through mono_runtime_invoke, the queued work runs first.
-  // On Linux the main thread's id is the process id.
+  // Which thread that is, see mainThreadId (platform layer).
 
   const MAIN_TIMEOUT = 3000;
   const mainQueue = [];
@@ -959,7 +962,7 @@ gpointer run_batch (gpointer data) {
   let draining = false;
 
   function isMainThread() {
-    return Process.getCurrentThreadId() === Process.id;
+    return Process.getCurrentThreadId() === mainThreadId();
   }
 
   function drainMain() {
@@ -991,6 +994,7 @@ gpointer run_batch (gpointer data) {
     // A promise of work()'s result, computed on Unity's main thread.
     if (api === null || api.invoke === null)
       return Promise.reject(new Error('this Mono runtime cannot run game code'));
+    mainThreadId();  // found here, not first in the hook on a game thread
     return new Promise((resolve, reject) => {
       const job = { work, resolve, reject };
       job.timer = setTimeout(() => {

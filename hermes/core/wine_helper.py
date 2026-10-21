@@ -42,6 +42,7 @@ class WineProcess:
     pid: int
     created_ms: int
     name: str
+    bits: int = 0  # 32 or 64, 0 if unknown
 
 
 def helper_path(bits):
@@ -142,10 +143,11 @@ def parse_list(output):
     processes = []
     for line in output.splitlines():
         fields = line.rstrip("\r").split("\t")
-        if len(fields) != 3:
+        if len(fields) not in (3, 4):
             continue
         try:
-            processes.append(WineProcess(int(fields[0]), int(fields[1]), fields[2]))
+            bits = int(fields[3]) if len(fields) == 4 else 0
+            processes.append(WineProcess(int(fields[0]), int(fields[1]), fields[2], bits))
         except ValueError:
             continue
     return processes
@@ -164,15 +166,17 @@ def start_time_ms(pid, proc_root="/proc"):
     return boot * 1000 + ticks * 1000 // os.sysconf("SC_CLK_TCK")
 
 
-def match_process(processes, exe_name, started_ms):
+def match_process(processes, exe_name, started_ms, bits=None):
     """Pick the Windows process that is the game.
 
-    Matches on the executable name; among several of the same name, the one
+    Matches on the executable name and, if given, the architecture (a 32- and a
+    64-bit program may share a name); among several left, the one
     whose creation time is closest to the Unix process's start wins (Wine
     registers a process with its server right as it starts).
     """
     exe_name = exe_name.lower()
-    candidates = [proc for proc in processes if proc.name.lower() == exe_name]
+    candidates = [proc for proc in processes if proc.name.lower() == exe_name
+                  and (bits is None or proc.bits in (0, bits))]
     if not candidates:
         raise HelperError(f"{exe_name} is not among the prefix's Windows processes")
     if len(candidates) == 1 or started_ms is None:
@@ -186,6 +190,7 @@ class Helper:
     def __init__(self, pid, bits, proc_root="/proc"):
         environ = read_environ(pid, proc_root)
         self.pid = pid
+        self.bits = bits
         self.exe = helper_path(bits)
         self.wine = wine_loader(pid, environ, proc_root)
         self.env = helper_environment(environ)
@@ -215,7 +220,8 @@ class Helper:
         code, output = self.run("list")
         if code != 0:
             raise HelperError(f"Helper could not list processes: {output.strip()}")
-        return match_process(parse_list(output), exe_name, start_time_ms(self.pid)).pid
+        return match_process(parse_list(output), exe_name, start_time_ms(self.pid),
+                             self.bits).pid
 
     def inject(self, windows_pid, dll_path, load_library=None):
         """Load ``dll_path`` (a Windows path) into ``windows_pid``."""

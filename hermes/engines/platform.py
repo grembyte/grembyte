@@ -12,6 +12,10 @@ API themselves.
     Call ``onUnmap(start, end)`` before memory is unmapped or released, while
     it is still mapped (``munmap``; under Wine ``NtFreeVirtualMemory`` and
     ``NtUnmapViewOfSection``). Returns a listener with ``detach()``.
+``mainThreadId()``
+    The id of the process's first thread, where Unity runs its player loop.
+    On Linux that is the process id; Windows gives threads ids of their own,
+    so there it is the thread created first (``GetThreadTimes``).
 ``pauseThreads()`` / ``resumeThreads(paused)``
     Stop every thread of the game while the agent changes code in bulk, and
     let them run again. Frida's own threads keep running: they are not in
@@ -65,8 +69,11 @@ function watchUnmaps(onUnmap) {
     });
   // Under Wine the game's Windows code frees memory through ntdll.
   const MEM_DECOMMIT = 0x4000, MEM_RELEASE = 0x8000, MEM_FREE = 0x10000;
-  const INFO_SIZE = 48;  // MEMORY_BASIC_INFORMATION (64-bit)
-  const currentProcess = ptr('0xffffffffffffffff');
+  // MEMORY_BASIC_INFORMATION: BaseAddress, AllocationBase, RegionSize, State
+  const wide = Process.pointerSize === 8;
+  const INFO_SIZE = wide ? 48 : 28;
+  const ALLOCATION_BASE = wide ? 8 : 4, REGION_SIZE = wide ? 24 : 12, STATE = wide ? 32 : 16;
+  const currentProcess = ptr(wide ? '0xffffffffffffffff' : '0xffffffff');
   const query = new NativeFunction(
     Process.getModuleByName('kernel32.dll').getExportByName('VirtualQuery'),
     'pointer', ['pointer', 'pointer', 'pointer']);
@@ -77,9 +84,9 @@ function watchUnmaps(onUnmap) {
     const info = Memory.alloc(INFO_SIZE);
     let cursor = base;
     while (!query(cursor, info, ptr(INFO_SIZE)).isNull()
-           && info.add(8).readPointer().equals(base)
-           && info.add(32).readU32() !== MEM_FREE)
-      cursor = info.readPointer().add(info.add(24).readU64());
+           && info.add(ALLOCATION_BASE).readPointer().equals(base)
+           && info.add(STATE).readU32() !== MEM_FREE)
+      cursor = info.readPointer().add(info.add(REGION_SIZE).readPointer());
     return cursor;
   }
   const listeners = [
@@ -103,6 +110,42 @@ function watchUnmaps(onUnmap) {
   return { detach() { listeners.forEach(listener => listener.detach()); } };
 }
 
+let mainThread = null;
+
+function mainThreadId() {
+  if (mainThread !== null)
+    return mainThread;
+  if (Process.platform !== 'windows') {
+    mainThread = Process.id;
+    return mainThread;
+  }
+  const kernel32 = Process.getModuleByName('kernel32.dll');
+  const fn = (name, ret, args) => new NativeFunction(kernel32.getExportByName(name), ret, args);
+  const open = fn('OpenThread', 'pointer', ['uint32', 'int', 'uint32']);
+  const times = fn('GetThreadTimes', 'int', ['pointer', 'pointer', 'pointer', 'pointer', 'pointer']);
+  const close = fn('CloseHandle', 'int', ['pointer']);
+  const THREAD_QUERY_LIMITED_INFORMATION = 0x0800;
+  const filetimes = Memory.alloc(4 * 8);  // creation, exit, kernel, user
+  let first = null;
+  for (const thread of Process.enumerateThreads()) {
+    const handle = open(THREAD_QUERY_LIMITED_INFORMATION, 0, thread.id);
+    if (handle.isNull())
+      continue;
+    const ok = times(handle, filetimes, filetimes.add(8), filetimes.add(16), filetimes.add(24));
+    close(handle);
+    if (!ok)
+      continue;
+    const created = BigInt(filetimes.readU64().toString());
+    if (first === null || created < first.created
+        || (created === first.created && thread.id < first.id))
+      first = { id: thread.id, created };
+  }
+  if (first === null)
+    return Process.id;  // not cached: try again next time
+  mainThread = first.id;
+  return mainThread;
+}
+
 let threadPauser = null;
 
 function pauseThreads() {
@@ -121,7 +164,10 @@ function pauseThreads() {
   }
   const THREAD_SUSPEND_RESUME = 0x0002, THREAD_GET_CONTEXT = 0x0008;
   const SUSPEND_FAILED = 0xffffffff;
-  const CONTEXT_SIZE = 0x4d0, CONTEXT_FLAGS = 0x30, CONTEXT_CONTROL = 0x100001;
+  // CONTEXT differs between x64 and x86 in size, layout and flag values.
+  const wide = Process.pointerSize === 8;
+  const CONTEXT_SIZE = wide ? 0x4d0 : 0x2cc, CONTEXT_FLAGS = wide ? 0x30 : 0;
+  const CONTEXT_CONTROL = wide ? 0x100001 : 0x10001;
   const t = threadPauser;
   const self = Process.getCurrentThreadId();
   const handles = [];
@@ -139,7 +185,8 @@ function pauseThreads() {
   }
   // SuspendThread only asks the thread to stop; reading its context returns
   // once it has. CONTEXT must be 16-byte aligned.
-  const context = Memory.alloc(CONTEXT_SIZE + 16).add(15).and(ptr('0xfffffffffffffff0'));
+  const context = Memory.alloc(CONTEXT_SIZE + 16).add(15)
+    .and(ptr(wide ? '0xfffffffffffffff0' : '0xfffffff0'));
   for (const handle of handles) {
     context.add(CONTEXT_FLAGS).writeU32(CONTEXT_CONTROL);
     t.context(handle, context);

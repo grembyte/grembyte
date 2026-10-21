@@ -61,6 +61,17 @@ def test_matches_game_by_name_then_closest_creation_time():
         match_process(processes, "game.exe", 0)
 
 
+def test_reads_architecture_and_tells_same_named_programs_apart():
+    processes = parse_list("40\t90000\tping.exe\t32\r\n52\t90003\tping.exe\t64\r\n"
+                           "60\t1\tsvc.exe\t0\r\n")
+
+    assert processes[0] == WineProcess(40, 90000, "ping.exe", 32)
+    assert match_process(processes, "ping.exe", 90000, bits=64).pid == 52
+    assert match_process(processes, "ping.exe", 90003, bits=32).pid == 40
+    # Unknown architecture (0) never rules a process out.
+    assert match_process(processes, "svc.exe", 1, bits=64).pid == 60
+
+
 def test_environment_copies_prefix_and_sync_but_not_wine_internals(tmp_path):
     _fake_process(tmp_path, 7, "/x/wine64-preloader",
                   b"WINEPREFIX=/games/pfx\0WINEFSYNC=1\0WINEESYNC=1\0"

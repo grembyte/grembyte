@@ -7,7 +7,8 @@
  * and exits; no ptrace or breakpoint is involved.
  *
  *   hermes-inject list
- *       One line per process: "<pid>\t<creation, Unix ms>\t<exe name>".
+ *       One line per process:
+ *       "<pid>\t<creation, Unix ms>\t<exe name>\t<32 or 64, 0 if unknown>".
  *   hermes-inject inject <pid> <dll path> [LoadLibraryW address, hex]
  *       Prints "ok <module low 32 bits>" and exits 0, or "error <text>" and
  *       a non-zero code. Without an address the helper's own LoadLibraryW is
@@ -41,6 +42,20 @@ static unsigned long long unix_ms(FILETIME time)
     return (value.QuadPart - 116444736000000000ULL) / 10000ULL;
 }
 
+/* 32 or 64 for another process, 0 if unknown. A 32-bit process on a 64-bit
+   system runs under WoW64; on a purely 32-bit Wine everything is 32-bit. */
+static int process_bits(HANDLE process)
+{
+    BOOL target_wow = FALSE, self_wow = FALSE;
+
+    if (!IsWow64Process(process, &target_wow) ||
+        !IsWow64Process(GetCurrentProcess(), &self_wow))
+        return 0;
+    if (target_wow)
+        return 32;
+    return sizeof(void *) == 4 && !self_wow ? 32 : 64;
+}
+
 static int list_processes(void)
 {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -52,19 +67,21 @@ static int list_processes(void)
     if (Process32FirstW(snapshot, &entry)) {
         do {
             unsigned long long created = 0;
+            int bits = 0;
             HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
                                          entry.th32ProcessID);
             if (process) {
                 FILETIME creation, exit_time, kernel, user;
                 if (GetProcessTimes(process, &creation, &exit_time, &kernel, &user))
                     created = unix_ms(creation);
+                bits = process_bits(process);
                 CloseHandle(process);
             }
             /* UTF-8, so non-ASCII exe names survive the pipe to hermes. */
             char name[MAX_PATH * 4];
             WideCharToMultiByte(CP_UTF8, 0, entry.szExeFile, -1, name, sizeof(name),
                                 NULL, NULL);
-            printf("%lu\t%llu\t%s\n", entry.th32ProcessID, created, name);
+            printf("%lu\t%llu\t%s\t%d\n", entry.th32ProcessID, created, name, bits);
         } while (Process32NextW(snapshot, &entry));
     }
     CloseHandle(snapshot);

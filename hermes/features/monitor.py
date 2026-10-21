@@ -6,12 +6,25 @@ Mono compiles the method (see ``engine.prepare``), and a Frida interceptor on
 its native code reports every call with its arguments, the calling method
 and, if asked for, the return value.
 
-Arguments are read where Mono's x86-64 calling convention puts them:
-``this`` and integer-like values in rdi, rsi, rdx, rcx, r8, r9, floating
-point values in xmm0-xmm7, the rest on the stack. A struct larger than 16
-bytes is returned through a hidden pointer argument (after ``this``, or
-after a first reference argument). Where structs are passed by value depends
-on their fields, so arguments after a struct are not decoded.
+Arguments are read where Mono's calling convention for the game's platform
+puts them:
+
+- x86-64 Linux (System V): ``this`` and integer-like values in rdi, rsi, rdx,
+  rcx, r8, r9, floating point values in xmm0-xmm7, the rest on the stack. A
+  struct larger than 16 bytes is returned through a hidden pointer argument.
+  Where structs are passed by value depends on their fields, so arguments
+  after a struct are not decoded.
+- x64 Windows (Wine): rcx, rdx, r8, r9 or xmm0-xmm3 by position, the rest on
+  the stack above 32 bytes of shadow space. Every argument, a struct too,
+  takes one slot; a struct of other than 1, 2, 4 or 8 bytes is returned
+  through a hidden pointer.
+- x86 Windows (32-bit Wine): everything on the stack, ``this`` first; 64-bit
+  values take two slots, a struct its size rounded to 4 bytes. Every struct
+  result goes through a hidden pointer. A float result is in the x87 register
+  st0 and a 64-bit one in edx:eax; Frida reads neither, so they are not
+  shown.
+
+The hidden pointer comes after ``this``, or after a first reference argument.
 
 When the game frees the memory of monitored code (Unity does so on exit,
 when Mono releases its JIT code), the monitor is removed first: Frida would
@@ -58,9 +71,13 @@ from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
 
 _AGENT_SOURCE = ENGINE_AGENT_SOURCE + r"""
 const T = engine.TYPE;
-const INT_REGS = ['rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9'];
-const FLOAT_REGS = 8;
-const MAX_STRUCT_IN_REGS = 16;
+// The calling convention of Mono's JIT code: 'sysv', 'win64' or 'x86'.
+const ABI = Process.arch === 'ia32' ? 'x86' : (Process.platform === 'windows' ? 'win64' : 'sysv');
+const SYSV_INT_REGS = ['rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9'];
+const SYSV_FLOAT_REGS = 8;
+const SYSV_MAX_STRUCT_IN_REGS = 16;
+const WIN64_REGS = ['rcx', 'rdx', 'r8', 'r9'];
+const WIN64_SHADOW = 32;
 const MAX_EVENTS = 200;
 const MAX_STRING = 120;
 const REFERENCE_KINDS = new Set([0x12, 0x14, 0x15, 0x1c, 0x1d]);  // class, array, generic, object, szarray
@@ -83,35 +100,90 @@ function isReference(type) {
   return type.byref || REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING;
 }
 
-function argumentLayout(info) {
-  // { self, args: [location or null] }; a location is { reg }, { xmm } or
-  // { stack } (8-byte slot above the return address).
+function is64(type) {
+  return !type.byref && (type.kind === T.I8 || type.kind === T.U8 || type.kind === T.R8);
+}
+
+function hasHiddenReturn(type) {
+  if (!isStruct(type))
+    return false;
+  if (ABI === 'x86')
+    return true;
+  if (ABI === 'win64')
+    return ![1, 2, 4, 8].includes(type.structSize);
+  return type.structSize > SYSV_MAX_STRUCT_IN_REGS;
+}
+
+function sysvSlots() {
+  // Integer and float registers fill up separately, then 8-byte stack slots.
   let ints = 0;
   let floats = 0;
   let stack = 0;
-  const nextInt = () => (ints < INT_REGS.length ? { reg: INT_REGS[ints++] } : { stack: stack++ });
-  const nextFloat = () => (floats < FLOAT_REGS ? { xmm: floats++ } : { stack: stack++ });
-  const hiddenReturn = isStruct(info.returns) && info.returns.structSize > MAX_STRUCT_IN_REGS;
+  const onStack = () => ({ stack: 8 * (1 + stack++) });
+  return type => {
+    if (isStruct(type))
+      return null;  // structs may take registers, stack or both
+    if (isFloat(type))
+      return floats < SYSV_FLOAT_REGS ? { xmm: floats++ } : onStack();
+    return ints < SYSV_INT_REGS.length ? { reg: SYSV_INT_REGS[ints++] } : onStack();
+  };
+}
+
+function win64Slots() {
+  // One slot per argument, by position, register or stack alike.
+  let slot = 0;
+  return type => {
+    const index = slot++;
+    if (isStruct(type))
+      return { struct: true };  // in its slot by value or by reference
+    if (index >= WIN64_REGS.length)
+      return { stack: 8 + WIN64_SHADOW + 8 * (index - WIN64_REGS.length) };
+    return isFloat(type) ? { xmm: index } : { reg: WIN64_REGS[index] };
+  };
+}
+
+function x86Slots() {
+  // Everything on the stack above the return address, in 4-byte steps.
+  let offset = 4;
+  return type => {
+    const location = { stack: offset, size: is64(type) ? 8 : 4 };
+    if (isStruct(type)) {
+      if (!type.structSize)
+        return null;
+      offset += Math.ceil(type.structSize / 4) * 4;
+      return { struct: true };
+    }
+    offset += location.size;
+    return location;
+  };
+}
+
+function argumentLayout(info) {
+  // { self, args: [location or null] }; a location is { reg }, { xmm } or
+  // { stack, size? } (the byte offset from the stack pointer at entry).
+  // Null: not known where (after a struct whose layout is unclear) or a
+  // struct, which is not decoded.
+  const next = ABI === 'x86' ? x86Slots() : ABI === 'win64' ? win64Slots() : sysvSlots();
+  const POINTER = { kind: 0x1c, byref: false };
+  const hiddenReturn = hasHiddenReturn(info.returns);
   const firstIsReference = info.params.length > 0 && isReference(info.params[0].type);
   const layout = { self: null, args: [] };
   if (info.instance) {
-    layout.self = nextInt();
+    layout.self = next(POINTER);
     if (hiddenReturn)
-      nextInt();
+      next(POINTER);
   } else if (hiddenReturn && firstIsReference) {
-    layout.args.push(nextInt());
-    nextInt();
+    layout.args.push(next(POINTER));
+    next(POINTER);
   } else if (hiddenReturn) {
-    nextInt();
+    next(POINTER);
   }
   let known = true;
   for (const param of info.params.slice(layout.args.length)) {
-    if (!known || isStruct(param.type)) {
-      known = false;  // structs may take registers, stack or both
-      layout.args.push(null);
-    } else {
-      layout.args.push(isFloat(param.type) ? nextFloat() : nextInt());
-    }
+    const location = known ? next(param.type) : null;
+    if (location === null)
+      known = false;
+    layout.args.push(location === null || location.struct ? null : location);
   }
   return layout;
 }
@@ -121,7 +193,18 @@ function rawValue(context, location) {
     return context[location.reg];
   if (location.xmm !== undefined)
     return context['xmm' + location.xmm];
-  return context.sp.add(8 * (location.stack + 1)).readPointer();
+  const slot = context.sp.add(location.stack);
+  return location.size === 8 && Process.pointerSize === 4 ? slot.readU64() : slot.readPointer();
+}
+
+function resultRaw(context, retval, type) {
+  // The raw result as registerValue takes it.
+  if (ABI === 'x86' && isFloat(type))
+    throw new Error('32-bit: a float result is in the x87 register st0, which Frida cannot read');
+  if (ABI === 'x86' && is64(type))
+    return uint64(((BigInt(context.edx.toUInt32()) << 32n)
+                   | BigInt(retval.toUInt32())).toString());
+  return isFloat(type) ? context.xmm0 : retval;
 }
 
 // --- Values -----------------------------------------------------------------
@@ -441,7 +524,7 @@ function onLeave(monitor, invocation, retval) {
   const type = monitor.info.returns;
   if (type.kind !== T.VOID || type.byref) {
     const value = safely(() => registerValue(
-      type, isFloat(type) ? invocation.context.xmm0 : retval, true));
+      type, resultRaw(invocation.context, retval, type), true));
     delete value.pointer;
     record.result = monitor.objects ? snapshot(value) : value;
   }
@@ -896,6 +979,8 @@ function replaceResult(hook, invocation, retval, value) {
   const type = hook.info.returns;
   if (type.kind === T.VOID && !type.byref)
     throw new Error('the method returns nothing (void)');
+  if (ABI === 'x86' && (isFloat(type) || is64(type)))
+    throw new Error('32-bit: float and 64-bit results cannot be replaced');
   if (isFloat(type)) {
     if (typeof value !== 'number' || !Number.isFinite(value))
       throw new Error(`the result must be a number, not ${displayText(value)}`);
@@ -920,7 +1005,8 @@ function replaceResult(hook, invocation, retval, value) {
   }
   if (typeof value !== 'number' || !Number.isFinite(value))
     throw new Error(`the result must be a number, not ${displayText(value)}`);
-  retval.replace(ptr(BigInt.asUintN(64, BigInt(Math.trunc(value))).toString()));
+  retval.replace(ptr(BigInt.asUintN(8 * Process.pointerSize,
+                                    BigInt(Math.trunc(value))).toString()));
 }
 
 function writeArgument(context, location, type, value, raw) {
@@ -951,7 +1037,7 @@ function writeArgument(context, location, type, value, raw) {
         view.setFloat64(0, value, true);
       context['xmm' + location.xmm] = buffer;
     } else {
-      writeJs(type, context.sp.add(8 * (location.stack + 1)), value);
+      writeJs(type, context.sp.add(location.stack), value);
     }
     return;
   }
@@ -960,8 +1046,12 @@ function writeArgument(context, location, type, value, raw) {
     pointer = pointerOf(type, value);
   else if (type.kind === T.BOOLEAN)
     pointer = ptr(value ? 1 : 0);
-  else if (typeof value === 'number' && Number.isFinite(value))
-    pointer = ptr(BigInt.asUintN(64, BigInt(Math.trunc(value))).toString());
+  else if (typeof value === 'number' && Number.isFinite(value) && location.size === 8
+           && Process.pointerSize === 4) {
+    writeJs(type, context.sp.add(location.stack), value);  // two 32-bit stack slots
+    return;
+  } else if (typeof value === 'number' && Number.isFinite(value))
+    pointer = ptr(BigInt.asUintN(8 * Process.pointerSize, BigInt(Math.trunc(value))).toString());
   else if (type.kind === T.CHAR && typeof value === 'string')
     pointer = ptr(value.charCodeAt(0));
   else
@@ -969,7 +1059,7 @@ function writeArgument(context, location, type, value, raw) {
   if (location.reg !== undefined)
     context[location.reg] = pointer;
   else
-    context.sp.add(8 * (location.stack + 1)).writePointer(pointer);
+    context.sp.add(location.stack).writePointer(pointer);
 }
 
 function hookBefore(hook, invocation) {
@@ -1075,7 +1165,8 @@ function hookLeave(hook, invocation, retval) {
   const type = hook.info.returns;
   const isVoid = type.kind === T.VOID && !type.byref;
   const result = isVoid ? undefined
-    : isFloat(type) ? floatValue(invocation.context.xmm0, type.kind) : registerJs(type, retval);
+    : isFloat(type) ? floatValue(resultRaw(invocation.context, retval, type), type.kind)
+      : registerJs(type, resultRaw(invocation.context, retval, type));
   const refs = {};
   for (const [name, refType, pointer] of call.refs)
     refs[name] = readJs({ ...refType, byref: false }, pointer);
