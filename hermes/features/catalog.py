@@ -18,18 +18,10 @@ from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
 from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
+from hermes.core.agent_source import load_agent_source
 
 
-_AGENT_SOURCE = ENGINE_AGENT_SOURCE + r"""
-rpc.exports = {
-  assemblies() {
-    return engine.assemblies();
-  },
-  classes(assembly) {
-    return engine.classes(assembly);
-  }
-};
-"""
+_AGENT_SOURCE = ENGINE_AGENT_SOURCE + load_agent_source(__file__)
 
 
 @dataclass(frozen=True)

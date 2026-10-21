@@ -1,0 +1,1236 @@
+const mono = (() => {
+  // The runtime library: libmono*.so natively, mono*.dll under Wine.
+  const RUNTIME_NAME = /^libmono|^mono(-2\.0-(bdwgc|sgen))?\.dll$/i;
+  const SEARCH_INTERVAL = 2000;
+  const MAX_CACHE = 4096;
+  let api = null;
+  let lastSearch = -Infinity;
+  // address -> { method, offset } or null (no JIT code)
+  const locations = new Map();
+  // method -> 'Namespace.Class:Method' or null
+  const names = new Map();
+
+  function bind(module) {
+    const address = name => {
+      const found = module.findExportByName(name);
+      if (found === null)
+        throw new Error(`${module.name} does not export ${name}`);
+      return found;
+    };
+    // Exclusive: the calls are short, and some run in exception handlers.
+    const exported = (name, ret, args) =>
+      new NativeFunction(address(name), ret, args, { scheduling: 'exclusive' });
+    // Cooperative: these may take Mono's locks or run a garbage collection,
+    // so they must not hold the agent's lock that game threads wait for.
+    const blocking = (name, ret, args) => new NativeFunction(address(name), ret, args);
+    const free = module.findExportByName('mono_free');
+    return {
+      module,
+      // Not mono_domain_foreach: old Mono (Unity's libmono.so) allocates GC
+      // memory in it, which crashes on a thread the GC does not know.
+      domainById: blocking('mono_domain_get_by_id', 'pointer', ['int']),
+      threadAttach: blocking('mono_thread_attach', 'pointer', ['pointer']),
+      threadDetach: blocking('mono_thread_detach', 'void', ['pointer']),
+      imageLoaded: blocking('mono_image_loaded', 'pointer', ['pointer']),
+      getMethod: blocking('mono_get_method', 'pointer', ['pointer', 'uint32', 'pointer']),
+      compileMethod: blocking('mono_compile_method', 'pointer', ['pointer']),
+      codeSize: exported('mono_jit_info_get_code_size', 'int', ['pointer']),
+      methodToken: exported('mono_method_get_token', 'uint32', ['pointer']),
+      methodClass: exported('mono_method_get_class', 'pointer', ['pointer']),
+      classImage: exported('mono_class_get_image', 'pointer', ['pointer']),
+      imageName: exported('mono_image_get_name', 'pointer', ['pointer']),
+      imageFile: exported('mono_image_get_filename', 'pointer', ['pointer']),
+      rootDomain: exported('mono_get_root_domain', 'pointer', []),
+      currentDomain: exported('mono_domain_get', 'pointer', []),
+      findJitInfo: exported('mono_jit_info_table_find', 'pointer', ['pointer', 'pointer']),
+      jitMethod: exported('mono_jit_info_get_method', 'pointer', ['pointer']),
+      codeStart: exported('mono_jit_info_get_code_start', 'pointer', ['pointer']),
+      fullName: exported('mono_method_full_name', 'pointer', ['pointer', 'int']),
+      free: free === null ? null
+        : new NativeFunction(free, 'void', ['pointer'], { scheduling: 'exclusive' }),
+      // Only the catalog needs these; without them the rest still works.
+      catalog: optional(() => ({
+        assemblyForeach: exported('mono_assembly_foreach', 'void', ['pointer', 'pointer']),
+        assemblyImage: exported('mono_assembly_get_image', 'pointer', ['pointer']),
+        tableRows: exported('mono_image_get_table_rows', 'int', ['pointer', 'int']),
+        classGet: exported('mono_class_get', 'pointer', ['pointer', 'uint32']),
+        classType: exported('mono_class_get_type', 'pointer', ['pointer']),
+        typeName: exported('mono_type_get_name', 'pointer', ['pointer']),
+        classMethods: exported('mono_class_get_methods', 'pointer', ['pointer', 'pointer']),
+        methodName: exported('mono_method_get_name', 'pointer', ['pointer']),
+        methodFlags: exported('mono_method_get_flags', 'uint32', ['pointer', 'pointer']),
+        methodSignature: exported('mono_method_signature', 'pointer', ['pointer']),
+        returnType: exported('mono_signature_get_return_type', 'pointer', ['pointer'])
+      })),
+      // Only the method monitor needs these.
+      types: optional(() => ({
+        methodSignature: exported('mono_method_signature', 'pointer', ['pointer']),
+        returnType: exported('mono_signature_get_return_type', 'pointer', ['pointer']),
+        params: exported('mono_signature_get_params', 'pointer', ['pointer', 'pointer']),
+        paramCount: exported('mono_signature_get_param_count', 'uint32', ['pointer']),
+        paramNames: exported('mono_method_get_param_names', 'void', ['pointer', 'pointer']),
+        isInstance: exported('mono_signature_is_instance', 'int', ['pointer']),
+        typeKind: exported('mono_type_get_type', 'int', ['pointer']),
+        isByref: exported('mono_type_is_byref', 'int', ['pointer']),
+        typeName: exported('mono_type_get_name', 'pointer', ['pointer']),
+        typeClass: exported('mono_class_from_mono_type', 'pointer', ['pointer']),
+        classType: exported('mono_class_get_type', 'pointer', ['pointer']),
+        isEnum: exported('mono_class_is_enum', 'int', ['pointer']),
+        enumBase: exported('mono_class_enum_basetype', 'pointer', ['pointer']),
+        isValueType: exported('mono_class_is_valuetype', 'int', ['pointer']),
+        valueSize: exported('mono_class_value_size', 'int', ['pointer', 'pointer']),
+        objectClass: exported('mono_object_get_class', 'pointer', ['pointer']),
+        classFields: exported('mono_class_get_fields', 'pointer', ['pointer', 'pointer']),
+        fieldName: exported('mono_field_get_name', 'pointer', ['pointer']),
+        fieldType: exported('mono_field_get_type', 'pointer', ['pointer']),
+        fieldOffset: exported('mono_field_get_offset', 'uint32', ['pointer']),
+        fieldFlags: exported('mono_field_get_flags', 'uint32', ['pointer']),
+        classParent: exported('mono_class_get_parent', 'pointer', ['pointer']),
+        classRank: exported('mono_class_get_rank', 'int', ['pointer']),
+        elementClass: exported('mono_class_get_element_class', 'pointer', ['pointer']),
+        elementSize: exported('mono_array_element_size', 'int', ['pointer'])
+      })),
+      // Only Unity object names need these. Cooperative: they run game code.
+      invoke: optional(() => ({
+        methodFromName: exported('mono_class_get_method_from_name', 'pointer',
+          ['pointer', 'pointer', 'int']),
+        runtimeInvoke: blocking('mono_runtime_invoke', 'pointer',
+          ['pointer', 'pointer', 'pointer', 'pointer']),
+        // Unity runs its script methods through it: a way onto its main thread.
+        runtimeInvokeAddress: address('mono_runtime_invoke'),
+        virtualMethod: exported('mono_object_get_virtual_method', 'pointer',
+          ['pointer', 'pointer']),
+        typeObject: blocking('mono_type_get_object', 'pointer', ['pointer', 'pointer']),
+        classFromName: exported('mono_class_from_name', 'pointer',
+          ['pointer', 'pointer', 'pointer']),
+        classMethods: exported('mono_class_get_methods', 'pointer', ['pointer', 'pointer']),
+        methodName: exported('mono_method_get_name', 'pointer', ['pointer']),
+        methodFlags: exported('mono_method_get_flags', 'uint32', ['pointer', 'pointer'])
+      })),
+      // Only for passing strings to game code.
+      stringNew: optional(() => blocking('mono_string_new', 'pointer', ['pointer', 'pointer'])),
+      // Storing a reference in an object tells the garbage collector.
+      writeBarrier: optional(() => exported('mono_gc_wbarrier_set_field', 'void',
+        ['pointer', 'pointer', 'pointer']))
+    };
+  }
+
+  function optional(bindAll) {
+    try {
+      return bindAll();
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function refresh() {
+    if (api !== null)
+      return true;
+    const now = Date.now();
+    if (now - lastSearch < SEARCH_INTERVAL)
+      return false;
+    lastSearch = now;
+    for (const module of Process.enumerateModules()) {
+      if (!RUNTIME_NAME.test(module.name)
+          || module.findExportByName('mono_jit_info_table_find') === null)
+        continue;
+      try {
+        api = bind(module);
+        return true;
+      } catch (_error) {
+      }
+    }
+    return false;
+  }
+
+  function remember(key, location) {
+    if (locations.size >= MAX_CACHE) {
+      locations.clear();
+      names.clear();
+    }
+    locations.set(key, location);
+    return location;
+  }
+
+  function locate(address) {
+    if (api === null)
+      return undefined;
+    const key = address.toString();
+    const cached = locations.get(key);
+    if (cached !== undefined)
+      return cached;
+    if (Process.findModuleByAddress(address) !== null)
+      return remember(key, null);
+    // Threads Mono does not know have no domain.
+    const current = api.currentDomain();
+    if (current.isNull())
+      return undefined;
+    // Shared code lives in the root domain, Unity's scripts in a child domain.
+    const root = api.rootDomain();
+    for (const domain of root.isNull() || root.equals(current) ? [current] : [current, root]) {
+      const info = api.findJitInfo(domain, address);
+      if (!info.isNull())
+        return remember(key, {
+          method: api.jitMethod(info),
+          offset: address.sub(api.codeStart(info))
+        });
+    }
+    return remember(key, null);
+  }
+
+  function name(address) {
+    const location = locations.get(address.toString());
+    if (!location)
+      return null;
+    const key = location.method.toString();
+    let text = names.get(key);
+    if (text === undefined) {
+      text = cString(api.fullName(location.method, 0));
+      names.set(key, text);
+    }
+    return text === null ? null : `${text}+${location.offset}`;
+  }
+
+  function describe(address) {
+    return locate(address) ? name(address) : null;
+  }
+
+  function cString(pointer) {
+    const text = pointer.isNull() ? null : pointer.readUtf8String();
+    if (!pointer.isNull() && api.free !== null)
+      api.free(pointer);
+    return text;
+  }
+
+  function signatureName(method) {
+    return cString(api.fullName(method, 1));
+  }
+
+  function identify(address) {
+    const location = locations.get(address.toString());
+    if (!location)
+      return null;
+    const image = api.classImage(api.methodClass(location.method));
+    return {
+      engine: 'mono',
+      image: api.imageName(image).readUtf8String(),
+      file: api.imageFile(image).readUtf8String(),
+      token: api.methodToken(location.method),
+      method: signatureName(location.method),
+      offset: location.offset.toInt32()
+    };
+  }
+
+  const DOMAIN_GAP = 16;
+  const MAX_DOMAIN_ID = 4096;
+
+  function scriptDomain() {
+    // Unity runs its scripts in a child domain created after the root one.
+    // Ids count up; unloaded domains leave gaps, so stop after a run of them.
+    const root = api.rootDomain();
+    let last = root;
+    for (let id = 0, missing = 0; missing < DOMAIN_GAP && id < MAX_DOMAIN_ID; id++) {
+      const domain = api.domainById(id);
+      if (domain.isNull()) {
+        missing++;
+        continue;
+      }
+      missing = 0;
+      if (!domain.equals(root))
+        last = domain;
+    }
+    return last;
+  }
+
+  // How often the agent's thread looks whether a Mono thread is done, and
+  // how long a finished one may still need to leave our callback.
+  const MONO_THREAD_POLL = 5;
+  const MONO_THREAD_LEAVE = 200;
+
+  function onMonoThread(work) {
+    // A promise of work(domain), run on a thread of our own: Mono compiles
+    // and loads classes only for threads it knows. The thread attaches and
+    // ends afterwards, so Mono forgets it (see above).
+    //
+    // The agent's thread must not wait for it (pthread_join): Frida may need
+    // that thread for the JavaScript the other one runs, and both would wait
+    // forever, blocking every script of the agent. It keeps running its
+    // event loop instead and looks now and then whether the work is done.
+    const state = { done: false, result: undefined, failure: null };
+    const body = new NativeCallback(() => {
+      try {
+        const domain = scriptDomain();
+        const thread = api.threadAttach(domain);
+        try {
+          state.result = work(domain);
+        } finally {
+          api.threadDetach(thread);
+        }
+      } catch (error) {
+        state.failure = error;
+      }
+      state.done = true;
+      return NULL;
+    }, 'pointer', ['pointer']);
+    try {
+      spawnThread(body, NULL);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    // Cutting the session must not unload the code the thread runs.
+    Script.pin();
+    return new Promise((resolve, reject) => {
+      const poll = () => {
+        if (!state.done) {
+          setTimeout(poll, MONO_THREAD_POLL);
+          return;
+        }
+        // The thread is still returning through ``body``: keep it a moment.
+        setTimeout(() => {
+          body.toString();
+          Script.unpin();
+        }, MONO_THREAD_LEAVE);
+        if (state.failure !== null)
+          reject(state.failure);
+        else
+          resolve(state.result);
+      };
+      poll();
+    });
+  }
+
+  function findImage(identity) {
+    // The catalog knows assemblies by name only.
+    let image = identity.file ? api.imageLoaded(Memory.allocUtf8String(identity.file)) : NULL;
+    if (image.isNull())
+      image = api.imageLoaded(Memory.allocUtf8String(identity.image));
+    if (image.isNull() && api.catalog !== null)
+      image = loadedImages(api.catalog).find(
+        candidate => api.imageName(candidate).readUtf8String() === identity.image) || NULL;
+    if (image.isNull())
+      throw new Error(`assembly ${identity.image} is not loaded (yet)`);
+    return image;
+  }
+
+  function compileOnThread(domain, identity) {
+    const method = api.getMethod(findImage(identity), identity.token, NULL);
+    if (method.isNull() || signatureName(method) !== identity.method)
+      throw new Error(`${identity.method} is not in ${identity.image} (game updated?)`);
+    const code = codeOf(domain, method);
+    if (code === null)
+      throw new Error(`Mono did not compile ${identity.method}`);
+    return { method, ...code };
+  }
+
+  function codeOf(domain, method) {
+    // { start, size } of the code Mono has (or compiles now) for a method,
+    // or null; on a thread attached to ``domain``.
+    const code = api.compileMethod(method);
+    const root = api.rootDomain();
+    let info = code.isNull() ? NULL : api.findJitInfo(domain, code);
+    if (info.isNull() && !code.isNull() && !root.equals(domain))
+      info = api.findJitInfo(root, code);
+    if (info.isNull())
+      return null;
+    return { start: api.codeStart(info), size: api.codeSize(info) };
+  }
+
+  // --- Batches: much work on a thread of Mono's own, in C ----------------
+  // Running JavaScript on a thread of our own for thousands of methods, with
+  // the agent's thread waiting for it (onMonoThread), can deadlock inside
+  // Frida, and blocks every script of the agent meanwhile. A batch runs
+  // plain C instead, and the agent's thread only looks at its progress.
+
+  const BATCH_COMPILE = 0;
+  const BATCH_LOCATE = 1;
+  const BATCH_CHECK = 2;
+  const BATCH_POLL = 50;
+  const BATCH_SOURCE = `
+#include <glib.h>
+
+typedef struct {
+  gpointer domain;
+  gint kind;
+  gint count;
+  gpointer * input;
+  gpointer * first;
+  gpointer * second;
+  volatile gint done;
+  volatile gint cancel;
+  volatile gint finished;
+} Batch;
+
+extern gpointer mono_thread_attach (gpointer domain);
+extern void mono_thread_detach (gpointer thread);
+extern gpointer mono_compile_method (gpointer method);
+extern gpointer mono_jit_info_table_find (gpointer domain, gpointer address);
+extern gpointer mono_get_root_domain (void);
+extern gpointer mono_jit_info_get_code_start (gpointer info);
+extern gint mono_jit_info_get_code_size (gpointer info);
+extern gpointer mono_jit_info_get_method (gpointer info);
+extern gpointer mono_method_get_header (gpointer method);
+extern const guint8 * mono_method_header_get_code (gpointer header, guint32 * size,
+    guint32 * max_stack);
+extern void mono_metadata_free_mh (gpointer header);
+extern gpointer mono_method_get_class (gpointer method);
+extern guint32 mono_class_get_flags (gpointer klass);
+extern gpointer mono_class_get_image (gpointer klass);
+extern gpointer mono_get_method (gpointer image, guint32 token, gpointer klass);
+extern gpointer mono_class_get (gpointer image, guint32 token);
+
+#define TYPE_ATTRIBUTE_IMPORT 0x1000
+#define TOKEN_METHOD 1
+#define TOKEN_TYPE 2
+#define TOKEN_ANY 3
+
+/* The length of the IL instruction at ip (0: cannot tell), and which kind
+   of token its operand is (0: none). */
+static guint32 instruction (const guint8 * ip, const guint8 * end, gint * kind) {
+  guint8 op = ip[0];
+  *kind = 0;
+  if (op == 0xfe) {
+    if (ip + 1 >= end)
+      return 0;
+    switch (ip[1]) {
+      case 0x06: case 0x07:                       /* ldftn, ldvirtftn */
+        *kind = TOKEN_METHOD;
+        return 6;
+      case 0x15: case 0x16: case 0x1c:            /* initobj, constrained., sizeof */
+        *kind = TOKEN_TYPE;
+        return 6;
+      case 0x09: case 0x0a: case 0x0b: case 0x0c: case 0x0d: case 0x0e:
+        return 4;
+      case 0x12: case 0x19:
+        return 3;
+      default:
+        return 2;
+    }
+  }
+  if ((op >= 0x0e && op <= 0x13) || op == 0x1f || (op >= 0x2b && op <= 0x37) || op == 0xde)
+    return 2;
+  if (op == 0x20 || op == 0x22 || op == 0x29 || op == 0x72 || (op >= 0x38 && op <= 0x44)
+      || (op >= 0x7b && op <= 0x80) || op == 0xdd)
+    return 5;
+  if (op == 0x21 || op == 0x23)
+    return 9;
+  if (op == 0x27 || op == 0x28 || op == 0x6f || op == 0x73) {  /* jmp, call, callvirt, newobj */
+    *kind = TOKEN_METHOD;
+    return 5;
+  }
+  if (op == 0x70 || op == 0x71 || op == 0x74 || op == 0x75 || op == 0x79 || op == 0x81
+      || op == 0x8c || op == 0x8d || op == 0x8f || op == 0xa3 || op == 0xa4 || op == 0xa5
+      || op == 0xc2 || op == 0xc6) {
+    *kind = TOKEN_TYPE;
+    return 5;
+  }
+  if (op == 0xd0) {                                           /* ldtoken */
+    *kind = TOKEN_ANY;
+    return 5;
+  }
+  if (op == 0x45) {                                           /* switch */
+    if (ip + 5 > end)
+      return 0;
+    guint32 count = ip[1] | ip[2] << 8 | ip[3] << 16 | (guint32) ip[4] << 24;
+    if (count > (guint32) (end - ip) / 4)
+      return 0;
+    return 5 + 4 * count;
+  }
+  return 1;
+}
+
+static gboolean is_import (gpointer klass) {
+  return klass != NULL && (mono_class_get_flags (klass) & TYPE_ATTRIBUTE_IMPORT) != 0;
+}
+
+/* Whether a method uses COM interop ([ComImport] classes or interfaces).
+   Compiling such code makes Mono set up COM support, which hangs on Linux. */
+static gboolean uses_com (gpointer method) {
+  gpointer own = mono_method_get_class (method);
+  if (is_import (own))
+    return TRUE;
+  gpointer header = mono_method_get_header (method);
+  if (header == NULL)
+    return FALSE;
+  guint32 size = 0, max_stack = 0;
+  const guint8 * code = mono_method_header_get_code (header, &size, &max_stack);
+  const guint8 * end = code + size;
+  gpointer image = mono_class_get_image (own);
+  gboolean found = FALSE;
+  const guint8 * ip = code;
+  while (code != NULL && ip < end && !found) {
+    gint kind;
+    guint32 length = instruction (ip, end, &kind);
+    if (length == 0 || length > (guint32) (end - ip))
+      break;
+    if (kind != 0) {
+      const guint8 * operand = ip + length - 4;
+      guint32 token = operand[0] | operand[1] << 8 | operand[2] << 16
+          | (guint32) operand[3] << 24;
+      guint32 table = token >> 24;
+      gpointer klass = NULL;
+      if (kind != TOKEN_TYPE && (table == 0x06 || table == 0x0a || table == 0x2b)) {
+        gpointer callee = mono_get_method (image, token, NULL);
+        klass = callee == NULL ? NULL : mono_method_get_class (callee);
+      } else if (kind != TOKEN_METHOD && (table == 0x01 || table == 0x02 || table == 0x1b)) {
+        klass = mono_class_get (image, token);
+      }
+      found = is_import (klass);
+    }
+    ip += length;
+  }
+  mono_metadata_free_mh (header);
+  return found;
+}
+
+static gpointer find_info (Batch * batch, gpointer root, gpointer address) {
+  gpointer info = mono_jit_info_table_find (batch->domain, address);
+  if (info == NULL && root != batch->domain)
+    info = mono_jit_info_table_find (root, address);
+  return info;
+}
+
+/* compile: input methods -> first code start, second code size (or NULL)
+   locate: input addresses -> first method, second code start (or NULL)
+   check: input methods -> first non-NULL if the method uses COM interop */
+gpointer run_batch (gpointer data) {
+  Batch * batch = data;
+  gpointer thread = mono_thread_attach (batch->domain);
+  gpointer root = mono_get_root_domain ();
+  for (gint i = 0; i < batch->count && !batch->cancel; i++) {
+    if (batch->kind == 2) {
+      batch->first[i] = GSIZE_TO_POINTER ((gsize) uses_com (batch->input[i]));
+      batch->done = i + 1;
+      continue;
+    }
+    gpointer address = batch->input[i];
+    if (batch->kind == 0)
+      address = mono_compile_method (address);
+    gpointer info = address == NULL ? NULL : find_info (batch, root, address);
+    if (info == NULL) {
+      batch->first[i] = NULL;
+    } else if (batch->kind == 0) {
+      batch->first[i] = mono_jit_info_get_code_start (info);
+      batch->second[i] = GSIZE_TO_POINTER ((gsize) mono_jit_info_get_code_size (info));
+    } else {
+      batch->first[i] = mono_jit_info_get_method (info);
+      batch->second[i] = mono_jit_info_get_code_start (info);
+    }
+    batch->done = i + 1;
+  }
+  mono_thread_detach (thread);
+  batch->finished = 1;
+  return NULL;
+}
+`;
+  // Offsets in Batch: pointers are 4 bytes in a 32-bit game (Wine), 8 otherwise.
+  const P = Process.pointerSize;
+  const B_DOMAIN = 0, B_KIND = P, B_COUNT = P + 4, B_INPUT = P === 8 ? 16 : 12,
+    B_FIRST = B_INPUT + P, B_SECOND = B_FIRST + P, B_DONE = B_SECOND + P,
+    B_CANCEL = B_DONE + 4, B_FINISHED = B_CANCEL + 4,
+    B_SIZE = Math.ceil((B_FINISHED + 4) / P) * P;
+  let batchCode = null;
+  const batches = new Set();
+
+  function batchFunctions() {
+    if (batchCode === null) {
+      const symbols = {};
+      for (const name of ['mono_thread_attach', 'mono_thread_detach', 'mono_compile_method',
+                          'mono_jit_info_table_find', 'mono_get_root_domain',
+                          'mono_jit_info_get_code_start', 'mono_jit_info_get_code_size',
+                          'mono_jit_info_get_method', 'mono_method_get_header',
+                          'mono_method_header_get_code', 'mono_metadata_free_mh',
+                          'mono_method_get_class', 'mono_class_get_flags',
+                          'mono_class_get_image', 'mono_get_method', 'mono_class_get'])
+        symbols[name] = api.module.getExportByName(name);
+      const cm = new CModule(BATCH_SOURCE, symbols);
+      batchCode = { cm };
+    }
+    return batchCode;
+  }
+
+  function runBatch(kind, inputs, progress) {
+    // A promise of [[first, second], ...] for the inputs (see BATCH_SOURCE).
+    if (!refresh())
+      return Promise.reject(new Error('no Mono runtime in the process'));
+    const code = batchFunctions();
+    const count = inputs.length;
+    const size = Process.pointerSize * Math.max(count, 1);
+    const batch = Memory.alloc(B_SIZE);
+    const input = Memory.alloc(size);
+    const first = Memory.alloc(size);
+    const second = Memory.alloc(size);
+    inputs.forEach((value, i) => input.add(i * Process.pointerSize).writePointer(value));
+    batch.add(B_DOMAIN).writePointer(scriptDomain());
+    batch.add(B_KIND).writeS32(kind);
+    batch.add(B_COUNT).writeS32(count);
+    batch.add(B_INPUT).writePointer(input);
+    batch.add(B_FIRST).writePointer(first);
+    batch.add(B_SECOND).writePointer(second);
+    try {
+      spawnThread(code.cm.run_batch, batch);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    // Should the session be cut meanwhile, Frida must not unload the C code
+    // the batch thread runs: the script stays until the batch has finished.
+    Script.pin();
+    const entry = { batch, input };
+    batches.add(entry);
+    return new Promise((resolve, reject) => {
+      const poll = () => {
+        if (batch.add(B_FINISHED).readS32() === 0) {
+          if (progress)
+            progress(batch.add(B_DONE).readS32());
+          entry.timer = setTimeout(poll, BATCH_POLL);
+          return;
+        }
+        batches.delete(entry);
+        Script.unpin();
+        if (batch.add(B_CANCEL).readS32() !== 0) {
+          reject(new Error('cancelled'));
+          return;
+        }
+        // The closure keeps the buffers alive until here.
+        resolve(inputs.map((_value, i) => [
+          first.add(i * Process.pointerSize).readPointer(),
+          second.add(i * Process.pointerSize).readPointer()
+        ]));
+      };
+      poll();
+    });
+  }
+
+  function cancelBatches() {
+    // Ask running batches to stop; their promises reject once they have.
+    for (const entry of batches)
+      entry.batch.add(B_CANCEL).writeS32(1);
+    return batches.size;
+  }
+
+  function batchesRunning() {
+    return batches.size > 0;
+  }
+
+  async function checkAll(methods, progress) {
+    // Whether each method uses COM interop (see uses_com): [true/false].
+    const results = await runBatch(BATCH_CHECK, methods, progress);
+    return results.map(([found]) => !found.isNull());
+  }
+
+  async function compileAll(methods, progress) {
+    // The code of many methods: [{ start, size } or null], see runBatch.
+    const results = await runBatch(BATCH_COMPILE, methods, progress);
+    return results.map(([start, size]) =>
+      (start.isNull() ? null : { start, size: size.toInt32() }));
+  }
+
+  async function describeAll(addresses) {
+    // ``describe`` for many addresses of JIT code, from the agent's thread.
+    const results = await runBatch(BATCH_LOCATE, addresses);
+    return results.map(([method, start], i) => {
+      if (method.isNull())
+        return null;
+      const key = method.toString();
+      let text = names.get(key);
+      if (text === undefined) {
+        text = cString(api.fullName(method, 0));
+        names.set(key, text);
+      }
+      return text === null ? null : `${text}+${addresses[i].sub(start)}`;
+    });
+  }
+
+  async function compile(identity) {
+    // A promise of { start, size }.
+    if (!refresh())
+      throw new Error('no Mono runtime in the process');
+    return onMonoThread(domain => {
+      const { start, size } = compileOnThread(domain, identity);
+      return { start, size };
+    });
+  }
+
+  // --- Signatures: what the method monitor needs to decode arguments ------
+
+  const TYPE = {
+    VOID: 0x01, BOOLEAN: 0x02, CHAR: 0x03, I1: 0x04, U1: 0x05, I2: 0x06, U2: 0x07,
+    I4: 0x08, U4: 0x09, I8: 0x0a, U8: 0x0b, R4: 0x0c, R8: 0x0d, STRING: 0x0e,
+    VALUETYPE: 0x11, GENERICINST: 0x15, I: 0x18, U: 0x19
+  };
+
+  function typesApi() {
+    if (!refresh())
+      throw new Error('no Mono runtime in the process');
+    if (api.types === null)
+      throw new Error('this Mono runtime lacks the functions to read signatures');
+    return api.types;
+  }
+
+  function typeInfo(t, type) {
+    // { kind, byref, name, enumName?, structSize? }: enums become their base
+    // type, value types that are no enum are structs ('VALUETYPE').
+    const info = {
+      kind: t.typeKind(type),
+      byref: t.isByref(type) !== 0,
+      name: cString(t.typeName(type)) || '?'
+    };
+    if (info.kind === TYPE.VALUETYPE || info.kind === TYPE.GENERICINST) {
+      const klass = t.typeClass(type);
+      if (!klass.isNull() && t.isEnum(klass) !== 0) {
+        info.enumName = info.name;
+        info.kind = t.typeKind(t.enumBase(klass));
+      } else if (!klass.isNull() && t.isValueType(klass) !== 0) {
+        info.kind = TYPE.VALUETYPE;
+        info.structSize = t.valueSize(klass, NULL);
+        info.klass = klass;
+      }
+    }
+    return info;
+  }
+
+  async function prepare(identity) {
+    // Compile the method like compile() and describe its signature (a
+    // promise): { start, size, instance, params: [{ name, type }], returns: type }.
+    typesApi();
+    return onMonoThread(domain => {
+      const { method, start, size } = compileOnThread(domain, identity);
+      return { start, size, ...signatureOf(method) };
+    });
+  }
+
+  const signatures = new Map();
+
+  function signatureOf(method) {
+    // { instance, params: [{ name, type }], returns: type } of a method (cached).
+    const key = method.toString();
+    let result = signatures.get(key);
+    if (result !== undefined)
+      return result;
+    const t = typesApi();
+    const signature = t.methodSignature(method);
+    if (signature.isNull())
+      throw new Error(`no signature for method ${method}`);
+    const count = t.paramCount(signature);
+    const names = Memory.alloc(Process.pointerSize * Math.max(count, 1));
+    t.paramNames(method, names);
+    const iterator = Memory.alloc(Process.pointerSize);
+    iterator.writePointer(NULL);
+    const params = [];
+    for (let i = 0; i < count; i++) {
+      const type = t.params(signature, iterator);
+      const name = names.add(i * Process.pointerSize).readPointer();
+      params.push({
+        name: name.isNull() ? `arg${i}` : name.readUtf8String(),
+        type: typeInfo(t, type)
+      });
+    }
+    result = {
+      params,
+      instance: t.isInstance(signature) !== 0,
+      returns: typeInfo(t, t.returnType(signature))
+    };
+    signatures.set(key, result);
+    return result;
+  }
+
+  // --- Objects: classes, their fields, arrays -----------------------------
+
+  const FIELD_STATIC = 0x10;
+  const layouts = new Map();
+  let knownImages = new Set();
+
+  function isLoadedImage(image) {
+    if (knownImages.has(image.toString()))
+      return true;
+    if (api.catalog === null)
+      return false;
+    // Assemblies may have been loaded since.
+    knownImages = new Set(loadedImages(api.catalog).map(String));
+    return knownImages.has(image.toString());
+  }
+
+  function classOf(object) {
+    // The class of a managed object, or null if ``object`` is none (any
+    // more): a MonoObject starts with its vtable, which starts with the
+    // class, and a real class belongs to a loaded assembly. Only plain
+    // memory reads until then, so a stale address cannot mislead Mono.
+    typesApi();
+    try {
+      const klass = object.readPointer().readPointer();
+      return isLoadedImage(api.classImage(klass)) ? klass : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function layout(klass) {
+    // { name, valueType, rank, fields: [{ name, type, offset, static }] }
+    // with inherited fields first; for arrays also element type and size.
+    const key = klass.toString();
+    let result = layouts.get(key);
+    if (result !== undefined)
+      return result;
+    const t = typesApi();
+    const chain = [];
+    for (let current = klass; !current.isNull(); current = t.classParent(current))
+      chain.unshift(current);
+    const fields = [];
+    const iterator = Memory.alloc(Process.pointerSize);
+    for (const current of chain) {
+      iterator.writePointer(NULL);
+      for (;;) {
+        const field = t.classFields(current, iterator);
+        if (field.isNull())
+          break;
+        fields.push({
+          name: t.fieldName(field).readUtf8String(),
+          type: typeInfo(t, t.fieldType(field)),
+          offset: t.fieldOffset(field),
+          static: (t.fieldFlags(field) & FIELD_STATIC) !== 0
+        });
+      }
+    }
+    result = {
+      name: cString(t.typeName(t.classType(klass))) || '?',
+      valueType: t.isValueType(klass) !== 0,
+      rank: t.classRank(klass),
+      fields
+    };
+    if (result.rank > 0) {
+      const element = t.elementClass(klass);
+      result.element = typeInfo(t, t.classType(element));
+      result.elementSize = t.elementSize(klass);
+    }
+    layouts.set(key, result);
+    return result;
+  }
+
+  // --- Unity object names ----------------------------------------------------
+  // GameObjects and components keep their name on Unity's native side; the
+  // managed object only holds a pointer to it (m_CachedPtr). Reading it means
+  // calling UnityEngine.Object.get_name, which Unity only allows on its main
+  // thread: call unityName only on a game thread that runs game code. Threads
+  // where it never worked are not asked again.
+
+  const MAX_FAILURES = 3;
+  const nameMethods = new Map();
+  const nameThreads = new Map();
+  const naming = new Set();
+
+  function nameMethod(klass) {
+    // UnityEngine.Object.get_name if ``klass`` derives from UnityEngine.Object.
+    const key = klass.toString();
+    let method = nameMethods.get(key);
+    if (method !== undefined)
+      return method;
+    const t = typesApi();
+    method = null;
+    for (let current = klass; !current.isNull(); current = t.classParent(current)) {
+      if (layout(current).name === 'UnityEngine.Object') {
+        const found = api.invoke.methodFromName(current, Memory.allocUtf8String('get_name'), 0);
+        method = found.isNull() ? null : found;
+        break;
+      }
+    }
+    nameMethods.set(key, method);
+    return method;
+  }
+
+  function unityName(object) {
+    // The name of a GameObject or component, or null.
+    if (api === null || api.types === null || api.invoke === null)
+      return null;
+    const thread = Process.getCurrentThreadId();
+    const state = nameThreads.get(thread) || { ok: 0, failed: 0 };
+    if ((state.ok === 0 && state.failed >= MAX_FAILURES) || naming.has(thread))
+      return null;
+    const klass = classOf(object);
+    const method = klass === null ? null : nameMethod(klass);
+    if (method === null)
+      return null;
+    const exception = Memory.alloc(Process.pointerSize);
+    exception.writePointer(NULL);
+    naming.add(thread);  // get_name could run a monitored method
+    let result;
+    try {
+      result = api.invoke.runtimeInvoke(method, object, NULL, exception);
+    } finally {
+      naming.delete(thread);
+    }
+    // An exception: not the main thread, or the object was destroyed.
+    const failed = !exception.readPointer().isNull() || result.isNull();
+    if (failed)
+      state.failed++;
+    else
+      state.ok++;
+    nameThreads.set(thread, state);
+    if (failed)
+      return null;
+    const length = result.add(2 * Process.pointerSize).readS32();
+    return result.add(2 * Process.pointerSize + 4).readUtf16String(Math.min(length, 120));
+  }
+
+  // --- Unity's main thread ----------------------------------------------------
+  // Game code that Unity only allows on its main thread (Unity API, game
+  // logic) runs there via onMainThread: the next time the main thread starts
+  // a script method through mono_runtime_invoke, the queued work runs first.
+  // Which thread that is, see mainThreadId (platform layer).
+
+  const MAIN_TIMEOUT = 3000;
+  const mainQueue = [];
+  let mainHook = null;
+  let draining = false;
+
+  function isMainThread() {
+    return Process.getCurrentThreadId() === mainThreadId();
+  }
+
+  function drainMain() {
+    // Run the queued work; call it on any thread, it only acts on the main one.
+    if (draining || !isMainThread())
+      return;
+    draining = true;  // our own invocations pass mono_runtime_invoke, too
+    try {
+      while (mainQueue.length > 0) {
+        const job = mainQueue.shift();
+        clearTimeout(job.timer);
+        try {
+          job.resolve(job.work());
+        } catch (error) {
+          job.reject(error);
+        }
+      }
+    } finally {
+      draining = false;
+    }
+    if (mainHook !== null) {
+      const hook = mainHook;
+      mainHook = null;
+      setTimeout(() => hook.detach(), 0);  // not from within its own callback
+    }
+  }
+
+  function onMainThread(work) {
+    // A promise of work()'s result, computed on Unity's main thread.
+    if (api === null || api.invoke === null)
+      return Promise.reject(new Error('this Mono runtime cannot run game code'));
+    mainThreadId();  // found here, not first in the hook on a game thread
+    return new Promise((resolve, reject) => {
+      const job = { work, resolve, reject };
+      job.timer = setTimeout(() => {
+        const index = mainQueue.indexOf(job);
+        if (index >= 0)
+          mainQueue.splice(index, 1);
+        reject(new Error('the game did not run code on its main thread for 3 s ' +
+                         '(still loading, or no Unity game?)'));
+      }, MAIN_TIMEOUT);
+      mainQueue.push(job);
+      if (mainHook === null)
+        mainHook = Interceptor.attach(api.invoke.runtimeInvokeAddress, {
+          onEnter() {
+            drainMain();
+          }
+        });
+    });
+  }
+
+  // --- Properties: parameterless getters ---------------------------------------
+
+  const propertyLists = new Map();
+
+  function classChain(klass) {
+    const chain = [];
+    for (let current = klass; !current.isNull(); current = api.types.classParent(current))
+      chain.push(current);
+    return chain;  // the class first, System.Object last
+  }
+
+  function properties(klass) {
+    // [{ name, method, static, type }] of the getters of ``klass`` and its
+    // base classes (overridden ones once); a GameObject also lists its
+    // components (``special: 'components'``). Cached.
+    const key = klass.toString();
+    let result = propertyLists.get(key);
+    if (result !== undefined)
+      return result;
+    const t = typesApi();
+    result = [];
+    if (api.invoke === null) {
+      propertyLists.set(key, result);
+      return result;
+    }
+    const seen = new Set();
+    const iterator = Memory.alloc(Process.pointerSize);
+    const chain = classChain(klass);
+    if (chain.some(current => layout(current).name === 'UnityEngine.GameObject'))
+      result.push({ name: 'GetComponents()', special: 'components', static: false,
+                    type: { kind: 0x1d, byref: false, name: 'UnityEngine.Component[]' } });
+    for (const current of chain) {
+      iterator.writePointer(NULL);
+      for (;;) {
+        const method = api.invoke.classMethods(current, iterator);
+        if (method.isNull())
+          break;
+        const name = api.invoke.methodName(method).readUtf8String();
+        if (!name.startsWith('get_') || seen.has(name))
+          continue;
+        const signature = t.methodSignature(method);
+        if (signature.isNull() || t.paramCount(signature) !== 0)
+          continue;
+        seen.add(name);
+        result.push({
+          name: name.substring(4),
+          method: method.toString(),
+          static: (api.invoke.methodFlags(method, NULL) & METHOD_STATIC) !== 0,
+          type: typeInfo(t, t.returnType(signature))
+        });
+      }
+    }
+    propertyLists.set(key, result);
+    return result;
+  }
+
+  function invoke(method, object, params) {
+    // { result, exception } of calling a managed method; main thread only.
+    const exception = Memory.alloc(Process.pointerSize);
+    exception.writePointer(NULL);
+    const result = api.invoke.runtimeInvoke(method, object, params, exception);
+    return { result, exception: exception.readPointer() };
+  }
+
+  function getProperty(object, property, isStruct) {
+    // Call a getter of ``object`` (an unboxed value for a struct).
+    if (property.special === 'components')
+      return components(object);
+    let method = ptr(property.method);
+    if (!property.static && !isStruct)
+      method = api.invoke.virtualMethod(object, method);  // the override
+    return invoke(method, property.static ? NULL : object, NULL);
+  }
+
+  function components(gameObject) {
+    // GameObject.GetComponents(typeof(Component))
+    const klass = classOf(gameObject);
+    let getComponents = null;
+    const iterator = Memory.alloc(Process.pointerSize);
+    for (const current of classChain(klass)) {
+      iterator.writePointer(NULL);
+      for (let method = api.invoke.classMethods(current, iterator); !method.isNull();
+           method = api.invoke.classMethods(current, iterator)) {
+        if (api.invoke.methodName(method).readUtf8String() !== 'GetComponents')
+          continue;
+        const signature = api.types.methodSignature(method);
+        const paramIterator = Memory.alloc(Process.pointerSize);
+        paramIterator.writePointer(NULL);
+        if (!signature.isNull() && api.types.paramCount(signature) === 1
+            && cString(api.types.typeName(api.types.params(signature, paramIterator)))
+               === 'System.Type')
+          getComponents = method;
+      }
+    }
+    if (getComponents === null)
+      throw new Error('GameObject.GetComponents(Type) not found');
+    const image = api.classImage(klass);
+    const component = api.invoke.classFromName(image, Memory.allocUtf8String('UnityEngine'),
+                                               Memory.allocUtf8String('Component'));
+    if (component.isNull())
+      throw new Error('UnityEngine.Component not found');
+    const params = Memory.alloc(Process.pointerSize);
+    params.writePointer(api.invoke.typeObject(api.currentDomain(), api.types.classType(component)));
+    return invoke(getComponents, gameObject, params);
+  }
+
+  // --- Calling game methods by name ---------------------------------------------
+
+  const classesByName = new Map();
+
+  function findClass(fullName) {
+    // A class of a loaded assembly by its full name, e.g. "Game.PartyHelper".
+    let klass = classesByName.get(fullName);
+    if (klass !== undefined)
+      return klass;
+    if (api.catalog === null || api.invoke === null)
+      throw new Error('this Mono runtime cannot look up classes');
+    const dot = fullName.lastIndexOf('.');
+    const space = Memory.allocUtf8String(dot < 0 ? '' : fullName.substring(0, dot));
+    const name = Memory.allocUtf8String(fullName.substring(dot + 1));
+    klass = null;
+    for (const image of loadedImages(api.catalog)) {
+      const found = api.invoke.classFromName(image, space, name);
+      if (!found.isNull()) {
+        klass = found;
+        break;
+      }
+    }
+    if (klass === null)
+      throw new Error(`class ${fullName} not found`);
+    classesByName.set(fullName, klass);
+    return klass;
+  }
+
+  function findMethod(klass, name, argumentCount, wantStatic) {
+    // The first method ``name`` of the class or a base class taking
+    // ``argumentCount`` arguments; ``wantStatic`` true/false or null for any.
+    const iterator = Memory.alloc(Process.pointerSize);
+    for (const current of classChain(klass)) {
+      iterator.writePointer(NULL);
+      for (let method = api.invoke.classMethods(current, iterator); !method.isNull();
+           method = api.invoke.classMethods(current, iterator)) {
+        if (api.invoke.methodName(method).readUtf8String() !== name)
+          continue;
+        const isStatic = (api.invoke.methodFlags(method, NULL) & METHOD_STATIC) !== 0;
+        if ((wantStatic === null || isStatic === wantStatic)
+            && signatureOf(method).params.length === argumentCount)
+          return method;
+      }
+    }
+    throw new Error(`${layout(klass).name} has no ${wantStatic ? 'static ' : ''}method ` +
+                    `${name} with ${argumentCount} argument(s)`);
+  }
+
+  function writeReference(object, field, value) {
+    // Store reference ``value`` in the field at ``field`` of ``object``.
+    if (api.writeBarrier !== null && object !== null)
+      api.writeBarrier(object, field, value);
+    else
+      field.writePointer(value);
+  }
+
+  function newString(text) {
+    if (api.stringNew === null)
+      throw new Error('this Mono runtime cannot create strings');
+    return api.stringNew(api.currentDomain(), Memory.allocUtf8String(text));
+  }
+
+  const classNames = new Map();
+
+  function objectClassName(object) {
+    // Class of a managed object; metadata only, any thread will do.
+    const t = typesApi();
+    const klass = t.objectClass(object);
+    const key = klass.toString();
+    let text = classNames.get(key);
+    if (text === undefined) {
+      text = cString(t.typeName(t.classType(klass))) || '?';
+      classNames.set(key, text);
+    }
+    return text;
+  }
+
+  // --- Catalog: the classes and methods of the loaded assemblies ----------
+
+  const TYPEDEF_TABLE = 2;
+  const TYPEDEF_TOKEN = 0x02000000;
+  const METHOD_STATIC = 0x10;
+
+  function catalogApi() {
+    if (!refresh())
+      throw new Error('no Mono runtime in the process');
+    if (api.catalog === null)
+      throw new Error('this Mono runtime lacks the functions for a catalog');
+    return api.catalog;
+  }
+
+  function loadedImages(c) {
+    const images = [];
+    const collect = new NativeCallback(assembly => {
+      images.push(c.assemblyImage(assembly));
+    }, 'void', ['pointer', 'pointer']);
+    c.assemblyForeach(collect, NULL);
+    return images;
+  }
+
+  async function assemblies() {
+    // Loading classes needs a thread Mono knows.
+    const c = catalogApi();
+    return onMonoThread(() => loadedImages(c).map(image => ({
+      name: api.imageName(image).readUtf8String(),
+      file: api.imageFile(image).readUtf8String(),
+      classes: Math.max(0, c.tableRows(image, TYPEDEF_TABLE) - 1)
+    })));
+  }
+
+  function methodEntry(c, method) {
+    // [name, parameters, return type, static, token, full signature]
+    const full = signatureName(method) || '';
+    const open = full.indexOf(' (');
+    const signature = c.methodSignature(method);
+    return [
+      c.methodName(method).readUtf8String(),
+      open < 0 ? '()' : full.substring(open + 1),
+      signature.isNull() ? '' : cString(c.typeName(c.returnType(signature))) || '',
+      (c.methodFlags(method, NULL) & METHOD_STATIC) !== 0,
+      api.methodToken(method),
+      full
+    ];
+  }
+
+  function eachClass(c, assembly, visit) {
+    // visit(class name, [method, ...]) for the classes of one assembly; row
+    // 1 of its type table is the <Module> pseudo class. On a Mono thread.
+    const image = loadedImages(c).find(
+      candidate => api.imageName(candidate).readUtf8String() === assembly);
+    if (image === undefined)
+      throw new Error(`assembly ${assembly} is not loaded`);
+    const iterator = Memory.alloc(Process.pointerSize);
+    const rows = c.tableRows(image, TYPEDEF_TABLE);
+    for (let row = 2; row <= rows; row++) {
+      const klass = c.classGet(image, TYPEDEF_TOKEN | row);
+      if (klass.isNull())
+        continue;
+      const methods = [];
+      iterator.writePointer(NULL);
+      for (;;) {
+        const method = c.classMethods(klass, iterator);
+        if (method.isNull())
+          break;
+        methods.push(method);
+      }
+      visit(cString(c.typeName(c.classType(klass))), methods);
+    }
+  }
+
+  async function classes(assembly) {
+    // [[class name, [method entry, ...]], ...] of one assembly.
+    const c = catalogApi();
+    return onMonoThread(() => {
+      const result = [];
+      eachClass(c, assembly, (className, methods) => {
+        result.push([className, methods.map(method => methodEntry(c, method))]);
+      });
+      return result;
+    });
+  }
+
+  async function methods(assembly) {
+    // [{ className, method, entry, flags, implFlags }] of one assembly, for
+    // the trace: ``entry`` as in classes, the flags as Mono has them.
+    const c = catalogApi();
+    return onMonoThread(() => {
+      const result = [];
+      const implFlags = Memory.alloc(4);
+      eachClass(c, assembly, (className, found) => {
+        for (const method of found) {
+          implFlags.writeU32(0);
+          const flags = c.methodFlags(method, implFlags);
+          result.push({ className, method, entry: methodEntry(c, method), flags,
+                        implFlags: implFlags.readU32() });
+        }
+      });
+      return result;
+    });
+  }
+
+  refresh();
+  return {
+    id: 'mono',
+    refresh, locate, name, describe, identify, compile, assemblies, classes, methods,
+    checkAll, compileAll, describeAll, cancelBatches, batchesRunning, prepare,
+    objectClassName, classOf, layout, onRuntimeThread: onMonoThread, unityName,
+    onMainThread, drainMain, properties, getProperty, signatureOf, findClass, findMethod,
+    newString, invoke, classChain, writeReference,
+    virtualMethod: (object, method) => api.invoke.virtualMethod(object, method)
+  };
+})();
+
+registerEngine(mono);
