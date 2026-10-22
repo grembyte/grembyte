@@ -33,6 +33,9 @@ static volatile int frames;
 __attribute__((noinline)) void frame(int x) { frames += x; }
 __attribute__((noinline)) void spend_gold(int amount) { gold -= amount; }
 __attribute__((noinline)) void buy_item(int price) { spend_gold(price); }
+__attribute__((noinline)) void drink_potion(int amount) { gold += amount; }
+/* volatile: called through the pointer, as by a vtable */
+static void (*volatile use_item)(int) = drink_potion;
 
 static void *render(void *unused) {
     (void)unused;
@@ -55,6 +58,8 @@ int main(void) {
             frame(value);
         else if (strcmp(cmd, "buy") == 0)
             buy_item(value);
+        else if (strcmp(cmd, "use") == 0)
+            use_item(value);
         printf("%d 0\n", gold);
         fflush(stdout);
     }
@@ -140,24 +145,29 @@ def test_native_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
         baseline = recorder.record(target, "baseline", ("tick", 1), ("tick", 2))
         apply_names(functions, baseline)
         assert baseline["events"] == []
-        scenario = recorder.record(target, "scenario", ("tick", 3), ("buy", 7))
+        scenario = recorder.record(target, "scenario", ("tick", 3), ("buy", 7), ("use", 2))
         apply_names(functions, scenario)
-        assert target.send("tick", 0) == (93, 0)  # the game still runs, and bought
-        assert (baseline["saturated"], scenario["saturated"]) == (0, 0)  # no calls lost
+        assert target.send("tick", 0) == (95, 0)  # the game still runs, bought and drank
+        assert (baseline["lost"], scenario["lost"]) == (0, 0)  # no calls lost
 
         rows = [row for row in analyze(scenario, baseline) if functions[row.method].module == "game"]
         verdicts = {functions[row.method].label: (row.verdict, row.calls) for row in rows}
         assert verdicts["buy_item"] == (NEW, 1)
         assert verdicts["spend_gold"] == (NEW, 1)
+        assert verdicts["drink_potion"] == (NEW, 1)  # through the function pointer
         assert verdicts["frame"][0] == SAME
-        # The first calls of what is new, on the thread that bought
+        # The first calls of what is new, in order, on the thread that bought
         calls = [call for call in recording_calls(scenario)
                  if functions[call.method].module == "game"]
-        assert sorted(functions[call.method].label for call in calls) == ["buy_item",
-                                                                         "spend_gold"]
+        assert [functions[call.method].label for call in calls] == ["buy_item", "spend_gold",
+                                                                   "drink_potion"]
         assert {call.thread for call in calls} == {target.pid}
+        assert calls[0].time <= calls[1].time <= calls[2].time
         buy = next(function for function in functions if function.label == "buy_item")
         assert buy.location.startswith("game+0x")
+        # spend_gold is called from within buy_item
+        caller = int(calls[1].caller.removeprefix("game+"), 16)
+        assert 0 <= caller - buy.offset < 0x40
 
         # Another trace after this one: the agent is loaded afresh.
         worker.stop()
@@ -170,7 +180,7 @@ def test_native_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
         recorder.wait(lambda: len(recorder.stopped) == 2)
         # The main thread waits for commands in code Stalker made: once it
         # has returned from there, the agents unload without waiting.
-        assert target.send("tick", 0) == (92, 0)
+        assert target.send("tick", 0) == (94, 0)
     finally:
         worker.requestInterruption()
         worker.wait(5000)

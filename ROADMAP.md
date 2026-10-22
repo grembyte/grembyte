@@ -40,16 +40,24 @@ Bezahlen oder bei Schaden läuft.
 `hermes/ui/widgets/native_trace.py` (Fenster). Gemeinsame Sitzungslogik mit dem Mono-Trace
 in `AgentWorker` (`hermes/features/trace.py`); `analyze` und die Einstufung sind dieselben.
 
-- Stalker folgt den gewählten Threads mit `events: {call: true}` und `onCallSummary`;
-  nicht gewählte Module werden per `Stalker.exclude` nativ ausgeführt (nur Aufrufe *in*
+- Stalker folgt den gewählten Threads mit einem CModule-`transform` (seit 22.10.2026, vorher
+  `events: {call: true}` und `onCallSummary`): Vor jedem `call` des verfolgten Codes steht
+  ein Callout in C, der das Ziel aus den Registern berechnet (direkt, Register,
+  Speicheroperand inkl. `rip`-relativ) und im Spiel-Thread in einer Hashtabelle zählt. Die
+  Reihenfolge der ersten Aufrufe ist exakt und kennt die Aufrufstelle. Nur x86/x64; `call`
+  über `fs:`/`gs:` wird nicht gezählt. Nicht gewählte Module werden per `Stalker.exclude` nativ ausgeführt (nur Aufrufe *in*
   sie zählen). Vorauswahl: Module aus dem Ordner des Spiels, Threads, die gerade laufen
   (CPU-Zeit oder Kontextwechsel in `/proc`).
 - Funktionsnamen: Exporte, unter Linux zusätzlich Symbole (`DebugSymbol`), sonst `modul+0x…`.
 - Verifiziert: Testspiel (C) und ein Python-Interpreter mit `libpython` (~6 Mio. Aufrufe/2 s,
   Szenario fand den JSON-Encoder). Noch nicht in einem echten Spiel getestet.
 - Gelernt: Stalkers Queue fasst standardmäßig 16 384 Ereignisse pro Leerung und verwirft den
-  Rest **stillschweigend**. Jetzt 131 072 bei 25 ms; ein voller Durchlauf wird als
-  `saturated` gemeldet und im Fenster gewarnt.
+  Rest **stillschweigend**. Mit dem CModule gibt es keine Queue mehr; verloren gehen nur
+  Aufrufe, wenn die Funktionstabelle (2^19) voll ist (`lost`, im Fenster gewarnt).
+- Gelernt: Fridas TinyCC kennt kein Compare-and-Swap (`g_atomic_*_compare_and_exchange`,
+  `__atomic_*`, `__sync_*` fehlen), nur `g_atomic_int_add`: Einträge werden über einen
+  Claim-Zähler belegt. Lasttest libpython (4 Threads): ~11 Mio. Aufrufe/2 s ohne Verlust,
+  Szenario etwas schneller als mit `onCallSummary` (1,2 s statt 1,5 s).
 - Gelernt: Ein verfolgter Thread, der in einem blockierenden Aufruf hängt, hält Stalkers
   Code fest; `script.unload()` wartet dann bis zu ~25 s (das Spiel überlebt). Daher werden
   untätige Threads nicht vorausgewählt, und „Verfolgung beenden" entlädt den Agenten nicht
@@ -60,9 +68,8 @@ Nächste Schritte:
 
 - In einem echten nativen Spiel ausprobieren (Last, Spielbarkeit, Trefferqualität)
 - Unter Wine/Proton über das Gadget testen (Fenster warnt bisher nur)
-- Aufrufer: Die Zusammenfassung kennt nur Ziele. Für auffällige Funktionen könnte ein
-  kurzer Interceptor-Lauf die Aufrufer nachliefern, oder ein CModule-`transform` zählt in C
-  mit Aufrufstelle (auch genauer als die 25-ms-Reihenfolge)
+- Aufrufer: Die Reihenfolge zeigt die Aufrufstelle des ersten Aufrufs je Thread. Eine
+  Liste aller Aufrufer je Funktion (Zählung je Aufrufstelle und Ziel) fehlt noch
 - Anschluss an vorhandene Werkzeuge: Disassembler-Ansicht der Funktion, Hook auf die
   Funktion, später Byte-Signatur (Punkt 5)
 - **Erledigt (19.10.2026):** Ergebnisse sortier- und filterbar (Name, Aufrufzahl, `%3`).

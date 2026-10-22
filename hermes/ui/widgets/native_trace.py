@@ -54,23 +54,15 @@ class NativeRowModel(TraceRowModel):
 
 
 class NativeSequenceModel(TraceSequenceModel):
-    """The first calls of the scenario; where the function is instead of the caller."""
+    """The first calls of the scenario, the call instruction as the caller."""
 
     def __init__(self, translations, parent=None):
         super().__init__(translations, parent)
-        self.columns = tuple(
-            "native_trace.column_function" if column == "trace.column_method"
-            else "native_trace.column_location" if column == "trace.column_caller"
-            else column for column in self.columns)
+        self.columns = tuple("native_trace.column_function" if column == "trace.column_method"
+                             else column for column in self.columns)
 
     def method_name(self, index):
         return self.methods[index].label
-
-    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if (index.isValid() and index.column() == _S_CALLER
-                and role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole)):
-            return self.methods[self.items[index.row()].method].location
-        return super().data(index, role)
 
 
 class NativeTraceDialog(QDialog):
@@ -371,7 +363,7 @@ class NativeTraceDialog(QDialog):
             self.baseline = result
             self.status_label.setText(self.translations["native_trace.baseline_done"].format(
                 functions=len(result.get("counts", {})), seconds=seconds)
-                + self._saturation_text(result))
+                + self._lost_text(result))
             if self.scenario is not None:
                 self._show_results()  # compare the scenario with the new baseline
             return
@@ -382,14 +374,13 @@ class NativeTraceDialog(QDialog):
             calls=len(self.sequence_model.items), seconds=seconds)
         if result.get("dropped"):
             text += "  ·  " + self.translations["trace.dropped"].format(count=result["dropped"])
-        self.status_label.setText(text + self._saturation_text(result))
+        self.status_label.setText(text + self._lost_text(result))
 
-    def _saturation_text(self, result):
-        """A warning when Stalker had to drop calls, or ''."""
-        if not result.get("saturated"):
+    def _lost_text(self, result):
+        """A warning when the table of functions was full, or ''."""
+        if not result.get("lost"):
             return ""
-        return "\n" + self.translations["native_trace.saturated"].format(
-            count=result["saturated"])
+        return "\n" + self.translations["native_trace.lost"].format(count=result["lost"])
 
     # --- Results -----------------------------------------------------------------
     def _in_game_code(self, number):

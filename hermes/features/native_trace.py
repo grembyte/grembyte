@@ -15,14 +15,15 @@ Cheat Engine's "code filter":
 
 The answers have the shape of the Mono trace's, so ``analyze`` compares them
 the same way: functions are numbered as the agent first sees them, the
-numbers stay the same for the whole trace. Stalker sums the calls up per
-thread every ``DRAIN_INTERVAL_MS``; the sequence therefore holds the first
-call of every function (not seen in the baseline) per thread, in the order of
-these sums, and does not know the caller.
+numbers stay the same for the whole trace. A CModule counts the calls: its
+Stalker ``transform`` puts a callout before every call instruction of the
+followed code, which works out the target from the registers and counts it
+in the game's thread. The sequence therefore holds the first call of every
+function (not seen in the baseline) per thread in the exact order, with the
+call instruction as the caller.
 
-Between two sums Stalker queues at most ``QUEUE_CAPACITY`` calls per thread
-and drops the rest without a word. A sum that big means calls were lost: the
-answers count such sums in ``saturated``.
+The table of functions holds ``FUNCTION_CAPACITY`` of them; calls of
+functions beyond it are lost, the answers count them in ``lost``.
 """
 
 from dataclasses import dataclass
@@ -35,12 +36,10 @@ from hermes.features.trace import AgentWorker
 from hermes.core.agent_source import load_agent_source
 
 
-# How often Stalker hands over its sums: how exact the sequence is.
-DRAIN_INTERVAL_MS = 25
-# Calls Stalker queues per thread in between (32 bytes each): together with
-# the interval how many calls a second a thread may make without losing any
-# (Frida's default: 16384).
-QUEUE_CAPACITY = 131_072
+# Functions the CModule's table can hold (a power of two; 17 bytes each).
+FUNCTION_CAPACITY = 1 << 19
+# (function, thread) pairs it notes first calls of (a power of two; 12 bytes each)
+FIRST_CAPACITY = 1 << 19
 # First calls written into the sequence; later ones are only counted.
 EVENT_CAPACITY = 100_000
 # How long ``finish`` may look up function names.
@@ -48,8 +47,8 @@ SYMBOL_BUDGET_MS = 3000
 
 _AGENT_SOURCE = (
     load_agent_source(__file__)
-    .replace("DRAIN_INTERVAL_VALUE", str(DRAIN_INTERVAL_MS))
-    .replace("QUEUE_CAPACITY_VALUE", str(QUEUE_CAPACITY))
+    .replace("FUNCTION_CAPACITY_VALUE", str(FUNCTION_CAPACITY))
+    .replace("FIRST_CAPACITY_VALUE", str(FIRST_CAPACITY))
     .replace("EVENT_CAPACITY_VALUE", str(EVENT_CAPACITY))
     .replace("SYMBOL_BUDGET_VALUE", str(SYMBOL_BUDGET_MS))
 )
