@@ -275,7 +275,8 @@ class TraceDialog(QDialog):
     """Hook many C# methods, record a baseline and a scenario, compare.
 
     Not modal. The worker and its Frida session live as long as the window;
-    closing it removes the interceptors.
+    closing it removes the interceptors. With an assembly selection (see
+    hermes.ui.widgets.assemblies) only the selected assemblies are traced.
     """
 
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
@@ -285,7 +286,7 @@ class TraceDialog(QDialog):
     hook_requested = pyqtSignal(object)
 
     def __init__(self, translations, pid, parent=None, engine=None, filter_repository=None,
-                 favorites=None):
+                 favorites=None, assembly_selection=None):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
@@ -296,6 +297,9 @@ class TraceDialog(QDialog):
         self.large = settings.get("large_trace")
         self._filter_repository = filter_repository
         self._favorites = favorites
+        self._assembly_selection = assembly_selection
+        # The selection changed while a trace ran: list the candidates when it ends.
+        self._stale_candidates = False
         self.methods = []
         self.baseline = None
         self.scenario = None
@@ -306,7 +310,7 @@ class TraceDialog(QDialog):
         self.setWindowTitle(self._title())
         self.resize(1100, 720)
         self._build_ui()
-        self._worker = TraceWorker(pid, engine=self.engine)
+        self._worker = TraceWorker(pid, engine=self.engine, selection=self.selection())
         self._worker.planned.connect(self._on_planned)
         self._worker.started.connect(self._on_started)
         self._worker.progress.connect(self._on_progress)
@@ -321,6 +325,8 @@ class TraceDialog(QDialog):
         self._worker.start()
         self._worker.candidates()
         self._set_state(_IDLE)
+        if assembly_selection is not None:
+            assembly_selection.changed.connect(self._on_selection_changed)
 
     # --- UI ------------------------------------------------------------------
     def _build_ui(self):
@@ -437,6 +443,9 @@ class TraceDialog(QDialog):
 
     def _set_state(self, state):
         self._state = state
+        if state == _IDLE and self._stale_candidates:
+            self._stale_candidates = False
+            self._reload_candidates()
         tracing = state in (_READY, _RECORDING)
         self.filter_input.setEnabled(state == _IDLE)
         self.filter_panel.setEnabled(state == _IDLE)
@@ -495,6 +504,22 @@ class TraceDialog(QDialog):
             return False
         return True
 
+    def selection(self):
+        """The user's assembly selection; empty for none."""
+        store = self._assembly_selection
+        return store.selection if store is not None else frozenset()
+
+    def _on_selection_changed(self):
+        self._worker.set_selection(self.selection())
+        if self._state == _IDLE:
+            self._reload_candidates()
+        else:
+            self._stale_candidates = True
+
+    def _reload_candidates(self):
+        self.filter_panel.set_candidates(None)
+        self._worker.candidates()
+
     def _on_candidates(self, methods, _skipped):
         self.filter_panel.set_candidates(methods)
 
@@ -505,6 +530,9 @@ class TraceDialog(QDialog):
             return
         text = self.translations["trace.filters_count"].format(
             count=len(chosen), total=len(self.filter_panel.candidates))
+        if self.selection():
+            text += " " + self.translations["trace.assembly_selection"].format(
+                count=len(self.selection()))
         if self.limit is not None and len(chosen) > self.limit:
             text += " " + self.translations["trace.filters_over_limit"].format(limit=self.limit)
         self.choice_label.setText(text)

@@ -80,11 +80,13 @@ function untraceable(found) {
     return 'abstract';
   if ((found.flags & METHOD_PINVOKE) || (found.implFlags & (IMPL_CODE_TYPE | IMPL_INTERNAL_CALL)))
     return 'native';
-  // Open generics have no code of their own: List`1, Method<T>
+  // Open generics have no code of their own: List`1, Method<T>; Mono names
+  // the class of a definition 'Ns.List<T>', its methods 'Ns.List`1:Add (T)'.
   const full = found.entry[5];
   const open = full.indexOf(' (');
   const head = open < 0 ? full : full.substring(0, open);
-  if (found.className.includes('`') || head.substring(head.lastIndexOf(':') + 1) !== found.entry[0])
+  if (found.className.includes('`') || /`\d+:/.test(head)
+      || head.substring(head.lastIndexOf(':') + 1) !== found.entry[0])
     return 'generic';
   return null;
 }

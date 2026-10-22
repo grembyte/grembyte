@@ -26,3 +26,6 @@ class Process(Base):  # pylint: disable=too-few-public-methods
     favorites = relationship(
         "FavoriteRecord", back_populates="process", cascade="all, delete-orphan"
     )
+    assembly_selections = relationship(
+        "AssemblySelectionRecord", back_populates="process", cascade="all, delete-orphan"
+    )

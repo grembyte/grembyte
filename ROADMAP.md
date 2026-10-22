@@ -24,6 +24,10 @@ with ★ (first table column). Favorites are saved per program at once, so they 
 frozen or crashed game; View → "Favorites…" lists them with a note and hands them to the
 method or native function monitor.
 
+View → "Assemblies…" lists the assemblies a Mono game has loaded; the ticked ones are
+saved per program and limit the catalog and the Mono trace to them. Without a selection
+both use all game assemblies, as before.
+
 ## Proposals, independent of any engine
 
 Sorted by benefit relative to effort.

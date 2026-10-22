@@ -7,8 +7,9 @@ Mono: mscorlib, System, UnityEngine, ...) are only read when asked for: they
 are large and rarely what one looks for.
 """
 
+import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
@@ -19,6 +20,7 @@ from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
 from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
 from hermes.core.agent_source import load_agent_source
+from hermes.features.assemblies import chosen_assemblies
 
 
 _AGENT_SOURCE = ENGINE_AGENT_SOURCE + load_agent_source(__file__)
@@ -51,6 +53,56 @@ def short_name(signature):
     return f"{class_name.rsplit('.', 1)[-1]}:{method}"
 
 
+# ``Ns.Class`2`` at the end of a signature's class part: a generic class
+# without type arguments, i.e. its definition.
+_GENERIC_DEFINITION = re.compile(r"`(\d+)$")
+# The type parameters Mono shows in a class name: ``Ns.Map<TKey,TValue>``
+_TYPE_PARAMETERS = re.compile(r"<([^<>]*)>$")
+
+
+def generic_parameters(method):
+    """The type parameters of the generic class a method was defined in, else ().
+
+    Such a method (``R3.ReactiveProperty`1:set_Value (T)``) has no code of
+    its own, only its instances have (see with_type_arguments).
+    """
+    found = _GENERIC_DEFINITION.search(method.signature.split(":", 1)[0])
+    if found is None:
+        return ()
+    named = _TYPE_PARAMETERS.search(method.class_name)
+    if named is not None:
+        return tuple(name.strip() for name in named.group(1).split(","))
+    count = int(found.group(1))
+    return ("T",) if count == 1 else tuple(f"T{index}" for index in range(1, count + 1))
+
+
+def split_type_arguments(text):
+    """``int, Ns.Map`2<int,string>`` -> ``["int", "Ns.Map`2<int,string>"]``."""
+    arguments, depth, current = [], 0, ""
+    for char in text:
+        depth += {"<": 1, ">": -1}.get(char, 0)
+        if char == "," and depth == 0:
+            arguments.append(current.strip())
+            current = ""
+        else:
+            current += char
+    arguments.append(current.strip())
+    return [argument for argument in arguments if argument]
+
+
+def with_type_arguments(method, arguments):
+    """The method of a generic class's instance, e.g. ``ReactiveProperty`1<int>``.
+
+    The signature keeps the definition's parameters (``(T)``); the agent
+    binds the class to ``arguments`` (see resolveMethod in the Mono agent).
+    """
+    head, _, rest = method.signature.partition(":")
+    listed = ", ".join(arguments)
+    class_name, count = _TYPE_PARAMETERS.subn(f"<{listed}>", method.class_name)
+    return replace(method, signature=f"{head}<{listed}>:{rest}",
+                   class_name=class_name if count else f"{method.class_name}<{listed}>")
+
+
 def catalog_method_from_identity(identity):
     """A CatalogMethod for a method known by its identity (e.g. of a hook).
 
@@ -79,8 +131,10 @@ class CatalogWorker(QThread):
 
     Emits ``assemblies_found`` with all loaded assemblies first, then
     ``assembly_loaded`` for each one it reads: those named in ``assemblies``,
-    or else every assembly that is not part of the framework. ``engine`` is
-    the adapter (see hermes/engines), detected if not given.
+    or else the loaded ones of ``selection`` (the user's assembly selection,
+    see hermes.features.assemblies), or else every assembly that is not part
+    of the framework. ``engine`` is the adapter (see hermes/engines),
+    detected if not given.
     """
 
     assemblies_found = pyqtSignal(list)
@@ -90,10 +144,12 @@ class CatalogWorker(QThread):
     assembly_failed = pyqtSignal(str, str)
     catalog_failed = pyqtSignal(str)
 
-    def __init__(self, pid, assemblies=None, parent=None, engine=None):
+    def __init__(self, pid, assemblies=None, parent=None, engine=None, selection=()):
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.pid = pid
         self.assemblies = assemblies
+        self.selection = frozenset(selection)
         self.engine = resolve_engine(pid, engine)
         self._detached = threading.Event()
 
@@ -112,8 +168,8 @@ class CatalogWorker(QThread):
             self.assemblies_found.emit(found)
             names = self.assemblies
             if names is None:
-                names = [a["name"] for a in found
-                         if not self.engine.is_framework_assembly(a["name"])]
+                names = chosen_assemblies([a["name"] for a in found], self.selection,
+                                          self.engine)
             for name in names:
                 if self.isInterruptionRequested() or self._detached.is_set():
                     break

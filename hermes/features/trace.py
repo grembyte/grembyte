@@ -37,6 +37,7 @@ from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-
 from hermes.core import activity, logs, settings
 from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
+from hermes.features.assemblies import chosen_assemblies
 from hermes.features.catalog import CatalogMethod
 from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
@@ -388,9 +389,15 @@ class TraceWorker(AgentWorker):
 
     agent_name = "Mono trace"
 
-    def __init__(self, pid, parent=None, engine=None):
+    def __init__(self, pid, parent=None, engine=None, selection=()):
         super().__init__(pid, parent)
         self.engine = resolve_engine(pid, engine)
+        # The user's assembly selection (see hermes.features.assemblies)
+        self.selection = frozenset(selection)
+
+    def set_selection(self, selection):
+        """Trace only these assemblies from now on; none means all of the game."""
+        self.selection = frozenset(selection)
 
     def agent_source(self):
         return build_agent_source(settings.get("trace_sequence"))
@@ -427,8 +434,8 @@ class TraceWorker(AgentWorker):
             return {"assemblies": sorted({assembly for assembly, _token in methods}),
                     "words": [word.lower() for word in argument.get("words", [])],
                     "methods": methods}
-        names = [a["name"] for a in api.assemblies()
-                 if not self.engine.is_framework_assembly(a["name"])]
+        names = chosen_assemblies([a["name"] for a in api.assemblies()], self.selection,
+                                  self.engine)
         return {"assemblies": names, "words": [word.lower() for word in argument]}
 
     def _run_command(self, api, action, argument):

@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 
 from hermes.engines.registry import resolve_engine
+from hermes.features.assemblies import missing_assemblies
 from hermes.features.catalog import CatalogWorker
 from hermes.features.favorites import CATALOG
 from hermes.ui.widgets.favorites import (
@@ -59,6 +60,8 @@ class CatalogModel(FavoriteColumn, QAbstractTableModel):
         self.visible = []
         self._words = []
         self._framework = False
+        # The user's assembly selection; empty for none
+        self.selection = frozenset()
 
     # --- Qt model --------------------------------------------------------
     def rowCount(self, parent=QModelIndex()):  # pylint: disable=invalid-name
@@ -98,10 +101,18 @@ class CatalogModel(FavoriteColumn, QAbstractTableModel):
         self.methods = []
         self._apply()
 
-    def set_filter(self, text, framework):
+    def set_filter(self, text, framework, selection=None):
         self._words = text.lower().split()
         self._framework = framework
+        if selection is not None:
+            self.selection = frozenset(selection)
         self._apply()
+
+    def shows_assembly(self, assembly):
+        """Whether methods of ``assembly`` are shown (selection, else framework switch)."""
+        if self.selection:
+            return assembly in self.selection
+        return self._framework or not self.engine.is_framework_assembly(assembly)
 
     def method_at(self, row):
         return self.visible[row] if 0 <= row < len(self.visible) else None
@@ -113,8 +124,7 @@ class CatalogModel(FavoriteColumn, QAbstractTableModel):
         self.beginResetModel()
         self.visible = [
             method for method in self.methods
-            if (self._framework or not self.engine.is_framework_assembly(method.assembly))
-            and matches(self._words, method)
+            if self.shows_assembly(method.assembly) and matches(self._words, method)
         ]
         self.endResetModel()
 
@@ -123,7 +133,9 @@ class CatalogDialog(QDialog):
     """Search the classes and methods a Mono game has loaded.
 
     Not modal, so the scanner stays usable. Game assemblies are read when the
-    dialog opens, framework assemblies only when they are to be shown.
+    dialog opens, framework assemblies only when they are to be shown. With
+    an assembly selection (see hermes.ui.widgets.assemblies) only the
+    selected assemblies are read and shown.
     """
 
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
@@ -131,7 +143,8 @@ class CatalogDialog(QDialog):
     # CatalogMethod to log the calls of (double click or "Monitor")
     monitor_requested = pyqtSignal(object)
 
-    def __init__(self, translations, pid, parent=None, engine=None, favorites=None):
+    def __init__(self, translations, pid, parent=None, engine=None, favorites=None,
+                 assembly_selection=None):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
@@ -140,6 +153,7 @@ class CatalogDialog(QDialog):
         self.engine = resolve_engine(pid, engine)
         self.model = CatalogModel(translations, self.engine, self)
         self._favorites = favorites
+        self._assembly_selection = assembly_selection
         self._assemblies = []
         self._loaded = set()
         self._failed = {}
@@ -152,6 +166,8 @@ class CatalogDialog(QDialog):
         self._filter_timer.setSingleShot(True)
         self._filter_timer.setInterval(FILTER_DELAY_MS)
         self._filter_timer.timeout.connect(self._apply_filter)
+        if assembly_selection is not None:
+            assembly_selection.changed.connect(self.reload)
         self.reload()
 
     def _build_ui(self):
@@ -219,6 +235,11 @@ class CatalogDialog(QDialog):
         layout.addWidget(self.status_label)
 
     # --- Reading -------------------------------------------------------------
+    def selection(self):
+        """The user's assembly selection; empty for none."""
+        store = self._assembly_selection
+        return store.selection if store is not None else frozenset()
+
     def reload(self):
         """Read the catalog anew, e.g. after the game loaded more assemblies."""
         self._stop_worker()
@@ -227,10 +248,18 @@ class CatalogDialog(QDialog):
         self._failed.clear()
         self._error = None
         self.model.clear()
+        selection = self.selection()
+        self.model.set_filter(self.search_input.text(), self.framework_check.isChecked(),
+                              selection)
+        # The selection decides which assemblies are shown, framework ones too.
+        self.framework_check.setEnabled(not selection)
+        self.framework_check.setToolTip(self.translations[
+            "catalog.framework_selection_tooltip" if selection else "catalog.framework_tooltip"])
         self._start_worker(None)
 
     def _start_worker(self, assemblies):
-        worker = CatalogWorker(self.pid, assemblies, engine=self.engine)
+        worker = CatalogWorker(self.pid, assemblies, engine=self.engine,
+                               selection=self.selection())
         worker.assemblies_found.connect(self._on_assemblies_found)
         worker.assembly_loaded.connect(self._on_assembly_loaded)
         worker.assembly_failed.connect(self._on_assembly_failed)
@@ -277,7 +306,7 @@ class CatalogDialog(QDialog):
     def _toggle_framework(self, shown):
         missing = [a["name"] for a in self._assemblies
                    if self.engine.is_framework_assembly(a["name"]) and a["name"] not in self._loaded]
-        if shown and missing and self._worker is None:
+        if shown and missing and self._worker is None and not self.selection():
             self._start_worker(missing)
         self._apply_filter()
 
@@ -290,8 +319,7 @@ class CatalogDialog(QDialog):
     def _show_progress(self):
         pending = [a["name"] for a in self._assemblies
                    if a["name"] not in self._loaded and a["name"] not in self._failed
-                   and (self.framework_check.isChecked()
-                        or not self.engine.is_framework_assembly(a["name"]))]
+                   and self.model.shows_assembly(a["name"])]
         if pending:
             self.status_label.setText(self.translations["catalog.loading"].format(
                 assembly=pending[0], done=len(self._loaded), total=len(self._loaded) + len(pending)
@@ -303,6 +331,14 @@ class CatalogDialog(QDialog):
             shown=len(self.model.visible), total=len(self.model.methods),
             classes=len(classes), assemblies=len(self._loaded),
         )
+        selection = self.selection()
+        if selection:
+            text += "  ·  " + self.translations["catalog.assembly_selection"].format(
+                count=len(selection))
+            missing = missing_assemblies([a["name"] for a in self._assemblies], selection)
+            if missing and self._assemblies:
+                text += "  ·  " + self.translations["catalog.assemblies_missing"].format(
+                    assemblies=", ".join(missing))
         if self._failed:
             text += "  ·  " + self.translations["catalog.assemblies_failed"].format(
                 assemblies=", ".join(sorted(self._failed))

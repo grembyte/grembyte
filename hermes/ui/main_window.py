@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHeaderView, QStatusBar, QToolBar, QDialog,
     QAbstractItemView, QFormLayout,
     QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox, QTabWidget, QSizePolicy,
+    QInputDialog,
 )
 from PyQt6.QtCore import Qt, QSize, QTimer, QSettings  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor, QActionGroup  # pylint: disable=import-error,no-name-in-module
@@ -35,7 +36,12 @@ from hermes.core.scanner import (
 from hermes.core.memory import UnknownModuleError, parse_address, write_process_value
 from hermes.engines import base as engine_base
 from hermes.engines.registry import ENGINES, detect_engine
-from hermes.features.catalog import catalog_method_from_identity
+from hermes.features.catalog import (
+    catalog_method_from_identity,
+    generic_parameters,
+    split_type_arguments,
+    with_type_arguments,
+)
 from hermes.core.wine_gadget import gadget_loader, gadget_port, wine_bits
 from hermes.platform import (
     ProcessMemory, is_wine_process, process_start_time, program_bits, read_mappings,
@@ -49,12 +55,14 @@ from hermes.core.write_watch import (
     watch_size_for_type,
 )
 from hermes.db.repository.addresses import AddressRepository, address_pointer
+from hermes.db.repository.assembly_selections import AssemblySelectionRepository
 from hermes.db.repository.favorites import FavoriteRepository
 from hermes.db.repository.hooks import HookRepository
 from hermes.db.repository.settings import SettingsRepository
 from hermes.db.repository.trace_filters import TraceFilterRepository
 from hermes.hooks.engine import HookSpec
 from hermes.hooks.transforms import example_templates
+from hermes.ui.widgets.assemblies import AssemblyDialog, AssemblySelectionStore
 from hermes.ui.widgets.catalog import CatalogDialog
 from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
@@ -300,6 +308,11 @@ class MainWindow(QMainWindow):
         self._favorite_store.failed.connect(lambda message: self.lbl_status.setText(
             self.translations["hooks.db_failed"].format(message=message)))
         self._favorites_dialog = None
+        # Assemblies the catalog and the trace of the program are limited to.
+        self._assembly_selection = AssemblySelectionStore(AssemblySelectionRepository(), self)
+        self._assembly_selection.failed.connect(lambda message: self.lbl_status.setText(
+            self.translations["hooks.db_failed"].format(message=message)))
+        self._assemblies_dialog = None
         self._process_id = None
         self._address_keys = itertools.count(1)
         self._filling_addresses = False
@@ -408,6 +421,10 @@ class MainWindow(QMainWindow):
         self.act_templates.triggered.connect(self._open_template_dialog)
 
         view_menu.addSeparator()
+
+        self.act_assemblies = view_menu.addAction(
+            glyph_icon("▤"), self.translations["menu.assemblies"])
+        self.act_assemblies.triggered.connect(self._open_assemblies)
 
         self.act_catalog = view_menu.addAction(
             glyph_icon("{ }"), self.translations["menu.catalog"])
@@ -1214,6 +1231,7 @@ class MainWindow(QMainWindow):
         unsupported = self.translations["catalog.button_no_engine"].format(
             engines=", ".join(engine.display_name for engine in ENGINES))
         for action, tooltip, capability in (
+                (self.act_assemblies, "assemblies.button_tooltip", engine_base.CATALOG),
                 (self.act_catalog, "catalog.button_tooltip", engine_base.CATALOG),
                 (self.act_trace, "trace.button_tooltip", engine_base.TRACE)):
             enabled = (self._current_pid is not None and self._engine is not None
@@ -1264,7 +1282,8 @@ class MainWindow(QMainWindow):
         catalog = self._catalog
         if catalog is None:
             catalog = CatalogDialog(self.translations, self._current_pid, parent=self,
-                                    engine=self._engine, favorites=self._favorite_store)
+                                    engine=self._engine, favorites=self._favorite_store,
+                                    assembly_selection=self._assembly_selection)
             catalog.finished.connect(lambda _result: setattr(self, "_catalog", None))
             catalog.monitor_requested.connect(self._monitor_method)
             catalog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -1272,6 +1291,21 @@ class MainWindow(QMainWindow):
         catalog.show()
         catalog.raise_()
         catalog.activateWindow()
+
+    def _open_assemblies(self):
+        """Show the assemblies of the attached game, to limit the catalog and the trace."""
+        if self._current_pid is None or self._engine is None:
+            return
+        dialog = self._assemblies_dialog
+        if dialog is None:
+            dialog = AssemblyDialog(self.translations, self._current_pid,
+                                    self._assembly_selection, parent=self, engine=self._engine)
+            dialog.finished.connect(lambda _result: setattr(self, "_assemblies_dialog", None))
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._assemblies_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _update_sessions_button(self):
         """Show how many workers are attached, and whether one hangs."""
@@ -1336,7 +1370,8 @@ class MainWindow(QMainWindow):
             trace = TraceDialog(self.translations, self._current_pid, parent=self,
                                 engine=self._engine,
                                 filter_repository=self._trace_filter_repository,
-                                favorites=self._favorite_store)
+                                favorites=self._favorite_store,
+                                assembly_selection=self._assembly_selection)
             trace.finished.connect(lambda _result: setattr(self, "_trace_dialog", None))
             trace.monitor_requested.connect(self._monitor_method)
             if self.hook_panel is not None:
@@ -1418,6 +1453,11 @@ class MainWindow(QMainWindow):
         """Log the calls of a C# method chosen in the catalog."""
         if self._current_pid is None:
             return
+        parameters = generic_parameters(method)
+        if parameters:
+            method = self._ask_type_arguments(method, parameters)
+            if method is None:
+                return
         monitor = self._method_monitor
         if monitor is None:
             monitor = MethodMonitorDialog(self.translations, self._current_pid, parent=self)
@@ -1431,10 +1471,30 @@ class MainWindow(QMainWindow):
         monitor.add_method(method)
         monitor.activateWindow()
 
+    def _ask_type_arguments(self, method, parameters):
+        """The instance of a generic class's method the user names, or None."""
+        text = ""
+        while True:
+            text, accepted = QInputDialog.getText(
+                self, self.translations["monitor.type_arguments_title"],
+                self.translations["monitor.type_arguments_label"].format(
+                    method=f"{method.class_name}:{method.name}",
+                    parameters=", ".join(parameters)),
+                text=text)
+            if not accepted:
+                return None
+            arguments = split_type_arguments(text)
+            if len(arguments) == len(parameters):
+                return with_type_arguments(method, arguments)
+            QMessageBox.warning(
+                self, self.translations["monitor.type_arguments_title"],
+                self.translations["monitor.type_arguments_count"].format(
+                    count=len(parameters), parameters=", ".join(parameters)))
+
     def _close_catalog(self):
         """Close the catalog, the traces and the method monitor (process gone or switched)."""
-        for name in ("_catalog", "_trace_dialog", "_native_trace_dialog", "_method_monitor",
-                     "_native_monitor"):
+        for name in ("_assemblies_dialog", "_catalog", "_trace_dialog", "_native_trace_dialog",
+                     "_method_monitor", "_native_monitor"):
             dialog = getattr(self, name)
             if dialog is not None:
                 dialog.close()
@@ -1861,6 +1921,7 @@ class MainWindow(QMainWindow):
                 self._process_timer.start()
                 self._process_id = process_id
                 self._favorite_store.set_process(process_id)
+                self._assembly_selection.set_process(process_id)
                 self._load_saved_addresses()
             self._current_proc = self.translations["app.process_display"].format(
                 name=dlg.selected_name, pid=dlg.selected_pid

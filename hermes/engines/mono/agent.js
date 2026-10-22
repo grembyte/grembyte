@@ -107,6 +107,21 @@ const mono = (() => {
         methodName: exported('mono_method_get_name', 'pointer', ['pointer']),
         methodFlags: exported('mono_method_get_flags', 'uint32', ['pointer', 'pointer'])
       })),
+      // Only for methods of generic classes (List`1<int>); see resolveMethod.
+      // Not mono_class_bind_generic_parameters: Unity's MonoBleedingEdge does
+      // not export it. Binding goes through a reflection name instead, like
+      // Type.GetType("List`1[[System.Int32, mscorlib]]").
+      generics: optional(() => ({
+        corlib: exported('mono_get_corlib', 'pointer', []),
+        classFromName: blocking('mono_class_from_name', 'pointer',
+          ['pointer', 'pointer', 'pointer']),
+        typeFromName: blocking('mono_reflection_type_from_name', 'pointer',
+          ['pointer', 'pointer']),
+        typeClass: exported('mono_class_from_mono_type', 'pointer', ['pointer']),
+        nestedTypes: blocking('mono_class_get_nested_types', 'pointer', ['pointer', 'pointer']),
+        className: exported('mono_class_get_name', 'pointer', ['pointer']),
+        classMethods: blocking('mono_class_get_methods', 'pointer', ['pointer', 'pointer'])
+      })),
       // Only for passing strings to game code.
       stringNew: optional(() => blocking('mono_string_new', 'pointer', ['pointer', 'pointer'])),
       // Storing a reference in an object tells the garbage collector.
@@ -313,13 +328,223 @@ const mono = (() => {
   }
 
   function compileOnThread(domain, identity) {
-    const method = api.getMethod(findImage(identity), identity.token, NULL);
-    if (method.isNull() || signatureName(method) !== identity.method)
-      throw new Error(`${identity.method} is not in ${identity.image} (game updated?)`);
+    const method = resolveMethod(identity);
     const code = codeOf(domain, method);
-    if (code === null)
+    if (code === null) {
+      const head = splitSignature(identity.method);
+      if (head !== null && /`\d+$/.test(head.head))
+        throw new Error(`${identity.method} belongs to a generic class and has no code of its ` +
+          'own: monitor an instance with type arguments, e.g. List`1<int>');
       throw new Error(`Mono did not compile ${identity.method}`);
+    }
     return { method, ...code };
+  }
+
+  // --- Generic classes: the methods of List`1<int> ------------------------
+  // The token of a method names its definition ('R3.ReactiveProperty`1:set_Value
+  // (T)'), which has no code. Mono names the methods of an instance like
+  // 'R3.ReactiveProperty`1<int>:set_Value (int)' (e.g. a write watch's hit);
+  // their class is bound to the type arguments of that name. Identities made
+  // from a catalog entry keep the definition's parameters: '...`1<int>:set_Value (T)'.
+
+  function resolveMethod(identity) {
+    // The method of an identity (on a thread Mono knows).
+    const notFound = () => new Error(`${identity.method} is not in ${identity.image} ` +
+      '(game updated?)');
+    const definition = api.getMethod(findImage(identity), identity.token, NULL);
+    if (definition.isNull())
+      throw notFound();
+    const signature = signatureName(definition);
+    if (signature === identity.method)
+      return definition;
+    const wanted = splitSignature(identity.method);
+    const found = splitSignature(signature || '');
+    if (wanted === null || found === null || wanted.name !== found.name)
+      throw notFound();
+    const head = parseType(wanted.head);
+    if (head.args.length === 0 || head.name !== parseType(found.head).name)
+      throw notFound();
+    const method = instanceMethod(definition, head, identity.token);
+    if (wanted.params !== found.params
+        && wanted.params !== (splitSignature(signatureName(method) || '') || {}).params)
+      throw notFound();
+    return method;
+  }
+
+  function splitSignature(signature) {
+    // { head, name, params } of 'Class:Method (params)', or null.
+    let depth = 0;
+    for (let i = 0; i < signature.length; i++) {
+      const c = signature[i];
+      if (c === '<')
+        depth++;
+      else if (c === '>')
+        depth--;
+      else if (c === ':' && depth === 0) {
+        const rest = signature.substring(i + 1);
+        const open = rest.indexOf(' (');
+        return {
+          head: signature.substring(0, i),
+          name: open < 0 ? rest : rest.substring(0, open),
+          params: open < 0 ? '' : rest.substring(open + 1)
+        };
+      }
+    }
+    return null;
+  }
+
+  function parseType(text) {
+    // A type as Mono describes it: 'Ns.Map`2<int, Ns.Item[]>' is
+    // { name: 'Ns.Map`2', args: [{ name: 'int', ... }, { ..., suffix: '[]' }], suffix: '' }.
+    let at = 0;
+    const fail = () => new Error(`cannot read the type ${text}`);
+    const suffix = () => {
+      const start = at;
+      for (;;) {
+        if (text[at] === '[') {
+          const end = text.indexOf(']', at);
+          if (end < 0)
+            throw fail();
+          at = end + 1;
+        } else if (text[at] === '&' || text[at] === '*') {
+          at++;
+        } else {
+          return text.substring(start, at);
+        }
+      }
+    };
+    const type = () => {
+      const start = at;
+      while (at < text.length && !',>[]&* '.includes(text[at])) {
+        if (text[at] !== '<') {
+          at++;
+          continue;
+        }
+        const name = text.substring(start, at);
+        // Type arguments of a generic class, also for a class nested in one
+        // (Outer`1/Inner<int>); compiler-generated names start with '<'.
+        if (/`\d+/.test(name) && at > start && !'./'.includes(text[at - 1])) {
+          const args = [];
+          do {
+            at++;
+            while (text[at] === ' ')
+              at++;
+            args.push(type());
+          } while (text[at] === ',');
+          if (text[at] !== '>')
+            throw fail();
+          at++;
+          return { name, args, suffix: suffix() };
+        }
+        // Part of a compiler-generated name: '<>c', '<Start>d__5'
+        let depth = 0;
+        do {
+          if (text[at] === '<')
+            depth++;
+          else if (text[at] === '>')
+            depth--;
+          at++;
+        } while (depth > 0 && at < text.length);
+      }
+      if (at === start)
+        throw fail();
+      return { name: text.substring(start, at), args: [], suffix: suffix() };
+    };
+    const result = type();
+    if (at !== text.length)
+      throw fail();
+    return result;
+  }
+
+  // Mono's short names of the built-in types, and C#'s
+  const TYPE_ALIASES = {
+    void: 'Void', bool: 'Boolean', char: 'Char', byte: 'Byte', sbyte: 'SByte',
+    int16: 'Int16', uint16: 'UInt16', short: 'Int16', ushort: 'UInt16', int: 'Int32',
+    uint: 'UInt32', long: 'Int64', ulong: 'UInt64', single: 'Single', float: 'Single',
+    double: 'Double', decimal: 'Decimal', string: 'String', object: 'Object',
+    intptr: 'IntPtr', uintptr: 'UIntPtr'
+  };
+
+  function genericsApi() {
+    if (api.generics === null || api.catalog === null)
+      throw new Error('this Mono runtime lacks the functions for generic classes ' +
+        '(mono_reflection_type_from_name and others)');
+    return api.generics;
+  }
+
+  function instanceMethod(definition, head, token) {
+    // The method ``token`` of the definition's class bound to head.args.
+    const g = genericsApi();
+    const image = api.classImage(api.methodClass(definition));
+    const name = reflectionName(g, head);
+    const type = g.typeFromName(Memory.allocUtf8String(name), image);
+    if (type.isNull())
+      throw new Error(`Mono does not know the type ${name}`);
+    const klass = g.typeClass(type);
+    const iterator = Memory.alloc(Process.pointerSize);
+    iterator.writePointer(NULL);
+    for (let method = g.classMethods(klass, iterator); !method.isNull();
+      method = g.classMethods(klass, iterator)) {
+      if (api.methodToken(method) === token)
+        return method;
+    }
+    throw new Error(`${cString(api.fullName(definition, 1))} is not in ${name}`);
+  }
+
+  function reflectionName(g, parsed) {
+    // The name of a parsed type as Type.GetType takes it:
+    // 'Ns.Map`2<int, Ns.Outer/Item[]>' is
+    // 'Ns.Map`2[[System.Int32, mscorlib],[Ns.Outer+Item[], Assembly-CSharp]]'.
+    const alias = TYPE_ALIASES[parsed.name];
+    let name = alias === undefined ? parsed.name.split('/').join('+') : `System.${alias}`;
+    if (parsed.args.length > 0)
+      name += '[' + parsed.args.map(arg =>
+        `[${reflectionName(g, arg)}, ${assemblyOf(g, arg)}]`).join(',') + ']';
+    for (const part of parsed.suffix.match(/\[[^\]]*\]|[&*]/g) || []) {
+      if (part[0] !== '[')
+        throw new Error(`type arguments with ${part} are not supported`);
+      name += part;
+    }
+    return name;
+  }
+
+  function assemblyOf(g, parsed) {
+    // The name of the assembly that defines a parsed type.
+    const klass = TYPE_ALIASES[parsed.name] !== undefined ? NULL : classByName(g, parsed.name);
+    if (TYPE_ALIASES[parsed.name] === undefined && klass.isNull())
+      throw new Error(`class ${parsed.name} not found`);
+    const image = klass.isNull() ? g.corlib() : api.classImage(klass);
+    return api.imageName(image).readUtf8String();
+  }
+
+  function classByName(g, fullName) {
+    // A class of a loaded assembly by Mono's name: 'Ns.Outer/Inner'.
+    const [outer, ...nested] = fullName.split('/');
+    const dot = outer.lastIndexOf('.');
+    const space = Memory.allocUtf8String(dot < 0 ? '' : outer.substring(0, dot));
+    const name = Memory.allocUtf8String(outer.substring(dot + 1));
+    let klass = NULL;
+    for (const image of loadedImages(api.catalog)) {
+      klass = g.classFromName(image, space, name);
+      if (!klass.isNull())
+        break;
+    }
+    for (const inner of nested) {
+      if (klass.isNull())
+        break;
+      const iterator = Memory.alloc(Process.pointerSize);
+      iterator.writePointer(NULL);
+      let found = NULL;
+      for (let candidate = g.nestedTypes(klass, iterator); !candidate.isNull();
+        candidate = g.nestedTypes(klass, iterator)) {
+        if (g.className(candidate).readUtf8String() === inner) {
+          found = candidate;
+          break;
+        }
+      }
+      klass = found;
+    }
+    return klass;
   }
 
   function codeOf(domain, method) {

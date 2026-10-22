@@ -55,6 +55,7 @@ struct Class {
     Class *element;
     int element_size;
     uint32_t type_flags;
+    int instance;  /* a generic class bound to type arguments: no typedef row */
 };
 /* Like Mono: an object starts with its vtable, the vtable with its class. */
 typedef struct { Class *klass; } VTable;
@@ -76,23 +77,26 @@ typedef struct {
     size_t size;
     const uint8_t *il;
     uint32_t il_size;
+    int open;  /* of a generic class's definition: Mono cannot compile it */
 } Method;
 
 #define ADD_GOLD 0x06000001u
 #define TAKE 0x06000002u
 #define ROLL_DAMAGE 0x06000004u
 #define CALC_DAMAGE 0x06000005u
+#define SET_VALUE 0x0600000eu
 #define STATIC 0x10u
 
 /* Assembly-CSharp: Game.Inventory, Game.Loot, Game.Combat (a Unity
    component), the enum Game.DamageType, Game.DamageInfo and Game.Loop;
    mscorlib: System.Object, System.Int32, System.Int32[],
    UnityEngine.Component[] and System.InvalidOperationException;
-   UnityEngine.CoreModule: UnityEngine.Object, .Component and .GameObject. */
+   UnityEngine.CoreModule: UnityEngine.Object, .Component and .GameObject;
+   R3.ReactiveProperty`1 (in Assembly-CSharp) and its instance for int. */
 static Image game = { "Assembly-CSharp", "/game/Assembly-CSharp.dll" };
 static Image corlib = { "mscorlib", "/game/mscorlib.dll" };
 static Image unity = { "UnityEngine.CoreModule", "/game/UnityEngine.CoreModule.dll" };
-static Class classes[15];
+static Class classes[17];
 static Type t_void = { "System.Void", 0x01 }, t_int = { "System.Int32", 0x08 },
     t_int_ref = { "System.Int32&", 0x08, 1 }, t_float = { "System.Single", 0x0c },
     t_string = { "System.String", 0x0e }, t_bool = { "System.Boolean", 0x02 },
@@ -104,7 +108,7 @@ static Type t_void = { "System.Void", 0x01 }, t_int = { "System.Int32", 0x08 },
     t_game_object = { "UnityEngine.GameObject", 0x12, 0, &classes[10] },
     t_type = { "System.Type", 0x12 };
 static Type *type_params[] = { &t_type };
-static Class classes[15] = {
+static Class classes[17] = {
     { .type = { "Game.Inventory", 0x12 }, .image = &game },
     { .type = { "Game.Loot", 0x12 }, .image = &game },
     { .type = { "System.Object", 0x1c }, .image = &corlib },
@@ -133,6 +137,9 @@ static Class classes[15] = {
     /* [ComImport]: Mono hangs on Linux compiling code that uses it */
     { .type = { "UnityEngine.KnownFolders", 0x12 }, .image = &unity, .parent = &classes[2],
       .type_flags = 0x1000 },
+    { .type = { "R3.ReactiveProperty<T>", 0x12 }, .image = &game, .parent = &classes[2] },
+    { .type = { "R3.ReactiveProperty<int>", 0x15, 0, &classes[16] }, .image = &game,
+      .parent = &classes[2], .instance = 1 },
 };
 static VTable vt_combat = { &classes[3] }, vt_info = { &classes[6] }, vt_ints = { &classes[7] },
     vt_game_object = { &classes[10] }, vt_components = { &classes[11] },
@@ -233,6 +240,13 @@ __attribute__((noipa)) float roll_damage(Object *self, int32_t min, float scale,
     return crit ? min * scale * 2 : min * scale;
 }
 
+/* void R3.ReactiveProperty<int>.set_Value(int value) */
+static int32_t reactive_value;
+__attribute__((noipa)) void reactive_set_value(void *self, int32_t value) {
+    (void)self;
+    reactive_value = value;
+}
+
 /* IL: get_Broken creates a COM object (newobj KnownFolders::.ctor), Update
    only does harmless things (a switch, ldstr, call AddGold) */
 static const uint8_t broken_il[] = { 0x73, 0x0d, 0x00, 0x00, 0x06, 0x26, 0x16, 0x2a };
@@ -274,6 +288,12 @@ static Method methods[] = {
       &t_void, 0, { 0 }, { 0 }, (void *)loop_update, .il = update_il, .il_size = sizeof update_il },
     { "UnityEngine.KnownFolders:.ctor", "UnityEngine.KnownFolders:.ctor ()", 0x0600000du,
       &classes[14], ".ctor", 0, &t_void },
+    /* The token finds the definition; only the instance has code. */
+    { "R3.ReactiveProperty`1:set_Value", "R3.ReactiveProperty`1:set_Value (T)", SET_VALUE,
+      &classes[15], "set_Value", 0, &t_void, 1, { &t_int }, { "value" }, .open = 1 },
+    { "R3.ReactiveProperty`1<int>:set_Value", "R3.ReactiveProperty`1<int>:set_Value (int)",
+      SET_VALUE, &classes[16], "set_Value", 0, &t_void, 1, { &t_int }, { "value" },
+      (void *)reactive_set_value },
 };
 #define COUNT(array) (sizeof array / sizeof *array)
 static int root_domain, script_domain, thread;
@@ -289,6 +309,8 @@ static Method *by_token(uint32_t token) {
 }
 
 static uint8_t *compile(Method *m) {
+    if (m->open)
+        return NULL;
     if (m->code)
         return m->code;
     if (m->native) {
@@ -379,6 +401,12 @@ void fake_tick(void) {
     mono_runtime_invoke(by_token(0x0600000cu), NULL, NULL, &exception);
 }
 void *fake_code(uint32_t token) { return compile(by_token(token)); }
+/* The game sets a ReactiveProperty<int> */
+void fake_set_value(int32_t value) {
+    for (size_t i = 0; i < COUNT(methods); i++)
+        if (methods[i].token == SET_VALUE && !methods[i].open)
+            ((void (*)(void *, int32_t))compile(&methods[i]))(NULL, value);
+}
 
 void *mono_get_root_domain(void) { return &root_domain; }
 void *mono_domain_get(void) { return current_domain; }
@@ -435,13 +463,13 @@ void *mono_assembly_get_image(void *assembly) { return assembly; }
 int mono_image_get_table_rows(Image *img, int table) {
     int rows = 1;  /* <Module> */
     for (size_t i = 0; table == 2 && i < COUNT(classes); i++)
-        rows += classes[i].image == img;
+        rows += classes[i].image == img && !classes[i].instance;
     return rows;
 }
 void *mono_class_get(Image *img, uint32_t token) {
     uint32_t row = 1;
     for (size_t i = 0; i < COUNT(classes); i++)
-        if (classes[i].image == img && ++row == (token & 0xffffff))
+        if (classes[i].image == img && !classes[i].instance && ++row == (token & 0xffffff))
             return &classes[i];
     return NULL;
 }
@@ -455,6 +483,19 @@ void *mono_class_get_methods(Class *k, void **iterator) {
     return NULL;
 }
 const char *mono_method_get_name(Method *m) { return m->short_name; }
+
+/* Generic classes: only ReactiveProperty`1 bound to System.Int32. Like
+   Unity's MonoBleedingEdge: no mono_class_bind_generic_parameters. */
+void *mono_get_corlib(void) { return &corlib; }
+void *mono_reflection_type_from_name(char *name, Image *img) {
+    return img == &game && strcmp(name, "R3.ReactiveProperty`1[[System.Int32, mscorlib]]") == 0
+        ? &classes[16].type : NULL;
+}
+void *mono_class_get_nested_types(Class *k, void **iterator) {
+    (void)k; (void)iterator;
+    return NULL;
+}
+const char *mono_class_get_name(Class *k) { return k->type.name; }
 uint32_t mono_method_get_flags(Method *m, uint32_t *implementation) {
     (void)implementation;
     return m->flags;
@@ -544,6 +585,7 @@ void *fake_code(uint32_t token);
 void *fake_combat(const char *name);
 void *fake_string(const char *ascii);
 void fake_tick(void);
+void fake_set_value(int32_t value);
 typedef float (*roll_fn)(void *self, int32_t min, float scale, void *name, int32_t crit,
                          int32_t type, int32_t *roll);
 typedef void (*calc_fn)(void *self, void *other, void **info);
@@ -578,6 +620,8 @@ int main(void) {
         }
         if (strcmp(cmd, "tick") == 0)
             fake_tick();
+        else if (strcmp(cmd, "set") == 0)
+            fake_set_value(value);
         else if (strcmp(cmd, "add") == 0)
             ((change_fn)fake_code(0x06000001u))(&g_game->player->gold, value);
         else if (strcmp(cmd, "loot") == 0)
@@ -810,7 +854,7 @@ def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
 
         found, loaded = read()
         assert [(a["name"], a["classes"]) for a in found] == [
-            ("Assembly-CSharp", 6), ("mscorlib", 5), ("UnityEngine.CoreModule", 4)]
+            ("Assembly-CSharp", 7), ("mscorlib", 5), ("UnityEngine.CoreModule", 4)]
         # Framework assemblies are only read on request.
         assert loaded == {"Assembly-CSharp": [
             CatalogMethod("Assembly-CSharp", "Game.Inventory", "AddGold", "(int&,int)",
@@ -832,6 +876,9 @@ def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
                           True, 0x06000009, "Game.Combat:get_Count ()"),
             CatalogMethod("Assembly-CSharp", "Game.Loop", "Update", "()", "System.Void", True,
                           0x0600000c, "Game.Loop:Update ()"),
+            # The definition of a generic class, not its instance
+            CatalogMethod("Assembly-CSharp", "R3.ReactiveProperty<T>", "set_Value", "(T)",
+                          "System.Void", False, 0x0600000e, "R3.ReactiveProperty`1:set_Value (T)"),
         ]}
         assert loaded["Assembly-CSharp"][0].signature == "Game.Inventory:AddGold (int&,int)"
         _found, loaded = read(["mscorlib"])
@@ -849,8 +896,8 @@ def test_catalog_dialog_searches_methods(tmp_path, qt_app, translations):
     dialog = CatalogDialog(translations, target.pid)
     try:
         _wait_for(qt_app, lambda: dialog._worker is None)
-        assert dialog.model.rowCount() == 8
-        assert "8 von 8 Methoden" in dialog.status_label.text()
+        assert dialog.model.rowCount() == 9
+        assert "9 von 9 Methoden" in dialog.status_label.text()
 
         dialog.search_input.setText("loot TAKE")
         dialog._apply_filter()
@@ -919,6 +966,78 @@ def test_method_monitor_logs_arguments_caller_and_result(tmp_path, qt_app):
         assert [call["monitorId"] for call in calls] == [with_result]
         # What the method left in the out argument
         assert calls[0]["args"][5]["after"] == {"text": "42"}
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+_SET_VALUE = {"image": "Assembly-CSharp", "file": None, "token": 0x0600000e,
+              "method": "R3.ReactiveProperty`1:set_Value (T)"}
+
+
+def test_methods_of_generic_classes_need_type_arguments():
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.catalog import (
+        catalog_method_from_identity,
+        generic_parameters,
+        split_type_arguments,
+        with_type_arguments,
+    )
+
+    definition = catalog_method_from_identity(_SET_VALUE)
+    assert generic_parameters(definition) == ("T",)
+    assert generic_parameters(definition.__class__(
+        "A", "Game.Map<TKey,TValue>", "Get", "(TKey)", "TValue", False, 1,
+        "Game.Map`2:Get (TKey)")) == ("TKey", "TValue")
+    assert split_type_arguments("int, Game.Map`2<int, string>,") == [
+        "int", "Game.Map`2<int, string>"]
+    instance = with_type_arguments(definition, ["int"])
+    assert instance.signature == "R3.ReactiveProperty`1<int>:set_Value (T)"
+    assert generic_parameters(instance) == ()
+    assert generic_parameters(catalog_method_from_identity(
+        {**_SET_VALUE, "method": "R3.ReactiveProperty`1<int>:set_Value (int)"})) == ()
+
+
+@requires_target
+def test_method_monitor_binds_generic_classes_to_type_arguments(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.catalog import catalog_method_from_identity, with_type_arguments
+    from hermes.features.monitor import MethodMonitorWorker
+
+    definition = catalog_method_from_identity(_SET_VALUE)
+    target = _MonoTarget(_build(tmp_path))
+    worker = MethodMonitorWorker(target.pid)
+    added, failed, calls = {}, {}, []
+    worker.monitor_added.connect(added.__setitem__)
+    worker.monitor_failed.connect(failed.__setitem__)
+    worker.calls.connect(lambda events, _dropped, _counts: calls.extend(events))
+    try:
+        worker.start()
+        # The definition has no code of its own.
+        open_id = worker.add_monitor(definition.identity())
+        _wait_for(qt_app, lambda: open_id in failed)
+        assert "generic class" in failed[open_id]
+
+        # Type arguments given for a catalog entry
+        chosen = worker.add_monitor(with_type_arguments(definition, ["int"]).identity())
+        _wait_for(qt_app, lambda: chosen in added or chosen in failed)
+        assert chosen not in failed
+        assert added[chosen]["params"] == ["System.Int32 value"]
+        target.send("set", 45)
+        _wait_for(qt_app, lambda: calls)
+        assert [arg["text"] for arg in calls[0]["args"]] == ["45"]
+        worker.remove_monitor(chosen)
+
+        # The name a write watch or a hook knows the instance by
+        named = worker.add_monitor(
+            {**_SET_VALUE, "method": "R3.ReactiveProperty`1<int>:set_Value (int)"})
+        _wait_for(qt_app, lambda: named in added or named in failed)
+        assert named not in failed
+
+        unknown = worker.add_monitor(with_type_arguments(definition, ["Game.Nothing"]).identity())
+        _wait_for(qt_app, lambda: unknown in failed)
+        assert "Game.Nothing not found" in failed[unknown]
     finally:
         worker.requestInterruption()
         worker.wait(5000)
@@ -1754,7 +1873,8 @@ def test_mono_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
         worker.plan([])
         _wait_for(qt_app, lambda: planned or failed)
         assert not failed
-        assert planned[0] == {"methods": 8, "skipped": {"abstract": 0, "native": 0, "generic": 0},
+        # The generic class's definition has no code to trace.
+        assert planned[0] == {"methods": 8, "skipped": {"abstract": 0, "native": 0, "generic": 1},
                               "assemblies": ["Assembly-CSharp"]}
 
         worker.trace([])
