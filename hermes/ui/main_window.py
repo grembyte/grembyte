@@ -56,7 +56,7 @@ from hermes.hooks.transforms import example_templates
 from hermes.ui.widgets.catalog import CatalogDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
-from hermes.core import logs, sessions
+from hermes.core import activity, logs, sessions
 from hermes.ui.widgets import (
     method_monitor,
     native_monitor,
@@ -421,6 +421,8 @@ class MainWindow(QMainWindow):
         selection on attach leaves the saved default untouched.
         """
         self._watch_backend = backend
+        activity.record("watch_backend", backend=backend, chosen="by hand" if persist else "auto",
+                        pid=self._current_pid)
         if persist:
             self._settings.setValue("watch_backend", backend)
         if self.hook_panel is not None:
@@ -1172,6 +1174,9 @@ class MainWindow(QMainWindow):
         if self._current_pid is not None and self._engine is None:
             self._engine = detect_engine(self._current_pid)
             if self._engine is not None:
+                activity.record("engine_detected", pid=self._current_pid, engine=self._engine.id,
+                                name=self._engine.display_name,
+                                native_tools=self._engine.native_tools)
                 self._show_attached()
         unsupported = self.translations["catalog.button_no_engine"].format(
             engines=", ".join(engine.display_name for engine in ENGINES))
@@ -1780,6 +1785,8 @@ class MainWindow(QMainWindow):
         dlg = ProcessSelectDialog(self, self.translations)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             changed = dlg.selected_pid != self._current_pid
+            activity.record("process_selected", name=dlg.selected_name, changed=changed,
+                            **activity.describe_process(dlg.selected_pid))
             process_id = self._known_process_id(dlg) if changed else self._process_id
             if changed:
                 self._stop_write_monitor()
@@ -1822,6 +1829,7 @@ class MainWindow(QMainWindow):
             self._update_backend_label()
             return True
         process = self._current_proc
+        activity.record("process_exited", pid=self._current_pid, name=self._current_name)
         self._detach_process()
         self.lbl_status.setText(
             self.translations["app.process_exited"].format(process=process)
@@ -1830,6 +1838,7 @@ class MainWindow(QMainWindow):
 
     def _detach_process(self):
         """Stop all work on the attached process and reset the window."""
+        activity.record("process_detached", pid=self._current_pid, name=self._current_name)
         self._process_timer.stop()
         self._refresh_timer.stop()
         scan_worker = self._scan_worker

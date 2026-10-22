@@ -139,7 +139,8 @@ def test_native_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
 
         worker.trace([thread.id for thread in threads], ["game"])
         recorder.wait(lambda: recorder.started)
-        assert recorder.started[0] == {"threads": len(threads), "failed": 0, "modules": 1}
+        assert recorder.started[0] == {"threads": len(threads), "failed": 0, "modules": 1,
+                                       "waiting": 0}  # under Windows: not entered yet
 
         functions = []
         baseline = recorder.record(target, "baseline", ("tick", 1), ("tick", 2))

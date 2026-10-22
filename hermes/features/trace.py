@@ -34,7 +34,7 @@ from dataclasses import dataclass
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import logs
+from hermes.core import activity, logs
 from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
 from hermes.features.catalog import CatalogMethod
@@ -108,6 +108,18 @@ class TraceRow:
         if not self.baseline_rate:
             return None
         return self.rate / self.baseline_rate
+
+
+def recorded_summary(result):
+    """What a ``finish`` answer holds, in numbers, for the activity log."""
+    counts = result.get("counts", {})
+    summary = {"phase": result.get("phase"), "duration_ms": result.get("duration"),
+               "functions": len(counts), "calls": sum(counts.values()),
+               "events": len(result.get("events", [])), "dropped": result.get("dropped", 0)}
+    for key in ("lost", "saturated", "waiting"):
+        if result.get(key) is not None:
+            summary[key] = result[key]
+    return summary
 
 
 def recording_calls(result):
@@ -326,7 +338,9 @@ class AgentWorker(QThread):
             api.begin(argument)
             self.began.emit(argument)
         elif action == "finish":
-            self.recorded.emit(api.finish())
+            result = api.finish()
+            activity.record("trace_recorded", **recorded_summary(result))
+            self.recorded.emit(result)
         elif action == "stop":
             api.stop()
             self.stopped.emit()

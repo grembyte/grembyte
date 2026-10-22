@@ -34,7 +34,7 @@ from pathlib import Path
 
 import frida
 
-from hermes.core import wine_helper
+from hermes.core import activity, wine_helper
 from hermes.platform import process_start_time
 from hermes.core.ptrace_engine import (
     DR6,
@@ -179,18 +179,23 @@ def pe_images(pid, memory):
     return images
 
 
-def wine_bits(pid):
-    """Return 32 or 64 for the program a Wine process runs, or None if unknown."""
+def wine_program(pid):
+    """(path, 32 or 64) of the Windows program a Wine process runs, or (None, None)."""
     try:
         memory = _Memory(pid, writable=False)
     except OSError:
-        return None
+        return None, None
     try:
         images = pe_images(pid, memory)
     finally:
         memory.close()
     main = next((image for image in images if image.name.endswith(".exe")), None)
-    return main.bits if main else None
+    return (main.path, main.bits) if main else (None, None)
+
+
+def wine_bits(pid):
+    """Return 32 or 64 for the program a Wine process runs, or None if unknown."""
+    return wine_program(pid)[1]
 
 
 def pe_export(memory, image, name):
@@ -701,12 +706,19 @@ def connect(pid, download=True):
     with _LOCK:
         port = gadget_port(pid)
         if port is None:
+            began = time.monotonic()
             try:
                 load_gadget(pid, download=download)
-            except OSError as error:
+                port = _wait_listening(pid)
+            except (OSError, GadgetError) as error:
+                activity.record("gadget_failed", pid=pid, error=str(error),
+                                seconds=round(time.monotonic() - began, 3))
+                if isinstance(error, GadgetError):
+                    raise
                 raise GadgetError(
                     f"Could not load the Frida gadget into the game: {error}") from error
-            port = _wait_listening(pid)
+            activity.record("gadget_loaded", pid=pid, port=port, method=gadget_loader(pid),
+                            seconds=round(time.monotonic() - began, 3))
         url = f"127.0.0.1:{port}"
         try:
             return _attach_gadget(_device(url))

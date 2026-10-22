@@ -4,7 +4,6 @@ const EVENT_CAPACITY = EVENT_CAPACITY_VALUE;
 const SYMBOL_BUDGET_MS = SYMBOL_BUDGET_VALUE;
 const EVENT_SIZE = 32;
 const THREAD_SIZE = 8;
-const ENTRY_POLL_MS = 20;
 const STOP_GC_TIMEOUT = 500;
 const DISPOSE_GC_TIMEOUT = 3000;
 const PHASES = { baseline: 1, scenario: 2 };
@@ -36,7 +35,7 @@ typedef struct {
 
 typedef struct {
   guint32 id;
-  volatile guint32 entered;  /* runs in Stalker's code */
+  guint32 reserved;
 } Thread;
 
 typedef struct {
@@ -192,7 +191,7 @@ done:
   g_atomic_int_add (&state[3], -1);
 }
 
-static Site * describe (const cs_insn * insn, guint32 thread) {
+static Site * describe (const cs_insn * insn, Thread * thread) {
   const cs_x86_op * op = &insn->detail->x86.operands[0];
   Site * s;
   gsize next = insn->address + insn->size;
@@ -205,7 +204,7 @@ static Site * describe (const cs_insn * insn, guint32 thread) {
   s = g_malloc0 (sizeof (Site));
   s->site = insn->address;
   s->next = next;
-  s->thread = thread;
+  s->thread = thread->id;
   if (op->type == X86_OP_IMM) {
     s->kind = TARGET_KNOWN;
     s->target = (gsize) op->imm;
@@ -226,10 +225,9 @@ void transform (GumStalkerIterator * iterator, GumStalkerOutput * output, gpoint
   /* Runs in the followed thread whenever Stalker compiles a block of its code. */
   Thread * thread = user_data;
   const cs_insn * insn;
-  thread->entered = 1;
   while (gum_stalker_iterator_next (iterator, &insn)) {
     if (insn->id == X86_INS_CALL) {
-      Site * site = describe (insn, thread->id);
+      Site * site = describe (insn, thread);
       if (site != NULL)
         gum_stalker_iterator_put_callout (iterator, on_call, site, g_free);
     }
@@ -360,46 +358,112 @@ function start(spec) {
     phase: null,
     began: 0,
     beganMono: 0n,
-    threads: [],            // [id, Thread of the C side]
-    entered: new Set(),     // threads that run in Stalker's code by now
-    entryTimer: null
+    threads: [],            // [id, Thread of the C side]: followed
+    entries: [],            // Windows: hooks threads enter Stalker through
+    waiting: new Map()      // Windows: id -> Thread of the C side, not entered yet
   };
-  const failed = [];
-  for (const id of spec.threads) {
-    if (id === AGENT_THREAD)
-      continue;
-    const info = trace.threadInfo.add(THREAD_SIZE * trace.threads.length);
+  const ids = spec.threads.filter(id => id !== AGENT_THREAD);
+  const infos = new Map(ids.map((id, i) => {
+    const info = trace.threadInfo.add(THREAD_SIZE * i);
     info.writeU32(id);
     info.add(4).writeU32(0);
+    return [id, info];
+  }));
+  const failed = WINDOWS
+    ? enterOnReturn(trace, infos, new ModuleMap(module => followed.has(module.name)))
+    : followAll(trace, infos);
+  return { threads: ids.length - failed.length, failed: failed.length, modules: included.length,
+           waiting: trace.waiting.size };
+}
+
+function followAll(t, infos) {
+  // Stalker takes each thread over where it stands; returns the ids it could not.
+  const failed = [];
+  for (const [id, info] of infos) {
     try {
-      Stalker.follow(id, { transform: trace.cm.transform, data: info });
-      trace.threads.push([id, info]);
-    } catch (error) {
+      Stalker.follow(id, { transform: t.cm.transform, data: info });
+      t.threads.push([id, info]);
+    } catch (_error) {
       failed.push(id);  // e.g. ended meanwhile
     }
   }
-  if (WINDOWS)
-    trace.entryTimer = setInterval(() => clearEntered(trace), ENTRY_POLL_MS);
-  return { threads: trace.threads.length, failed: failed.length, modules: included.length };
+  return failed;
 }
 
-function clearEntered(t) {
-  // The entry breakpoints of the threads that run in Stalker's code by now.
-  if (t === null)
-    return;
-  const entered = [];
-  for (const [id, info] of t.threads) {
-    if (!t.entered.has(id) && info.add(4).readU32() !== 0) {
-      t.entered.add(id);
-      entered.push(id);
+function enterOnReturn(t, infos, followed) {
+  // Windows: Stalker takes another thread over through a hardware breakpoint
+  // at the instruction it stands at, mostly the return of a system call in
+  // ntdll that Stalker's handler passes itself (it calls Sleep). Wine keeps
+  // the breakpoint after the handler cleared it, so it hit again within the
+  // handler, which then waited for a lock it held: the game froze, or (hit
+  // later) crashed with EXCEPTION_SINGLE_STEP. Instead each thread follows
+  // itself, which needs no breakpoint: a hook where it returns into the
+  // followed code next (its stack's first return address there) starts
+  // Stalker in the thread. Returns the ids of threads with no such address.
+  const failed = [];
+  const groups = new Map();  // address text -> {address, threads: Set of ids}
+  const found = new Set();
+  for (const thread of Process.enumerateThreads()) {
+    if (!infos.has(thread.id))
+      continue;
+    found.add(thread.id);
+    let target = null;
+    try {
+      target = Thread.backtrace(thread.context, Backtracer.FUZZY)
+        .find(address => followed.find(address) !== null) || null;
+    } catch (_error) {
+      // no stack to read
+    }
+    if (target === null) {
+      failed.push(thread.id);  // runs no followed code now: nothing to see
+      continue;
+    }
+    const key = target.toString();
+    if (!groups.has(key))
+      groups.set(key, { address: target, threads: new Set() });
+    groups.get(key).threads.add(thread.id);
+    t.waiting.set(thread.id, infos.get(thread.id));
+  }
+  for (const id of infos.keys()) {
+    if (!found.has(id))
+      failed.push(id);  // ended meanwhile
+  }
+  for (const group of groups.values()) {
+    try {
+      group.listener = Interceptor.attach(group.address, function () {
+        enter(t, group, this.threadId);
+      });
+      t.entries.push(group);
+    } catch (_error) {
+      for (const id of group.threads) {
+        t.waiting.delete(id);
+        failed.push(id);  // e.g. too short to hook
+      }
     }
   }
-  if (entered.length > 0)
-    clearEntryBreakpoints(entered);
-  if (t.entered.size === t.threads.length) {
-    clearInterval(t.entryTimer);
-    t.entryTimer = null;
-  }
+  Interceptor.flush();
+  return failed;
+}
+
+function enter(t, group, id) {
+  // In the game's thread, at a hook of enterOnReturn: follow this thread.
+  if (trace !== t || !group.threads.has(id))
+    return;
+  group.threads.delete(id);
+  const info = t.waiting.get(id);
+  t.waiting.delete(id);
+  Stalker.follow(id, { transform: t.cm.transform, data: info });  // itself: no breakpoint
+  t.threads.push([id, info]);
+  if (group.threads.size === 0)
+    setTimeout(() => detachEntry(t, group), 0);  // not from within its own callback
+}
+
+function detachEntry(t, group) {
+  const index = t.entries.indexOf(group);
+  if (index < 0)
+    return;
+  t.entries.splice(index, 1);
+  group.listener.detach();
 }
 
 function functionNumber(target) {
@@ -560,7 +624,7 @@ function finish() {
     counts[number] = slotCounts[called[i]];
   });
   const result = { phase, duration, counts, events: [], dropped: 0,
-                   lost: t.state.add(8).readS32() };
+                   lost: t.state.add(8).readS32(), waiting: t.waiting.size };
   if (phase === 'scenario') {
     Object.assign(result, readEvents(t));
   } else {
@@ -598,29 +662,6 @@ function live() {
          events: Math.min(t.state.add(4).readS32(), EVENT_CAPACITY) });
 }
 
-function clearEntryBreakpoints(ids) {
-  // Under Windows Stalker enters a thread through a hardware breakpoint at
-  // the instruction it stands at (1 and 2 serve it too in 32-bit programs),
-  // and removes it by writing the old debug registers into the exception's
-  // context. Wine hands over that context with debug registers of zero, so
-  // nothing changes and the breakpoint stays: once Stalker forgot the
-  // thread, its next pass there (a system call's return) ended Baldur's
-  // Gate under Proton with EXCEPTION_SINGLE_STEP.
-  const slots = Process.pointerSize === 4 ? [0, 1, 2] : [0];
-  const wanted = new Set(ids);
-  for (const thread of Process.enumerateThreads()) {
-    if (!wanted.has(thread.id))
-      continue;
-    for (const slot of slots) {
-      try {
-        thread.unsetHardwareBreakpoint(slot);
-      } catch (_error) {
-        // ended meanwhile
-      }
-    }
-  }
-}
-
 function stop() {
   // Exclusions stay with the Stalker: Python loads a fresh agent for the next trace.
   if (trace === null)
@@ -628,11 +669,10 @@ function stop() {
   const t = trace;
   trace = null;
   t.state.writeS32(0);
-  if (t.entryTimer !== null)
-    clearInterval(t.entryTimer);
+  for (const group of t.entries.slice())
+    detachEntry(t, group);  // threads not entered yet stay as they are
+  t.waiting.clear();
   const ids = t.threads.map(([id]) => id);
-  if (WINDOWS)
-    clearEntryBreakpoints(ids);
   for (const id of ids) {
     try {
       Stalker.unfollow(id);

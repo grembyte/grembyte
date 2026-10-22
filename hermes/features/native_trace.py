@@ -30,7 +30,9 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import sessions
+import threading
+
+from hermes.core import activity, sessions
 from hermes.platform import is_wine_process, read_mappings
 from hermes.features.trace import AgentWorker
 from hermes.core.agent_source import load_agent_source
@@ -227,9 +229,9 @@ class NativeTraceWorker(AgentWorker):
         if action == "inventory":
             answer = api.inventory()
             ids = [thread["id"] for thread in answer["threads"]]
-            activity = thread_activity(self.pid, ids) if self._measure_load else {}
+            loads = thread_activity(self.pid, ids) if self._measure_load else {}
             threads = [TraceThread(thread["id"], thread["name"],
-                                   *activity.get(thread["id"], (None, None)))
+                                   *loads.get(thread["id"], (None, None)))
                        for thread in answer["threads"]]
             threads.sort(key=lambda thread: -(thread.load or 0))
             modules = [TraceModule(module["name"], module["path"], int(module["base"], 16),
@@ -250,7 +252,19 @@ class NativeTraceWorker(AgentWorker):
                             if module.name in argument["modules"]]
                 argument = {**argument,
                             "ranges": foreign_code(read_mappings(self.pid), followed)}
-            self.started.emit(api.start(argument))
+            activity.record("native_trace_start", pid=self.pid, threads=argument["threads"],
+                            modules=argument["modules"],
+                            native_ranges=len(argument.get("ranges", [])))
+            answer = api.start(argument)
+            activity.record("native_trace_started", pid=self.pid, **answer)
+            # Where the threads are once Stalker has taken them over (or not)
+            timer = threading.Timer(1.0, activity.record_threads, (self.pid, "1 s after start"))
+            timer.daemon = True
+            timer.start()
+            self.started.emit(answer)
+        elif action == "stop":
+            super()._run_command(api, action, argument)
+            activity.record_threads(self.pid, "trace stopped")
         else:
             super()._run_command(api, action, argument)
 

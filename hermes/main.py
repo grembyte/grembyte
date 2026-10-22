@@ -9,10 +9,11 @@ from PyQt6.QtCore import QStandardPaths, QTimer  # pylint: disable=import-error,
 from PyQt6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import logs
+from hermes.core import activity, logs
 from hermes.core.sessions import SESSIONS
 from hermes.db.engine import init_db
 from hermes.ui.main_window import MainWindow
+from hermes.ui.activity_recorder import UiRecorder
 
 ICON_PATH = Path(__file__).parent / "ui" / "resources" / "icon.svg"
 DESKTOP_FILE_NAME = "hermes-hook"
@@ -22,6 +23,7 @@ def main() -> int:
     """Initialize the database and run the application event loop."""
     try:
         logs.setup()
+        activity.setup()
     except OSError as error:
         print(f"Hermes cannot write its log: {error}", file=sys.stderr)
     logs.install_exception_hooks()
@@ -38,7 +40,9 @@ def main() -> int:
     ):
         app.setDesktopFileName(DESKTOP_FILE_NAME)
     window = MainWindow()
+    recorder = UiRecorder(app)
     window.show()
+    recorder.start()
 
     previous_sigint_handler = signal.getsignal(signal.SIGINT)
     signal.signal(
@@ -54,10 +58,17 @@ def main() -> int:
     try:
         code = app.exec()
     finally:
+        recorder.stop()
         signal_check_timer.stop()
         signal.signal(signal.SIGINT, previous_sigint_handler)
     logs.log.info("Hermes exits (code %s)", code)
-    if SESSIONS.sessions():
+    hanging = SESSIONS.sessions()
+    activity.flush()
+    activity.record("app_exited", code=code, hanging=[
+        {"kind": session.kind, "pid": session.pid} for session in hanging],
+        in_flight=activity.in_flight())
+    activity.teardown()
+    if hanging:
         logs.log.warning("exiting hard: %d session(s) did not end",
                          len(SESSIONS.sessions()))
         # A worker hangs in a call to the target (see ShutdownDialog). Python

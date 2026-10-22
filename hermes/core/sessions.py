@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from PyQt6.QtCore import QObject, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import logs
+from hermes.core import activity, logs
 
 
 # Kinds of workers (translation keys "sessions.kind_<kind>")
@@ -149,7 +149,7 @@ class SessionRegistry:
         logs.log.warning("cutting the Frida session of %s (pid %s)", session.kind, session.pid)
         self.stop(session)
         session.detaching = True
-        threading.Thread(target=_detach, args=(frida_session,), daemon=True,
+        threading.Thread(target=_detach, args=(frida_session, session.pid), daemon=True,
                          name="hermes-detach").start()
         self._changed()
         return True
@@ -180,7 +180,10 @@ class SessionSignals(QObject):
         self.destroyed.connect(lambda _object=None: SESSIONS.unsubscribe(emit))
 
 
-def _detach(frida_session):
+def _detach(frida_session, pid=None):
+    # A session cut by hand: the game may be stuck, note where its threads are.
+    if pid is not None:
+        activity.record_threads(pid, "session cut")
     try:
         frida_session.detach()
     except Exception as error:  # pylint: disable=broad-exception-caught
@@ -200,11 +203,14 @@ def tracked(kind):
                 self._failures_logged = True
             SESSIONS.add(self, kind, self.pid)
             logs.log.info("session %s started (pid %s)", kind, self.pid)
+            began = time.monotonic()
+            number = activity.session_started(kind, self, self.pid)
             try:
                 return run(self, *args, **kwargs)
             finally:
                 SESSIONS.remove(self)
                 logs.log.info("session %s ended (pid %s)", kind, self.pid)
+                activity.session_ended(number, kind, self.pid, time.monotonic() - began)
         return wrapper
     return decorate
 

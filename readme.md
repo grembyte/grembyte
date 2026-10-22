@@ -12,6 +12,7 @@ Hermes Hook ist eine Linux-Desktopanwendung auf Basis von Python und PyQt6 zum U
 - **Hooks**: An einer gefundenen Codestelle wird jeder Schreibzugriff abgefangen und der geschriebene Wert manipuliert, z. B. mit einem Multiplikator, einem festen Wert, Grenzen oder einer eigenen JavaScript-Funktion. Hooks werden pro Programm gespeichert und beim nächsten Start wieder installiert.
 - **Hook-Templates**: Manipulationen werden als JavaScript-Funktionen mit Parametern in der Datenbank gepflegt und lassen sich ohne Spielprozess testen.
 - **Hook-Debug**: Ein Debug-Fenster protokolliert jeden Aufruf eines Hooks samt Werten, Aufrufer, Ausgaben und Fehlern.
+- **Aktivitätsprotokoll**: `activity.jsonl` im Protokollordner (`~/.local/state/hermes-hook`) hält den Ablauf jedes Laufs fest: den angehängten Prozess mit Details (32/64 Bit, nativ oder Wine/Proton mit Proton-Version, Engine, wie das Gadget geladen wurde), Sitzungen und Agenten in der Reihenfolge ihres Starts und Endes, jeden RPC mit Dauer und Ergebnis (häufige zusammengefasst), Klicks, und warum eine Frida-Sitzung endete, samt Fridas Absturzbericht. Werte aus dem Speicher des Spiels stehen nicht darin. Im Fenster **Protokoll** unter **Aktivität** lesbar; **Fehlerbericht exportieren …** packt Aktivität, Protokoll und `crash.log` in eine ZIP-Datei.
 
 ### Einfrieren oder Hook?
 

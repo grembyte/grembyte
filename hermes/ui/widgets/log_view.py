@@ -1,10 +1,15 @@
 """The application log in a window, and a dialog for unexpected errors."""
 
+import time
+from pathlib import Path
+
 from PyQt6.QtCore import QObject, QUrl, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QDesktopServices, QFontDatabase, QGuiApplication, QTextCursor  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QCheckBox,
+    QComboBox,
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -13,7 +18,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QVBoxLayout,
 )
 
-from hermes.core import logs
+from hermes.core import activity, logs
 
 
 # Lines of the log the window shows at most (the newest).
@@ -42,20 +47,44 @@ def read_log(path, problems_only=False, max_lines=MAX_LINES):
     return lines[-max_lines:]
 
 
+def activity_lines(path, max_lines=MAX_LINES):
+    """The newest entries of ``activity.jsonl`` as lines, or None without the file."""
+    entries = activity.read_entries(path, max_lines)
+    if entries is None:
+        return None
+    lines = []
+    run = None
+    for entry in entries:
+        if entry.get("run") != run:
+            run = entry.get("run")
+            lines.append(f"--- {entry.get('t', '')[:10]} run {run} ---")
+        lines.append(activity.describe_entry(entry))
+    return lines
+
+
 class LogDialog(QDialog):
-    """The newest entries of ``hermes.log``."""
+    """The newest entries of ``hermes.log`` or of the activity log."""
 
     def __init__(self, translations, parent=None):
         super().__init__(parent)
         self.setModal(False)
         self.translations = translations
         self.path = logs.log_path()
+        self.activity_path = activity.activity_path()
         self.setWindowTitle(translations["log.title"])
         self.resize(1000, 600)
         layout = QVBoxLayout(self)
-        path_label = QLabel(translations["log.path"].format(path=self.path))
-        path_label.setStyleSheet("color: #8b949e;")
-        layout.addWidget(path_label)
+        top = QHBoxLayout()
+        self.source_combo = QComboBox()
+        self.source_combo.addItem(translations["log.source_log"], "log")
+        self.source_combo.addItem(translations["log.source_activity"], "activity")
+        self.source_combo.setToolTip(translations["log.source_tooltip"])
+        self.source_combo.currentIndexChanged.connect(lambda _index: self.refresh())
+        top.addWidget(self.source_combo)
+        self.path_label = QLabel()
+        self.path_label.setStyleSheet("color: #8b949e;")
+        top.addWidget(self.path_label, 1)
+        layout.addLayout(top)
         self.text = QPlainTextEdit()
         self.text.setReadOnly(True)
         self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -77,16 +106,45 @@ class LogDialog(QDialog):
         folder.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.path.parent))))
         buttons.addWidget(folder)
+        export = QPushButton(translations["log.export"])
+        export.setToolTip(translations["log.export_tooltip"])
+        export.clicked.connect(self._export)
+        buttons.addWidget(export)
         layout.addLayout(buttons)
         self.refresh()
 
+    def showing_activity(self):
+        return self.source_combo.currentData() == "activity"
+
     def refresh(self):
-        lines = read_log(self.path, self.problems_check.isChecked())
+        activity_shown = self.showing_activity()
+        path = self.activity_path if activity_shown else self.path
+        self.path_label.setText(self.translations["log.path"].format(path=path))
+        self.problems_check.setEnabled(not activity_shown)
+        lines = (activity_lines(path) if activity_shown
+                 else read_log(path, self.problems_check.isChecked()))
         if lines is None:
-            self.text.setPlainText(self.translations["log.missing"].format(path=self.path))
+            self.text.setPlainText(self.translations["log.missing"].format(path=path))
             return
         self.text.setPlainText("\n".join(lines) if lines else self.translations["log.empty"])
         self.text.moveCursor(QTextCursor.MoveOperation.End)
+
+    def _export(self):
+        name = time.strftime("hermes-report-%Y%m%d-%H%M%S.zip")
+        target, _filter = QFileDialog.getSaveFileName(
+            self, self.translations["log.export"], str(Path.home() / name),
+            self.translations["log.export_filter"])
+        if not target:
+            return
+        try:
+            files = activity.export_report(target, self.path.parent)
+        except OSError as error:
+            QMessageBox.warning(self, self.translations["log.export"],
+                                self.translations["log.export_failed"].format(error=error))
+            return
+        QMessageBox.information(self, self.translations["log.export"],
+                                self.translations["log.exported"].format(
+                                    path=target, count=len(files)))
 
 
 class ErrorReporter(QObject):

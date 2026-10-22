@@ -58,6 +58,27 @@ in `AgentWorker` (`hermes/features/trace.py`); `analyze` und die Einstufung sind
   `__atomic_*`, `__sync_*` fehlen), nur `g_atomic_int_add`: Einträge werden über einen
   Claim-Zähler belegt. Lasttest libpython (4 Threads): ~11 Mio. Aufrufe/2 s ohne Verlust,
   Szenario etwas schneller als mit `onCallSummary` (1,2 s statt 1,5 s).
+- Gelernt (22.10.2026): Unter Windows übernimmt `Stalker.follow(id)` einen fremden Thread
+  über einen Hardware-Breakpoint an der Stelle, an der er steht, fast immer der Rücksprung
+  eines Systemaufrufs in `ntdll`. Wine behält den Breakpoint, nachdem Stalker ihn im
+  Ausnahme-Kontext gelöscht hat. Stalkers Handler ruft beim Übernehmen selbst `Sleep` auf,
+  durch denselben Rücksprung: Der Breakpoint schlug im Handler erneut an, der dann auf eine
+  Sperre wartete, die er schon hielt. Das Spiel fror ein (winedbg: alle Spiel-Threads in
+  Fridas Handler, Warten auf SRW), oder es stürzte später mit `EXCEPTION_SINGLE_STEP` ab.
+  Das betraf auch den alten Agenten (Testspiel unter Proton: 3 von 5 Läufen eingefroren).
+  Den Breakpoint aus dem Agent-Thread zu entfernen ist ein Wettlauf; `NtSetContextThread`
+  auf den eigenen Thread aus einem vorgeschalteten Exception-Handler wirkt unter Wine nicht.
+  Jetzt folgt sich jeder Thread selbst (kein Breakpoint): `Thread.backtrace(…, FUZZY)` findet
+  seine nächste Rücksprungadresse in ein verfolgtes Modul, ein einmaliger Interceptor-Hook
+  dort ruft `Stalker.follow()` im Thread. Testspiel unter Proton: 10 von 10 Läufen sauber,
+  und der Render-Thread wird erst so wirklich verfolgt (8379 statt 585 Aufrufe). Threads
+  ohne Rücksprung in verfolgten Code zählen als nicht verfolgbar; wer noch nicht
+  eingestiegen ist, steht in `waiting`. Restrisiko: Der Hook überschreibt ein paar Bytes nach
+  einer `call`-Instruktion; springt Code mitten hinein, stürzt das Spiel ab.
+- Nachstellen ohne Spiel: ein kleines Windows-Testspiel mit `x86_64-w64-mingw32-gcc`, laufend
+  mit Protons `files/bin/wine` in einem eigenen `WINEPREFIX`; Hermes verbindet sich über das
+  Gadget wie bei einem echten Spiel. Stacks im eingefrorenen Zustand: `wine winedbg --command
+  "bt all" <Windows-PID>` (gdb sieht nur Wines Unix-Seite).
 - Gelernt: Ein verfolgter Thread, der in einem blockierenden Aufruf hängt, hält Stalkers
   Code fest; `script.unload()` wartet dann bis zu ~25 s (das Spiel überlebt). Daher werden
   untätige Threads nicht vorausgewählt, und „Verfolgung beenden" entlädt den Agenten nicht
@@ -67,7 +88,11 @@ in `AgentWorker` (`hermes/features/trace.py`); `analyze` und die Einstufung sind
 Nächste Schritte:
 
 - In einem echten nativen Spiel ausprobieren (Last, Spielbarkeit, Trefferqualität)
-- Unter Wine/Proton über das Gadget testen (Fenster warnt bisher nur)
+- **Erledigt (22.10.2026):** Einfrieren unter Wine/Proton behoben, siehe unten. Bestätigt mit
+  Baldur's Gate unter Proton Experimental (1 Thread, `Baldur.exe`: 3,2 Mio. Aufrufe im
+  Grundrauschen, nichts verloren, sauber beendet). Der 32-Bit-Weg des nativen Trace unter Wine
+  ist ungetestet (Shadowrun Returns ist Mono, dort sind native Werkzeuge gesperrt); das Gadget
+  selbst läuft in 32-Bit-Spielen (Mono-Trace in Shadowrun Returns).
 - Aufrufer: Die Reihenfolge zeigt die Aufrufstelle des ersten Aufrufs je Thread. Eine
   Liste aller Aufrufer je Funktion (Zählung je Aufrufstelle und Ziel) fehlt noch
 - Anschluss an vorhandene Werkzeuge: Disassembler-Ansicht der Funktion, Hook auf die
@@ -145,6 +170,25 @@ Unterpaket mit `EngineAdapter`-Unterklasse und Agent-Teil, der sich per
 **1 (Stalker-Diff-Trace)** und **2 (Zugriffe einer Instruktion)** bringen engine-unabhängig
 am meisten und nutzen viel Vorhandenes. Bei den Adaptern wäre **Unreal** der nächste große
 Schritt, **IL2CPP** der naheliegendste für Unity-Spiele ohne Mono.
+
+## Aktivitätsprotokoll (umgesetzt 22.10.2026)
+
+`hermes/core/activity.py`, `hermes/ui/activity_recorder.py`: `activity.jsonl` neben
+`hermes.log`, eine JSON-Zeile pro Ereignis mit Lauf-ID. Agenten, RPCs, Skriptfehler und das
+Ende einer Session zeichnen Proxys um Fridas Session und Skript in `attach_session` auf
+(alle Frida-Worker gehen dort durch); Sitzungen `sessions.tracked`, Gadget `wine_gadget.connect`,
+Prozess/Engine/Backend das Hauptfenster, Klicks ein Timer, der alle 500 ms neue Bedienelemente
+verbindet (kein Event-Filter: PyQt packt für einen Python-Filter jedes Ziel eines Ereignisses
+ein, auch Widgets im Abbau, und stürzte dabei in sip ab). Thread-Schnappschüsse des Spiels
+(`/proc/<pid>/task/*`: Zustand, CPU, Systemaufruf) 1 s nach dem Start eines nativen Trace,
+bei `stop` und beim Trennen einer Sitzung; Ergebnisse jeder Trace-Phase in Zahlen.
+Ab drei Aufrufen derselben Methode in 2 s werden RPCs zusammengefasst.
+
+- Gelernt: Ein Agent, dessen `unload` auf einen in Stalkers Code blockierten Thread wartet,
+  zeigt sich als `agent_unloaded … seconds=25`.
+- Offen: ptrace-Backends (Watch, Hooks) melden nur Start und Ende der Sitzung, keine
+  einzelnen Schritte. Ergebnisse einer Phase (Funktionen, `lost`) stehen nicht im Protokoll,
+  nur Dauer und Erfolg des `finish`.
 
 ## Offene Punkte aus der Wine/Proton-Arbeit
 
