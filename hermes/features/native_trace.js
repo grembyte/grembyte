@@ -9,6 +9,11 @@ const DISPOSE_GC_TIMEOUT = 3000;
 const PHASES = { baseline: 1, scenario: 2 };
 const WINDOWS = Process.platform === 'windows';
 const AGENT_THREAD = Process.getCurrentThreadId();
+// Linux x86-64: free address space Stalker's thread contexts should land at
+// the top of, see withRoomNearby.
+const STEER_CONTEXTS = Process.platform === 'linux' && Process.arch === 'x64';
+const LANDING_SIZE = 256n * 1024n * 1024n;
+const STEER_PASSES = 8;
 
 // The transform puts a callout before every call of the followed code; the
 // callout runs in the game's thread, works out where the call goes and
@@ -369,11 +374,109 @@ function start(spec) {
     info.add(4).writeU32(0);
     return [id, info];
   }));
+  let steered = null;
   const failed = WINDOWS
     ? enterOnReturn(trace, infos, new ModuleMap(module => followed.has(module.name)))
-    : followAll(trace, infos);
+    : withRoomNearby(() => followAll(trace, infos), placed => { steered = placed; });
   return { threads: ids.length - failed.length, failed: failed.length, modules: included.length,
-           waiting: trace.waiting.size };
+           waiting: trace.waiting.size, steered };
+}
+
+// --- Room for Stalker's code ---------------------------------------------------
+// On x86-64 Stalker's code reaches its thread's context with 32-bit offsets,
+// so every slab of code (4 MB) must lie within ±2 GB of the context. Gum
+// asks the kernel for the context without a hint; the kernel puts it into
+// the highest gap below mmap_base. A game that mapped many GB (EVERSPACE:
+// 9.9 GB in 5700 regions, gaps of a few MB) leaves no 4 MB within ±2 GB of
+// there: gum_memory_allocate_near fails, and Stalker writes to the NULL it
+// got (SIGSEGV at 0x18 a moment after following). So while Stalker creates
+// the contexts, every gap above the highest large free area is filled with
+// placeholders: the contexts land at the top of that area, with room below.
+
+let libcMmap = null;
+
+function mmapFunctions() {
+  if (libcMmap === null) {
+    libcMmap = {
+      mmap: new NativeFunction(Module.getGlobalExportByName('mmap'), 'pointer',
+                               ['pointer', 'size_t', 'int', 'int', 'int', 'long']),
+      munmap: new NativeFunction(Module.getGlobalExportByName('munmap'), 'int',
+                                 ['pointer', 'size_t'])
+    };
+  }
+  return libcMmap;
+}
+
+function mappedRanges() {
+  // [[start, end]] (BigInt) of the mappings, without the stack and the
+  // kernel's pages: hintless mappings never go above them.
+  const ranges = [];
+  for (const line of File.readAllText('/proc/self/maps').split('\n')) {
+    if (line === '')
+      continue;
+    if (/\[(stack|vvar|vvar_vclock|vdso|vsyscall)\]$/.test(line))
+      break;
+    const [start, end] = line.split(' ', 1)[0].split('-');
+    ranges.push([BigInt('0x' + start), BigInt('0x' + end)]);
+  }
+  return ranges;
+}
+
+function fillGapsAboveLanding(placed) {
+  // Fill every gap above the highest gap of LANDING_SIZE; how many were filled.
+  const { mmap } = mmapFunctions();
+  const PROT_NONE = 0;
+  const MAP_PRIVATE = 0x02, MAP_ANONYMOUS = 0x20, MAP_NORESERVE = 0x4000;
+  const MAP_FIXED_NOREPLACE = 0x100000;  // never over a mapping the game made meanwhile
+  const ranges = mappedRanges();
+  let landing = -1;
+  for (let i = ranges.length - 1; i > 0 && landing < 0; i--) {
+    if (ranges[i][0] - ranges[i - 1][1] >= LANDING_SIZE)
+      landing = i;
+  }
+  if (landing < 0)
+    return 0;
+  let filled = 0;
+  for (let i = landing + 1; i < ranges.length; i++) {
+    const start = ranges[i - 1][1];
+    const size = ranges[i][0] - start;
+    if (size <= 0n)
+      continue;
+    const address = ptr(start.toString());
+    const result = mmap(address, Number(size), PROT_NONE,
+                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
+    if (result.equals(address)) {
+      placed.push([address, Number(size)]);
+      filled++;
+    }
+  }
+  return filled;
+}
+
+function withRoomNearby(follow, report) {
+  // Run ``follow`` (which creates Stalker's thread contexts) with the gaps
+  // filled; ``report`` gets how many placeholders there were.
+  if (!STEER_CONTEXTS)
+    return follow();
+  const placed = [];
+  try {
+    // Reading the map grows the agent's heap into the highest gaps: again
+    // until no gap is left.
+    for (let pass = 0; pass < STEER_PASSES; pass++) {
+      if (fillGapsAboveLanding(placed) === 0)
+        break;
+    }
+  } catch (_error) {
+    // Without placeholders the contexts land where the kernel puts them.
+  }
+  try {
+    return follow();
+  } finally {
+    const { munmap } = mmapFunctions();
+    for (const [address, size] of placed)
+      munmap(address, size);
+    report(placed.length);
+  }
 }
 
 function followAll(t, infos) {

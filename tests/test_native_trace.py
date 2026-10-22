@@ -23,7 +23,9 @@ from tests.test_hooks import (  # pylint: disable=unused-import
 _TARGET_SOURCE = r"""
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 static volatile int gold = 100;
@@ -37,6 +39,10 @@ __attribute__((noinline)) void drink_potion(int amount) { gold += amount; }
 /* volatile: called through the pointer, as by a vtable */
 static void (*volatile use_item)(int) = drink_potion;
 
+#ifdef MANY_FUNCTIONS
+#include "many.h"  /* run_many(): calls thousands of functions, as a big game's code */
+#endif
+
 static void *render(void *unused) {
     (void)unused;
     for (;;) {
@@ -46,8 +52,23 @@ static void *render(void *unused) {
     return NULL;
 }
 
+/* Crowd the address space like a big game: below the libraries 2.5 GB
+   without a gap, then 2.5 GB with a 1 MB hole every 8 MB. A mapping without
+   a hint lands in the highest hole; no 4 MB are free within 2 GB of it. */
+static void crowd(void) {
+    const size_t block = 8u << 20, hole = 1u << 20;
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
+    mmap(NULL, 2560ul << 20, PROT_NONE, flags, -1, 0);
+    for (int i = 0; i < 320; i++) {
+        char *p = mmap(NULL, block, PROT_NONE, flags, -1, 0);
+        munmap(p + block - hole, hole);
+    }
+}
+
 int main(void) {
     pthread_t thread;
+    if (getenv("CROWD_ADDRESS_SPACE"))
+        crowd();
     pthread_create(&thread, NULL, render, NULL);
     printf("%d 0\n", getpid());
     fflush(stdout);
@@ -60,6 +81,10 @@ int main(void) {
             buy_item(value);
         else if (strcmp(cmd, "use") == 0)
             use_item(value);
+#ifdef MANY_FUNCTIONS
+        else if (strcmp(cmd, "many") == 0)
+            run_many(value);
+#endif
         printf("%d 0\n", gold);
         fflush(stdout);
     }
@@ -68,12 +93,26 @@ int main(void) {
 """
 
 
-def _build(tmp_path):
+def _many_functions(count):
+    """C source of ``run_many``, which calls ``count`` functions of their own."""
+    lines = ["static volatile int sink;"]
+    lines += [f"__attribute__((noinline)) void many_{i}(int x) {{ sink += x * {i} + (x >> 3); }}"
+              for i in range(count)]
+    lines.append("static void run_many(int x) {")
+    lines += [f"    many_{i}(x);" for i in range(count)]
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _build(tmp_path, many=0):
+    """Compile the test game; ``many``: with that many more functions (command "many")."""
     (tmp_path / "game.c").write_text(_TARGET_SOURCE)
-    binary = tmp_path / "game"
-    subprocess.run(["gcc", "-O1", "-pthread", str(tmp_path / "game.c"), "-o", str(binary)],
-                   check=True)
-    return binary
+    command = ["gcc", "-O1", "-pthread", str(tmp_path / "game.c"), "-o", str(tmp_path / "game")]
+    if many:
+        (tmp_path / "many.h").write_text(_many_functions(many))
+        command.append("-DMANY_FUNCTIONS")
+    subprocess.run(command, check=True)
+    return tmp_path / "game"
 
 
 class _Recorder:
@@ -139,8 +178,12 @@ def test_native_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
 
         worker.trace([thread.id for thread in threads], ["game"])
         recorder.wait(lambda: recorder.started)
-        assert recorder.started[0] == {"threads": len(threads), "failed": 0, "modules": 1,
-                                       "waiting": 0}  # under Windows: not entered yet
+        started = recorder.started[0]
+        assert {key: started[key] for key in ("threads", "failed", "modules", "waiting")} == {
+            "threads": len(threads), "failed": 0, "modules": 1,
+            "waiting": 0}  # under Windows: not entered yet
+        # Linux x86-64: gaps were filled while Stalker made its thread contexts
+        assert started["steered"] >= 0
 
         functions = []
         baseline = recorder.record(target, "baseline", ("tick", 1), ("tick", 2))
@@ -182,6 +225,38 @@ def test_native_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
         # The main thread waits for commands in code Stalker made: once it
         # has returned from there, the agents unload without waiting.
         assert target.send("tick", 0) == (94, 0)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_native_trace_survives_a_crowded_address_space(tmp_path, qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.native_trace import NativeTraceWorker
+
+    # Stalker found no room for its code near its thread contexts and wrote
+    # to NULL (EVERSPACE crashed 0.4 s after the start).
+    monkeypatch.setenv("CROWD_ADDRESS_SPACE", "1")
+    target = _Target(_build(tmp_path, many=4000))
+    worker = NativeTraceWorker(target.pid)
+    recorder = _Recorder(qt_app, worker)
+    try:
+        worker.start()
+        worker.inventory()
+        recorder.wait(lambda: recorder.inventory is not None)
+        threads, _modules, _platform = recorder.inventory
+        worker.trace([thread.id for thread in threads], ["game"])
+        recorder.wait(lambda: recorder.started)
+        assert recorder.started[0]["steered"] > 0
+        functions = []
+        # More code than Stalker's first slab holds: it needs another one
+        scenario = recorder.record(target, "scenario", ("many", 1), ("buy", 5))
+        apply_names(functions, scenario)
+        assert "buy_item" in {function.label for function in functions}
+        assert len(functions) > 4000
+        assert target.send("tick", 0) == (95, 0)  # still running
     finally:
         worker.requestInterruption()
         worker.wait(5000)

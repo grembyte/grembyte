@@ -60,6 +60,14 @@ damage.
 - Learned: Stalker's queue holds 16 384 events per drain by default and drops the rest
   **silently**. With the CModule there is no queue any more; calls are only lost when the
   function table (2^19) is full (`lost`, warned about in the window).
+- Learned (2026-10-22): on x86-64 every new 4 MB code slab of Stalker must lie within ±2 GB
+  of its thread context, which Gum maps without a hint. EVERSPACE (UE4, 9.9 GB in 5700
+  regions) left no such room there: `gum_memory_allocate_near` returned NULL, Stalker wrote
+  to `0x18` and the game crashed 0.4 s after the start (Pillars of Eternity after 20–40 s,
+  same cause). The agent now fills every gap above the highest free area of 256 MB with
+  placeholders while Stalker creates the contexts (`withRoomNearby`, Linux x86-64), so they
+  land at the top of that area. EVERSPACE: 34 threads followed, baseline recorded, clean
+  stop. Test: `test_native_trace_survives_a_crowded_address_space` (crashes without it).
 - Learned: Frida's TinyCC has no compare-and-swap (`g_atomic_*_compare_and_exchange`,
   `__atomic_*`, `__sync_*` are missing), only `g_atomic_int_add`: entries are taken through a
   claim counter. Load test with libpython (4 threads): ~11 million calls/2 s without loss,
