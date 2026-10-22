@@ -1,16 +1,19 @@
 #!/bin/sh
-# Build hermes-inject for 64- and 32-bit Wine games.
+# Build hermes-inject for 64- and 32-bit Wine games into build/inject/ of the
+# repository (or $OUT_DIR); the executables are not kept in git.
 # Uses MinGW when installed (sudo dnf install mingw64-gcc mingw32-gcc), else zig
 # (pip install ziglang).
 set -e
 cd "$(dirname "$0")"
+OUT_DIR="${OUT_DIR:-../../../build/inject}"
+mkdir -p "$OUT_DIR"
 FLAGS="-O2 -s -Wall -o"
 LIBS="-lshell32"
 FAILED=0
 
 # build <output> <compiler command...>
 build() {
-    out=$1
+    out=$OUT_DIR/$1
     shift
     if "$@" inject.c $FLAGS "$out" $LIBS; then
         echo "OK:     $out"

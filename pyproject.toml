@@ -27,7 +27,7 @@ include = ["hermes*"]
 
 [tool.setuptools.package-data]
 "hermes.ui" = ["localization/*.json", "resources/*.svg"]
-"hermes.core" = ["*.js", "inject/*.exe", "inject/inject.c", "inject/build.sh"]
+"hermes.core" = ["*.js", "inject/inject.c", "inject/build.sh"]
 "hermes.engines" = ["*.js"]
 "hermes.engines.mono" = ["*.js"]
 "hermes.features" = ["*.js"]

@@ -13,15 +13,25 @@ a Wine started on a prefix without a running server would start a server of
 its own and never see the game.
 """
 
+import logging
 import os
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 from hermes.platform import process_start_time
 
+# The helper's source and build script; build.sh puts the executables into
+# build/inject/ of the repository (BUILD_DIR), or $HERMES_INJECT_DIR.
 HELPER_DIR = Path(__file__).resolve().parent / "inject"
+BUILD_DIR = Path(__file__).resolve().parents[2] / "build" / "inject"
 HELPER_TIMEOUT = 60.0
+BUILD_TIMEOUT = 120.0
+
+log = logging.getLogger("hermes.wine_helper")
+_build_lock = threading.Lock()
+_build_tried = False
 
 # Of the game's Wine variables only those naming its prefix and those the
 # server must agree on (esync, fsync, ntsync) are copied. Others are Wine's
@@ -45,13 +55,48 @@ class WineProcess:
     bits: int = 0  # 32 or 64, 0 if unknown
 
 
-def helper_path(bits):
-    """Return the helper executable for a 32- or 64-bit target."""
-    path = HELPER_DIR / ("hermes-inject-x86.exe" if bits == 32
-                         else "hermes-inject-x86_64.exe")
+def helper_dir():
+    """Where the helper executables are: ``$HERMES_INJECT_DIR`` or BUILD_DIR."""
+    override = os.environ.get("HERMES_INJECT_DIR")
+    return Path(override).expanduser() if override else BUILD_DIR
+
+
+def helper_path(bits, build=True):
+    """Return the helper executable for a 32- or 64-bit target.
+
+    With ``build`` a missing helper is built once with build.sh (MinGW or zig
+    needed); raises HelperError if it is still missing.
+    """
+    name = "hermes-inject-x86.exe" if bits == 32 else "hermes-inject-x86_64.exe"
+    path = helper_dir() / name
+    if not path.exists() and build:
+        build_helpers(path.parent)
     if not path.exists():
-        raise HelperError(f"Helper not built: {path} (run {HELPER_DIR / 'build.sh'})")
+        raise HelperError(f"Helper not built: {path} (run {HELPER_DIR / 'build.sh'}; "
+                          "it needs mingw64-gcc and mingw32-gcc, or pip install ziglang)")
     return path
+
+
+def build_helpers(out_dir):
+    """Run build.sh into ``out_dir``, once per run of hermes; returns whether it succeeded."""
+    global _build_tried  # pylint: disable=global-statement
+    with _build_lock:
+        if _build_tried:
+            return False
+        _build_tried = True
+        log.info("building the Windows helper into %s", out_dir)
+        try:
+            result = subprocess.run(
+                ["sh", str(HELPER_DIR / "build.sh")], env={**os.environ, "OUT_DIR": str(out_dir)},
+                capture_output=True, text=True, timeout=BUILD_TIMEOUT, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            log.warning("building the Windows helper failed: %s", error)
+            return False
+        if result.returncode != 0:
+            log.warning("building the Windows helper failed:\n%s%s",
+                        result.stdout, result.stderr)
+            return False
+        return True
 
 
 def read_environ(pid, proc_root="/proc"):

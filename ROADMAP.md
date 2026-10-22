@@ -1,230 +1,240 @@
-# Roadmap und Ideen
+# Roadmap and ideas
 
-Sammlung von Erweiterungen, die beim Finden von Adressen und Hook-Einstiegspunkten
-helfen würden, und von offenen Punkten aus der Wine/Proton- und Unity-Arbeit.
-Stand: Oktober 2026.
+A collection of extensions that would help find addresses and hook entry points, and of
+open points from the Wine/Proton and Unity work.
+As of October 2026.
 
-## Ausgangslage
+## Starting point
 
-Engine-unabhängig vorhanden:
+Available independent of any engine:
 
-- Wertsuche: exakt, Bereich, unbekannter Startwert, verändert/unverändert, größer/kleiner,
-  Differenzen, unscharfe Floats
-- Pointer-Scan für stabile Pointerketten
-- Write-Watch: welche Instruktion eine Adresse schreibt, optional auch liest
-- Hooks auf Schreibinstruktionen, mit Aufrufer-Lernen
-- Speicheransicht, Disassembler, Einfrieren
+- Value scan: exact, range, unknown initial value, changed/unchanged, greater/less,
+  differences, fuzzy floats
+- Pointer scan for stable pointer chains
+- Write watch: which instruction writes an address, optionally also which reads it
+- Hooks on write instructions, with caller learning
+- Memory view, disassembler, freezing
 
-Für Unity-Spiele mit Mono gibt es darüber hinaus Katalog, Trace (mit Vorauswahl-Filtern),
-Methoden-Monitor und Methoden-Hooks über die Engine-Adapter-Schicht (`hermes/engines/`).
+For Unity games with Mono there are also the catalog, the trace (with preselection
+filters), the method monitor and method hooks, through the engine adapter layer
+(`hermes/engines/`).
 
-## Vorschläge, engine-unabhängig
+## Proposals, independent of any engine
 
-Sortiert nach Nutzen im Verhältnis zum Aufwand.
+Sorted by benefit relative to effort.
 
-### 1. Nativer Aufruf-Diff-Trace
+### 1. Native call diff trace
 
-Das native Gegenstück zum Mono-Trace und der größte Hebel. Fridas **Stalker** zeichnet
-auf, welche Funktionen bzw. Basisblöcke ein Thread ausführt. Mit derselben Logik wie
-beim Mono-Trace (Grundrauschen gegen Szenario) findet man die Funktion, die nur beim
-Bezahlen oder bei Schaden läuft.
+The native counterpart of the Mono trace and the biggest lever. Frida's **Stalker** records
+which functions or basic blocks a thread executes. With the same logic as the Mono trace
+(baseline against scenario) one finds the function that only runs when paying or taking
+damage.
 
-- Funktioniert ohne Metadaten, also für C++-Spiele, eigene Engines, Unreal, Godot, Source
-- Wiederverwendbar: Trace-Dialog, `analyze`, Einstufung „neu/häufiger"
-- Neu wäre nur der Agent (Stalker statt Mono-Hooks)
-- Vorbild: Cheat Engine „Code Filter" / „Ultimap"
-- Offen: Verhalten von Stalker unter Wine mit dem Windows-Gadget prüfen
+- Works without metadata, so for C++ games, own engines, Unreal, Godot, Source
+- Reusable: trace dialog, `analyze`, the "new/more often" verdicts
+- Only the agent would be new (Stalker instead of Mono hooks)
+- Model: Cheat Engine's "Code Filter" / "Ultimap"
+- Open: check how Stalker behaves under Wine with the Windows gadget
 
-**Stand (Prototyp, 19.10.2026):** Ansicht → „Nativer Trace …", unabhängig von einer Engine.
-`hermes/features/native_trace.py` (Agent + `NativeTraceWorker`),
-`hermes/ui/widgets/native_trace.py` (Fenster). Gemeinsame Sitzungslogik mit dem Mono-Trace
-in `AgentWorker` (`hermes/features/trace.py`); `analyze` und die Einstufung sind dieselben.
+**Status (prototype, 2026-10-19):** View → "Native trace…", independent of any engine.
+`hermes/features/native_trace.py` (agent + `NativeTraceWorker`),
+`hermes/ui/widgets/native_trace.py` (window). Session logic shared with the Mono trace in
+`AgentWorker` (`hermes/features/trace.py`); `analyze` and the verdicts are the same.
 
-- Stalker folgt den gewählten Threads mit einem CModule-`transform` (seit 22.10.2026, vorher
-  `events: {call: true}` und `onCallSummary`): Vor jedem `call` des verfolgten Codes steht
-  ein Callout in C, der das Ziel aus den Registern berechnet (direkt, Register,
-  Speicheroperand inkl. `rip`-relativ) und im Spiel-Thread in einer Hashtabelle zählt. Die
-  Reihenfolge der ersten Aufrufe ist exakt und kennt die Aufrufstelle. Nur x86/x64; `call`
-  über `fs:`/`gs:` wird nicht gezählt. Nicht gewählte Module werden per `Stalker.exclude` nativ ausgeführt (nur Aufrufe *in*
-  sie zählen). Vorauswahl: Module aus dem Ordner des Spiels, Threads, die gerade laufen
-  (CPU-Zeit oder Kontextwechsel in `/proc`).
-- Funktionsnamen: Exporte, unter Linux zusätzlich Symbole (`DebugSymbol`), sonst `modul+0x…`.
-- Verifiziert: Testspiel (C) und ein Python-Interpreter mit `libpython` (~6 Mio. Aufrufe/2 s,
-  Szenario fand den JSON-Encoder). Noch nicht in einem echten Spiel getestet.
-- Gelernt: Stalkers Queue fasst standardmäßig 16 384 Ereignisse pro Leerung und verwirft den
-  Rest **stillschweigend**. Mit dem CModule gibt es keine Queue mehr; verloren gehen nur
-  Aufrufe, wenn die Funktionstabelle (2^19) voll ist (`lost`, im Fenster gewarnt).
-- Gelernt: Fridas TinyCC kennt kein Compare-and-Swap (`g_atomic_*_compare_and_exchange`,
-  `__atomic_*`, `__sync_*` fehlen), nur `g_atomic_int_add`: Einträge werden über einen
-  Claim-Zähler belegt. Lasttest libpython (4 Threads): ~11 Mio. Aufrufe/2 s ohne Verlust,
-  Szenario etwas schneller als mit `onCallSummary` (1,2 s statt 1,5 s).
-- Gelernt (22.10.2026): Unter Windows übernimmt `Stalker.follow(id)` einen fremden Thread
-  über einen Hardware-Breakpoint an der Stelle, an der er steht, fast immer der Rücksprung
-  eines Systemaufrufs in `ntdll`. Wine behält den Breakpoint, nachdem Stalker ihn im
-  Ausnahme-Kontext gelöscht hat. Stalkers Handler ruft beim Übernehmen selbst `Sleep` auf,
-  durch denselben Rücksprung: Der Breakpoint schlug im Handler erneut an, der dann auf eine
-  Sperre wartete, die er schon hielt. Das Spiel fror ein (winedbg: alle Spiel-Threads in
-  Fridas Handler, Warten auf SRW), oder es stürzte später mit `EXCEPTION_SINGLE_STEP` ab.
-  Das betraf auch den alten Agenten (Testspiel unter Proton: 3 von 5 Läufen eingefroren).
-  Den Breakpoint aus dem Agent-Thread zu entfernen ist ein Wettlauf; `NtSetContextThread`
-  auf den eigenen Thread aus einem vorgeschalteten Exception-Handler wirkt unter Wine nicht.
-  Jetzt folgt sich jeder Thread selbst (kein Breakpoint): `Thread.backtrace(…, FUZZY)` findet
-  seine nächste Rücksprungadresse in ein verfolgtes Modul, ein einmaliger Interceptor-Hook
-  dort ruft `Stalker.follow()` im Thread. Testspiel unter Proton: 10 von 10 Läufen sauber,
-  und der Render-Thread wird erst so wirklich verfolgt (8379 statt 585 Aufrufe). Threads
-  ohne Rücksprung in verfolgten Code zählen als nicht verfolgbar; wer noch nicht
-  eingestiegen ist, steht in `waiting`. Restrisiko: Der Hook überschreibt ein paar Bytes nach
-  einer `call`-Instruktion; springt Code mitten hinein, stürzt das Spiel ab.
-- Nachstellen ohne Spiel: ein kleines Windows-Testspiel mit `x86_64-w64-mingw32-gcc`, laufend
-  mit Protons `files/bin/wine` in einem eigenen `WINEPREFIX`; Hermes verbindet sich über das
-  Gadget wie bei einem echten Spiel. Stacks im eingefrorenen Zustand: `wine winedbg --command
-  "bt all" <Windows-PID>` (gdb sieht nur Wines Unix-Seite).
-- Gelernt: Ein verfolgter Thread, der in einem blockierenden Aufruf hängt, hält Stalkers
-  Code fest; `script.unload()` wartet dann bis zu ~25 s (das Spiel überlebt). Daher werden
-  untätige Threads nicht vorausgewählt, und „Verfolgung beenden" entlädt den Agenten nicht
-  sofort. Ein neuer Trace bekommt einen frischen Agenten, weil Stalker Ausschlüsse nicht
-  zurücknehmen kann.
+- Stalker follows the chosen threads with a CModule `transform` (since 2026-10-22, before
+  that `events: {call: true}` and `onCallSummary`): before every `call` of the followed code
+  sits a callout in C that works out the target from the registers (direct, register, memory
+  operand including `rip`-relative) and counts it in a hash table, in the game's thread. The
+  order of the first calls is exact and knows the call site. x86/x64 only; a `call` through
+  `fs:`/`gs:` is not counted. Modules not chosen run natively through `Stalker.exclude` (only
+  calls *into* them count). Preselection: the modules in the game's folder, the threads
+  running right now (CPU time or context switches in `/proc`).
+- Function names: exports, on Linux also symbols (`DebugSymbol`), otherwise `module+0x…`.
+- Verified: test game (C) and a Python interpreter with `libpython` (~6 million calls/2 s,
+  the scenario found the JSON encoder), and Baldur's Gate under Proton (see below).
+- Learned: Stalker's queue holds 16 384 events per drain by default and drops the rest
+  **silently**. With the CModule there is no queue any more; calls are only lost when the
+  function table (2^19) is full (`lost`, warned about in the window).
+- Learned: Frida's TinyCC has no compare-and-swap (`g_atomic_*_compare_and_exchange`,
+  `__atomic_*`, `__sync_*` are missing), only `g_atomic_int_add`: entries are taken through a
+  claim counter. Load test with libpython (4 threads): ~11 million calls/2 s without loss,
+  the scenario slightly faster than with `onCallSummary` (1.2 s instead of 1.5 s).
+- Learned (2026-10-22): under Windows, `Stalker.follow(id)` takes another thread over through
+  a hardware breakpoint at the instruction it stands at, nearly always the return of a system
+  call in `ntdll`. Wine keeps the breakpoint after Stalker cleared it in the exception's
+  context. Stalker's handler itself calls `Sleep` while taking the thread over, through the
+  same return: the breakpoint hit again inside the handler, which then waited for a lock it
+  already held. The game froze (winedbg: all game threads in Frida's handler, waiting on an
+  SRW lock), or it crashed later with `EXCEPTION_SINGLE_STEP`. This affected the old agent
+  too (test game under Proton: 3 of 5 runs froze). Removing the breakpoint from the agent
+  thread is a race; `NtSetContextThread` on the thread itself from a vectored exception
+  handler placed first has no effect under Wine. Now each thread follows itself (no
+  breakpoint): `Thread.backtrace(…, FUZZY)` finds its next return address into a followed
+  module, and a one-shot Interceptor hook there calls `Stalker.follow()` in the thread. Test
+  game under Proton: 10 of 10 runs clean, and only this way is the render thread really
+  followed (8379 instead of 585 calls). Threads without a return into followed code count as
+  not followable; those that have not entered yet are in `waiting`. Remaining risk: the hook
+  overwrites a few bytes after a `call` instruction; if code jumps into the middle of them,
+  the game crashes.
+- Reproducing without a game: a small Windows test game built with `x86_64-w64-mingw32-gcc`,
+  run with Proton's `files/bin/wine` in a `WINEPREFIX` of its own; Hermes connects through
+  the gadget as with a real game. Stacks in the frozen state: `wine winedbg --command
+  "bt all" <Windows PID>` (gdb only sees Wine's Unix side).
+- Learned: a followed thread that hangs in a blocking call holds on to Stalker's code;
+  `script.unload()` then waits up to ~25 s (the game survives). So idle threads are not
+  preselected, and "Stop following" does not unload the agent at once. A new trace gets a
+  fresh agent, because Stalker cannot take exclusions back.
 
-Nächste Schritte:
+Next steps:
 
-- In einem echten nativen Spiel ausprobieren (Last, Spielbarkeit, Trefferqualität)
-- **Erledigt (22.10.2026):** Einfrieren unter Wine/Proton behoben, siehe unten. Bestätigt mit
-  Baldur's Gate unter Proton Experimental (1 Thread, `Baldur.exe`: 3,2 Mio. Aufrufe im
-  Grundrauschen, nichts verloren, sauber beendet). Der 32-Bit-Weg des nativen Trace unter Wine
-  ist ungetestet (Shadowrun Returns ist Mono, dort sind native Werkzeuge gesperrt); das Gadget
-  selbst läuft in 32-Bit-Spielen (Mono-Trace in Shadowrun Returns).
-- Aufrufer: Die Reihenfolge zeigt die Aufrufstelle des ersten Aufrufs je Thread. Eine
-  Liste aller Aufrufer je Funktion (Zählung je Aufrufstelle und Ziel) fehlt noch
-- Anschluss an vorhandene Werkzeuge: Disassembler-Ansicht der Funktion, Hook auf die
-  Funktion, später Byte-Signatur (Punkt 5)
-- **Erledigt (19.10.2026):** Ergebnisse sortier- und filterbar (Name, Aufrufzahl, `%3`).
-  Nativer Funktions-Monitor (`hermes/features/native_monitor.py`): Interceptor auf eine
-  Funktion aus dem Trace oder per Adresse/Modul+Offset/Symbol; protokolliert Argumente,
-  Ergebnis, Aufrufer und vergleicht den Speicher hinter Zeiger-Argumenten vor/nach dem
-  Aufruf (bei C++-Methoden: welche Felder von `this` gesetzt werden). In Baldur's Gate
-  (nativ, Linux) noch nicht ausprobiert.
-- Threads, die während des Trace entstehen, werden nicht verfolgt
+- Try it in a real native Linux game (load, playability, quality of the hits)
+- **Done (2026-10-22):** freezing under Wine/Proton fixed, see above. Confirmed with Baldur's
+  Gate under Proton Experimental (1 thread, `Baldur.exe`: 3.2 million calls in the baseline,
+  nothing lost, ended cleanly). The 32-bit path of the native trace under Wine is untested
+  (Shadowrun Returns is Mono, where native tools are blocked); the gadget itself runs in
+  32-bit games (Mono trace in Shadowrun Returns).
+- Callers: the sequence shows the call site of the first call per thread. A list of all
+  callers per function (a count per call site and target) is still missing
+- Connection to existing tools: disassembler view of the function, a hook on the function,
+  later a byte signature (point 5)
+- **Done (2026-10-19):** results sortable and filterable (name, call count, `%3`). Native
+  function monitor (`hermes/features/native_monitor.py`): an Interceptor on a function from
+  the trace or by address/module+offset/symbol; logs arguments, result and caller, and
+  compares the memory behind pointer arguments before and after the call (for C++ methods:
+  which fields of `this` are set). Not yet tried in Baldur's Gate (native, Linux).
+- Threads created during the trace are not followed
 
-### 2. „Welche Adressen fasst diese Instruktion an?"
+### 2. "Which addresses does this instruction touch?"
 
-Umkehrung der Write-Watch: die gefundene Schreibinstruktion hooken und alle Adressen
-sammeln, auf die sie zugreift, jeweils mit Registern und Aufrufer.
+The reverse of the write watch: hook the write instruction that was found and collect all
+the addresses it accesses, each with registers and caller.
 
-- Löst das Problem **geteilten Codes**: Dieselbe Instruktion verringert die HP von
-  Spieler *und* Gegnern. Der Vergleich zeigt, welche Adresse dem Spieler gehört und woran
-  der Code das unterscheidet (Register, Aufrufer, Team-Feld).
-- Der Hook-Agent kann bereits Register lesen und Aufrufer-Signaturen bilden.
+- Solves the problem of **shared code**: the same instruction lowers the HP of the player
+  *and* the enemies. The comparison shows which address belongs to the player and how the
+  code tells them apart (register, caller, team field).
+- The hook agent can already read registers and build caller signatures.
 
-### 3. Strukturen sezieren und vergleichen
+### 3. Dissecting and comparing structures
 
-Steht eine Adresse fest, ist das umgebende Objekt interessant: Max-HP, Mana, Gold und
-Team liegen meist daneben.
+Once an address is known, the surrounding object is of interest: max HP, mana, gold and team
+usually lie next to it.
 
-- **Strukturansicht:** Speicher ab Objektbeginn als Felder deuten (Pointer, Floats,
-  Ints, Strings) mit Typvermutung
-- **Instanzvergleich:** Spieler gegen Gegner oder zwei Zeitpunkte nebeneinander,
-  Unterschiede hervorgehoben
-- **Rückwärtssuche:** Wer zeigt auf dieses Objekt? Führt zum Basiszeiger und zu stabilen
-  Pointerketten.
+- **Structure view:** interpret memory from the start of the object as fields (pointers,
+  floats, ints, strings) with a guessed type
+- **Instance comparison:** player against enemy, or two points in time side by side, with
+  the differences highlighted
+- **Reverse search:** who points to this object? Leads to the base pointer and to stable
+  pointer chains.
 
-### 4. Einstiegspunkte über Strings, RTTI und Symbole
+### 4. Entry points through strings, RTTI and symbols
 
-- **String-Referenzen:** Texte wie „Not enough gold" oder „GoldAmount" im Speicher
-  finden, dann die Code-Stellen, die darauf verweisen. Das ergibt oft direkt die passende
-  Funktion.
-- **C++-RTTI:** Typnamen (MSVC `.?AV…@@`, Itanium `typeinfo`) führen zu vtables, also zu
-  Klassennamen für Objekte im Speicher. Eine Adresse wird dann zu „`CPlayerStats`+0x48".
-- **Symbole:** Native Linux-Spiele sind oft nicht vollständig gestrippt. Exportierte oder
-  Debug-Symbole liefern Funktionsnamen.
+- **String references:** find texts such as "Not enough gold" or "GoldAmount" in memory,
+  then the code locations that refer to them. That often yields the right function directly.
+- **C++ RTTI:** type names (MSVC `.?AV…@@`, Itanium `typeinfo`) lead to vtables, i.e. to
+  class names for objects in memory. An address then becomes "`CPlayerStats`+0x48".
+- **Symbols:** native Linux games are often not fully stripped. Exported or debug symbols
+  provide function names.
 
-### 5. Update-feste Hooks über Byte-Signaturen
+### 5. Update-proof hooks through byte signatures
 
-Für nativen Code ein Muster (AOB) aus den Bytes um die Schreibinstruktion erzeugen, mit
-Platzhaltern für Adressen und Offsets, und nach einem Spiel-Update automatisch neu
-suchen. Für JIT-Code leistet das bereits die Methodenidentität; für native Spiele fehlt
-es.
+For native code, build a pattern (AOB) from the bytes around the write instruction, with
+wildcards for addresses and offsets, and search for it again automatically after a game
+update. For JIT code the method identity already does this; for native games it is missing.
 
-### 6. Weitere Engine-Adapter
+### 6. More engine adapters
 
-Die Adapter-Schicht (`hermes/engines/base.py`, `registry.py`) ist dafür ausgelegt: ein
-Unterpaket mit `EngineAdapter`-Unterklasse und Agent-Teil, der sich per
-`registerEngine(...)` anmeldet, dazu ein Eintrag in `ENGINES`.
+The adapter layer (`hermes/engines/base.py`, `registry.py`) is designed for this: a
+subpackage with an `EngineAdapter` subclass and an agent part that registers itself with
+`registerEngine(...)`, plus an entry in `ENGINES`.
 
-| Engine | Ansatz | Ergebnis |
+| Engine | Approach | Result |
 |---|---|---|
-| **Unreal** | Reflection über GNames/GObjects | alle Klassen, Properties mit Offsets, UFunctions; ähnlich mächtig wie Mono |
-| **IL2CPP** (Unity ohne Mono) | `global-metadata.dat` + `il2cpp_*`-API | wie Mono, aber vorkompiliert; teilt das .NET-Modell des JS-Vertrags |
-| **Godot** | ClassDB / Objekt-Properties | Szenenbaum und Variablen |
-| **Lua-Engines** | `lua_*`-API hooken | Tabellen und Variablen des Skriptzustands |
-| **RPG Maker MV/MZ, Ren'Py** | JavaScript- bzw. Python-Laufzeit | Spielvariablen direkt im Skriptzustand |
+| **Unreal** | Reflection through GNames/GObjects | all classes, properties with offsets, UFunctions; about as powerful as Mono |
+| **IL2CPP** (Unity without Mono) | `global-metadata.dat` + the `il2cpp_*` API | like Mono, but compiled ahead of time; shares the .NET model of the JS contract |
+| **Godot** | ClassDB / object properties | scene tree and variables |
+| **Lua engines** | hook the `lua_*` API | tables and variables of the script state |
+| **RPG Maker MV/MZ, Ren'Py** | JavaScript or Python runtime | game variables directly in the script state |
 
-### 7. Kleinere Ergänzungen zur Suche
+### 7. Smaller additions to the search
 
-- **Gruppensuche:** mehrere Werte mit festen Abständen, z. B. HP 120 und Max-HP 150 vier
-  Bytes weiter. Findet Strukturen sofort.
-- **Spielstand-Diff:** zwei Spielstände vergleichen, um Werte und Layout zu erkennen, und
-  dann im Speicher danach suchen.
+- **Group search:** several values at fixed distances, e.g. HP 120 and max HP 150 four bytes
+  further on. Finds structures at once.
+- **Save game diff:** compare two save games to recognise values and layout, then search
+  memory for them.
 
-### Empfehlung
+### Recommendation
 
-**1 (Stalker-Diff-Trace)** und **2 (Zugriffe einer Instruktion)** bringen engine-unabhängig
-am meisten und nutzen viel Vorhandenes. Bei den Adaptern wäre **Unreal** der nächste große
-Schritt, **IL2CPP** der naheliegendste für Unity-Spiele ohne Mono.
+**1 (Stalker diff trace)** and **2 (accesses of an instruction)** bring the most
+independent of any engine and use much of what exists. Among the adapters, **Unreal** would
+be the next big step, **IL2CPP** the most obvious one for Unity games without Mono.
 
-## Aktivitätsprotokoll (umgesetzt 22.10.2026)
+## Activity log (implemented 2026-10-22)
 
-`hermes/core/activity.py`, `hermes/ui/activity_recorder.py`: `activity.jsonl` neben
-`hermes.log`, eine JSON-Zeile pro Ereignis mit Lauf-ID. Agenten, RPCs, Skriptfehler und das
-Ende einer Session zeichnen Proxys um Fridas Session und Skript in `attach_session` auf
-(alle Frida-Worker gehen dort durch); Sitzungen `sessions.tracked`, Gadget `wine_gadget.connect`,
-Prozess/Engine/Backend das Hauptfenster, Klicks ein Timer, der alle 500 ms neue Bedienelemente
-verbindet (kein Event-Filter: PyQt packt für einen Python-Filter jedes Ziel eines Ereignisses
-ein, auch Widgets im Abbau, und stürzte dabei in sip ab). Thread-Schnappschüsse des Spiels
-(`/proc/<pid>/task/*`: Zustand, CPU, Systemaufruf) 1 s nach dem Start eines nativen Trace,
-bei `stop` und beim Trennen einer Sitzung; Ergebnisse jeder Trace-Phase in Zahlen.
-Ab drei Aufrufen derselben Methode in 2 s werden RPCs zusammengefasst.
+`hermes/core/activity.py`, `hermes/ui/activity_recorder.py`: `activity.jsonl` beside
+`hermes.log`, one JSON line per event with a run id. Agents, RPCs, script errors and the end
+of a session are recorded by proxies around Frida's session and script in `attach_session`
+(all Frida workers go through it); sessions by `sessions.tracked`, the gadget by
+`wine_gadget.connect`, process/engine/backend by the main window, clicks by a timer that
+connects new controls every 500 ms (not an event filter: for a Python filter PyQt wraps the
+receiver of every event, also widgets being destroyed, and crashed in sip doing so).
+Snapshots of the game's threads (`/proc/<pid>/task/*`: state, CPU, system call) 1 s after a
+native trace starts, at `stop` and when a session is cut; the results of every trace phase
+in numbers. From three calls of the same method within 2 s, RPCs are summed up. It can be
+switched off in the settings.
 
-- Gelernt: Ein Agent, dessen `unload` auf einen in Stalkers Code blockierten Thread wartet,
-  zeigt sich als `agent_unloaded … seconds=25`.
-- Offen: ptrace-Backends (Watch, Hooks) melden nur Start und Ende der Sitzung, keine
-  einzelnen Schritte. Ergebnisse einer Phase (Funktionen, `lost`) stehen nicht im Protokoll,
-  nur Dauer und Erfolg des `finish`.
+- Learned: an agent whose `unload` waits for a thread blocked in Stalker's code shows up as
+  `agent_unloaded … seconds=25`.
+- Open: the ptrace backends (watch, hooks) only report the start and end of the session, no
+  single steps.
 
-## Offene Punkte aus der Wine/Proton-Arbeit
+## Settings (implemented 2026-10-22)
 
-- **Methoden-Monitor und Methoden-Hooks unter Wine:** `hermes/features/monitor.py` ordnet
-  Argumente jetzt nach der Konvention der Plattform zu: System V (Linux x86-64), Win64 (rcx,
-  rdx, r8, r9 bzw. xmm0–3 nach Position, 32 Byte Shadow-Space) und x86 (alles auf dem Stack).
-  Unter 32-Bit liegen Float-Ergebnisse in st0 und 64-Bit-Ergebnisse in edx:eax; sie werden
-  gelesen bzw. als nicht lesbar gemeldet, aber nicht ersetzt. Am echten Spiel noch zu prüfen:
-  Win64 mit Kathy Rain 2, x86 mit Shadowrun Returns, besonders Methoden mit Structs und Floats.
-- **Große Traces unter Wine:** Bei Zehntausenden Methoden fror das Spiel beim Kompilieren
-  ein (Monos Garbage Collector hing in `SuspendThread`) oder stürzte beim Hooken in Fridas
-  Code ab (Schreibzugriff auf den Header von `OPENGL32.dll` an `0x7BEB0000`). Umgangen
-  durch Vorauswahl-Filter und eine Obergrenze (`WINE_TRACE_LIMIT`), nicht behoben.
-  Kandidat für einen Bug-Report an Frida mit Minidump.
-- **32-Bit-Wine-Spiele:** Das Windows-Hilfsprogramm lädt das x86-Gadget auch in 32-Bit-Spiele.
-  Die Agents nahmen an drei Stellen 64-Bit an: die Batch-Struktur des Mono-Agents (Shadowrun
-  Returns stürzte bei der COM-Interop-Prüfung ab), `MEMORY_BASIC_INFORMATION` in `watchUnmaps`
-  und `CONTEXT` in `pauseThreads`. Das ist behoben und in einem 32-Bit-Prozess geprüft. Die
-  automatische Backend-Wahl nimmt für 32-Bit-Spiele weiter ptrace. Das betrifft aber nur
-  Überwachung und Hooks; Mono-Funktionen laufen immer über das Gadget. Weitere Annahmen für
-  64-Bit (Monitor-Argumente nach Win64-Konvention, Hook-Engine) sind möglich.
-- **Gadget per Windows-Hilfsprogramm (umgesetzt):** `hermes/core/inject/inject.c`, gebaut mit
-  `build.sh` (MinGW oder zig) als `hermes-inject-x86_64.exe` bzw. `-x86.exe`, lädt das Gadget
-  per `VirtualAllocEx`/`WriteProcessMemory`/`CreateRemoteThread` + `LoadLibraryW`.
-  `hermes/core/wine_helper.py` startet es mit dem `wine` des Spiels (neben bzw. über dessen
-  Preloader) und dessen `WINEPREFIX` und Sync-Variablen. Die Windows-PID ermittelt es über
-  Exe-Name und Erstellzeit. Vorher prüft es, ob der wineserver-Socket des Prefixes in `/tmp`
-  existiert, damit kein zweiter Server startet. `load_gadget` versucht zuerst das
-  Hilfsprogramm und fällt bei 64-Bit auf den ptrace-Loader zurück.
-  - Geprüft im eigenen Prefix mit Protons Wine (64- und 32-Bit-`ping.exe`, mehrere
-    gleichnamige Prozesse).
-  - Offen: ein echtes Steam-Spiel im Steam-Linux-Runtime-Container (Kathy Rain 2). Das
-    Hilfsprogramm läuft außerhalb des Containers und braucht das gemeinsame `/tmp` und
-    `/dev/shm`. Scheitert das, wäre `nsenter` in die Namespaces des Spiels der nächste Schritt.
-- **Gadget-Loader (ptrace, Rückfallweg):** Fängt einen Thread per Software-Breakpoint an einer
-  häufig aufgerufenen Windows-Funktion (Message-Pump, Timing). Spiele, die keine dieser
-  Funktionen aufrufen, brauchen eigene `hot_points`.
-- **Test-Suite:** Ein Durchlauf ist einmal mit einem Speicherabzug abgebrochen; weitere
-  Durchläufe liefen sauber. Ursache nicht untersucht, möglicherweise flaky.
+`hermes/core/settings.py` (definitions, values in this process), table `settings` in
+`hermes.db` (`hermes/db/repository/settings.py`), window `hermes/ui/widgets/settings_dialog.py`
+under Settings → General …: activity log, the trace's method limit under Wine/Proton
+(`wine_trace_limit`, formerly the constant `WINE_TRACE_LIMIT`), from how many methods the trace
+asks first, entries in the traces' call sequence, the refresh interval of tracked addresses,
+the language. The watch backend stays in the menu and in `QSettings`, since it is chosen
+automatically on attach.
+
+## Open points from the Wine/Proton work
+
+- **Method monitor and method hooks under Wine:** `hermes/features/monitor.py` now assigns
+  arguments by the platform's convention: System V (Linux x86-64), Win64 (rcx, rdx, r8, r9 or
+  xmm0–3 by position, 32 bytes of shadow space) and x86 (everything on the stack). Under
+  32 bit, float results are in st0 and 64-bit results in edx:eax; they are read or reported
+  as not readable, but not replaced. Still to check on a real game: Win64 with Kathy Rain 2,
+  x86 with Shadowrun Returns, especially methods with structs and floats.
+- **Large traces under Wine:** with tens of thousands of methods the game froze while
+  compiling (Mono's garbage collector hung in `SuspendThread`) or crashed while hooking in
+  Frida's code (a write to the header of `OPENGL32.dll` at `0x7BEB0000`). Worked around with
+  preselection filters and a limit (the `wine_trace_limit` setting), not fixed. A candidate
+  for a bug report to Frida with a minidump. In Shadowrun Returns a scenario filled the call
+  sequence (100 000 entries, 223 678 dropped); the setting for the entries in the sequence
+  raises that.
+- **32-bit Wine games:** the Windows helper also loads the x86 gadget into 32-bit games. The
+  agents assumed 64 bit in three places: the batch structure of the Mono agent (Shadowrun
+  Returns crashed in the COM interop check), `MEMORY_BASIC_INFORMATION` in `watchUnmaps`, and
+  `CONTEXT` in `pauseThreads`. That is fixed and checked in a 32-bit process. The automatic
+  backend choice still takes ptrace for 32-bit games. That only concerns the watch and hooks,
+  though; Mono features always go through the gadget. Further 64-bit assumptions (monitor
+  arguments by the Win64 convention, the hook engine) are possible.
+- **Gadget through the Windows helper (implemented):** `hermes/core/inject/inject.c`, built
+  with `build.sh` (MinGW or zig) as `hermes-inject-x86_64.exe` or `-x86.exe` into
+  `build/inject/` (not in git; `helper_path` runs `build.sh` once if they are missing), loads the gadget
+  with `VirtualAllocEx`/`WriteProcessMemory`/`CreateRemoteThread` + `LoadLibraryW`.
+  `hermes/core/wine_helper.py` starts it with the game's `wine` (beside or above its
+  preloader) and its `WINEPREFIX` and sync variables. It finds the Windows PID by exe name and
+  creation time. Beforehand it checks that the prefix's wineserver socket exists in `/tmp`, so
+  that no second server starts. `load_gadget` tries the helper first and falls back to the
+  ptrace loader for 64 bit.
+  - Checked in a prefix of its own with Proton's Wine (64- and 32-bit `ping.exe`, several
+    processes of the same name).
+  - Open: a real Steam game in the Steam Linux Runtime container (Kathy Rain 2). The helper
+    runs outside the container and needs the shared `/tmp` and `/dev/shm`. If that fails,
+    `nsenter` into the game's namespaces would be the next step.
+- **Gadget loader (ptrace, fallback):** catches a thread with a software breakpoint at a
+  frequently called Windows function (message pump, timing). Games that call none of these
+  functions need `hot_points` of their own.
+- **Test suite:** one run once aborted with a core dump; further runs were clean. Cause not
+  investigated, possibly flaky.
