@@ -165,3 +165,51 @@ def _exc_info(error):
         raise error
     except KeyError:
         return sys.exc_info()
+
+
+def test_a_log_deleted_while_hermes_runs_is_written_again(log_file):
+    logs.log.warning("before")
+    log_file.unlink()
+    logs.log.warning("after the file was deleted")
+    assert "after the file was deleted" in _text(log_file)
+
+
+def test_a_log_whose_folder_was_deleted_is_written_again(tmp_path):
+    # pylint: disable=import-outside-toplevel
+    import logging
+    import shutil
+
+    folder = tmp_path / "logs"
+    folder.mkdir()
+    handler = logs.ReopeningFileHandler(folder / "hermes.log", encoding="utf-8")
+    logger = logging.getLogger("hermes.test.folder")
+    logger.propagate = False
+    logger.addHandler(handler)
+    try:
+        logger.warning("before")
+        shutil.rmtree(folder)
+        logger.warning("after the folder was deleted")
+    finally:
+        logger.removeHandler(handler)
+        handler.close()
+    assert (folder / "hermes.log").read_text(encoding="utf-8") == "after the folder was deleted\n"
+
+
+def test_a_reopening_log_still_rotates(tmp_path):
+    # pylint: disable=import-outside-toplevel
+    import logging
+
+    handler = logs.ReopeningFileHandler(tmp_path / "small.log", maxBytes=200, backupCount=2,
+                                        encoding="utf-8")
+    logger = logging.getLogger("hermes.test.rotation")
+    logger.propagate = False
+    logger.addHandler(handler)
+    try:
+        for number in range(30):
+            logger.warning("line %02d of a log that is rotated now and then", number)
+    finally:
+        logger.removeHandler(handler)
+        handler.close()
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "small.log", "small.log.1", "small.log.2"]
+    assert "line 29" in (tmp_path / "small.log").read_text(encoding="utf-8")

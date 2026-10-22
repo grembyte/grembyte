@@ -292,6 +292,7 @@
   "log.open": "Open log",
   "log.empty": "(no entries yet)",
   "log.missing": "There is no log file yet: {path}",
+  "log.activity_off": "The activity log is switched off: Settings → General … → “Record the activity log”. Until then nothing is recorded.",
   "log.source_log": "Log",
   "log.source_activity": "Activity",
   "log.source_tooltip": "Log: what went wrong. Activity: what happened in Hermes, in order – the attached process with its details (bitness, native or Wine/Proton, engine, gadget), sessions and agents, RPCs with their duration, clicks, and why a session ended",

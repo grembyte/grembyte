@@ -292,6 +292,7 @@
   "log.open": "Protokoll öffnen",
   "log.empty": "(noch keine Einträge)",
   "log.missing": "Es gibt noch keine Protokolldatei: {path}",
+  "log.activity_off": "Das Aktivitätsprotokoll ist ausgeschaltet: Einstellungen → Allgemein … → „Aktivitätsprotokoll aufzeichnen“. Bis dahin wird nichts aufgezeichnet.",
   "log.source_log": "Protokoll",
   "log.source_activity": "Aktivität",
   "log.source_tooltip": "Protokoll: was schiefging. Aktivität: was in Hermes geschah, der Reihe nach – angehängter Prozess mit Details (Bit-Breite, nativ oder Wine/Proton, Engine, Gadget), Sitzungen und Agenten, RPCs mit Dauer, Klicks, und warum eine Sitzung endete",

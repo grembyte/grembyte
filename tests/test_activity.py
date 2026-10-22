@@ -45,6 +45,27 @@ def test_nothing_is_written_before_setup(tmp_path, monkeypatch):
     assert activity.in_flight() == []
 
 
+def test_an_activity_log_deleted_while_hermes_runs_is_written_again(activity_file):
+    activity.record("click", text="before")
+    activity_file.unlink()
+    activity.record("click", text="after")
+    assert [entry.get("text") for entry in _entries(activity_file)] == ["after"]
+
+
+def test_the_log_window_says_when_the_activity_log_is_off(tmp_path, monkeypatch, qt_app,
+                                                          translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.widgets.log_view import LogDialog
+
+    monkeypatch.setenv("HERMES_LOG_DIR", str(tmp_path))
+    dialog = LogDialog(translations)
+    dialog.source_combo.setCurrentIndex(1)
+    text = dialog.text.toPlainText()
+    assert text.startswith(translations["log.activity_off"])
+    assert "activity.jsonl" in text  # and that there is no file yet
+    dialog.close()
+
+
 def test_a_run_starts_with_what_hermes_runs_on(activity_file):
     import frida  # pylint: disable=import-outside-toplevel
 

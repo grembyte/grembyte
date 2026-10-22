@@ -123,9 +123,15 @@ class LogDialog(QDialog):
         self.problems_check.setEnabled(not activity_shown)
         lines = (activity_lines(path) if activity_shown
                  else read_log(path, self.problems_check.isChecked()))
+        # Switched off in the settings: say so rather than only that the file is missing.
+        note = (self.translations["log.activity_off"]
+                if activity_shown and not activity.enabled() else None)
         if lines is None:
-            self.text.setPlainText(self.translations["log.missing"].format(path=path))
+            missing = self.translations["log.missing"].format(path=path)
+            self.text.setPlainText(missing if note is None else f"{note}\n\n{missing}")
             return
+        if note is not None:
+            lines = [note, ""] + lines
         self.text.setPlainText("\n".join(lines) if lines else self.translations["log.empty"])
         self.text.moveCursor(QTextCursor.MoveOperation.End)
 

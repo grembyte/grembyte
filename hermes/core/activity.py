@@ -25,7 +25,6 @@ says how long it covers.
 import itertools
 import json
 import logging
-import logging.handlers
 import os
 import platform
 import sys
@@ -85,7 +84,7 @@ def setup(directory=None):
     teardown()
     directory = Path(directory) if directory is not None else logs.log_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    handler = logging.handlers.RotatingFileHandler(
+    handler = logs.ReopeningFileHandler(
         directory / ACTIVITY_NAME, maxBytes=MAX_BYTES, backupCount=BACKUPS, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(message)s"))
     _logger.addHandler(handler)

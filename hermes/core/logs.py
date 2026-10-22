@@ -64,6 +64,53 @@ def crash_path():
     return log_dir() / CRASH_NAME
 
 
+class ReopeningFileHandler(logging.handlers.RotatingFileHandler):
+    """A RotatingFileHandler that opens its file again once it was deleted or moved.
+
+    Otherwise a log deleted while Hermes runs keeps being written to the
+    deleted file and shows up again only at the next start. The check is
+    the one of logging's WatchedFileHandler, before every record.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._stat_stream()
+
+    def _stat_stream(self):
+        self._identity = None
+        if self.stream is not None:
+            status = os.fstat(self.stream.fileno())
+            self._identity = (status.st_dev, status.st_ino)
+
+    def _reopen_if_needed(self):
+        if self.stream is None:
+            return
+        try:
+            status = os.stat(self.baseFilename)
+            if (status.st_dev, status.st_ino) == self._identity:
+                return
+        except FileNotFoundError:
+            pass
+        self.stream.flush()
+        self.stream.close()
+        self.stream = None  # should opening fail, the next record tries again
+        Path(self.baseFilename).parent.mkdir(parents=True, exist_ok=True)
+        self.stream = self._open()
+        self._stat_stream()
+
+    def emit(self, record):
+        try:
+            self._reopen_if_needed()
+        except OSError:
+            self.handleError(record)
+            return
+        super().emit(record)
+
+    def doRollover(self):
+        super().doRollover()
+        self._stat_stream()
+
+
 class _Counter(logging.Handler):
     """Counts records of level ERROR and up and tells the subscribers."""
 
@@ -90,7 +137,7 @@ def setup(directory=None):
     for handler in list(log.handlers):
         log.removeHandler(handler)
         handler.close()
-    file_handler = logging.handlers.RotatingFileHandler(
+    file_handler = ReopeningFileHandler(
         directory / LOG_NAME, maxBytes=MAX_BYTES, backupCount=BACKUPS, encoding="utf-8")
     file_handler.setFormatter(logging.Formatter(FORMAT))
     file_handler.setLevel(logging.DEBUG)
