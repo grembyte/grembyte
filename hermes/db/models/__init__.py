@@ -7,5 +7,6 @@ from hermes.db.models.hook import Hook  # noqa: F401
 from hermes.db.models.method_hook import MethodHook  # noqa: F401
 from hermes.db.models.pointer_scan import PointerScan  # noqa: F401
 from hermes.db.models.process import Process  # noqa: F401
+from hermes.db.models.setting import SettingRecord  # noqa: F401
 from hermes.db.models.template import HookTemplate  # noqa: F401
 from hermes.db.models.trace_filter import TraceFilterRecord  # noqa: F401

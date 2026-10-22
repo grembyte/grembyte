@@ -9,9 +9,10 @@ from PyQt6.QtCore import QStandardPaths, QTimer  # pylint: disable=import-error,
 from PyQt6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import activity, logs
+from hermes.core import activity, logs, settings
 from hermes.core.sessions import SESSIONS
 from hermes.db.engine import init_db
+from hermes.db.repository.settings import SettingsRepository
 from hermes.ui.main_window import MainWindow
 from hermes.ui.activity_recorder import UiRecorder
 
@@ -19,15 +20,36 @@ ICON_PATH = Path(__file__).parent / "ui" / "resources" / "icon.svg"
 DESKTOP_FILE_NAME = "hermes-hook"
 
 
+def start_activity_log():
+    try:
+        activity.setup()
+    except OSError as error:
+        logs.log.error("cannot write the activity log: %s", error)
+
+
+def _follow_activity_setting(changed):
+    # Switched on or off in the settings: at once, no restart needed.
+    if "activity_log" not in changed:
+        return
+    if changed["activity_log"]:
+        start_activity_log()
+    else:
+        activity.record("activity_log_off")
+        activity.teardown()
+
+
 def main() -> int:
     """Initialize the database and run the application event loop."""
     try:
         logs.setup()
-        activity.setup()
     except OSError as error:
         print(f"Hermes cannot write its log: {error}", file=sys.stderr)
     logs.install_exception_hooks()
     init_db()
+    settings.load(SettingsRepository().load())
+    if settings.get("activity_log"):
+        start_activity_log()
+    settings.subscribe(_follow_activity_setting)
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
@@ -39,7 +61,7 @@ def main() -> int:
         f"{DESKTOP_FILE_NAME}.desktop",
     ):
         app.setDesktopFileName(DESKTOP_FILE_NAME)
-    window = MainWindow()
+    window = MainWindow(settings.language())
     recorder = UiRecorder(app)
     window.show()
     recorder.start()

@@ -50,13 +50,16 @@ from hermes.core.write_watch import (
 )
 from hermes.db.repository.addresses import AddressRepository, address_pointer
 from hermes.db.repository.hooks import HookRepository
+from hermes.db.repository.settings import SettingsRepository
 from hermes.db.repository.trace_filters import TraceFilterRepository
 from hermes.hooks.engine import HookSpec
 from hermes.hooks.transforms import example_templates
 from hermes.ui.widgets.catalog import CatalogDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
+from hermes.ui.widgets.settings_dialog import SettingsDialog
 from hermes.core import activity, logs, sessions
+from hermes.core import settings as app_settings
 from hermes.ui.widgets import (
     method_monitor,
     native_monitor,
@@ -321,7 +324,7 @@ class MainWindow(QMainWindow):
         if self._watch_backend not in WATCH_BACKENDS:
             self._watch_backend = BACKEND_FRIDA
         self._refresh_timer = QTimer(self)
-        self._refresh_timer.setInterval(1000)
+        self._refresh_timer.setInterval(app_settings.get("refresh_interval_ms"))
         self._refresh_timer.timeout.connect(self._refresh_memory_values)
         self._process_timer = QTimer(self)
         self._process_timer.setInterval(PROCESS_CHECK_INTERVAL_MS)
@@ -362,6 +365,12 @@ class MainWindow(QMainWindow):
         """Create the menu bar and the watch-backend switch."""
         menu_bar = self.menuBar()
         settings_menu = menu_bar.addMenu(self.translations["menu.settings"])
+        settings_menu.setToolTipsVisible(True)
+        self.act_settings = settings_menu.addAction(
+            glyph_icon("⚙"), self.translations["menu.general_settings"])
+        self.act_settings.setToolTip(self.translations["menu.general_settings_tooltip"])
+        self.act_settings.triggered.connect(self._open_settings)
+        settings_menu.addSeparator()
         # "&&" keeps Qt from reading the "&" as a mnemonic marker.
         backend_menu = settings_menu.addMenu(
             self.translations["menu.watch_backend"].replace("&", "&&"))
@@ -409,6 +418,16 @@ class MainWindow(QMainWindow):
             glyph_icon("◇"), self.translations["menu.native_monitor"])
         self.act_native_monitor.triggered.connect(lambda: self._monitor_native_function())
         self._update_catalog_button()
+
+    def _open_settings(self):
+        """Show the general settings; what changes takes effect at once (or after a restart)."""
+        dialog = SettingsDialog(self.translations, SettingsRepository(), parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._apply_settings(dialog.changed)
+
+    def _apply_settings(self, changed):
+        if "refresh_interval_ms" in changed:
+            self._refresh_timer.setInterval(changed["refresh_interval_ms"])
 
     def _set_watch_backend(self, backend):
         """Apply a backend the user picked by hand and remember it."""

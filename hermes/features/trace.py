@@ -34,7 +34,7 @@ from dataclasses import dataclass
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import activity, logs
+from hermes.core import activity, logs, settings
 from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
 from hermes.features.catalog import CatalogMethod
@@ -43,7 +43,8 @@ from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
 from hermes.core.agent_source import load_agent_source
 
 
-# Calls of the scenario written into the sequence; later ones are only counted.
+# Calls of the scenario written into the sequence by default (setting
+# trace_sequence); later ones are only counted.
 EVENT_CAPACITY = 100_000
 
 # A method ran "clearly more often" in the scenario than in the baseline when
@@ -54,14 +55,11 @@ MIN_EXTRA_CALLS = 3
 
 NEW, MORE, SAME = "new", "more", "same"
 
-_AGENT_SOURCE = ENGINE_AGENT_SOURCE + (
-    load_agent_source(__file__)
-    .replace("EVENT_CAPACITY_VALUE", str(EVENT_CAPACITY))
-)
+_AGENT_TEMPLATE = ENGINE_AGENT_SOURCE + load_agent_source(__file__)
 
 
-def build_agent_source():
-    return _AGENT_SOURCE
+def build_agent_source(event_capacity=EVENT_CAPACITY):
+    return _AGENT_TEMPLATE.replace("EVENT_CAPACITY_VALUE", str(event_capacity))
 
 
 def trace_methods(rows, engine="mono"):
@@ -395,7 +393,7 @@ class TraceWorker(AgentWorker):
         self.engine = resolve_engine(pid, engine)
 
     def agent_source(self):
-        return build_agent_source()
+        return build_agent_source(settings.get("trace_sequence"))
 
     def plan(self, words):
         """Count the methods a trace of ``words`` would hook; expect planned."""

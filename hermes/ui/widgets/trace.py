@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
+from hermes.core import settings
 from hermes.platform import is_wine_process
 from hermes.engines.registry import resolve_engine
 from hermes.features.trace import (
@@ -31,12 +32,11 @@ from hermes.ui.widgets.method_monitor import short_name
 from hermes.ui.widgets.trace_filters import TraceFilterPanel
 
 
-# Above this many methods the trace asks first: Mono compiles them all.
-LARGE_TRACE = 5000
-# Under Wine/Proton no more than this: compiling and hooking tens of
-# thousands of methods there froze or crashed the game (Mono's garbage
-# collector waiting in SuspendThread; Frida's Windows gadget).
-WINE_TRACE_LIMIT = 5000
+# The limits come from the settings (hermes.core.settings):
+# large_trace: above this many methods the trace asks first, Mono compiles them all.
+# wine_trace_limit: under Wine/Proton no more than this (0: no limit): compiling
+# and hooking tens of thousands of methods there froze or crashed the game
+# (Mono's garbage collector waiting in SuspendThread; Frida's Windows gadget).
 
 _R_ORDER, _R_METHOD, _R_CALLS, _R_RATE, _R_BASELINE, _R_VERDICT = range(6)
 _ROW_COLUMNS = (
@@ -268,7 +268,8 @@ class TraceDialog(QDialog):
         self.translations = translations
         self.pid = pid
         self.engine = resolve_engine(pid, engine)
-        self.limit = WINE_TRACE_LIMIT if is_wine_process(pid) else None
+        self.limit = (settings.get("wine_trace_limit") or None) if is_wine_process(pid) else None
+        self.large = settings.get("large_trace")
         self._filter_repository = filter_repository
         self.methods = []
         self.baseline = None
@@ -463,7 +464,7 @@ class TraceDialog(QDialog):
             self.status_label.setText(self.translations["trace.wine_limit"].format(
                 count=count, limit=self.limit))
             return False
-        if count > LARGE_TRACE and not self._confirm_large(count):
+        if count > self.large and not self._confirm_large(count):
             self.status_label.setText("")
             return False
         return True
@@ -483,7 +484,7 @@ class TraceDialog(QDialog):
         self.choice_label.setText(text)
 
     def _confirm_large(self, count):
-        """Whether to trace ``count`` methods, more than LARGE_TRACE."""
+        """Whether to trace ``count`` methods, more than ``self.large``."""
         answer = QMessageBox.question(
             self, self._title(),
             self.translations["trace.confirm_large"].format(count=count))

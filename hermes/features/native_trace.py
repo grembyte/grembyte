@@ -32,7 +32,7 @@ from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-m
 
 import threading
 
-from hermes.core import activity, sessions
+from hermes.core import activity, sessions, settings
 from hermes.platform import is_wine_process, read_mappings
 from hermes.features.trace import AgentWorker
 from hermes.core.agent_source import load_agent_source
@@ -40,24 +40,34 @@ from hermes.core.agent_source import load_agent_source
 
 # Functions the CModule's table can hold (a power of two; 17 bytes each).
 FUNCTION_CAPACITY = 1 << 19
-# (function, thread) pairs it notes first calls of (a power of two; 12 bytes each)
+# (function, thread) pairs it notes first calls of at least (a power of two;
+# 12 bytes each); twice the sequence's capacity when that is larger
 FIRST_CAPACITY = 1 << 19
-# First calls written into the sequence; later ones are only counted.
+# First calls written into the sequence by default (setting trace_sequence);
+# later ones are only counted.
 EVENT_CAPACITY = 100_000
 # How long ``finish`` may look up function names.
 SYMBOL_BUDGET_MS = 3000
 
-_AGENT_SOURCE = (
+_AGENT_TEMPLATE = (
     load_agent_source(__file__)
     .replace("FUNCTION_CAPACITY_VALUE", str(FUNCTION_CAPACITY))
-    .replace("FIRST_CAPACITY_VALUE", str(FIRST_CAPACITY))
-    .replace("EVENT_CAPACITY_VALUE", str(EVENT_CAPACITY))
     .replace("SYMBOL_BUDGET_VALUE", str(SYMBOL_BUDGET_MS))
 )
 
 
-def build_agent_source():
-    return _AGENT_SOURCE
+def first_capacity(event_capacity):
+    """Entries of the table of first calls for a sequence of ``event_capacity``."""
+    capacity = FIRST_CAPACITY
+    while capacity < 2 * event_capacity:
+        capacity *= 2
+    return capacity
+
+
+def build_agent_source(event_capacity=EVENT_CAPACITY):
+    return (_AGENT_TEMPLATE
+            .replace("FIRST_CAPACITY_VALUE", str(first_capacity(event_capacity)))
+            .replace("EVENT_CAPACITY_VALUE", str(event_capacity)))
 
 
 @dataclass
@@ -211,7 +221,7 @@ class NativeTraceWorker(AgentWorker):
         self._traced = False
 
     def agent_source(self):
-        return build_agent_source()
+        return build_agent_source(settings.get("trace_sequence"))
 
     def inventory(self):
         """List the threads and modules; expect inventory_found."""
