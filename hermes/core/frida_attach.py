@@ -12,6 +12,7 @@ the agents loaded and unloaded, every RPC, script errors, and why the
 session ended. It stands in for Frida's session and script otherwise.
 """
 
+import threading
 import time
 
 import frida
@@ -42,6 +43,16 @@ def attach_session(pid):
     return RecordedSession(session, pid, session_number, kind)
 
 
+FRIDA_THREAD_NAME = "frida-events"
+
+
+def _name_frida_thread():
+    # Frida calls back from a thread of its own, which Python calls "Dummy-<n>".
+    thread = threading.current_thread()
+    if thread.name.startswith("Dummy-"):
+        thread.name = FRIDA_THREAD_NAME
+
+
 class RecordedSession:
     """A Frida session that notes its scripts and its end in the activity log."""
 
@@ -56,6 +67,7 @@ class RecordedSession:
         return getattr(self._session, name)
 
     def _on_detached(self, reason, crash=None):
+        _name_frida_thread()
         fields = {}
         if crash is not None:
             fields["crash"] = {"summary": getattr(crash, "summary", None),
@@ -95,6 +107,7 @@ class RecordedScript:
             original = callback
 
             def callback(message, data):  # pylint: disable=function-redefined
+                _name_frida_thread()
                 if message.get("type") == "error":
                     activity.record("agent_error", **self._fields(),
                                     description=message.get("description"),

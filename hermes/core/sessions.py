@@ -194,23 +194,31 @@ SESSIONS = SessionRegistry()
 
 
 def tracked(kind):
-    """Decorate a worker's ``run``: registered while it runs."""
+    """Decorate a worker's ``run``: registered while it runs.
+
+    The thread is named ``<kind>-<session number>`` meanwhile, so the log
+    tells the workers apart: Python calls a QThread "Dummy-<n>", in the order
+    it first saw the threads.
+    """
     def decorate(run):
         @functools.wraps(run)
         def wrapper(self, *args, **kwargs):
             if not getattr(self, "_failures_logged", False):
                 logs.log_failures(self)
                 self._failures_logged = True
-            SESSIONS.add(self, kind, self.pid)
-            logs.log.info("session %s started (pid %s)", kind, self.pid)
             began = time.monotonic()
             number = activity.session_started(kind, self, self.pid)
+            thread = threading.current_thread()
+            name, thread.name = thread.name, f"{kind}-{number}"
+            SESSIONS.add(self, kind, self.pid)
+            logs.log.info("session %s started (pid %s)", kind, self.pid)
             try:
                 return run(self, *args, **kwargs)
             finally:
                 SESSIONS.remove(self)
                 logs.log.info("session %s ended (pid %s)", kind, self.pid)
                 activity.session_ended(number, kind, self.pid, time.monotonic() - began)
+                thread.name = name
         return wrapper
     return decorate
 

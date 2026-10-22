@@ -134,3 +134,41 @@ def test_counts_frida_agents_in_maps(tmp_path):
 
 def test_duration_text():
     assert [duration_text(s) for s in (4.9, 75, 3725)] == ["4 s", "1:15 min", "1:02 h"]
+
+
+def test_workers_log_under_the_name_of_their_session(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    import logging
+
+    from hermes.core import logs
+
+    class Named(QThread):
+        pid = 4711
+
+        def __init__(self):
+            super().__init__()
+            self.names = []
+
+        @sessions.tracked(sessions.NATIVE_TRACE)
+        def run(self):
+            self.names.append(threading.current_thread().name)
+            logs.log.info("inside")
+
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    logs.log.addHandler(handler)
+    previous = logs.log.level
+    logs.log.setLevel(logging.INFO)
+    worker = Named()
+    try:
+        worker.start()
+        assert worker.wait(5000)
+    finally:
+        logs.log.removeHandler(handler)
+        logs.log.setLevel(previous)
+    name = worker.names[0]
+    assert name.startswith("native_trace-") and name.split("-")[1].isdigit()
+    assert [record.threadName for record in records
+            if record.getMessage() in ("inside", "session native_trace started (pid 4711)",
+                                       "session native_trace ended (pid 4711)")] == [name] * 3
