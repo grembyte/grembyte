@@ -28,7 +28,14 @@ from hermes.features.trace import (
     calls_filter,
     recording_calls,
 )
-from hermes.ui.widgets.method_monitor import short_name
+from hermes.features.catalog import short_name
+from hermes.features.favorites import TRACE
+from hermes.ui.widgets.favorites import (
+    FAVORITE_COLUMN,
+    FAVORITE_COLUMN_KEY,
+    FavoriteColumn,
+    set_up_favorite_column,
+)
 from hermes.ui.widgets.trace_filters import TraceFilterPanel
 
 
@@ -38,22 +45,25 @@ from hermes.ui.widgets.trace_filters import TraceFilterPanel
 # and hooking tens of thousands of methods there froze or crashed the game
 # (Mono's garbage collector waiting in SuspendThread; Frida's Windows gadget).
 
-_R_ORDER, _R_METHOD, _R_CALLS, _R_RATE, _R_BASELINE, _R_VERDICT = range(6)
+_R_FAVORITE, _R_ORDER, _R_METHOD, _R_CALLS, _R_RATE, _R_BASELINE, _R_VERDICT = range(7)
 _ROW_COLUMNS = (
-    "trace.column_order", "trace.column_method", "trace.column_calls",
+    FAVORITE_COLUMN_KEY, "trace.column_order", "trace.column_method", "trace.column_calls",
     "trace.column_rate", "trace.column_baseline", "trace.column_verdict",
 )
-_S_TIME, _S_THREAD, _S_METHOD, _S_CALLER = range(4)
+_S_FAVORITE, _S_TIME, _S_THREAD, _S_METHOD, _S_CALLER = range(5)
 _SEQUENCE_COLUMNS = (
-    "trace.column_time", "trace.column_thread", "trace.column_method", "trace.column_caller",
+    FAVORITE_COLUMN_KEY, "trace.column_time", "trace.column_thread", "trace.column_method", "trace.column_caller",
 )
 
 # States of the window
 _IDLE, _PREPARING, _READY, _RECORDING = range(4)
 
 
-class _TableModel(QAbstractTableModel):
-    """Read-only rows with translated column headers."""
+class _TableModel(FavoriteColumn, QAbstractTableModel):
+    """Read-only rows with translated column headers, the first column the star.
+
+    Every item has a ``method``: the index of its method in ``methods``.
+    """
 
     def __init__(self, translations, columns, parent=None):
         super().__init__(parent)
@@ -81,6 +91,10 @@ class _TableModel(QAbstractTableModel):
 
     def item_at(self, row):
         return self.items[row] if 0 <= row < len(self.items) else None
+
+    def favorite_item(self, row):
+        item = self.item_at(row)
+        return None if item is None else self.methods[item.method]
 
     def method_name(self, index):
         return short_name(self.methods[index].signature)
@@ -116,6 +130,8 @@ class TraceRowModel(_TableModel):
         if column < 0 or column >= len(self.columns):
             return rows
         keys = {
+            _R_FAVORITE: lambda row: (self.favorites is not None
+                                      and self.favorites.is_favorite(self.methods[row.method])),
             _R_ORDER: lambda row: (row.first is None, row.first or 0),
             _R_METHOD: lambda row: self.method_name(row.method).lower(),
             _R_CALLS: lambda row: row.calls,
@@ -138,6 +154,8 @@ class TraceRowModel(_TableModel):
             return None
         row = self.items[index.row()]
         column = index.column()
+        if column == _R_FAVORITE:
+            return self.favorite_data(index.row(), role)
         if role == Qt.ItemDataRole.ToolTipRole and column == _R_METHOD:
             return self.signature(row.method)
         if role == Qt.ItemDataRole.TextAlignmentRole and column in (_R_ORDER, _R_CALLS, _R_RATE,
@@ -169,6 +187,8 @@ class TraceSequenceModel(_TableModel):
             return None
         call = self.items[index.row()]
         column = index.column()
+        if column == _S_FAVORITE:
+            return self.favorite_data(index.row(), role)
         if role == Qt.ItemDataRole.ToolTipRole and column == _S_METHOD:
             return self.signature(call.method)
         if role == Qt.ItemDataRole.ToolTipRole and column == _S_CALLER:
@@ -184,12 +204,14 @@ class TraceSequenceModel(_TableModel):
         return call.caller
 
 
-def trace_table(model, stretch_column, sortable=False):
+def trace_table(model, stretch_column, sortable=False, favorites=None, source=""):
     """A table of trace results: whole rows, one at a time.
 
     ``sortable``: a click on a column header sorts by it; until then the
-    rows keep the model's order.
+    rows keep the model's order. ``favorites``: the FavoriteStore the star
+    column marks the methods in, as found by ``source``.
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     view = QTableView()
     view.setModel(model)
     view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -201,6 +223,7 @@ def trace_table(model, stretch_column, sortable=False):
         header.setSectionResizeMode(
             column, QHeaderView.ResizeMode.Stretch if column == stretch_column
             else QHeaderView.ResizeMode.Interactive)
+    set_up_favorite_column(view, model, favorites, source)
     if sortable:
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         view.setSortingEnabled(True)
@@ -261,7 +284,8 @@ class TraceDialog(QDialog):
     monitor_requested = pyqtSignal(object)
     hook_requested = pyqtSignal(object)
 
-    def __init__(self, translations, pid, parent=None, engine=None, filter_repository=None):
+    def __init__(self, translations, pid, parent=None, engine=None, filter_repository=None,
+                 favorites=None):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
@@ -271,6 +295,7 @@ class TraceDialog(QDialog):
         self.limit = (settings.get("wine_trace_limit") or None) if is_wine_process(pid) else None
         self.large = settings.get("large_trace")
         self._filter_repository = filter_repository
+        self._favorites = favorites
         self.methods = []
         self.baseline = None
         self.scenario = None
@@ -405,8 +430,9 @@ class TraceDialog(QDialog):
         self._show_selection()
 
     def _table(self, model, stretch_column, sortable=False):
-        view = trace_table(model, stretch_column, sortable)
-        view.doubleClicked.connect(lambda _index: self._request_monitor())
+        view = trace_table(model, stretch_column, sortable, self._favorites, TRACE)
+        view.doubleClicked.connect(
+            lambda index: index.column() != FAVORITE_COLUMN and self._request_monitor())
         return view
 
     def _set_state(self, state):

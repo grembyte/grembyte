@@ -9,7 +9,9 @@ from hermes.core.value_types import value_type as get_value_type
 
 PAGE_SIZE = 4096
 
-_MODULE_ADDRESS = re.compile(r"^(?P<module>.+?)\s*\+\s*(?P<offset>(0x)?[0-9a-fA-F]+)$")
+_HEX = re.compile(r"(0x)?[0-9a-fA-F]+", re.IGNORECASE)
+# The last offset of an address expression, e.g. "+0x244" or "- 10"
+_LAST_OFFSET = re.compile(r"\s*(?P<sign>[+-])\s*(?P<offset>(0x)?[0-9a-fA-F]+)\s*$", re.IGNORECASE)
 
 
 class UnknownModuleError(ValueError):
@@ -45,23 +47,49 @@ def read_memory(pid, address, size):
     return bytes(data), readable
 
 
-def parse_address(text, mappings=None):
-    """Parse ``0x1234``, ``1234`` (hex) or ``module+0x10`` into an address.
+def _splits(text):
+    """``(base, offset)`` for every way to read ``text`` as a base and hex offsets.
 
-    Module names need the process ``mappings``. Raises ValueError.
+    The longest base comes first: a module name may hold a ``-`` or ``+``
+    followed by digits (``libfoo-1+0x10``).
+    """
+    base, offset = text, 0
+    yield base, offset
+    while (match := _LAST_OFFSET.search(base)) is not None and match.start() > 0:
+        value = int(match["offset"], 16)
+        offset += value if match["sign"] == "+" else -value
+        base = base[:match.start()].rstrip()
+        yield base, offset
+
+
+def parse_address(text, mappings=None):
+    """Parse an address: ``0x1234``, ``1234`` (hex), ``module+0x10`` or a sum.
+
+    The base, a hex number or a module name, may be followed by any number of
+    hex offsets to add or subtract, e.g. ``0x7f55e9339000+0x244`` or
+    ``game+0x1f0-8``. Module names need the process ``mappings``. Raises
+    ValueError, UnknownModuleError for a module the process has not loaded.
     """
     text = (text or "").strip()
-    match = _MODULE_ADDRESS.match(text)
-    if match is not None and not re.fullmatch(r"(0x)?[0-9a-fA-F]+", match["module"]):
-        bases = module_bases(mappings or [])
-        base = bases.get(match["module"])
-        if base is None:
-            raise UnknownModuleError(match["module"])
-        return base + int(match["offset"], 16)
-    try:
-        return int(text, 16)
-    except ValueError as error:
-        raise ValueError(f"Invalid address: {text!r}") from error
+    bases = None
+    unknown = None
+    for base, offset in _splits(text):
+        if _HEX.fullmatch(base):
+            address = int(base, 16) + offset
+        else:
+            if bases is None:
+                bases = module_bases(mappings or [])
+            if base not in bases:
+                if base != text:
+                    unknown = base  # the shortest such base names the module
+                continue
+            address = bases[base] + offset
+        if address < 0:
+            raise ValueError(f"Negative address: {text!r}")
+        return address
+    if unknown is not None:
+        raise UnknownModuleError(unknown)
+    raise ValueError(f"Invalid address: {text!r}")
 
 
 def describe_address(mappings, address):

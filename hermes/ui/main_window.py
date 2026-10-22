@@ -49,12 +49,14 @@ from hermes.core.write_watch import (
     watch_size_for_type,
 )
 from hermes.db.repository.addresses import AddressRepository, address_pointer
+from hermes.db.repository.favorites import FavoriteRepository
 from hermes.db.repository.hooks import HookRepository
 from hermes.db.repository.settings import SettingsRepository
 from hermes.db.repository.trace_filters import TraceFilterRepository
 from hermes.hooks.engine import HookSpec
 from hermes.hooks.transforms import example_templates
 from hermes.ui.widgets.catalog import CatalogDialog
+from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
 from hermes.ui.widgets.settings_dialog import SettingsDialog
@@ -293,6 +295,11 @@ class MainWindow(QMainWindow):
         self._hook_repository = HookRepository()
         self._trace_filter_repository = TraceFilterRepository()
         self._address_repository = AddressRepository()
+        # Favorites of the program last attached; kept after it exits.
+        self._favorite_store = FavoriteStore(FavoriteRepository(), self)
+        self._favorite_store.failed.connect(lambda message: self.lbl_status.setText(
+            self.translations["hooks.db_failed"].format(message=message)))
+        self._favorites_dialog = None
         self._process_id = None
         self._address_keys = itertools.count(1)
         self._filling_addresses = False
@@ -417,6 +424,13 @@ class MainWindow(QMainWindow):
         self.act_native_monitor = view_menu.addAction(
             glyph_icon("◇"), self.translations["menu.native_monitor"])
         self.act_native_monitor.triggered.connect(lambda: self._monitor_native_function())
+
+        view_menu.addSeparator()
+
+        self.act_favorites = view_menu.addAction(
+            glyph_icon("★"), self.translations["menu.favorites"])
+        self.act_favorites.setToolTip(self.translations["favorites.button_tooltip"])
+        self.act_favorites.triggered.connect(self._open_favorites)
         self._update_catalog_button()
 
     def _open_settings(self):
@@ -1213,6 +1227,9 @@ class MainWindow(QMainWindow):
             action.setEnabled(native)
             action.setToolTip(self.translations[tooltip] if native or self._engine is None
                               else self._native_blocked_text())
+        self.act_favorites.setEnabled(self._favorite_store.process_id is not None)
+        if self._favorites_dialog is not None:
+            self._favorites_dialog.set_attached(self._current_pid is not None)
 
     def _native_tools_allowed(self):
         """Whether the native trace and monitor may run in the attached game."""
@@ -1247,7 +1264,7 @@ class MainWindow(QMainWindow):
         catalog = self._catalog
         if catalog is None:
             catalog = CatalogDialog(self.translations, self._current_pid, parent=self,
-                                    engine=self._engine)
+                                    engine=self._engine, favorites=self._favorite_store)
             catalog.finished.connect(lambda _result: setattr(self, "_catalog", None))
             catalog.monitor_requested.connect(self._monitor_method)
             catalog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -1318,7 +1335,8 @@ class MainWindow(QMainWindow):
         if trace is None:
             trace = TraceDialog(self.translations, self._current_pid, parent=self,
                                 engine=self._engine,
-                                filter_repository=self._trace_filter_repository)
+                                filter_repository=self._trace_filter_repository,
+                                favorites=self._favorite_store)
             trace.finished.connect(lambda _result: setattr(self, "_trace_dialog", None))
             trace.monitor_requested.connect(self._monitor_method)
             if self.hook_panel is not None:
@@ -1339,7 +1357,8 @@ class MainWindow(QMainWindow):
             return
         trace = self._native_trace_dialog
         if trace is None:
-            trace = NativeTraceDialog(self.translations, self._current_pid, parent=self)
+            trace = NativeTraceDialog(self.translations, self._current_pid, parent=self,
+                                      favorites=self._favorite_store)
             trace.finished.connect(lambda _result: setattr(self, "_native_trace_dialog", None))
             trace.memory_requested.connect(self._open_memory_viewer)
             trace.monitor_requested.connect(self._monitor_native_function)
@@ -1348,6 +1367,21 @@ class MainWindow(QMainWindow):
         trace.show()
         trace.raise_()
         trace.activateWindow()
+
+    def _open_favorites(self):
+        """Show the favorite methods and functions of the program."""
+        dialog = self._favorites_dialog
+        if dialog is None:
+            dialog = FavoritesDialog(self.translations, self._favorite_store, parent=self)
+            dialog.method_monitor_requested.connect(self._monitor_method)
+            dialog.native_monitor_requested.connect(self._monitor_native_function)
+            dialog.finished.connect(lambda _result: setattr(self, "_favorites_dialog", None))
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._favorites_dialog = dialog
+        dialog.set_attached(self._current_pid is not None)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _monitor_native_address(self, address):
         """Monitor the instruction at ``address`` (e.g. a write watch's trap PC)."""
@@ -1389,6 +1423,7 @@ class MainWindow(QMainWindow):
             monitor = MethodMonitorDialog(self.translations, self._current_pid, parent=self)
             if self.hook_panel is not None:
                 monitor.hook_requested.connect(self.hook_panel.create_method_hook)
+            monitor.address_requested.connect(self._add_inspected_address)
             monitor.finished.connect(lambda _result: setattr(self, "_method_monitor", None))
             monitor.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._method_monitor = monitor
@@ -1825,6 +1860,7 @@ class MainWindow(QMainWindow):
                 self._process_bits = None
                 self._process_timer.start()
                 self._process_id = process_id
+                self._favorite_store.set_process(process_id)
                 self._load_saved_addresses()
             self._current_proc = self.translations["app.process_display"].format(
                 name=dlg.selected_name, pid=dlg.selected_pid
@@ -2355,6 +2391,17 @@ class MainWindow(QMainWindow):
             {"address": f"0x{address:X}", "address_value": address,
              "type": value_type, "value": ""},
             label,
+        )
+
+    def _add_inspected_address(self, entry):
+        """Put a field of an object in the object inspector on the address list."""
+        if self._current_pid is None:
+            return
+        address = entry["address"]
+        self._add_tracked_address(
+            {"address": f"0x{address:X}", "address_value": address,
+             "type": entry["value_type"], "value": ""},
+            entry["label"],
         )
 
     def _add_tracked_address(self, data, label=None):

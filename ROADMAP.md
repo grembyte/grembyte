@@ -19,6 +19,11 @@ For Unity games with Mono there are also the catalog, the trace (with preselecti
 filters), the method monitor and method hooks, through the engine adapter layer
 (`hermes/engines/`).
 
+Methods and functions found in the catalog, the trace or the native trace can be marked
+with ★ (first table column). Favorites are saved per program at once, so they survive a
+frozen or crashed game; View → "Favorites…" lists them with a note and hands them to the
+method or native function monitor.
+
 ## Proposals, independent of any engine
 
 Sorted by benefit relative to effort.

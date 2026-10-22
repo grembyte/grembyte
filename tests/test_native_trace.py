@@ -226,11 +226,11 @@ def test_native_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, tr
 
         record(dialog.baseline_button, ("tick", 1))
         record(dialog.scenario_button, ("buy", 5))
-        labels = [dialog.row_model.data(dialog.row_model.index(row, 1))
+        labels = [dialog.row_model.data(dialog.row_model.index(row, 2))
                   for row in range(dialog.row_model.rowCount())]
         assert sorted(labels) == ["buy_item", "spend_gold"]
-        assert dialog.row_model.data(dialog.row_model.index(0, 5)) == "neu"
-        assert dialog.sequence_model.data(dialog.sequence_model.index(0, 3)).startswith("game+0x")
+        assert dialog.row_model.data(dialog.row_model.index(0, 6)) == "neu"
+        assert dialog.sequence_model.data(dialog.sequence_model.index(0, 4)).startswith("game+0x")
 
         dialog.rows_view.selectRow(0)
         function = dialog.selected_function()
@@ -331,15 +331,15 @@ def test_rows_sort_by_column_and_filter_by_name_and_calls(qt_app, translations):
     model = NativeRowModel(translations)
 
     def labels():
-        return [model.data(model.index(row, 1)) for row in range(model.rowCount())]
+        return [model.data(model.index(row, 2)) for row in range(model.rowCount())]
 
     model.set_items(functions, rows)
     assert labels() == ["roll_dice", "draw_ui", "0x7f0000"]  # as analyze ordered them
-    model.sort(2, Qt.SortOrder.DescendingOrder)
+    model.sort(3, Qt.SortOrder.DescendingOrder)
     assert labels() == ["draw_ui", "0x7f0000", "roll_dice"]
     model.set_items(functions, rows[:1] + rows[2:])  # the sort stays
     assert labels() == ["0x7f0000", "roll_dice"]
-    model.sort(1)
+    model.sort(2)
     assert labels() == ["0x7f0000", "roll_dice"]
 
     bar = RowFilterBar(translations)

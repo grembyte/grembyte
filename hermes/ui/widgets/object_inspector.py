@@ -1,7 +1,7 @@
 """Object inspector: the fields of a managed object in a Mono game."""
 
-from PyQt6.QtCore import Qt, QTimer  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtGui import QColor, QGuiApplication  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QPushButton,
     QSplitter,
     QTableWidget,
@@ -24,6 +25,8 @@ LIVE_INTERVAL_MS = 500
 
 _FIELD, _TYPE, _VALUE, _OFFSET, _OPEN = range(5)
 _P_NAME, _P_TYPE, _P_VALUE, _P_LINK = range(4)
+# Data role of the offset cell: the field's {address, valueType} (see monitor.js)
+_LOCATION_ROLE = Qt.ItemDataRole.UserRole + 1
 _STATIC = QColor("#8b949e")
 _ERROR = QColor("#f85149")
 # Qt's default link blue is unreadable on the dark theme.
@@ -71,9 +74,15 @@ class ObjectInspectorDialog(QDialog):
     Below the fields, the object's properties (getters) can be evaluated on
     the game's main thread through ``evaluate(target, names, dialog)``; the
     values come back through ``show_properties``.
+
+    A field holding a number can be put on the address list, to watch,
+    change or freeze its value there.
     """
 
     # pylint: disable=too-many-instance-attributes,too-many-arguments
+
+    # {"address": int, "value_type": str, "label": str} to add to the address list
+    address_requested = pyqtSignal(object)
 
     def __init__(self, translations, open_object, target=None, request=None,
                  contents=None, captured=None, evaluate=None, name="", depth=1, parent=None):
@@ -91,6 +100,7 @@ class ObjectInspectorDialog(QDialog):
         self._pending = False
         # property name -> value, once evaluated
         self._property_values = {}
+        self._type_name = "?"
         self._set_window_title("?")
         self.resize(860, 680)
         self._build_ui(live=contents is None)
@@ -114,6 +124,11 @@ class ObjectInspectorDialog(QDialog):
         self.live_check.toggled.connect(self._toggle_live)
         self.refresh_button = QPushButton(self.translations["inspector.refresh"])
         self.refresh_button.clicked.connect(self.refresh)
+        self.add_address_button = QPushButton(self.translations["inspector.add_address"])
+        self.add_address_button.setToolTip(self.translations["inspector.add_address_tooltip"])
+        self.add_address_button.setEnabled(False)
+        self.add_address_button.clicked.connect(lambda: self.add_address(self.table.currentRow()))
+        bar.addWidget(self.add_address_button)
         if live:
             bar.addWidget(self.live_check)
             bar.addWidget(self.refresh_button)
@@ -144,6 +159,11 @@ class ObjectInspectorDialog(QDialog):
         header.resizeSection(_OPEN, link_width(self.table, [self.translations["inspector.open"]]))
         header.resizeSection(_TYPE, 200)
         self.table.cellDoubleClicked.connect(lambda row, _column: self.open_row(row))
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_field_menu)
+        self.table.currentCellChanged.connect(
+            lambda row, *_args: self.add_address_button.setEnabled(
+                self.address_entry(row) is not None))
 
         properties = QWidget()
         properties_layout = QVBoxLayout(properties)
@@ -219,6 +239,58 @@ class ObjectInspectorDialog(QDialog):
         if target:
             self._open_object(target, self, item.text())
 
+    # --- Address list ------------------------------------------------------------
+    def _field_location(self, row):
+        """``(address, value type or None)`` of the field in ``row``; address None if unknown."""
+        item = self.table.item(row, _OFFSET) if row >= 0 else None
+        location = item.data(_LOCATION_ROLE) if item is not None else None
+        if not location or not location.get("address"):
+            return None, None
+        return int(location["address"], 16), location.get("valueType")
+
+    def address_entry(self, row):
+        """What ``address_requested`` sends for the field in ``row``, or None if no number."""
+        address, value_type = self._field_location(row)
+        if address is None or value_type is None:
+            return None
+        # e.g. "CharacterStats.BaseMight"
+        owner = self._type_name.rsplit(".", 1)[-1]
+        field = self.table.item(row, _FIELD).text()
+        if owner == "?":
+            label = field
+        elif field.startswith("[") and owner.endswith("[]"):
+            label = owner[:-2] + field  # an element, e.g. "Int32[3]"
+        else:
+            label = f"{owner}.{field}"
+        return {"address": address, "value_type": value_type, "label": label}
+
+    def add_address(self, row):
+        """Ask to put the field in ``row`` on the address list."""
+        entry = self.address_entry(row)
+        if entry is not None:
+            self.address_requested.emit(entry)
+            self.status_label.setText(self.translations["inspector.address_added"].format(
+                label=entry["label"], address=f"0x{entry['address']:X}",
+                type=entry["value_type"]))
+
+    def _show_field_menu(self, position):
+        row = self.table.rowAt(position.y())
+        if row < 0:
+            return
+        address, _value_type = self._field_location(row)
+        menu = QMenu(self)
+        add = menu.addAction(self.translations["inspector.add_address"])
+        add.setEnabled(self.address_entry(row) is not None)
+        add.triggered.connect(lambda: self.add_address(row))
+        copy = menu.addAction(self.translations["inspector.copy_address"])
+        copy.setEnabled(address is not None)
+        copy.triggered.connect(lambda: QGuiApplication.clipboard().setText(f"0x{address:X}"))
+        open_object = menu.addAction(self.translations["inspector.open"])
+        item = self.table.item(row, _FIELD)
+        open_object.setEnabled(bool(item and item.data(Qt.ItemDataRole.UserRole)))
+        open_object.triggered.connect(lambda: self.open_row(row))
+        menu.exec(self.table.viewport().mapToGlobal(position))
+
     # --- Answers -----------------------------------------------------------------
     def show_contents(self, contents):
         self._pending = False
@@ -234,7 +306,8 @@ class ObjectInspectorDialog(QDialog):
             title += "  ·  " + self.translations["inspector.captured"].format(
                 time=self._captured)
         self.title_label.setText(title)
-        self._set_window_title(contents.get("name", "?"))
+        self._type_name = contents.get("name", "?")
+        self._set_window_title(self._type_name)
         selected = self.table.currentRow()
         self.table.setRowCount(len(fields))
         for row, field in enumerate(fields):
@@ -253,12 +326,17 @@ class ObjectInspectorDialog(QDialog):
                     item.setForeground(_STATIC)
                 self.table.setItem(row, column, item)
             self.table.item(row, _FIELD).setData(Qt.ItemDataRole.UserRole, target)
+            self.table.item(row, _OFFSET).setData(_LOCATION_ROLE, {
+                "address": field.get("address"), "valueType": field.get("valueType")})
+            if field.get("address"):
+                self.table.item(row, _OFFSET).setToolTip(field["address"])
             self.table.removeCellWidget(row, _OPEN)
             if target:
                 self.table.setCellWidget(row, _OPEN, link_label(
                     self.translations["inspector.open"], lambda row=row: self.open_row(row)))
         if 0 <= selected < len(fields):
             self.table.selectRow(selected)
+        self.add_address_button.setEnabled(self.address_entry(self.table.currentRow()) is not None)
 
         self._show_property_names(contents.get("properties", []))
 

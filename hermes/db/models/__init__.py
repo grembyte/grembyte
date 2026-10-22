@@ -3,6 +3,7 @@
 # Import all ORM models so SQLAlchemy's Base.metadata is populated
 # before create_all() is called in init_db().
 from hermes.db.models.address import Address  # noqa: F401
+from hermes.db.models.favorite import FavoriteRecord  # noqa: F401
 from hermes.db.models.hook import Hook  # noqa: F401
 from hermes.db.models.method_hook import MethodHook  # noqa: F401
 from hermes.db.models.pointer_scan import PointerScan  # noqa: F401

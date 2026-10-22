@@ -17,10 +17,18 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 
 from hermes.engines.registry import resolve_engine
 from hermes.features.catalog import CatalogWorker
+from hermes.features.favorites import CATALOG
+from hermes.ui.widgets.favorites import (
+    FAVORITE_COLUMN,
+    FAVORITE_COLUMN_KEY,
+    FavoriteColumn,
+    set_up_favorite_column,
+)
 
 
-_CLASS, _METHOD, _RETURN, _STATIC, _ASSEMBLY = range(5)
+_FAVORITE, _CLASS, _METHOD, _RETURN, _STATIC, _ASSEMBLY = range(6)
 _COLUMNS = (
+    FAVORITE_COLUMN_KEY,
     "catalog.column_class",
     "catalog.column_method",
     "catalog.column_return",
@@ -40,7 +48,7 @@ def matches(words, method):
     return all(word in text for word in words)
 
 
-class CatalogModel(QAbstractTableModel):
+class CatalogModel(FavoriteColumn, QAbstractTableModel):
     """All methods read so far; shows those matching the search."""
 
     def __init__(self, translations, engine, parent=None):
@@ -65,10 +73,15 @@ class CatalogModel(QAbstractTableModel):
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
+        if not index.isValid():
+            return None
+        if index.column() == FAVORITE_COLUMN:
+            return self.favorite_data(index.row(), role)
+        if role != Qt.ItemDataRole.DisplayRole:
             return None
         method = self.visible[index.row()]
         return (
+            None,
             method.class_name,
             f"{method.name} {method.parameters}",
             method.return_type,
@@ -93,6 +106,9 @@ class CatalogModel(QAbstractTableModel):
     def method_at(self, row):
         return self.visible[row] if 0 <= row < len(self.visible) else None
 
+    def favorite_item(self, row):
+        return self.method_at(row)
+
     def _apply(self):
         self.beginResetModel()
         self.visible = [
@@ -115,13 +131,15 @@ class CatalogDialog(QDialog):
     # CatalogMethod to log the calls of (double click or "Monitor")
     monitor_requested = pyqtSignal(object)
 
-    def __init__(self, translations, pid, parent=None, engine=None):
+    def __init__(self, translations, pid, parent=None, engine=None, favorites=None):
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
         self.translations = translations
         self.pid = pid
         self.engine = resolve_engine(pid, engine)
         self.model = CatalogModel(translations, self.engine, self)
+        self._favorites = favorites
         self._assemblies = []
         self._loaded = set()
         self._failed = {}
@@ -171,8 +189,10 @@ class CatalogDialog(QDialog):
         header.resizeSection(_RETURN, 140)
         header.resizeSection(_STATIC, 70)
         header.resizeSection(_ASSEMBLY, 170)
+        set_up_favorite_column(self.view, self.model, self._favorites, CATALOG)
         self.view.selectionModel().currentRowChanged.connect(self._show_details)
-        self.view.doubleClicked.connect(lambda _index: self._request_monitor())
+        self.view.doubleClicked.connect(
+            lambda index: index.column() != FAVORITE_COLUMN and self._request_monitor())
         self.model.modelReset.connect(lambda: self._show_details(QModelIndex()))
         layout.addWidget(self.view, 1)
 

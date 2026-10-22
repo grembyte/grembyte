@@ -8,7 +8,7 @@ import struct
 
 import pytest
 
-from hermes.core.memory import describe_address, parse_address, read_memory
+from hermes.core.memory import UnknownModuleError, describe_address, parse_address, read_memory
 from hermes.platform import read_mappings
 from hermes.platform.linux import parse_maps
 
@@ -53,21 +53,30 @@ def test_read_memory_marks_unmapped_bytes():
 @pytest.mark.parametrize(
     ("text", "expected"),
     [("0x10", 0x10), ("ff", 0xFF), (" 0X7F00 ", 0x7F00), ("game+0x1f0", 0x401F0),
-     ("libfoo.so.6 + 10", 0x7F0010)],
+     ("libfoo.so.6 + 10", 0x7F0010),
+     ("0x7f55e9339000+0x244", 0x7F55E9339244), ("0x1000 + 0x20 - 8", 0x1018),
+     ("game+0x1f0+0x10", 0x40200), ("game-1+0x10", 0x500010), ("game-0x10", 0x3FFF0)],
 )
 def test_parse_address(text, expected):
     mappings = parse_maps([
         "40000-41000 r-xp 00000000 08:01 1 /opt/game/game",
         "7f0000-7f1000 r-xp 00000000 08:01 2 /usr/lib/libfoo.so.6",
+        "500000-501000 r-xp 00000000 08:01 3 /opt/game/game-1",
     ])
 
     assert parse_address(text, mappings) == expected
 
 
-@pytest.mark.parametrize("text", ["", "xyz", "other+0x10"])
+@pytest.mark.parametrize("text", ["", "xyz", "other+0x10", "0x10-0x20", "0x10+", "+0x10"])
 def test_parse_address_rejects_invalid_input(text):
     with pytest.raises(ValueError):
         parse_address(text, [])
+
+
+def test_parse_address_names_the_unknown_module():
+    with pytest.raises(UnknownModuleError) as error:
+        parse_address("other.so+0x10+0x4", [])
+    assert error.value.module == "other.so"
 
 
 def test_describe_address():

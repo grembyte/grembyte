@@ -17,8 +17,10 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 
 from hermes.platform import is_wine_process
+from hermes.features.favorites import NATIVE_TRACE
 from hermes.features.native_trace import NativeTraceWorker, apply_names
 from hermes.features.trace import analyze, recording_calls
+from hermes.ui.widgets.favorites import FAVORITE_COLUMN
 from hermes.ui.widgets.trace import (
     _R_BASELINE,
     _R_CALLS,
@@ -79,12 +81,13 @@ class NativeTraceDialog(QDialog):
     # NativeFunction whose calls to monitor
     monitor_requested = pyqtSignal(object)
 
-    def __init__(self, translations, pid, parent=None):
+    def __init__(self, translations, pid, parent=None, favorites=None):
         super().__init__(parent)
         self.setModal(False)
         self.translations = translations
         self.pid = pid
         self.wine = is_wine_process(pid)
+        self._favorites = favorites
         self.functions = []
         self.baseline = None
         self.scenario = None
@@ -234,8 +237,9 @@ class NativeTraceDialog(QDialog):
         self._show_selection()
 
     def _table(self, model, stretch_column, sortable=False):
-        view = trace_table(model, stretch_column, sortable)
-        view.doubleClicked.connect(lambda _index: self._request_memory())
+        view = trace_table(model, stretch_column, sortable, self._favorites, NATIVE_TRACE)
+        view.doubleClicked.connect(
+            lambda index: index.column() != FAVORITE_COLUMN and self._request_memory())
         return view
 
     def _set_state(self, state):

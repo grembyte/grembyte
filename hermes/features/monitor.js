@@ -145,6 +145,18 @@ const OBJECT_HEADER = 2 * Process.pointerSize;
 const ARRAY_LENGTH = 3 * Process.pointerSize;
 const ARRAY_DATA = 4 * Process.pointerSize;
 
+// Hermes' value type (hermes/core/value_types.py) of a field that holds a
+// number, for the address list; enums count as their base type.
+const VALUE_TYPE_NAMES = {
+  [T.BOOLEAN]: 'uint8', [T.I1]: 'int8', [T.U1]: 'uint8', [T.CHAR]: 'uint16',
+  [T.I2]: 'int16', [T.U2]: 'uint16', [T.I4]: 'int32', [T.U4]: 'uint32',
+  [T.I8]: 'int64', [T.U8]: 'uint64', [T.R4]: 'float', [T.R8]: 'double'
+};
+
+function valueTypeName(type) {
+  return type.byref ? null : (VALUE_TYPE_NAMES[type.kind] || null);
+}
+
 function integer(pointer, bits, signed) {
   const value = BigInt(pointer.toString());
   return (signed ? BigInt.asIntN(bits, value) : BigInt.asUintN(bits, value)).toString();
@@ -286,8 +298,10 @@ function safely(read) {
 // --- Objects --------------------------------------------------------------------
 
 function contents(target) {
-  // { name, address, fields: [{ name, type, offset, static, value }], length? }
-  // of an object, array or struct; throws if it is no object any more.
+  // { name, address, fields: [{ name, type, offset, static, value, address?,
+  // valueType? }], length? } of an object, array or struct; throws if it is
+  // no object any more. A field's ``address`` is where its value is (not for
+  // static fields), ``valueType`` its value type if it holds a number.
   const address = ptr(target.address);
   let klass;
   let base = address;
@@ -309,7 +323,9 @@ function contents(target) {
       result.fields.push({
         name: `[${i}]`, type: layout.element.name, offset: ARRAY_DATA + i * layout.elementSize,
         static: false,
-        value: safely(() => readValue(layout.element, data.add(i * layout.elementSize)))
+        value: safely(() => readValue(layout.element, data.add(i * layout.elementSize))),
+        address: data.add(i * layout.elementSize).toString(),
+        valueType: valueTypeName(layout.element)
       });
     return result;
   }
@@ -319,7 +335,9 @@ function contents(target) {
   for (const field of layout.fields)
     result.fields.push({
       name: field.name, type: field.type.name, offset: field.offset, static: field.static,
-      value: field.static ? { text: '' } : safely(() => readValue(field.type, base.add(field.offset)))
+      value: field.static ? { text: '' } : safely(() => readValue(field.type, base.add(field.offset))),
+      address: field.static ? null : base.add(field.offset).toString(),
+      valueType: field.static ? null : valueTypeName(field.type)
     });
   return result;
 }

@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
+from hermes.features.catalog import short_name
 from hermes.features.monitor import MethodMonitorWorker
 from hermes.ui.widgets.object_inspector import ObjectInspectorDialog, link_label, link_width
 from hermes.ui.widgets.table import set_row_height
@@ -35,12 +36,6 @@ _CALL_COLUMNS = (
     "monitor.column_self", "monitor.column_args", "monitor.column_result",
     "monitor.column_caller",
 )
-
-
-def short_name(signature):
-    """``Class:Method`` of ``Namespace.Class:Method (params)``."""
-    class_name, _, method = signature.split(" (")[0].partition(":")
-    return f"{class_name.rsplit('.', 1)[-1]}:{method}"
 
 
 def call_time(call):
@@ -153,6 +148,8 @@ class MethodMonitorDialog(QDialog):
 
     # CatalogMethod to create a method hook for
     hook_requested = pyqtSignal(object)
+    # a field of an inspected object to put on the address list (see ObjectInspectorDialog)
+    address_requested = pyqtSignal(object)
 
     def __init__(self, translations, pid, parent=None):
         super().__init__(parent)
@@ -530,6 +527,7 @@ class MethodMonitorDialog(QDialog):
 
     def _show_inspector(self, inspector, origin=None):
         self.inspectors.append(inspector)
+        inspector.address_requested.connect(self.address_requested.emit)
         inspector.destroyed.connect(lambda _object, inspector=inspector: self._forget(inspector))
         if origin is not None:
             # Opened from another dialog: a little offset, so both stay visible.

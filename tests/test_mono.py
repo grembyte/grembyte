@@ -1015,14 +1015,23 @@ def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
         assert list(fields) == ["Damage", "Type", "Name", "Owner", "Rolls"]
         assert fields["Damage"]["value"]["text"] == "12.5"
         assert fields["Damage"]["type"] == "System.Single" and fields["Damage"]["offset"] == 0x10
+        # Where each value is, and its value type for the address list
+        base = int(after["target"]["address"], 16)
+        assert int(fields["Damage"]["address"], 16) == base + 0x10
+        assert [fields[name]["valueType"] for name in fields] == [
+            "float", "int32", None, None, None]  # the enum counts as its base type
 
         rolls = inspect(fields["Rolls"]["value"]["target"])
         assert rolls["length"] == 3
         assert [(f["name"], f["value"]["text"]) for f in rolls["fields"]] == [
             ("[0]", "3"), ("[1]", "4"), ("[2]", "5")]
+        first, second = (int(f["address"], 16) for f in rolls["fields"][:2])
+        assert second - first == 4 and rolls["fields"][0]["valueType"] == "int32"
+        assert first == int(rolls["address"], 16) + rolls["fields"][0]["offset"]
         owner = inspect(fields["Owner"]["value"]["target"])
         assert [(f["name"], f["static"], f["value"]["text"]) for f in owner["fields"]] == [
             ("m_CachedPtr", False, "0x0"), ("Health", False, "100"), ("Instances", True, "")]
+        assert owner["fields"][2]["address"] is None  # static
 
         # An address that holds no object is refused instead of read.
         assert "no object" in inspect({"address": "0x10"})
@@ -1116,6 +1125,46 @@ def test_method_monitor_asks_unity_for_names_only_on_its_main_thread(tmp_path, q
         worker.requestInterruption()
         worker.wait(5000)
         target.close()
+
+
+def test_inspector_puts_number_fields_on_the_address_list(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
+
+    contents = {"name": "Game.CharacterStats", "address": "0x7f55e9339000", "fields": [
+        {"name": "BaseMight", "type": "System.Int32", "offset": 0x244, "static": False,
+         "value": {"text": "12"}, "address": "0x7f55e9339244", "valueType": "int32"},
+        {"name": "Owner", "type": "Game.Combat", "offset": 0x20, "static": False,
+         "value": {"text": "Game.Combat@0x2000", "target": {"address": "0x2000"}},
+         "address": "0x7f55e9339020", "valueType": None},
+        {"name": "Cap", "type": "System.Int32", "offset": 0, "static": True,
+         "value": {"text": ""}, "address": None, "valueType": None},
+    ]}
+    dialog = ObjectInspectorDialog(translations, lambda *_: None, contents=contents,
+                                   captured="16:58:56.791")
+    requested = []
+    dialog.address_requested.connect(requested.append)
+    try:
+        assert not dialog.add_address_button.isEnabled()
+        dialog.table.selectRow(0)
+        assert dialog.add_address_button.isEnabled()
+        dialog.add_address_button.click()
+        assert requested == [{"address": 0x7F55E9339244, "value_type": "int32",
+                              "label": "CharacterStats.BaseMight"}]
+        assert "CharacterStats.BaseMight" in dialog.status_label.text()
+        dialog.table.selectRow(1)  # a reference, no number
+        assert not dialog.add_address_button.isEnabled()
+        assert dialog.address_entry(2) is None  # static
+
+        array = ObjectInspectorDialog(translations, lambda *_: None, captured="16:58:56.791",
+                                      contents={"name": "System.Int32[]", "address": "0x3000",
+                                                "length": 1, "fields": [
+            {"name": "[0]", "type": "System.Int32", "offset": 0x20, "static": False,
+             "value": {"text": "3"}, "address": "0x3020", "valueType": "int32"}]})
+        assert array.address_entry(0)["label"] == "Int32[0]"
+        array.close()
+    finally:
+        dialog.close()
 
 
 def test_inspector_shows_recorded_fields_without_reading_again(qt_app, translations):
@@ -1793,13 +1842,13 @@ def test_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, translati
         record(dialog.scenario_button, ("tick", 0), ("add", 2), ("tick", 0))
         assert "davon 1 auffällig" in dialog.status_label.text()
         # Update ran like in the baseline: hidden unless asked for
-        assert [dialog.row_model.data(dialog.row_model.index(row, 1))
+        assert [dialog.row_model.data(dialog.row_model.index(row, 2))
                 for row in range(dialog.row_model.rowCount())] == ["Inventory:AddGold"]
-        assert dialog.row_model.data(dialog.row_model.index(0, 5)) == "neu"
+        assert dialog.row_model.data(dialog.row_model.index(0, 6)) == "neu"
         dialog.notable_check.setChecked(False)
         assert dialog.row_model.rowCount() == 2
         assert dialog.sequence_model.rowCount() == 1
-        assert dialog.sequence_model.data(dialog.sequence_model.index(0, 3)).startswith("target+0x")
+        assert dialog.sequence_model.data(dialog.sequence_model.index(0, 4)).startswith("target+0x")
 
         dialog.sequence_view.selectRow(0)
         assert dialog.selection_label.text() == "Game.Inventory:AddGold (int&,int)"

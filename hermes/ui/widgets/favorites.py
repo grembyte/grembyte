@@ -1,0 +1,345 @@
+"""Favorites: a star column for the tables of methods and functions, and their window.
+
+The catalog, the Mono trace and the native trace show a star in their first
+column; a click on it saves the method or function as a favorite of the
+program (see hermes.features.favorites) or removes it. The favorites window
+lists them, keeps a note for each and hands them to the monitors.
+"""
+
+from PyQt6.QtCore import QObject, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+    QAbstractItemView,
+    QDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
+from sqlalchemy.exc import SQLAlchemyError
+
+from hermes.features.favorites import METHOD, favorite_key, favorite_of
+
+
+# The star column comes first in every table that has one.
+FAVORITE_COLUMN = 0
+FAVORITE_COLUMN_KEY = "favorites.column"
+STAR = "★"
+NO_STAR = "☆"
+
+
+class FavoriteStore(QObject):
+    """The favorites of the program last attached, shared by all windows.
+
+    Keeps the keys in memory, so the tables can ask for every row. Stays
+    with the program after it exits: a game that crashed can still have its
+    favorites looked at.
+    """
+
+    # The set of favorites changed (added or removed)
+    changed = pyqtSignal()
+    # A database error, as text
+    failed = pyqtSignal(str)
+
+    def __init__(self, repository, parent=None):
+        super().__init__(parent)
+        self.repository = repository
+        self.process_id = None
+        self._keys = set()
+
+    def set_process(self, process_id):
+        """Show the favorites of another program (its database id)."""
+        self.process_id = process_id
+        self._keys = set()
+        if process_id is not None:
+            self._keys = {favorite.key for favorite in self.favorites()}
+        self.changed.emit()
+
+    def favorites(self):
+        """The Favorites of the program, oldest first."""
+        if self.process_id is None:
+            return []
+        try:
+            return self.repository.list_favorites(self.process_id)
+        except SQLAlchemyError as error:
+            self.failed.emit(str(error))
+            return []
+
+    def is_favorite(self, item):
+        """Whether a CatalogMethod or NativeFunction is a favorite."""
+        return item is not None and favorite_key(item) in self._keys
+
+    def toggle(self, item, source=""):
+        """Save a CatalogMethod or NativeFunction as a favorite, or remove it; the new state."""
+        if item is None or self.process_id is None:
+            return False
+        key = favorite_key(item)
+        try:
+            if key in self._keys:
+                self.repository.delete_favorite(self.process_id, key)
+                self._keys.discard(key)
+            else:
+                self.repository.add_favorite(self.process_id, favorite_of(item, source))
+                self._keys.add(key)
+        except SQLAlchemyError as error:
+            self.failed.emit(str(error))
+            return key in self._keys
+        self.changed.emit()
+        return key in self._keys
+
+    def remove(self, favorite):
+        """Remove a Favorite."""
+        try:
+            self.repository.delete_favorite(self.process_id, favorite.key)
+        except SQLAlchemyError as error:
+            self.failed.emit(str(error))
+            return
+        self._keys.discard(favorite.key)
+        self.changed.emit()
+
+    def set_note(self, favorite, note):
+        """Change the note of a Favorite."""
+        try:
+            self.repository.set_note(favorite.favorite_id, note)
+        except SQLAlchemyError as error:
+            self.failed.emit(str(error))
+            return
+        favorite.note = note
+
+
+class FavoriteColumn:
+    """For table models whose first column is the star.
+
+    The model sets ``favorites`` (a FavoriteStore or None) and implements
+    ``favorite_item(row)``: the CatalogMethod or NativeFunction of a row.
+    """
+
+    favorites = None
+
+    def favorite_item(self, row):
+        raise NotImplementedError
+
+    def favorite_data(self, row, role):
+        """What the star cell of ``row`` shows for ``role``."""
+        if role == Qt.ItemDataRole.DisplayRole:
+            store = self.favorites
+            return STAR if store is not None and store.is_favorite(self.favorite_item(row)) \
+                else NO_STAR
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return int(Qt.AlignmentFlag.AlignCenter)
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return self.translations["favorites.star_tooltip"]
+        return None
+
+    def favorites_changed(self):
+        """Repaint the stars."""
+        rows = self.rowCount()
+        if rows:
+            self.dataChanged.emit(self.index(0, FAVORITE_COLUMN),
+                                  self.index(rows - 1, FAVORITE_COLUMN))
+
+
+def set_up_favorite_column(view, model, store, source):
+    """Let a click on the star column of ``view`` mark the row's item as a favorite.
+
+    Hides the column without a ``store``.
+    """
+    header = view.horizontalHeader()
+    header.setSectionResizeMode(FAVORITE_COLUMN, QHeaderView.ResizeMode.Fixed)
+    header.resizeSection(FAVORITE_COLUMN, 32)
+    model.favorites = store
+    if store is None:
+        view.setColumnHidden(FAVORITE_COLUMN, True)
+        return
+    store.changed.connect(model.favorites_changed)
+    view.clicked.connect(lambda index: index.column() == FAVORITE_COLUMN and store.toggle(
+        model.favorite_item(index.row()), source))
+
+
+_KIND, _NAME, _LOCATION, _NOTE, _SOURCE, _ADDED = range(6)
+_COLUMNS = (
+    "favorites.column_kind", "favorites.column_name", "favorites.column_location",
+    "favorites.column_note", "favorites.column_source", "favorites.column_added",
+)
+
+
+class FavoritesDialog(QDialog):
+    """The favorites of the program: search, annotate, monitor, remove.
+
+    Not modal. Monitoring needs the game running; without it the list stays
+    readable, e.g. after the game crashed.
+    """
+
+    # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
+
+    # CatalogMethod to log the calls of
+    method_monitor_requested = pyqtSignal(object)
+    # NativeFunction to log the calls of
+    native_monitor_requested = pyqtSignal(object)
+
+    def __init__(self, translations, store, parent=None):
+        super().__init__(parent)
+        self.setModal(False)
+        self.translations = translations
+        self.store = store
+        self.attached = False
+        self._shown = []
+        self._filling = False
+        self.setWindowTitle(translations["favorites.title"])
+        self.resize(1000, 520)
+        self._build_ui()
+        store.changed.connect(self.refresh)
+        self.refresh()
+
+    def _build_ui(self):
+        t = self.translations
+        layout = QVBoxLayout(self)
+        hint = QLabel(t["favorites.hint"])
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #8b949e;")
+        layout.addWidget(hint)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText(t["favorites.search_placeholder"])
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.textChanged.connect(lambda _text: self.refresh())
+        layout.addWidget(self.search_input)
+
+        self.table = QTableWidget(0, len(_COLUMNS))
+        self.table.setHorizontalHeaderLabels([t[column] for column in _COLUMNS])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked
+                                   | QAbstractItemView.EditTrigger.EditKeyPressed)
+        self.table.setWordWrap(False)
+        self.table.verticalHeader().setVisible(False)
+        header = self.table.horizontalHeader()
+        for column in range(len(_COLUMNS)):
+            header.setSectionResizeMode(
+                column, QHeaderView.ResizeMode.Stretch if column in (_NAME, _NOTE)
+                else QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(_KIND, 70)
+        header.resizeSection(_LOCATION, 220)
+        header.resizeSection(_SOURCE, 120)
+        header.resizeSection(_ADDED, 140)
+        self.table.itemChanged.connect(self._on_item_changed)
+        self.table.itemDoubleClicked.connect(self._on_double_click)
+        self.table.currentCellChanged.connect(lambda *_args: self._show_selection())
+        layout.addWidget(self.table, 1)
+
+        actions = QHBoxLayout()
+        self.selection_label = QLabel("")
+        self.selection_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        actions.addWidget(self.selection_label, 1)
+        self.monitor_button = QPushButton(t["favorites.monitor"])
+        self.monitor_button.setObjectName("btn_primary")
+        self.monitor_button.setToolTip(t["favorites.monitor_tooltip"])
+        self.monitor_button.clicked.connect(self._request_monitor)
+        actions.addWidget(self.monitor_button)
+        self.copy_button = QPushButton(t["favorites.copy"])
+        self.copy_button.setToolTip(t["favorites.copy_tooltip"])
+        self.copy_button.clicked.connect(self._copy)
+        actions.addWidget(self.copy_button)
+        self.remove_button = QPushButton(t["favorites.remove"])
+        self.remove_button.clicked.connect(self._remove)
+        actions.addWidget(self.remove_button)
+        layout.addLayout(actions)
+
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+    # --- Content -----------------------------------------------------------------
+    def set_attached(self, attached):
+        """Whether the program runs, so its favorites can be monitored."""
+        self.attached = attached
+        self._show_selection()
+
+    def refresh(self):
+        """Show the favorites anew, keeping the selection."""
+        t = self.translations
+        selected = self.selected_favorite()
+        words = self.search_input.text().lower().split()
+        favorites = self.store.favorites()
+        self._shown = [favorite for favorite in favorites if favorite.matches(words)]
+        self._filling = True
+        self.table.setRowCount(len(self._shown))
+        for row, favorite in enumerate(self._shown):
+            kind = t["favorites.kind_method" if favorite.kind == METHOD else "favorites.kind_native"]
+            location = favorite.location
+            location_tip = location
+            if not favorite.lasting:
+                location += "  ⚠"
+                location_tip = t["favorites.address_only"]
+            added = favorite.created_at.strftime("%Y-%m-%d %H:%M") if favorite.created_at else ""
+            for column, text, tooltip in (
+                    (_KIND, kind, None),
+                    (_NAME, favorite.label, favorite.signature),
+                    (_LOCATION, location, location_tip),
+                    (_NOTE, favorite.note, t["favorites.note_tooltip"]),
+                    (_SOURCE, t.get(f"favorites.source_{favorite.source}", favorite.source),
+                     None),
+                    (_ADDED, added, None)):
+                item = QTableWidgetItem(text)
+                if tooltip:
+                    item.setToolTip(tooltip)
+                if column != _NOTE:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(row, column, item)
+        self._filling = False
+        if selected is not None:
+            for row, favorite in enumerate(self._shown):
+                if favorite.key == selected.key:
+                    self.table.selectRow(row)
+        self.status_label.setText(t["favorites.count"].format(
+            shown=len(self._shown), total=len(favorites)))
+        self._show_selection()
+
+    def selected_favorite(self):
+        row = self.table.currentRow()
+        return self._shown[row] if 0 <= row < len(self._shown) else None
+
+    def _show_selection(self):
+        favorite = self.selected_favorite()
+        self.monitor_button.setEnabled(favorite is not None and self.attached)
+        self.monitor_button.setToolTip(self.translations[
+            "favorites.monitor_tooltip" if self.attached else "favorites.not_attached"])
+        self.copy_button.setEnabled(favorite is not None)
+        self.remove_button.setEnabled(favorite is not None)
+        self.selection_label.setText(favorite.signature if favorite is not None else "")
+
+    # --- Actions -----------------------------------------------------------------
+    def _on_item_changed(self, item):
+        if self._filling or item.column() != _NOTE:
+            return
+        favorite = self._shown[item.row()] if item.row() < len(self._shown) else None
+        if favorite is not None and item.text() != favorite.note:
+            self.store.set_note(favorite, item.text())
+
+    def _on_double_click(self, item):
+        if item.column() != _NOTE:
+            self._request_monitor()
+
+    def _request_monitor(self):
+        favorite = self.selected_favorite()
+        if favorite is None or not self.attached:
+            return
+        if favorite.kind == METHOD:
+            self.method_monitor_requested.emit(favorite.method())
+        else:
+            self.native_monitor_requested.emit(favorite.function())
+
+    def _copy(self):
+        favorite = self.selected_favorite()
+        if favorite is not None:
+            QGuiApplication.clipboard().setText(
+                favorite.signature if favorite.kind == METHOD else favorite.location)
+
+    def _remove(self):
+        favorite = self.selected_favorite()
+        if favorite is not None:
+            self.store.remove(favorite)

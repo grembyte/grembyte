@@ -45,6 +45,12 @@ class CatalogMethod:
                 "token": self.token, "method": self.signature}
 
 
+def short_name(signature):
+    """``Class:Method`` of ``Namespace.Class:Method (params)``."""
+    class_name, _, method = signature.split(" (")[0].partition(":")
+    return f"{class_name.rsplit('.', 1)[-1]}:{method}"
+
+
 def catalog_method_from_identity(identity):
     """A CatalogMethod for a method known by its identity (e.g. of a hook).
 
