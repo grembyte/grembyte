@@ -327,8 +327,31 @@ const mono = (() => {
     return image;
   }
 
+  // mono_method_get_flags: METHOD_ATTRIBUTE_ABSTRACT, _PINVOKE_IMPL and the
+  // implementation flags of code that is not IL (native, runtime, internal call)
+  const METHOD_ABSTRACT = 0x0400;
+  const METHOD_PINVOKE = 0x2000;
+  const IMPL_NOT_IL = 0x0003 | 0x1000;
+
+  function codeless(method) {
+    // Why a method has no code Mono could compile, or null.
+    const flagsOf = (api.catalog || api.invoke || {}).methodFlags;
+    if (flagsOf === undefined)
+      return null;
+    const implFlags = Memory.alloc(4);
+    const flags = flagsOf(method, implFlags);
+    if (flags & METHOD_ABSTRACT)
+      return 'is abstract and has no code of its own: monitor the overrides in its subclasses';
+    if ((flags & METHOD_PINVOKE) || (implFlags.readU32() & IMPL_NOT_IL))
+      return 'is implemented natively, not in IL';
+    return null;
+  }
+
   function compileOnThread(domain, identity) {
     const method = resolveMethod(identity);
+    const reason = codeless(method);
+    if (reason !== null)
+      throw new Error(`${identity.method} ${reason}`);
     const code = codeOf(domain, method);
     if (code === null) {
       const head = splitSignature(identity.method);
