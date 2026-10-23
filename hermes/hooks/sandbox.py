@@ -113,7 +113,8 @@ class TransformSandbox:
         """Call a method hook's ``source`` like the agent would for ``result``.
 
         There are no arguments, objects or game calls here: ``ctx.args`` and
-        ``ctx.refs`` are empty, ``ctx.this`` is null and ``ctx.call`` throws.
+        ``ctx.refs`` are empty, ``ctx.this`` and ``ctx.caller`` are null and
+        ``ctx.call`` throws.
         """
         fn = self._engine.evaluate(f"({source}\n)")
         if fn.isError():
@@ -121,6 +122,7 @@ class TransformSandbox:
         if not fn.isCallable():
             return SandboxResult(error="The source does not evaluate to a function")
         data = {"phase": "after", "result": result, "args": {}, "refs": {}, "this": None,
+                "caller": None,
                 "params": dict(params), "method": "Test", "hookId": 0, "threadId": 0}
         outcome = self._runner.call([fn, self._engine.toScriptValue(data), self._state])
         if outcome.isError():

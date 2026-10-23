@@ -604,6 +604,10 @@ const methodHooks = new Map();
 const hookStats = new Map();
 const hookDebug = [];
 const hookDebugDropped = new Map();
+// Per thread the hooked calls (after the call) that are still running, the
+// innermost last: ctx.caller of a nested hook. A frame whose method left by an
+// exception never sees onLeave; enterFrame drops it once the stack is below it.
+const activeCalls = new Map();
 const MAX_HOOK_DEBUG = 200;
 
 // Objects the scripts see: a managed object (or a struct inside one).
@@ -1008,6 +1012,49 @@ function writeArgument(context, location, type, value, raw) {
     context.sp.add(location.stack).writePointer(pointer);
 }
 
+function callFrame(frames) {
+  return frames === undefined || frames.length === 0 ? null : frames[frames.length - 1].frame;
+}
+
+function enterFrame(threadId, sp, frame) {
+  let frames = activeCalls.get(threadId);
+  if (frames === undefined) {
+    frames = [];
+    activeCalls.set(threadId, frames);
+  }
+  while (frames.length > 0 && frames[frames.length - 1].sp.compare(sp) <= 0)
+    frames.pop();
+  frame.caller = callFrame(frames);
+  frames.push({ sp, frame });
+}
+
+function leaveFrame(threadId, frame) {
+  const frames = activeCalls.get(threadId);
+  if (frames === undefined)
+    return;
+  const index = frames.findIndex(entry => entry.frame === frame);
+  if (index >= 0)
+    frames.length = index;
+  if (frames.length === 0)
+    activeCalls.delete(threadId);
+}
+
+function currentCaller(threadId, sp) {
+  // The innermost hooked call this one runs in (not stale), else null.
+  const frames = activeCalls.get(threadId);
+  if (frames === undefined)
+    return null;
+  while (frames.length > 0 && frames[frames.length - 1].sp.compare(sp) <= 0)
+    frames.pop();
+  return callFrame(frames);
+}
+
+function debugCaller(returnAddress, caller) {
+  // The debug window's caller: the return address and what ctx.caller is.
+  const text = safely(() => ({ text: frameText(returnAddress) })).text;
+  return `${text} · ctx.caller: ${caller === null ? 'null' : `#${caller.hookId} ${caller.method}`}`;
+}
+
 function hookBefore(hook, invocation) {
   // The "before the call" phase: the script may change arguments and fields.
   engine.drainMain();
@@ -1030,6 +1077,7 @@ function hookBefore(hook, invocation) {
     args,
     refs: {},
     this: layout.self === null ? null : objectJs(rawValue(context, layout.self)),
+    caller: currentCaller(invocation.threadId, context.sp),
     result: undefined,
     params: hook.transform.params,
     state: hook.transform.state,
@@ -1070,7 +1118,7 @@ function hookBefore(hook, invocation) {
     pushHookDebug(hook, {
       threadId: invocation.threadId,
       address: '',
-      caller: safely(() => ({ text: frameText(invocation.returnAddress) })).text,
+      caller: debugCaller(invocation.returnAddress, ctx.caller),
       old: '',
       result: text,
       kept: changed.length === 0,
@@ -1096,18 +1144,22 @@ function hookEnter(hook, invocation) {
     if (param.type.byref)
       refs.push([param.name, param.type, raw]);
   });
-  invocation.hookCall = {
+  const frame = {
+    method: hook.signature,
+    hookId: hook.id,
     args,
-    refs,
-    self: layout.self === null ? null : objectJs(rawValue(context, layout.self)),
-    caller: invocation.returnAddress
+    this: layout.self === null ? null : objectJs(rawValue(context, layout.self)),
+    caller: null
   };
+  enterFrame(invocation.threadId, context.sp, frame);
+  invocation.hookCall = { args, refs, frame, returnAddress: invocation.returnAddress };
 }
 
 function hookLeave(hook, invocation, retval) {
   const call = invocation.hookCall;
   if (call === undefined)
     return;
+  leaveFrame(invocation.threadId, call.frame);
   const type = hook.info.returns;
   const isVoid = type.kind === T.VOID && !type.byref;
   const result = isVoid ? undefined
@@ -1121,7 +1173,8 @@ function hookLeave(hook, invocation, retval) {
     phase: 'after',
     args: call.args,
     refs,
-    this: call.self,
+    this: call.frame.this,
+    caller: call.frame.caller,
     result,
     params: hook.transform.params,
     state: hook.transform.state,
@@ -1155,7 +1208,7 @@ function hookLeave(hook, invocation, retval) {
     pushHookDebug(hook, {
       threadId: invocation.threadId,
       address: '',
-      caller: safely(() => ({ text: frameText(call.caller) })).text,
+      caller: debugCaller(call.returnAddress, ctx.caller),
       old: displayText(result),
       result: displayText(kept ? result : returned),
       kept,
