@@ -21,6 +21,7 @@ from hermes.features.favorites import NATIVE_TRACE
 from hermes.features.native_trace import NativeTraceWorker, apply_names
 from hermes.features.trace import analyze, recording_calls
 from hermes.ui.widgets.favorites import FAVORITE_COLUMN
+from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.trace import (
     _R_BASELINE,
     _R_CALLS,
@@ -214,8 +215,7 @@ class NativeTraceDialog(QDialog):
         layout.addWidget(splitter, 1)
 
         actions = QHBoxLayout()
-        self.selection_label = QLabel("")
-        self.selection_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.selection_label = SelectableText()
         actions.addWidget(self.selection_label, 1)
         self.monitor_button = QPushButton(t["native_trace.monitor"])
         self.monitor_button.setObjectName("btn_primary")

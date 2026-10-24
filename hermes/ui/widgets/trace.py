@@ -36,7 +36,9 @@ from hermes.ui.widgets.favorites import (
     FavoriteColumn,
     set_up_favorite_column,
 )
+from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.trace_filters import TraceFilterPanel
+from hermes.ui.widgets.table import resizable_columns
 
 
 # The limits come from the settings (hermes.core.settings):
@@ -224,6 +226,7 @@ def trace_table(model, stretch_column, sortable=False, favorites=None, source=""
             column, QHeaderView.ResizeMode.Stretch if column == stretch_column
             else QHeaderView.ResizeMode.Interactive)
     set_up_favorite_column(view, model, favorites, source)
+    resizable_columns(view)
     if sortable:
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         view.setSortingEnabled(True)
@@ -417,8 +420,7 @@ class TraceDialog(QDialog):
         layout.addWidget(splitter, 1)
 
         actions = QHBoxLayout()
-        self.selection_label = QLabel("")
-        self.selection_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.selection_label = SelectableText()
         actions.addWidget(self.selection_label, 1)
         self.monitor_button = QPushButton(self.translations["trace.monitor"])
         self.monitor_button.setToolTip(self.translations["trace.monitor_tooltip"])

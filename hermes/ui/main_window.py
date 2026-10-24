@@ -23,7 +23,7 @@ from hermes.ui.styles.styles import STYLE
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.glyph_icon import glyph_icon
 from hermes.ui.widgets.process_list import ProcessSelectDialog
-from hermes.ui.widgets.table import set_row_height
+from hermes.ui.widgets.table import resizable_columns, set_row_height
 from hermes.core.pointer import chain_for_static_address, module_bases, resolve_chain
 from hermes.core.freeze import FreezeWorker, FrozenValue
 from hermes.core.scanner import (
@@ -692,6 +692,7 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
             header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
             header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+            resizable_columns(self.result_table)
 
         header = self.result_table.verticalHeader()
         if header is not None:
@@ -949,6 +950,7 @@ class MainWindow(QMainWindow):
             for col in (1, 2, 3, 4):
                 header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
             header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+            resizable_columns(self.addr_table)
 
         header = self.addr_table.verticalHeader()
         if header is not None:

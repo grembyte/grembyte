@@ -30,7 +30,7 @@ from hermes.hooks.transforms import PARAMETER_NAME, TransformDefinition, Transfo
 from hermes.hooks.sandbox import TransformSandbox
 from hermes.ui.widgets.hooks import TransformForm, format_number, parse_number
 from hermes.ui.widgets.labels import WrappedLabel
-from hermes.ui.widgets.table import set_row_height
+from hermes.ui.widgets.table import resizable_columns, set_row_height
 
 
 NEW_TEMPLATE_SOURCE = """function (ctx) {
@@ -173,6 +173,7 @@ class TemplateDialog(QDialog):
         )
         # text + padding, drop-down arrow and cell margins
         self.param_table.setColumnWidth(_KIND, widest + 64)
+        resizable_columns(self.param_table)
         self.param_table.setMinimumHeight(140)
         layout.addWidget(self.param_table)
         param_buttons = QHBoxLayout()

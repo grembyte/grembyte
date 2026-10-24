@@ -34,8 +34,9 @@ from hermes.features.native_monitor import (
     parse_location,
     signed,
 )
+from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.method_monitor import call_time
-from hermes.ui.widgets.table import set_row_height
+from hermes.ui.widgets.table import resizable_columns, set_row_height
 
 
 # Calls kept in the log; older ones are dropped.
@@ -188,6 +189,7 @@ def _table(translations, columns, stretch_column):
         header.setSectionResizeMode(
             column, QHeaderView.ResizeMode.Stretch if column == stretch_column
             else QHeaderView.ResizeMode.ResizeToContents)
+    resizable_columns(table)
     return table
 
 
@@ -338,6 +340,7 @@ class NativeMonitorDialog(QDialog):
         log_header.resizeSection(_C_RESULT, 130)
         log_header.resizeSection(_C_CALLER, 240)
         log_header.resizeSection(_C_CHANGES, 80)
+        resizable_columns(self.log_view)
         self.log_view.selectionModel().currentRowChanged.connect(self._show_call)
         # A reset (clearing the log) does not report a new current row.
         self.log.modelReset.connect(lambda: self._show_call(QModelIndex()))
@@ -372,8 +375,7 @@ class NativeMonitorDialog(QDialog):
         layout.addWidget(splitter, 1)
 
         actions = QHBoxLayout()
-        self.selection_label = QLabel("")
-        self.selection_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.selection_label = SelectableText()
         actions.addWidget(self.selection_label, 1)
         self.memory_button = QPushButton(t["native_trace.show_memory"])
         self.memory_button.setToolTip(t["native_monitor.show_memory_tooltip"])

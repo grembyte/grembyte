@@ -38,7 +38,7 @@ from hermes.hooks.transforms import (
 )
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.hook_debug import HookDebugWindow
-from hermes.ui.widgets.table import set_row_height
+from hermes.ui.widgets.table import resizable_columns, set_row_height
 
 
 # Upper bound for joining a hook worker from the GUI thread.
@@ -512,6 +512,7 @@ class HookPanel(QGroupBox):
                     column, QHeaderView.ResizeMode.ResizeToContents
                 )
             header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+            resizable_columns(self.table)
         self.table.itemSelectionChanged.connect(self._update_buttons)
         self.table.doubleClicked.connect(self._edit_selected)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

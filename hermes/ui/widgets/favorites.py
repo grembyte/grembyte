@@ -23,6 +23,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy.exc import SQLAlchemyError
 
 from hermes.features.favorites import METHOD, favorite_key, favorite_of
+from hermes.ui.widgets.labels import SelectableText
+from hermes.ui.widgets.table import resizable_columns
 
 
 # The star column comes first in every table that has one.
@@ -226,14 +228,14 @@ class FavoritesDialog(QDialog):
         header.resizeSection(_LOCATION, 220)
         header.resizeSection(_SOURCE, 120)
         header.resizeSection(_ADDED, 140)
+        resizable_columns(self.table)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.itemDoubleClicked.connect(self._on_double_click)
         self.table.currentCellChanged.connect(lambda *_args: self._show_selection())
         layout.addWidget(self.table, 1)
 
         actions = QHBoxLayout()
-        self.selection_label = QLabel("")
-        self.selection_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.selection_label = SelectableText()
         actions.addWidget(self.selection_label, 1)
         self.monitor_button = QPushButton(t["favorites.monitor"])
         self.monitor_button.setObjectName("btn_primary")

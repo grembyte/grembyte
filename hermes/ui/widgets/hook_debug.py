@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QVBoxLayout,
 )
 
-from hermes.ui.widgets.table import set_row_height
+from hermes.ui.widgets.table import resizable_columns, set_row_height
 
 
 # Oldest entries are discarded beyond this many.
@@ -125,6 +125,7 @@ class HookDebugWindow(QDialog):
         for column in range(len(_COLUMNS)):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(len(_COLUMNS) - 1, QHeaderView.ResizeMode.Stretch)
+        resizable_columns(self.table)
         self.table.itemSelectionChanged.connect(self._show_details)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)

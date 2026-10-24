@@ -18,7 +18,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
-from hermes.ui.widgets.table import set_row_height
+from hermes.ui.widgets.labels import SelectableText
+from hermes.ui.widgets.table import resizable_columns, set_row_height
 
 
 LIVE_INTERVAL_MS = 500
@@ -116,8 +117,7 @@ class ObjectInspectorDialog(QDialog):
     def _build_ui(self, live):
         layout = QVBoxLayout(self)
         bar = QHBoxLayout()
-        self.title_label = QLabel("")
-        self.title_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.title_label = SelectableText()
         bar.addWidget(self.title_label, 1)
         self.live_check = QCheckBox(self.translations["inspector.live"])
         self.live_check.setToolTip(self.translations["inspector.live_tooltip"])
@@ -158,6 +158,7 @@ class ObjectInspectorDialog(QDialog):
         header.setSectionResizeMode(_OPEN, QHeaderView.ResizeMode.Fixed)
         header.resizeSection(_OPEN, link_width(self.table, [self.translations["inspector.open"]]))
         header.resizeSection(_TYPE, 200)
+        resizable_columns(self.table)
         self.table.cellDoubleClicked.connect(lambda row, _column: self.open_row(row))
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_field_menu)
@@ -198,6 +199,7 @@ class ObjectInspectorDialog(QDialog):
         properties_header.resizeSection(_P_TYPE, 200)
         properties_header.resizeSection(_P_LINK, link_width(self.properties_table, [
             self.translations["inspector.open"], self.translations["inspector.evaluate"]]))
+        resizable_columns(self.properties_table)
         properties_layout.addWidget(self.properties_table, 1)
 
         splitter = QSplitter(Qt.Orientation.Vertical)

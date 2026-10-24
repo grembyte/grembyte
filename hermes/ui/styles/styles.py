@@ -77,6 +77,8 @@ STYLE = """
         color: #8b949e;
         border: none;
         border-bottom: 1px solid #30363d;
+        /* Shows where a column ends, i.e. where it can be resized */
+        border-right: 1px solid #30363d;
         padding: 6px 8px;
         font-size: 11px;
         font-weight: normal;

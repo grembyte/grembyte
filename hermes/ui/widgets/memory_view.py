@@ -235,6 +235,8 @@ class MemoryViewerDialog(QDialog):
         metrics = self.view.fontMetrics()
         header = self.view.horizontalHeader()
         header.setStretchLastSection(False)
+        # The byte columns are fixed: no lines that suggest resizing them.
+        header.setStyleSheet("QHeaderView::section { border-right: none; }")
         for column in range(BYTES_PER_ROW + 1):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
             header.resizeSection(column, metrics.horizontalAdvance("00") + 12)
