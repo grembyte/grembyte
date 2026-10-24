@@ -1,5 +1,7 @@
 """Tests for the process and hook repository."""
 
+import sys
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -228,6 +230,7 @@ def test_init_db_adds_new_nullable_columns(tmp_path):
     engine.dispose()
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="XDG_DATA_HOME is Linux only")
 def test_default_db_path_follows_environment(monkeypatch, tmp_path):
     # pylint: disable=import-outside-toplevel
     from hermes.db.engine import default_db_path

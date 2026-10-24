@@ -18,6 +18,24 @@ from hermes.ui.activity_recorder import UiRecorder
 
 ICON_PATH = Path(__file__).parent / "ui" / "resources" / "icon.svg"
 DESKTOP_FILE_NAME = "hermes-hook"
+WINDOWS_APP_ID = "hermes-hook.hermes"
+
+
+def _set_windows_app_id():
+    """Give the process an app ID of its own on Windows.
+
+    The taskbar groups windows by program, here python.exe, and shows its
+    icon. With an app ID of its own it shows the window icon instead. It has
+    to be set before the first window opens.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes  # pylint: disable=import-outside-toplevel
+
+    try:
+        ctypes.WinDLL("shell32").SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_ID)
+    except (AttributeError, OSError) as error:
+        logs.log.warning("cannot set the Windows app ID: %s", error)
 
 
 def start_activity_log():
@@ -51,6 +69,7 @@ def main() -> int:
         start_activity_log()
     settings.subscribe(_follow_activity_setting)
 
+    _set_windows_app_id()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setWindowIcon(QIcon(str(ICON_PATH)))

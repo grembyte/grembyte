@@ -313,6 +313,22 @@ def proton_version(loader_path):
     return None
 
 
+def _executable(pid, proc_root):
+    """Path of the program ``pid`` runs, or None."""
+    if sys.platform == "win32":
+        # pylint: disable=import-outside-toplevel
+        import psutil
+
+        try:
+            return psutil.Process(pid).exe() or None
+        except psutil.Error:
+            return None
+    try:
+        return os.readlink(f"{proc_root}/{pid}/exe")
+    except OSError:
+        return None
+
+
 def describe_process(pid, proc_root="/proc"):
     """What is known of ``pid`` without attaching: program, bits, Wine, Frida in it."""
     # pylint: disable=import-outside-toplevel
@@ -320,10 +336,7 @@ def describe_process(pid, proc_root="/proc"):
     from hermes.platform import is_wine_process, program_bits
 
     details = {"pid": pid}
-    try:
-        details["exe"] = os.readlink(f"{proc_root}/{pid}/exe")
-    except OSError:
-        details["exe"] = None
+    details["exe"] = _executable(pid, proc_root)
     wine = is_wine_process(pid, proc_root)
     details["wine"] = wine
     details["loader_bits"] = program_bits(pid, proc_root)
@@ -378,8 +391,13 @@ def thread_states(pid, seconds=0.2, proc_root="/proc", sleep=None):
     a loop runs (``R``, a CPU share near 1); one in a deadlock sleeps
     (``S``) in a system call (``futex`` is 202 on x86-64) with ``pc`` the
     address it called from.
+
+    On Windows there is no state or system call: each entry has the
+    thread's name, if the program gave it one, and its CPU share.
     """
     sleep = sleep or time.sleep
+    if sys.platform == "win32":
+        return _windows_thread_states(pid, seconds, sleep)
     root = Path(proc_root) / str(pid) / "task"
     try:
         tids = sorted(int(name) for name in os.listdir(root))
@@ -402,12 +420,43 @@ def thread_states(pid, seconds=0.2, proc_root="/proc", sleep=None):
     return states
 
 
+def _windows_thread_states(pid, seconds, sleep):
+    # pylint: disable=import-outside-toplevel
+    import psutil
+
+    from hermes.platform.windows import thread_name, thread_times
+
+    try:
+        tids = sorted(thread.id for thread in psutil.Process(pid).threads())
+    except psutil.Error:
+        return []
+    before = {tid: thread_times(tid) for tid in tids}
+    sleep(seconds)
+    states = []
+    for tid in tids:
+        start, end = before[tid], thread_times(tid)
+        if start is None or end is None:
+            continue
+        entry = {"tid": tid}
+        name = thread_name(tid)
+        if name:
+            entry["name"] = name
+        entry["cpu"] = round((end[0] - start[0]) / seconds, 2)
+        states.append(entry)
+    return states
+
+
+def _running(entry):
+    # Without a state (Windows) a thread runs if it used half a CPU or more.
+    return entry["state"] == "R" if "state" in entry else entry["cpu"] >= 0.5
+
+
 def record_threads(pid, why, **fields):
     """Write what the threads of ``pid`` do (see ``thread_states``)."""
     if _handler is None:
         return
     states = thread_states(pid)
-    record("threads", pid=pid, why=why, running=sum(entry["state"] == "R" for entry in states),
+    record("threads", pid=pid, why=why, running=sum(_running(entry) for entry in states),
            threads=states, **fields)
 
 

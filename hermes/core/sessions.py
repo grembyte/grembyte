@@ -11,6 +11,7 @@ callbacks there; ``SessionSignals`` turns that into a Qt signal for widgets.
 """
 
 import functools
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -18,6 +19,7 @@ from dataclasses import dataclass, field
 from PyQt6.QtCore import QObject, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import activity, logs
+from hermes.platform import read_mappings
 
 
 # Kinds of workers (translation keys "sessions.kind_<kind>")
@@ -243,6 +245,14 @@ def frida_gadgets(pid, proc_root="/proc"):
 
 def _mapped_files(pid, markers, proc_root):
     # Count the files mapped from offset 0 whose path holds one of ``markers``.
+    if sys.platform == "win32":
+        # The loaded modules (frida-agent.dll), each from a folder of its own.
+        try:
+            return len({mapping.path for mapping in read_mappings(pid)
+                        if mapping.module is not None
+                        and any(marker in mapping.path for marker in markers)})
+        except OSError:
+            return 0
     try:
         with open(f"{proc_root}/{pid}/maps", encoding="utf-8", errors="replace") as maps:
             return sum(1 for line in maps

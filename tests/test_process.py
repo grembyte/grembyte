@@ -4,6 +4,7 @@ import os
 import subprocess
 
 from hermes.platform.linux import is_wine_process, process_start_time, program_bits
+from tests.test_hooks import linux_only
 
 
 def _write_stat(root, pid, name, state, start_time):
@@ -25,6 +26,7 @@ def test_zombies_and_missing_processes_count_as_exited(tmp_path):
     assert process_start_time(43, tmp_path) is None
 
 
+@linux_only
 def test_running_and_exited_real_process():
     assert process_start_time(os.getpid()) is not None
 
@@ -44,6 +46,7 @@ def _link_exe(root, pid, target):
     (root / str(pid) / "exe").symlink_to(target)
 
 
+@linux_only
 def test_detects_wine_and_proton_loaders(tmp_path):
     proton = "/steam/GE-Proton11-7/files/lib/wine"
     _link_exe(tmp_path, 1, f"{proton}/i386-unix/wine-preloader")
@@ -61,6 +64,7 @@ def test_detects_wine_and_proton_loaders(tmp_path):
     assert not is_wine_process(os.getpid())
 
 
+@linux_only
 def test_reads_the_bitness_of_the_program(tmp_path):
     for pid, header in ((1, b"\x7fELF\x01"), (2, b"\x7fELF\x02"), (3, b"MZ\x90\x00\x03")):
         (tmp_path / str(pid)).mkdir()

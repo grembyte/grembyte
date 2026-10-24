@@ -109,6 +109,7 @@ class NativeCallModel(QAbstractTableModel):
         self.calls = []
         self.names = {}
         self.platform = None
+        self.arch = None
 
     def rowCount(self, parent=QModelIndex()):  # pylint: disable=invalid-name
         return 0 if parent.isValid() else len(self.calls)
@@ -124,7 +125,7 @@ class NativeCallModel(QAbstractTableModel):
     def arguments_text(self, call):
         if "registers" in call:
             return registers_text(call)
-        return ", ".join(f"{argument_name(index, self.platform)}={value_text(value)}"
+        return ", ".join(f"{argument_name(index, self.platform, self.arch)}={value_text(value)}"
                          for index, value in enumerate(call.get("args", [])))
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -524,6 +525,7 @@ class NativeMonitorDialog(QDialog):
     # --- Calls -------------------------------------------------------------------
     def _on_calls(self, calls, counts):
         self.log.platform = self._worker.platform
+        self.log.arch = self._worker.arch
         for monitor_id, numbers in counts.items():
             row = self._row_of(monitor_id)
             if row is not None:
@@ -565,11 +567,11 @@ class NativeMonitorDialog(QDialog):
         table.setRowCount(0)
         if call is None:
             return
-        platform = self._worker.platform
+        platform, arch = self._worker.platform, self._worker.arch
         if "registers" in call:
             rows = [tuple(register) for register in call["registers"]]
         else:
-            rows = [(argument_name(index, platform), value)
+            rows = [(argument_name(index, platform, arch), value)
                     for index, value in enumerate(call.get("args", []))]
             rows.append((self.translations["monitor.column_result"], call["result"]))
         for name, value in rows:
@@ -599,13 +601,13 @@ class NativeMonitorDialog(QDialog):
         table.setRowCount(0)
         if call is None:
             return
-        platform = self._worker.platform
+        platform, arch = self._worker.platform, self._worker.arch
         for change in call.get("changes", []):
             row = table.rowCount()
             table.insertRow(row)
             address = int(change["address"], 16)
             numbers = change_numbers(change["before"], change["after"])
-            table.setItem(row, _X_ARGUMENT, _item(argument_name(change["arg"], platform)))
+            table.setItem(row, _X_ARGUMENT, _item(argument_name(change["arg"], platform, arch)))
             table.setItem(row, _X_OFFSET, _item(f"+0x{change['offset']:x}"))
             table.setItem(row, _X_ADDRESS, _item(change["address"], address))
             table.setItem(row, _X_BEFORE, _item(change["before"]))

@@ -10,7 +10,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, qWarning  # pylint: disab
 from hermes.core import logs
 from hermes.ui.widgets.log_view import read_log
 
-from tests.test_hooks import _wait_for, fixture_qt_app  # pylint: disable=unused-import
+from tests.test_hooks import _wait_for, fixture_qt_app, linux_only  # pylint: disable=unused-import
 
 
 @pytest.fixture(name="log_file")
@@ -167,6 +167,7 @@ def _exc_info(error):
         return sys.exc_info()
 
 
+@linux_only
 def test_a_log_deleted_while_hermes_runs_is_written_again(log_file):
     logs.log.warning("before")
     log_file.unlink()
@@ -174,6 +175,7 @@ def test_a_log_deleted_while_hermes_runs_is_written_again(log_file):
     assert "after the file was deleted" in _text(log_file)
 
 
+@linux_only
 def test_a_log_whose_folder_was_deleted_is_written_again(tmp_path):
     # pylint: disable=import-outside-toplevel
     import logging

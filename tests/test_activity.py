@@ -14,6 +14,7 @@ from tests.test_hooks import (  # pylint: disable=unused-import
     _wait_for,
     fixture_qt_app,
     fixture_translations,
+    linux_only,
     requires_target,
 )
 
@@ -45,6 +46,7 @@ def test_nothing_is_written_before_setup(tmp_path, monkeypatch):
     assert activity.in_flight() == []
 
 
+@linux_only
 def test_an_activity_log_deleted_while_hermes_runs_is_written_again(activity_file):
     activity.record("click", text="before")
     activity_file.unlink()
@@ -144,6 +146,7 @@ def test_sessions_know_their_thread(activity_file):
     assert ended["seconds"] == 1.5
 
 
+@linux_only
 def test_a_native_process_is_described(tmp_path):
     details = activity.describe_process(os.getpid())
     assert details["exe"] == os.path.realpath(sys.executable)

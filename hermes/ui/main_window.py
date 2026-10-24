@@ -1,6 +1,8 @@
 """hermes-hook – Main Window: application main UI (PyQt6)."""
 
 import itertools
+import platform
+import sys
 from dataclasses import dataclass
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -98,6 +100,15 @@ CLOSING_WORKER_TIMEOUT_MS = 3_000
 WRITE_WATCH_STOP_TIMEOUT_MS = 3000
 # Scan results beyond this many rows are kept but not shown in the table.
 RESULT_DISPLAY_LIMIT = 1000
+
+
+def _platform_text():
+    """The system Hermes runs on for the status bar, e.g. ``Windows x86-64``."""
+    system = "Windows" if sys.platform == "win32" else "Linux"
+    machine = platform.machine()
+    if machine.lower() in ("x86_64", "amd64"):
+        machine = "x86-64"
+    return f"{system} {machine}"
 
 
 @dataclass(frozen=True)
@@ -402,6 +413,8 @@ class MainWindow(QMainWindow):
             (BACKEND_FRIDA, "menu.backend_frida"),
             (BACKEND_PTRACE, "menu.backend_ptrace"),
         ):
+            if backend not in WATCH_BACKENDS:
+                continue
             action = backend_menu.addAction(self.translations[label])
             action.setCheckable(True)
             action.setChecked(self._watch_backend == backend)
@@ -1888,7 +1901,8 @@ class MainWindow(QMainWindow):
         self._log_signals.error_logged.connect(self._update_log_button)
         self._error_reporter = ErrorReporter(self.translations, self._open_log, self)
         self._update_log_button()
-        sb.addPermanentWidget(QLabel(self.translations["app.version_status"]))
+        sb.addPermanentWidget(QLabel(
+            self.translations["app.version_status"].format(platform=_platform_text())))
         sb.setSizeGripEnabled(False)
 
     # ------------------------------------------------------------------

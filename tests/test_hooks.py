@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -189,6 +190,10 @@ def _ptrace_allowed():
 requires_target = pytest.mark.skipif(
     shutil.which("gcc") is None or not _ptrace_allowed(),
     reason="needs gcc and ptrace_scope=0 to attach to a test process",
+)
+
+linux_only = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="tests Linux behaviour (/proc, files in use)",
 )
 
 

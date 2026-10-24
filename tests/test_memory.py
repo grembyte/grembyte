@@ -5,7 +5,9 @@ import struct
 
 import pytest
 
+from hermes.core import memory as memory_module
 from hermes.core.memory import write_process_value
+from hermes.platform import linux
 
 
 class FakeMemory:
@@ -52,6 +54,8 @@ def test_write_process_value_encodes_and_writes_typed_data(
         return fake_memory
 
     monkeypatch.setattr(builtins, "open", fake_open)
+    # The fake is /proc: use the Linux backend on every system.
+    monkeypatch.setattr(memory_module, "ProcessMemory", linux.ProcessMemory)
 
     result = write_process_value(123, base_address + 4, value, value_type)
 

@@ -18,6 +18,7 @@ from hermes.core.pointer import (
     static_regions,
 )
 from hermes.platform import Mapping, ProcessMemory, main_module, read_mappings
+from hermes.platform import linux
 from hermes.platform.linux import parse_maps
 from tests.test_hooks import requires_target
 
@@ -281,6 +282,8 @@ def test_pointer_map_ignores_unaligned_values_by_default(monkeypatch):
 
     monkeypatch.setattr(pointer_module, "read_mappings", lambda _pid: mappings)
     monkeypatch.setattr(builtins, "open", fake_open)
+    # The fake is /proc/<pid>/mem: use the Linux backend on every system.
+    monkeypatch.setattr(pointer_module, "ProcessMemory", linux.ProcessMemory)
 
     assert PointerMap.build(123).values.tolist() == [0x1008]
     assert PointerMap.build(123, aligned_values=False).values.tolist() == [0x1004, 0x1008]

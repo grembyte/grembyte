@@ -2,7 +2,8 @@
 
 ``setup`` writes the ``hermes`` loggers to a rotating ``hermes.log`` in
 ``hermes-hook`` in the user's state directory (``$XDG_STATE_HOME`` or
-``~/.local/state`` on Linux; or ``HERMES_LOG_DIR``), lets ``faulthandler`` write the Python stack of every
+``~/.local/state`` on Linux; ``logs`` in ``hermes-hook`` in ``%LOCALAPPDATA%``
+on Windows; or ``HERMES_LOG_DIR``), lets ``faulthandler`` write the Python stack of every
 thread to ``crash.log`` should the process crash or abort, and routes Qt's
 messages into the log.
 
@@ -52,6 +53,11 @@ def log_dir():
     """Where the log files go (not created here)."""
     if os.environ.get("HERMES_LOG_DIR"):
         return Path(os.environ["HERMES_LOG_DIR"])
+    if sys.platform == "win32":
+        # Qt's state location there is %LOCALAPPDATA%\State, shared by all
+        # programs; keep the logs next to the database instead.
+        data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericDataLocation)
+        return Path(data) / "hermes-hook" / "logs"
     state = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericStateLocation)
     return Path(state) / "hermes-hook"
 

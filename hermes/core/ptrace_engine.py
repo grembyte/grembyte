@@ -14,8 +14,10 @@ attached it, so a subclass runs its whole lifecycle inside a ``QThread``'s
 """
 
 import ctypes
+import errno
 import os
 import signal
+import sys
 import time
 
 from capstone import (  # pylint: disable=import-error
@@ -72,15 +74,22 @@ SYNC_WINDOW = 48
 
 _LENGTH_BITS = {1: 0b00, 2: 0b01, 4: 0b11, 8: 0b10}
 
-_libc = ctypes.CDLL("libc.so.6", use_errno=True)
-_libc.ptrace.restype = ctypes.c_long
-_libc.ptrace.argtypes = [
-    ctypes.c_long, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p,
-]
+# ptrace is Linux's. Elsewhere this module still imports (wine_gadget needs
+# its constants), but every ptrace call fails.
+if sys.platform.startswith("linux"):
+    _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    _libc.ptrace.restype = ctypes.c_long
+    _libc.ptrace.argtypes = [
+        ctypes.c_long, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p,
+    ]
+else:
+    _libc = None
 
 
 def _ptrace(request, pid, addr, data):
     """Call ``ptrace`` and raise OSError on failure."""
+    if _libc is None:
+        raise OSError(errno.ENOSYS, f"ptrace is only available on Linux, not {sys.platform}")
     ctypes.set_errno(0)
     result = _libc.ptrace(request, pid, ctypes.c_void_p(addr), ctypes.c_void_p(data))
     err = ctypes.get_errno()

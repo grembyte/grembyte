@@ -20,8 +20,9 @@ regions and asks about processes through these names only:
 ``is_wine_process(pid)``
     Whether the program runs under Wine or Proton.
 
-Only Linux is implemented (linux.py). The ptrace backends and the Wine
-gadget loader in ``hermes.core`` are Linux-only on top of that.
+Linux (linux.py) and Windows (windows.py) are implemented. The ptrace
+backends and the Wine gadget loader in ``hermes.core`` are Linux-only on top
+of that.
 """
 
 import sys
@@ -30,6 +31,15 @@ from hermes.platform.mapping import Mapping
 
 if sys.platform.startswith("linux"):
     from hermes.platform.linux import (
+        ProcessMemory,
+        is_wine_process,
+        main_module,
+        process_start_time,
+        program_bits,
+        read_mappings,
+    )
+elif sys.platform == "win32":
+    from hermes.platform.windows import (
         ProcessMemory,
         is_wine_process,
         main_module,

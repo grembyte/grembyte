@@ -7,6 +7,7 @@ whether it reads and/or writes the target.
 In Mono games (Unity) a hit in JIT code names its C# method (``method``).
 """
 
+import sys
 import threading
 
 import frida
@@ -172,10 +173,11 @@ class WriteWatchWorker(QThread):
         self._detach_reason = reason
 
 
-# Watch backends the UI can switch between.
+# Watch backends the UI can switch between; ptrace is Linux's.
 BACKEND_FRIDA = "frida"
 BACKEND_PTRACE = "ptrace"
-WATCH_BACKENDS = (BACKEND_FRIDA, BACKEND_PTRACE)
+WATCH_BACKENDS = ((BACKEND_FRIDA, BACKEND_PTRACE) if sys.platform.startswith("linux")
+                  else (BACKEND_FRIDA,))
 
 
 def create_watch_worker(backend, pid, address, size, parent=None, reads=False):

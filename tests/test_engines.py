@@ -7,6 +7,7 @@ from hermes.engines.mono.adapter import MonoAdapter
 from hermes.engines.registry import (
     ENGINE_AGENT_SOURCE, ENGINES, detect_engine, engine_by_id, resolve_engine,
 )
+from tests.test_hooks import linux_only
 
 
 @pytest.mark.parametrize("name", [
@@ -28,6 +29,7 @@ def _maps(tmp_path, pid, *paths):
     maps.write_text("".join(f"7f00-7f10 r-xp 00000000 08:01 7 {path}\n" for path in paths))
 
 
+@linux_only
 def test_detects_the_engine_from_the_mapped_runtime(tmp_path):
     _maps(tmp_path, 41, "/usr/lib/libc.so.6",
           "/games/Kathy Rain 2/MonoBleedingEdge/EmbedRuntime/mono-2.0-bdwgc.dll")

@@ -68,16 +68,17 @@ def build_agent_source():
     return _AGENT_SOURCE
 
 
-# Where arguments are passed, by Process.platform (x86-64)
+# Where arguments are passed on x86-64, by Process.platform; 32-bit code
+# passes them on the stack.
 _REGISTERS = {
     "windows": ("rcx", "rdx", "r8", "r9"),
     "linux": ("rdi", "rsi", "rdx", "rcx", "r8", "r9"),
 }
 
 
-def argument_name(index, platform):
+def argument_name(index, platform, arch="x64"):
     """``rdi`` … for the register an argument is passed in, ``arg4`` on the stack."""
-    registers = _REGISTERS.get(platform, ())
+    registers = _REGISTERS.get(platform, ()) if arch == "x64" else ()
     return registers[index] if index < len(registers) else f"arg{index}"
 
 
@@ -140,6 +141,7 @@ class NativeMonitorWorker(AgentWorker):
     def __init__(self, pid, parent=None):
         super().__init__(pid, parent)
         self.platform = None
+        self.arch = None
 
     def agent_source(self):
         return build_agent_source()
@@ -184,6 +186,7 @@ class NativeMonitorWorker(AgentWorker):
         payload = message.get("payload") or {}
         if payload.get("kind") == "ready":
             self.platform = payload.get("platform")
+            self.arch = payload.get("arch")
         super()._on_message(message, data)
 
     def _on_payload(self, kind, payload):

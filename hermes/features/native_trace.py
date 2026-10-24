@@ -30,6 +30,7 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
+import sys
 import threading
 
 from hermes.core import activity, sessions, settings
@@ -175,22 +176,33 @@ def thread_activity(pid, tids, seconds=0.5, proc_root="/proc", sleep=None):
     """{tid: (share of a CPU, whether it ran)} over ``seconds``, for the tids /proc knows.
 
     A thread that only wakes up briefly uses less than a clock tick: whether
-    it ran shows in its context switches.
+    it ran shows in its context switches (on Windows in its CPU cycles).
     """
     # pylint: disable=import-outside-toplevel
     import os
     import time
 
     sleep = sleep or time.sleep
-    ticks_per_second = os.sysconf("SC_CLK_TCK")
-    before = {tid: _thread_times(pid, tid, proc_root) for tid in tids}
+    if sys.platform == "win32":
+        from hermes.platform.windows import thread_times
+        # (CPU seconds, CPU cycles)
+        sample = thread_times
+    else:
+        ticks_per_second = os.sysconf("SC_CLK_TCK")  # pylint: disable=no-member
+
+        def sample(tid):
+            # (CPU seconds, context switches)
+            times = _thread_times(pid, tid, proc_root)
+            return None if times is None else (times[0] / ticks_per_second, times[1])
+
+    before = {tid: sample(tid) for tid in tids}
     sleep(seconds)
     activity = {}
     for tid, start in before.items():
-        end = _thread_times(pid, tid, proc_root)
+        end = sample(tid)
         if start is not None and end is not None:
-            ticks, switches = end[0] - start[0], end[1] - start[1]
-            activity[tid] = (ticks / ticks_per_second / seconds, ticks > 0 or switches > 0)
+            busy, woke = end[0] - start[0], end[1] - start[1]
+            activity[tid] = (busy / seconds, busy > 0 or woke > 0)
     return activity
 
 

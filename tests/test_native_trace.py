@@ -16,6 +16,7 @@ from tests.test_hooks import (  # pylint: disable=unused-import
     _wait_for,
     fixture_qt_app,
     fixture_translations,
+    linux_only,
     requires_target,
 )
 
@@ -349,6 +350,7 @@ def test_wine_unix_code_outside_the_followed_modules_runs_natively():
         ["0x6fff0000", 0x10000], ["0x7f0000000000", 0x100000]]
 
 
+@linux_only
 def test_thread_activity_is_cpu_share_and_wakeups(tmp_path):
     # pylint: disable=import-outside-toplevel
     import os

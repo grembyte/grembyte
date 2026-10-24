@@ -15,6 +15,10 @@ from hermes.core.wine_helper import (
     server_socket,
     wine_loader,
 )
+from tests.test_hooks import linux_only
+
+# Wine and Proton run on Linux only.
+pytestmark = linux_only
 
 
 def _executable(path):

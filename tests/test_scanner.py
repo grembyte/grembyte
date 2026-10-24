@@ -14,6 +14,7 @@ from hermes.core.scanner import (
     MemorySnapshot, ScanResults, ScanWorker, ValueRange, ValueRefreshWorker,
 )
 from hermes.core.value_types import VALUE_TYPES
+from hermes.platform import linux
 from hermes.platform.linux import parse_maps
 
 
@@ -53,6 +54,9 @@ def install_fake_process(monkeypatch, maps, base_address, contents):
         raise AssertionError(f"Unexpected file open: {path}")
 
     monkeypatch.setattr(builtins, "open", fake_open)
+    # The fake is /proc: use the Linux backend on every system.
+    monkeypatch.setattr(scanner, "read_mappings", linux.read_mappings)
+    monkeypatch.setattr(scanner, "ProcessMemory", linux.ProcessMemory)
 
 
 @pytest.mark.parametrize(

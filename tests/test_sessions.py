@@ -11,7 +11,7 @@ from hermes.core import sessions
 from hermes.core.sessions import SESSIONS, frida_agents
 from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog, duration_text
 
-from tests.test_hooks import _wait_for, fixture_qt_app, fixture_translations  # pylint: disable=unused-import
+from tests.test_hooks import _wait_for, fixture_qt_app, fixture_translations, linux_only  # pylint: disable=unused-import
 
 
 class _FakeFridaSession:
@@ -120,6 +120,7 @@ def test_shutdown_gives_up_on_a_worker_that_ignores_everything(qt_app, translati
         qt_app.processEvents()
 
 
+@linux_only
 def test_counts_frida_agents_in_maps(tmp_path):
     maps = tmp_path / "77" / "maps"
     maps.parent.mkdir()

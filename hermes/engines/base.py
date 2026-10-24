@@ -55,9 +55,12 @@ The platform helpers an adapter may use (``spawnThread``, ``watchUnmaps``,
 ``pauseThreads``) are in platform.js.
 """
 
+import ntpath
 import os
+import sys
 
 from hermes.core.agent_source import load_agent_source
+from hermes.platform import read_mappings
 
 # Libraries many games ship that are not the game itself (input, tweening,
 # store and platform SDKs, consoles, serializers). Adapters add them to their
@@ -94,6 +97,12 @@ class EngineAdapter:
 
     def detect(self, pid, proc_root="/proc"):
         """Return whether the process has loaded this engine's runtime."""
+        if sys.platform == "win32":
+            try:
+                return any(self.is_runtime_file(ntpath.basename(mapping.path))
+                           for mapping in read_mappings(pid) if mapping.module is not None)
+            except OSError:
+                return False
         try:
             with open(f"{proc_root}/{pid}/maps", encoding="utf-8", errors="replace") as maps:
                 return any(
