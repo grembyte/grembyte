@@ -6,7 +6,7 @@ program (see hermes.features.favorites) or removes it. The favorites window
 lists them, keeps a note for each and hands them to the monitors.
 """
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import QItemSelectionModel, QObject, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -178,10 +179,10 @@ class FavoritesDialog(QDialog):
 
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
-    # CatalogMethod to log the calls of
-    method_monitor_requested = pyqtSignal(object)
-    # NativeFunction to log the calls of
-    native_monitor_requested = pyqtSignal(object)
+    # [CatalogMethod] to log the calls of
+    method_monitor_requested = pyqtSignal(list)
+    # [NativeFunction] to log the calls of
+    native_monitor_requested = pyqtSignal(list)
 
     def __init__(self, translations, store, parent=None):
         super().__init__(parent)
@@ -214,7 +215,8 @@ class FavoritesDialog(QDialog):
         self.table = QTableWidget(0, len(_COLUMNS))
         self.table.setHorizontalHeaderLabels([t[column] for column in _COLUMNS])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Ctrl and Shift select several, e.g. to monitor them at once.
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked
                                    | QAbstractItemView.EditTrigger.EditKeyPressed)
         self.table.setWordWrap(False)
@@ -231,7 +233,7 @@ class FavoritesDialog(QDialog):
         resizable_columns(self.table)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.itemDoubleClicked.connect(self._on_double_click)
-        self.table.currentCellChanged.connect(lambda *_args: self._show_selection())
+        self.table.itemSelectionChanged.connect(self._show_selection)
         layout.addWidget(self.table, 1)
 
         actions = QHBoxLayout()
@@ -264,7 +266,8 @@ class FavoritesDialog(QDialog):
     def refresh(self):
         """Show the favorites anew, keeping the selection."""
         t = self.translations
-        selected = self.selected_favorite()
+        selected = {favorite.key for favorite in self.selected_favorites()}
+        current = self.selected_favorite()
         words = self.search_input.text().lower().split()
         favorites = self.store.favorites()
         self._shown = [favorite for favorite in favorites if favorite.matches(words)]
@@ -293,26 +296,51 @@ class FavoritesDialog(QDialog):
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(row, column, item)
         self._filling = False
-        if selected is not None:
-            for row, favorite in enumerate(self._shown):
-                if favorite.key == selected.key:
-                    self.table.selectRow(row)
+        self._select({favorite.key for favorite in self._shown} & selected,
+                     current.key if current is not None else None)
         self.status_label.setText(t["favorites.count"].format(
             shown=len(self._shown), total=len(favorites)))
         self._show_selection()
 
+    def _select(self, keys, current_key):
+        """Select the rows of the favorites with ``keys``; ``current_key`` gets the focus."""
+        selection = self.table.selectionModel()
+        flags = (QItemSelectionModel.SelectionFlag.Select
+                 | QItemSelectionModel.SelectionFlag.Rows)
+        self.table.blockSignals(True)
+        self.table.clearSelection()
+        for row, favorite in enumerate(self._shown):
+            if favorite.key in keys:
+                selection.select(self.table.model().index(row, 0), flags)
+            if favorite.key == current_key:
+                selection.setCurrentIndex(self.table.model().index(row, 0),
+                                          QItemSelectionModel.SelectionFlag.NoUpdate)
+        self.table.blockSignals(False)
+
     def selected_favorite(self):
+        """The favorite of the current row (the one last clicked), or None."""
         row = self.table.currentRow()
         return self._shown[row] if 0 <= row < len(self._shown) else None
 
+    def selected_favorites(self):
+        """The selected favorites, in the order of the table."""
+        rows = sorted(index.row() for index in self.table.selectionModel().selectedRows())
+        return [self._shown[row] for row in rows if row < len(self._shown)]
+
     def _show_selection(self):
-        favorite = self.selected_favorite()
-        self.monitor_button.setEnabled(favorite is not None and self.attached)
+        favorites = self.selected_favorites()
+        self.monitor_button.setEnabled(bool(favorites) and self.attached)
         self.monitor_button.setToolTip(self.translations[
             "favorites.monitor_tooltip" if self.attached else "favorites.not_attached"])
-        self.copy_button.setEnabled(favorite is not None)
-        self.remove_button.setEnabled(favorite is not None)
-        self.selection_label.setText(favorite.signature if favorite is not None else "")
+        self.copy_button.setEnabled(bool(favorites))
+        self.remove_button.setEnabled(bool(favorites))
+        if len(favorites) == 1:
+            text = favorites[0].signature
+        elif favorites:
+            text = self.translations["favorites.selected"].format(count=len(favorites))
+        else:
+            text = ""
+        self.selection_label.setText(text)
 
     # --- Actions -----------------------------------------------------------------
     def _on_item_changed(self, item):
@@ -327,21 +355,29 @@ class FavoritesDialog(QDialog):
             self._request_monitor()
 
     def _request_monitor(self):
-        favorite = self.selected_favorite()
-        if favorite is None or not self.attached:
+        if not self.attached:
             return
-        if favorite.kind == METHOD:
-            self.method_monitor_requested.emit(favorite.method())
-        else:
-            self.native_monitor_requested.emit(favorite.function())
+        favorites = self.selected_favorites()
+        methods = [favorite.method() for favorite in favorites if favorite.kind == METHOD]
+        functions = [favorite.function() for favorite in favorites if favorite.kind != METHOD]
+        if methods:
+            self.method_monitor_requested.emit(methods)
+        if functions:
+            self.native_monitor_requested.emit(functions)
 
     def _copy(self):
-        favorite = self.selected_favorite()
-        if favorite is not None:
-            QGuiApplication.clipboard().setText(
-                favorite.signature if favorite.kind == METHOD else favorite.location)
+        favorites = self.selected_favorites()
+        if favorites:
+            QGuiApplication.clipboard().setText("\n".join(
+                favorite.signature if favorite.kind == METHOD else favorite.location
+                for favorite in favorites))
 
     def _remove(self):
-        favorite = self.selected_favorite()
-        if favorite is not None:
+        favorites = self.selected_favorites()
+        if len(favorites) > 1 and QMessageBox.question(
+                self, self.translations["favorites.title"],
+                self.translations["favorites.remove_several"].format(count=len(favorites)),
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        for favorite in favorites:
             self.store.remove(favorite)

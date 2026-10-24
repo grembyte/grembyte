@@ -19,7 +19,7 @@ from hermes.ui.window_buttons import add_window_buttons
 
 ICON_PATH = Path(__file__).parent / "ui" / "resources" / "icon.svg"
 DESKTOP_FILE_NAME = "hermes-hook"
-WINDOWS_APP_ID = "hermes-hook.hermes"
+WINDOWS_APP_ID = "hermes-hook.win"
 
 
 def _set_windows_app_id():

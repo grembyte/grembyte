@@ -1423,8 +1423,8 @@ class MainWindow(QMainWindow):
         dialog = self._favorites_dialog
         if dialog is None:
             dialog = FavoritesDialog(self.translations, self._favorite_store, parent=self)
-            dialog.method_monitor_requested.connect(self._monitor_method)
-            dialog.native_monitor_requested.connect(self._monitor_native_function)
+            dialog.method_monitor_requested.connect(self._monitor_methods)
+            dialog.native_monitor_requested.connect(self._monitor_native_functions)
             dialog.finished.connect(lambda _result: setattr(self, "_favorites_dialog", None))
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._favorites_dialog = dialog
@@ -1438,6 +1438,17 @@ class MainWindow(QMainWindow):
         monitor = self._monitor_native_function()
         if monitor is not None:
             monitor.add_address(address)
+
+    def _monitor_native_functions(self, functions):
+        """Log the calls of several native functions in one monitor."""
+        for function in functions:
+            if self._monitor_native_function(function) is None:
+                break  # no process, or not allowed in this game: said once
+
+    def _monitor_methods(self, methods):
+        """Log the calls of several C# methods in one monitor."""
+        for method in methods:
+            self._monitor_method(method)
 
     def _monitor_native_function(self, function=None):
         """Log the calls of a native function (a NativeFunction of the native trace).

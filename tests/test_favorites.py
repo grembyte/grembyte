@@ -145,8 +145,8 @@ def test_favorites_window_annotates_and_monitors(qt_app, repository, process_id,
     store.toggle(ROLL, NATIVE_TRACE)
     dialog = FavoritesDialog(translations, store)
     methods, functions = [], []
-    dialog.method_monitor_requested.connect(methods.append)
-    dialog.native_monitor_requested.connect(functions.append)
+    dialog.method_monitor_requested.connect(methods.extend)
+    dialog.native_monitor_requested.connect(functions.extend)
 
     assert dialog.table.rowCount() == 2
     dialog.table.selectRow(1)
@@ -166,3 +166,52 @@ def test_favorites_window_annotates_and_monitors(qt_app, repository, process_id,
     dialog.remove_button.click()
     assert [favorite.label for favorite in store.favorites()] == ["roll_dice"]
     assert not store.is_favorite(GOLD)
+
+
+def test_favorites_window_handles_several_at_once(qt_app, repository, process_id, translations,
+                                                  monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PyQt6.QtCore import QItemSelectionModel  # pylint: disable=import-error,no-name-in-module
+    from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
+    from PyQt6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
+    from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
+
+    store = FavoriteStore(repository)
+    store.set_process(process_id)
+    store.toggle(GOLD, CATALOG)
+    store.toggle(ROLL, NATIVE_TRACE)
+    dialog = FavoritesDialog(translations, store)
+    dialog.set_attached(True)
+    methods, functions = [], []
+    dialog.method_monitor_requested.connect(methods.extend)
+    dialog.native_monitor_requested.connect(functions.extend)
+
+    dialog.table.selectAll()
+    assert len(dialog.selected_favorites()) == 2
+    assert dialog.selection_label.text() == "2 Favoriten ausgewählt"
+    dialog.monitor_button.click()
+    assert methods == [GOLD] and functions == [ROLL]
+
+    dialog.copy_button.click()
+    assert QGuiApplication.clipboard().text().splitlines() == [GOLD.signature, "game+0x1000"]
+
+    # A refresh, e.g. after a note was edited, keeps both selected.
+    dialog.table.item(0, 3).setText("Gold")
+    assert len(dialog.selected_favorites()) == 2
+
+    # Removing several asks first.
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *_args: QMessageBox.StandardButton.No)
+    dialog.remove_button.click()
+    assert len(store.favorites()) == 2
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *_args: QMessageBox.StandardButton.Yes)
+    dialog.remove_button.click()
+    assert store.favorites() == []
+
+    # One selected: its signature, no question.
+    store.toggle(GOLD, CATALOG)
+    dialog.table.selectionModel().select(
+        dialog.table.model().index(0, 0),
+        QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
+    assert dialog.selection_label.text() == GOLD.signature
