@@ -378,6 +378,24 @@ const mono = (() => {
   // 'R3.ReactiveProperty`1<int>:set_Value (int)' (e.g. a write watch's hit);
   // their class is bound to the type arguments of that name. Identities made
   // from a catalog entry keep the definition's parameters: '...`1<int>:set_Value (T)'.
+  // Code that all reference types share names its type arguments 'T_REF'
+  // ('Ns.PhaseVM`1<TItem_REF>:OnPointsChanged', e.g. a caller). Any class
+  // bound to reference types there runs that code: one the game derives from
+  // (PhaseVM`1<Ns.ItemVM>, which meets the constraints of T), else object.
+
+  const SHARED_REF = /^[A-Za-z_][\w`]*_REF$/;
+
+  function sharedRef(parsed) {
+    // Whether a parsed type argument is the placeholder of shared code.
+    return parsed.args.length === 0 && SHARED_REF.test(parsed.name);
+  }
+
+  function sharedParams(wanted, bound) {
+    // Whether parameters with 'T_REF' match those of a bound class.
+    const pattern = wanted.split(/([A-Za-z_][\w`]*_REF(?![\w`]))/).map((part, i) =>
+      (i % 2 === 1 ? '.+?' : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('');
+    return new RegExp(`^${pattern}$`).test(bound);
+  }
 
   function resolveMethod(identity) {
     // The method of an identity (on a thread Mono knows).
@@ -397,8 +415,9 @@ const mono = (() => {
     if (head.args.length === 0 || head.name !== parseType(found.head).name)
       throw notFound();
     const method = instanceMethod(definition, head, identity.token);
-    if (wanted.params !== found.params
-        && wanted.params !== (splitSignature(signatureName(method) || '') || {}).params)
+    const bound = (splitSignature(signatureName(method) || '') || {}).params;
+    if (wanted.params !== found.params && wanted.params !== bound
+        && !sharedParams(wanted.params, bound || ''))
       throw notFound();
     return method;
   }
@@ -508,11 +527,22 @@ const mono = (() => {
     // The method ``token`` of the definition's class bound to head.args.
     const g = genericsApi();
     const image = api.classImage(api.methodClass(definition));
+    if (head.args.some(sharedRef)) {
+      const shared = sharedInstance(g, image, head, token);
+      if (shared !== null)
+        return shared;
+    }
     const name = reflectionName(g, head);
     const type = g.typeFromName(Memory.allocUtf8String(name), image);
     if (type.isNull())
       throw new Error(`Mono does not know the type ${name}`);
-    const klass = g.typeClass(type);
+    const method = methodByToken(g, g.typeClass(type), token);
+    if (method === null)
+      throw new Error(`${cString(api.fullName(definition, 1))} is not in ${name}`);
+    return method;
+  }
+
+  function methodByToken(g, klass, token) {
     const iterator = Memory.alloc(Process.pointerSize);
     iterator.writePointer(NULL);
     for (let method = g.classMethods(klass, iterator); !method.isNull();
@@ -520,14 +550,78 @@ const mono = (() => {
       if (api.methodToken(method) === token)
         return method;
     }
-    throw new Error(`${cString(api.fullName(definition, 1))} is not in ${name}`);
+    return null;
+  }
+
+  function sharedInstance(g, image, head, token) {
+    // The method ``token`` of a base class of a loaded class that binds
+    // head's 'T_REF' arguments to reference types, or null. The assembly of
+    // the generic class comes first.
+    const c = api.catalog;
+    const t = api.types;
+    if (t === null)
+      return null;
+    const images = [image, ...loadedImages(c).filter(other => !other.equals(image))];
+    const seen = new Set();
+    for (const candidate of images) {
+      const rows = c.tableRows(candidate, TYPEDEF_TABLE);
+      for (let row = 2; row <= rows; row++) {
+        for (let klass = c.classGet(candidate, TYPEDEF_TOKEN | row); !klass.isNull();
+          klass = t.classParent(klass)) {
+          const key = klass.toString();
+          if (seen.has(key))
+            break;
+          seen.add(key);
+          if (bindsShared(g, t, head, cString(c.typeName(c.classType(klass))) || '')) {
+            const method = methodByToken(g, klass, token);
+            if (method !== null)
+              return method;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function bindsShared(g, t, head, name) {
+    // Whether a class name binds head's arguments: the same where head names
+    // a type, a reference type where it has 'T_REF'.
+    if (!name.startsWith(`${head.name}<`))
+      return false;
+    let parsed;
+    try {
+      parsed = parseType(name);
+    } catch (_error) {
+      return false;
+    }
+    if (parsed.name !== head.name || parsed.args.length !== head.args.length)
+      return false;
+    return parsed.args.every((arg, i) => (sharedRef(head.args[i])
+      ? isReference(g, t, arg) : typeText(arg) === typeText(head.args[i])));
+  }
+
+  function isReference(g, t, parsed) {
+    if (parsed.suffix.includes('['))
+      return true;
+    if (parsed.suffix !== '')
+      return false;
+    const alias = TYPE_ALIASES[parsed.name];
+    if (alias !== undefined)
+      return alias === 'Object' || alias === 'String';
+    const klass = classByName(g, parsed.name);
+    return !klass.isNull() && t.isValueType(klass) === 0;
+  }
+
+  function typeText(parsed) {
+    const args = parsed.args.length === 0 ? '' : `<${parsed.args.map(typeText).join(',')}>`;
+    return `${parsed.name}${args}${parsed.suffix}`;
   }
 
   function reflectionName(g, parsed) {
     // The name of a parsed type as Type.GetType takes it:
     // 'Ns.Map`2<int, Ns.Outer/Item[]>' is
     // 'Ns.Map`2[[System.Int32, mscorlib],[Ns.Outer+Item[], Assembly-CSharp]]'.
-    const alias = TYPE_ALIASES[parsed.name];
+    const alias = sharedRef(parsed) ? 'Object' : TYPE_ALIASES[parsed.name];
     let name = alias === undefined ? parsed.name.split('/').join('+') : `System.${alias}`;
     if (parsed.args.length > 0)
       name += '[' + parsed.args.map(arg =>
@@ -542,6 +636,8 @@ const mono = (() => {
 
   function assemblyOf(g, parsed) {
     // The name of the assembly that defines a parsed type.
+    if (sharedRef(parsed))
+      return api.imageName(g.corlib()).readUtf8String();
     const klass = TYPE_ALIASES[parsed.name] !== undefined ? NULL : classByName(g, parsed.name);
     if (TYPE_ALIASES[parsed.name] === undefined && klass.isNull())
       throw new Error(`class ${parsed.name} not found`);
