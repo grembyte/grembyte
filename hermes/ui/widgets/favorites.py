@@ -183,6 +183,8 @@ class FavoritesDialog(QDialog):
     method_monitor_requested = pyqtSignal(list)
     # [NativeFunction] to log the calls of
     native_monitor_requested = pyqtSignal(list)
+    # static CatalogMethod to call ("Call …")
+    call_requested = pyqtSignal(object)
 
     def __init__(self, translations, store, parent=None):
         super().__init__(parent)
@@ -252,6 +254,9 @@ class FavoritesDialog(QDialog):
         self.monitor_button.setToolTip(t["favorites.monitor_tooltip"])
         self.monitor_button.clicked.connect(self._request_monitor)
         actions.addWidget(self.monitor_button)
+        self.call_button = QPushButton(t["favorites.call"])
+        self.call_button.clicked.connect(self._request_call)
+        actions.addWidget(self.call_button)
         self.copy_button = QPushButton(t["favorites.copy"])
         self.copy_button.setToolTip(t["favorites.copy_tooltip"])
         self.copy_button.clicked.connect(self._copy)
@@ -360,6 +365,12 @@ class FavoritesDialog(QDialog):
         self.monitor_button.setEnabled(bool(favorites) and self.attached)
         self.monitor_button.setToolTip(self.translations[
             "favorites.monitor_tooltip" if self.attached else "favorites.not_attached"])
+        callable_method = self._callable_method(favorites)
+        self.call_button.setEnabled(callable_method is not None and self.attached)
+        self.call_button.setToolTip(self.translations[
+            "favorites.not_attached" if not self.attached
+            else "favorites.call_tooltip" if callable_method is not None
+            else "favorites.call_static_only"])
         self.copy_button.setEnabled(bool(favorites))
         self.remove_button.setEnabled(bool(favorites))
         if len(favorites) == 1:
@@ -392,6 +403,19 @@ class FavoritesDialog(QDialog):
             self.method_monitor_requested.emit(methods)
         if functions:
             self.native_monitor_requested.emit(functions)
+
+    @staticmethod
+    def _callable_method(favorites):
+        """The CatalogMethod of the only selected favorite if it is static, else None."""
+        if len(favorites) != 1 or favorites[0].kind != METHOD:
+            return None
+        method = favorites[0].method()
+        return method if method.static else None
+
+    def _request_call(self):
+        method = self._callable_method(self.selected_favorites())
+        if method is not None and self.attached:
+            self.call_requested.emit(method)
 
     def _copy(self):
         favorites = self.selected_favorites()

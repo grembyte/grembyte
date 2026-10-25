@@ -204,6 +204,8 @@ class CatalogDialog(QDialog):
 
     # CatalogMethod to log the calls of (double click or "Monitor")
     monitor_requested = pyqtSignal(object)
+    # static CatalogMethod to call ("Call …")
+    call_requested = pyqtSignal(object)
 
     def __init__(self, translations, pid, parent=None, engine=None, favorites=None,
                  assembly_selection=None, game=None):
@@ -308,6 +310,12 @@ class CatalogDialog(QDialog):
         self.calls_button.setEnabled(False)
         self.calls_button.clicked.connect(self._show_calls)
         details.addWidget(self.calls_button)
+        self.call_button = QPushButton(self.translations["catalog.call"])
+        self.call_button.setToolTip(self.translations[
+            "catalog.offline_no_call" if self.game is not None else "catalog.call_tooltip"])
+        self.call_button.setEnabled(False)
+        self.call_button.clicked.connect(self._request_call)
+        details.addWidget(self.call_button)
         self.monitor_button = QPushButton(self.translations["catalog.monitor"])
         self.monitor_button.setObjectName("btn_primary")
         self.monitor_button.setToolTip(self.translations[
@@ -462,6 +470,7 @@ class CatalogDialog(QDialog):
         self.copy_button.setEnabled(method is not None)
         self.calls_button.setEnabled(method is not None)
         self.monitor_button.setEnabled(method is not None and self.game is None)
+        self.call_button.setEnabled(method is not None and method.static and self.game is None)
         if method is None:
             self.details_label.setText("")
             return
@@ -477,6 +486,11 @@ class CatalogDialog(QDialog):
         method = self.selected_method()
         if method is not None and self.game is None:
             self.monitor_requested.emit(method)
+
+    def _request_call(self):
+        method = self.selected_method()
+        if method is not None and method.static and self.game is None:
+            self.call_requested.emit(method)
 
     def _show_calls(self):
         """Open the call graph of the selected method in a window of its own."""

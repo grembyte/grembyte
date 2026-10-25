@@ -82,6 +82,7 @@ from hermes.ui.widgets import (
 )
 from hermes.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
 from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog
+from hermes.ui.widgets.method_call import MethodCallDialog
 from hermes.ui.widgets.method_monitor import MethodMonitorDialog
 from hermes.ui.widgets.native_monitor import NativeMonitorDialog
 from hermes.ui.widgets.native_trace import NativeTraceDialog
@@ -338,6 +339,7 @@ class MainWindow(QMainWindow):
         self._memory_viewer = None
         self._catalog = None
         self._method_monitor = None
+        self._method_call = None
         self._trace_dialog = None
         self._native_trace_dialog = None
         self._native_monitor = None
@@ -1318,6 +1320,7 @@ class MainWindow(QMainWindow):
                                     assembly_selection=self._assembly_selection)
             catalog.finished.connect(lambda _result: setattr(self, "_catalog", None))
             catalog.monitor_requested.connect(self._monitor_method)
+            catalog.call_requested.connect(self._call_method)
             catalog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._catalog = catalog
         catalog.show()
@@ -1455,6 +1458,7 @@ class MainWindow(QMainWindow):
             dialog = FavoritesDialog(self.translations, self._favorite_store, parent=self)
             dialog.method_monitor_requested.connect(self._monitor_methods)
             dialog.native_monitor_requested.connect(self._monitor_native_functions)
+            dialog.call_requested.connect(self._call_method)
             dialog.finished.connect(lambda _result: setattr(self, "_favorites_dialog", None))
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._favorites_dialog = dialog
@@ -1527,6 +1531,26 @@ class MainWindow(QMainWindow):
         monitor.add_method(method)
         monitor.activateWindow()
 
+    def _call_method(self, method):
+        """Call a static C# method chosen in the catalog or the favorites."""
+        if self._current_pid is None:
+            return
+        parameters = generic_parameters(method)
+        if parameters:
+            method = self._ask_type_arguments(method, parameters)
+            if method is None:
+                return
+        dialog = self._method_call
+        if dialog is None:
+            dialog = MethodCallDialog(self.translations, self._current_pid, parent=self)
+            dialog.finished.connect(lambda _result: setattr(self, "_method_call", None))
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._method_call = dialog
+        dialog.set_method(method)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     def _ask_type_arguments(self, method, parameters):
         """The instance of a generic class's method the user names, or None."""
         text = ""
@@ -1550,7 +1574,7 @@ class MainWindow(QMainWindow):
     def _close_catalog(self):
         """Close the catalog, the traces and the method monitor (process gone or switched)."""
         for name in ("_assemblies_dialog", "_catalog", "_trace_dialog", "_native_trace_dialog",
-                     "_method_monitor", "_native_monitor"):
+                     "_method_monitor", "_native_monitor", "_method_call"):
             dialog = getattr(self, name)
             if dialog is not None:
                 dialog.close()

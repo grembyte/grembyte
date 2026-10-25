@@ -56,6 +56,9 @@ Properties (parameterless getters, and a GameObject's components) are game
 code that Unity only allows on its main thread. ``evaluate`` queues the call
 until the main thread runs a script method (see ``engine.onMainThread``). The inspector
 shows the current fields; a short-lived object may be collected by then.
+
+Static methods can be called there too (``call``, see
+hermes/features/method_call.py for the arguments).
 """
 
 import itertools
@@ -98,6 +101,11 @@ class MethodMonitorWorker(QThread):
     # request id, [{name, value}] of evaluated properties
     evaluated = pyqtSignal(int, list)
     evaluate_failed = pyqtSignal(int, str)
+    # request id, {params: [{name, type}], returns} of a static method
+    call_described = pyqtSignal(int, dict)
+    # request id, {result: value or None (void)} or {exception: text}
+    called = pyqtSignal(int, dict)
+    call_failed = pyqtSignal(int, str)
     # request id, the whole text of a long string value (None: no longer kept)
     text_fetched = pyqtSignal(int, object)
     text_failed = pyqtSignal(int, str)
@@ -145,6 +153,22 @@ class MethodMonitorWorker(QThread):
         """
         request_id = next(self._requests)
         self._commands.put(("evaluate", request_id, (target, list(names))))
+        return request_id
+
+    def describe_call(self, identity):
+        """Read the parameters of a static method; expect call_described or call_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("describe", request_id, identity))
+        return request_id
+
+    def call(self, identity, arguments):
+        """Call a static method on the game's main thread; expect called or call_failed.
+
+        ``arguments`` as ``parse_argument`` (hermes/features/method_call.py)
+        returns them. Game code: it changes the game like the game itself would.
+        """
+        request_id = next(self._requests)
+        self._commands.put(("call", request_id, (identity, list(arguments))))
         return request_id
 
     def full_text(self, text_id):
@@ -221,6 +245,16 @@ class MethodMonitorWorker(QThread):
                     self.evaluated.emit(monitor_id, api.evaluate(*argument))
                 except frida.RPCException as error:
                     self.evaluate_failed.emit(monitor_id, str(error))
+            elif action == "describe":
+                try:
+                    self.call_described.emit(monitor_id, api.describe_call(argument))
+                except frida.RPCException as error:
+                    self.call_failed.emit(monitor_id, str(error))
+            elif action == "call":
+                try:
+                    self.called.emit(monitor_id, api.call_static(*argument))
+                except frida.RPCException as error:
+                    self.call_failed.emit(monitor_id, str(error))
             elif action == "text":
                 try:
                     self.text_fetched.emit(monitor_id, api.full_text(argument))

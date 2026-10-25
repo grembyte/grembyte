@@ -634,16 +634,20 @@ class MethodMonitorDialog(QDialog):
     def closeEvent(self, event):  # pylint: disable=invalid-name
         # Removing the interceptors can wait for calls in progress; do not
         # block the window for that.
-        worker = self._worker
-        worker.requestInterruption()
-        if worker.isRunning():
-            _closing_workers.add(worker)
-            worker.finished.connect(lambda: _closing_workers.discard(worker))
+        stop_worker(self._worker)
         super().closeEvent(event)
 
 
 # Workers of closed windows, kept until they have removed their interceptors.
 _closing_workers = set()
+
+
+def stop_worker(worker):
+    """Stop the MethodMonitorWorker of a window that closes, without waiting for it."""
+    worker.requestInterruption()
+    if worker.isRunning():
+        _closing_workers.add(worker)
+        worker.finished.connect(lambda: _closing_workers.discard(worker))
 
 
 def wait_for_closing_workers(timeout_ms):

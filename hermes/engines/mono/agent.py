@@ -57,6 +57,9 @@ features use through ``engine``; ``onMonoThread`` is exported there as
 ``mono.findClass(name)`` / ``mono.findMethod(klass, name, count, static)``
     Look up game code by name, to call it with ``mono.invoke(method, this,
     params)`` (main thread); ``mono.signatureOf(method)`` describes it.
+``mono.resolve(identity)``
+    The method of an ``identify`` result (or ``CatalogMethod.identity()``),
+    to call it; on a thread Mono knows.
 ``mono.properties(klass)`` / ``mono.getProperty(object, property, isStruct)``
     The parameterless getters of a class (and a GameObject's components),
     and calling one on the main thread: ``{result, exception}``.

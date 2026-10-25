@@ -454,6 +454,41 @@ function evaluate(target, names) {
   });
 }
 
+// --- Calling static methods (the method call dialog) ------------------------------
+
+function staticMethod(identity) {
+  const method = engine.resolve(identity);
+  if (engine.signatureOf(method).instance)
+    throw new Error(`${identity.method} is no static method`);
+  return method;
+}
+
+function describeCall(identity) {
+  // The parameters and result type of a static method: { params, returns }.
+  return engine.onRuntimeThread(() => {
+    const { params, returns } = engine.signatureOf(staticMethod(identity));
+    return { params, returns };
+  });
+}
+
+function callStatic(identity, args) {
+  // Call a static method on Unity's main thread with the arguments the
+  // dialog read (see hermes/features/method_call.py; an object or IntPtr as
+  // { address }): { result } with the value it returned, or { exception }.
+  return engine.onMainThread(() => {
+    const method = staticMethod(identity);
+    const values = args.map(arg => (arg !== null && typeof arg === 'object'
+      ? ptr(arg.address) : arg));
+    const { result, exception } = invokeMethod(method, null, values);
+    if (!exception.isNull())
+      return { exception: exceptionText(exception) };
+    const returns = engine.signatureOf(method).returns;
+    if (returns.kind === T.VOID && !returns.byref)
+      return { result: null };
+    return { result: resultValue(returns, result) };
+  });
+}
+
 function inspect(target) {
   // Called on the agent's thread; class layouts are read by a thread Mono
   // knows (see engine.onRuntimeThread).
@@ -929,8 +964,8 @@ function pointerOf(type, value) {
   return ptr(value);
 }
 
-function callMethod(method, self, args) {
-  // Call game code with JavaScript arguments; returns its result.
+function invokeMethod(method, self, args) {
+  // Call game code with JavaScript arguments: { result, exception }.
   const signature = engine.signatureOf(method);
   const params = Memory.alloc(Process.pointerSize * Math.max(args.length, 1));
   const keep = [];
@@ -954,9 +989,14 @@ function callMethod(method, self, args) {
     keep.push(slot);
     params.add(i * Process.pointerSize).writePointer(slot);
   });
-  const { result, exception } = engine.invoke(method, self === null ? NULL : self, params);
+  return engine.invoke(method, self === null ? NULL : self, params);
+}
+
+function callMethod(method, self, args) {
+  // Call game code with JavaScript arguments; returns its result.
+  const { result, exception } = invokeMethod(method, self, args);
   throwIfException(exception);
-  return resultJs(signature.returns, result);
+  return resultJs(engine.signatureOf(method).returns, result);
 }
 
 function staticCall(qualifiedName, ...args) {
@@ -1419,6 +1459,8 @@ rpc.exports = {
   inspect,
   fullText,
   evaluate,
+  describeCall,
+  callStatic,
   addMethodHook,
   removeMethodHook,
   setMethodHookEnabled(id, enabled) {

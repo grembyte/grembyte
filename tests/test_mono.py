@@ -1507,6 +1507,40 @@ def test_properties_are_evaluated_on_the_main_thread(tmp_path, qt_app):
 
 
 @requires_target
+def test_static_methods_are_called_on_the_main_thread(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.monitor import MethodMonitorWorker
+
+    count = {"image": "Assembly-CSharp", "file": None, "token": 0x06000009,
+             "method": "Game.Combat:get_Count ()"}
+    target = _MonoTarget(_build(tmp_path))
+    worker = MethodMonitorWorker(target.pid)
+    answers, failures = {}, {}
+    worker.call_described.connect(answers.__setitem__)
+    worker.called.connect(answers.__setitem__)
+    worker.call_failed.connect(failures.__setitem__)
+
+    def answer(request, then=None):
+        if then is not None:
+            time.sleep(0.2)  # the agent waits for the main thread now
+            target.send(then, 0)
+        _wait_for(qt_app, lambda: request in answers or request in failures, timeout=6)
+        return answers.get(request, failures.get(request))
+
+    try:
+        worker.start()
+        described = answer(worker.describe_call(count))
+        assert described["params"] == [] and described["returns"]["name"] == "System.Int32"
+        assert answer(worker.call(count, []), then="tick") == {"result": {"text": "7"}}
+        # Instance methods need an object: not callable from the dialog.
+        assert "no static method" in answer(worker.describe_call(_CALC_DAMAGE))
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
 def test_inspector_evaluates_properties(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
     from hermes.features.catalog import CatalogMethod

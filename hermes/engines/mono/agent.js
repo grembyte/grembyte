@@ -1670,7 +1670,7 @@ gpointer run_batch (gpointer data) {
     checkAll, compileAll, describeAll, cancelBatches, batchesRunning, prepare,
     objectClassName, classOf, layout, onRuntimeThread: onMonoThread, unityName,
     onMainThread, drainMain, properties, getProperty, signatureOf, findClass, findMethod,
-    newString, invoke, classChain, writeReference,
+    newString, invoke, classChain, writeReference, resolve: resolveMethod,
     virtualMethod: (object, method) => api.invoke.virtualMethod(object, method)
   };
 })();
