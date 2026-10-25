@@ -1,6 +1,8 @@
 """The catalog cache: one file per assembly build, keyed by its MVID."""
 
 import gzip
+import os
+import time
 
 from hermes.features import catalog_cache
 
@@ -18,14 +20,33 @@ def test_stored_classes_come_back_for_the_same_build(tmp_path):
     assert catalog_cache.load("il2cpp", "Assembly-CSharp", _MVID, tmp_path) is None
 
 
-def test_a_new_build_replaces_the_old_one(tmp_path):
-    catalog_cache.store("mono", "Assembly-CSharp", "old", _CLASSES, tmp_path)
-    catalog_cache.store("mono", "Assembly-CSharp", _MVID, [], tmp_path)
+def test_builds_of_one_name_stay_side_by_side(tmp_path):
+    # Two games, each with its Assembly-CSharp
+    catalog_cache.store("mono", "Assembly-CSharp", "game-a", _CLASSES, tmp_path)
+    catalog_cache.store("mono", "Assembly-CSharp", "game-b", [], tmp_path)
+    catalog_cache.store("mono", "Assembly-CSharp", "game-b", {"targets": []}, tmp_path,
+                        kind=catalog_cache.CALLS)
 
-    assert catalog_cache.load("mono", "Assembly-CSharp", "old", tmp_path) is None
-    assert catalog_cache.load("mono", "Assembly-CSharp", _MVID, tmp_path) == []
-    assert [path.name for path in (tmp_path / "mono" / "Assembly-CSharp").iterdir()] == [
-        f"{_MVID}.json.gz"]
+    assert catalog_cache.load("mono", "Assembly-CSharp", "game-a", tmp_path) == _CLASSES
+    assert catalog_cache.load("mono", "Assembly-CSharp", "game-b", tmp_path) == []
+    assert catalog_cache.load("mono", "Assembly-CSharp", "game-b", tmp_path,
+                              kind=catalog_cache.CALLS) == {"targets": []}
+
+
+def test_unused_files_are_pruned(tmp_path):
+    for mvid in ("old", "used", "new"):
+        catalog_cache.store("mono", "Assembly-CSharp", mvid, _CLASSES, tmp_path)
+    folder = tmp_path / "mono" / "Assembly-CSharp"
+    long_ago = time.time() - (catalog_cache.MAX_AGE_DAYS + 1) * 24 * 3600
+    for mvid in ("old", "used"):
+        os.utime(folder / f"{mvid}.json.gz", (long_ago, long_ago))
+    (folder / "lost.json.gz.part").write_bytes(b"")
+    os.utime(folder / "lost.json.gz.part", (long_ago, long_ago))
+    # Reading a file counts as using it.
+    assert catalog_cache.load("mono", "Assembly-CSharp", "used", tmp_path) == _CLASSES
+
+    catalog_cache.prune(tmp_path)
+    assert sorted(path.name for path in folder.iterdir()) == ["new.json.gz", "used.json.gz"]
 
 
 def test_assemblies_without_mvid_are_not_cached(tmp_path):

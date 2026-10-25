@@ -8,7 +8,11 @@ target by a metadata token, and the adapter says which method a token names
 
 Who calls a method needs the calls of every method of the assemblies looked
 at: an index per assembly (``build_call_index``), kept in the catalog cache
-like the classes (see hermes.features.catalog_cache).
+like the classes (see hermes.features.catalog_cache). A call into another
+assembly names its target by that assembly's token, so the index notes the
+builds it was made with and is made anew when they differ
+(``read_call_index``): the same build of a library may meet another
+UnityEngine in another game.
 
 The C# compiler moves the body of an ``async`` method or an iterator into
 the ``MoveNext`` method of a class it generates (``Outer.<Load>d__0``); the
@@ -157,6 +161,28 @@ def build_call_index(assembly, classes, read_bodies, resolve, progress=None):
     if progress is not None:
         progress(len(tokens), len(tokens))
     return {"targets": targets, "calls": calls}
+
+
+def read_call_index(engine, assembly, mvid, mvids, build):
+    """The call index of ``assembly`` (its ``mvid``) in a process whose
+    assemblies have ``mvids`` ({name: mvid}).
+
+    From the catalog cache if it was made with the same builds of the
+    assemblies it refers to, else ``build()`` makes it (and it is kept).
+    """
+    def made():
+        index = build()
+        referred = {target[0] for target in index["targets"]} - {assembly}
+        index["references"] = {name: mvids.get(name) for name in sorted(referred)}
+        return index
+
+    index, cached = catalog_cache.read_cached(engine, assembly, mvid, made,
+                                              kind=catalog_cache.CALLS)
+    if cached and any(mvids.get(name) != referred
+                      for name, referred in index.get("references", {}).items()):
+        index = catalog_cache.read_cached(engine, assembly, mvid, made, fresh=True,
+                                          kind=catalog_cache.CALLS)[0]
+    return index
 
 
 @dataclass(frozen=True)
@@ -366,12 +392,11 @@ class CallGraphWorker(QThread):
         mvid, classes, methods = self._assembly(api, name)
         index = self._known[name][3]
         if index is None:
-            index = catalog_cache.read_cached(
-                self.engine.id, name, mvid,
+            index = read_call_index(
+                self.engine.id, name, mvid, self._assembly_mvids(api),
                 lambda: build_call_index(
                     name, classes,
                     lambda tokens: split_bodies(api.method_bodies(name, tokens)),
-                    lambda tokens: api.resolve_tokens(name, tokens)),
-                kind=catalog_cache.CALLS)[0]
+                    lambda tokens: api.resolve_tokens(name, tokens)))
             self._known[name] = (mvid, classes, methods, index)
         return index

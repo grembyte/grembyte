@@ -171,3 +171,31 @@ def test_dialog_navigates_and_searches_callers(monkeypatch):
         assert dialog.method == load_bin and not dialog.forward_button.isEnabled()
     finally:
         dialog.close()
+
+
+def test_an_index_made_with_other_builds_is_made_anew():
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.call_graph import read_call_index
+
+    made = []
+
+    def build():
+        made.append(len(made))
+        return {"targets": [["DOTween", 0x06000001, "DG.Tween:Kill ()"],
+                            ["UnityEngine.CoreModule", 0x06000123, "UnityEngine.Object:Destroy ()"]],
+                "calls": [[0x06000001, [["call", 1]]]]}
+
+    game_a = {"DOTween": "dotween", "UnityEngine.CoreModule": "unity-2021"}
+    index = read_call_index("mono", "DOTween", "dotween", game_a, build)
+    # Its own assembly is not a reference.
+    assert index["references"] == {"UnityEngine.CoreModule": "unity-2021"}
+    read_call_index("mono", "DOTween", "dotween", game_a, build)
+    assert made == [0]  # from the cache
+
+    # The same DOTween in a game with another UnityEngine
+    game_b = {"DOTween": "dotween", "UnityEngine.CoreModule": "unity-2022"}
+    index = read_call_index("mono", "DOTween", "dotween", game_b, build)
+    assert made == [0, 1]
+    assert index["references"] == {"UnityEngine.CoreModule": "unity-2022"}
+    read_call_index("mono", "DOTween", "dotween", game_b, build)
+    assert made == [0, 1]

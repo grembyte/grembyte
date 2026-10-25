@@ -9,13 +9,18 @@ read again. Assemblies the runtime names no MVID for are not cached.
 
 The files lie in ``cache/<engine>/<assembly>/<mvid>.json.gz`` (``CLASSES``)
 and ``<mvid>.calls.json.gz`` (``CALLS``) next to the database; deleting them
-only costs the next reading.
+only costs the next reading. Several builds of an assembly stay side by side:
+games share assembly names (every Unity game has an ``Assembly-CSharp``).
+A file not used for ``MAX_AGE_DAYS`` goes (``prune``, once per run), e.g.
+the builds of a game before its update.
 """
 
 import gzip
 import json
 import os
 import re
+import threading
+import time
 from pathlib import Path
 
 from PyQt6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
@@ -26,10 +31,15 @@ CLASSES, CALLS = "classes", "calls"
 
 # Raise when what is stored changes its shape; older files are then ignored.
 # classes 2: the methods' flags, for the trace
-FORMATS = {CLASSES: 2, CALLS: 1}
+# calls 2: the builds of the assemblies it refers to
+FORMATS = {CLASSES: 2, CALLS: 2}
 
 # Characters kept in a file or directory name; others become "_".
 _UNSAFE = re.compile(r"[^\w.-]")
+
+# A file unused this long is deleted (its time is that of its last use).
+MAX_AGE_DAYS = 60
+_pruned = threading.Event()
 
 
 def cache_dir():
@@ -71,13 +81,21 @@ def load(engine, assembly, mvid, directory=None, kind=CLASSES):
     if (not isinstance(stored, dict) or stored.get("format") != FORMATS[kind]
             or stored.get("assembly") != assembly or stored.get("mvid") != mvid):
         return None
+    try:
+        os.utime(path)  # used now: see prune
+    except OSError:
+        pass
     return stored.get(kind)
 
 
 def store(engine, assembly, mvid, data, directory=None, kind=CLASSES):
-    """Keep ``data`` of ``kind`` for this build of ``assembly``; drop other builds'."""
+    """Keep ``data`` of ``kind`` for this build of ``assembly``."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     if not mvid:
         return
+    if directory is None and not _pruned.is_set():
+        _pruned.set()
+        prune()
     path = _path(engine, assembly, mvid, directory, kind)
     partial = path.with_name(path.name + ".part")
     try:
@@ -86,12 +104,20 @@ def store(engine, assembly, mvid, data, directory=None, kind=CLASSES):
             json.dump({"format": FORMATS[kind], "assembly": assembly, "mvid": mvid,
                        kind: data}, file, separators=(",", ":"))
         os.replace(partial, path)
-        build = f"{_safe(mvid)}."
-        for other in path.parent.glob("*.json.gz"):
-            if not other.name.startswith(build):
-                other.unlink()
     except OSError as error:
         logs.log.warning("catalog cache %s not written: %s", path, error)
+
+
+def prune(directory=None, max_age_days=MAX_AGE_DAYS):
+    """Delete the files not used for ``max_age_days``, left-over parts too."""
+    base = Path(directory) if directory is not None else cache_dir()
+    oldest = time.time() - max_age_days * 24 * 3600
+    for path in base.glob("*/*/*.json.gz*"):
+        try:
+            if path.stat().st_mtime < oldest:
+                path.unlink()
+        except OSError as error:
+            logs.log.warning("catalog cache %s not deleted: %s", path, error)
 
 
 def read_cached(engine, assembly, mvid, read, fresh=False, kind=CLASSES):
@@ -100,6 +126,7 @@ def read_cached(engine, assembly, mvid, read, fresh=False, kind=CLASSES):
     Not cached (or ``fresh``): ``read()`` finds it out (e.g. asks the agent),
     and the answer is stored for the next time.
     """
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     if not fresh:
         data = load(engine, assembly, mvid, kind=kind)
         if data is not None:
