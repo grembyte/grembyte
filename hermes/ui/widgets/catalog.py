@@ -19,6 +19,7 @@ from hermes.engines.registry import resolve_engine
 from hermes.features.assemblies import missing_assemblies
 from hermes.features.catalog import CatalogWorker
 from hermes.features.favorites import CATALOG
+from hermes.ui.widgets.call_graph import CallGraphDialog
 from hermes.ui.widgets.favorites import (
     FAVORITE_COLUMN,
     FAVORITE_COLUMN_KEY,
@@ -234,6 +235,11 @@ class CatalogDialog(QDialog):
         self.copy_button.setEnabled(False)
         self.copy_button.clicked.connect(self._copy_signature)
         details.addWidget(self.copy_button)
+        self.calls_button = QPushButton(self.translations["catalog.calls"])
+        self.calls_button.setToolTip(self.translations["catalog.calls_tooltip"])
+        self.calls_button.setEnabled(False)
+        self.calls_button.clicked.connect(self._show_calls)
+        details.addWidget(self.calls_button)
         self.monitor_button = QPushButton(self.translations["catalog.monitor"])
         self.monitor_button.setObjectName("btn_primary")
         self.monitor_button.setToolTip(self.translations["catalog.monitor_tooltip"])
@@ -372,6 +378,7 @@ class CatalogDialog(QDialog):
     def _show_details(self, current, _previous=None):
         method = self.model.method_at(current.row()) if current.isValid() else None
         self.copy_button.setEnabled(method is not None)
+        self.calls_button.setEnabled(method is not None)
         self.monitor_button.setEnabled(method is not None)
         if method is None:
             self.details_label.setText("")
@@ -388,6 +395,16 @@ class CatalogDialog(QDialog):
         method = self.selected_method()
         if method is not None:
             self.monitor_requested.emit(method)
+
+    def _show_calls(self):
+        """Open the call graph of the selected method in a window of its own."""
+        method = self.selected_method()
+        if method is None:
+            return
+        graph = CallGraphDialog(self.translations, self.pid, method, parent=self,
+                                engine=self.engine, selection=self.selection())
+        graph.monitor_requested.connect(self.monitor_requested.emit)
+        graph.show()
 
     def _copy_signature(self):
         method = self.selected_method()

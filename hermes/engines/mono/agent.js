@@ -128,7 +128,14 @@ const mono = (() => {
       writeBarrier: optional(() => exported('mono_gc_wbarrier_set_field', 'void',
         ['pointer', 'pointer', 'pointer'])),
       // The module version id the catalog cache keys an assembly by.
-      imageGuid: optional(() => exported('mono_image_get_guid', 'pointer', ['pointer']))
+      imageGuid: optional(() => exported('mono_image_get_guid', 'pointer', ['pointer'])),
+      // Only the call graph needs these: the IL code of a method.
+      il: optional(() => ({
+        header: blocking('mono_method_get_header', 'pointer', ['pointer']),
+        code: exported('mono_method_header_get_code', 'pointer',
+          ['pointer', 'pointer', 'pointer']),
+        free: exported('mono_metadata_free_mh', 'void', ['pointer'])
+      }))
     };
   }
 
@@ -1494,10 +1501,76 @@ gpointer run_batch (gpointer data) {
     });
   }
 
+  // --- Call graph: the IL code of methods and what its tokens name ------------
+
+  async function methodBodies(assembly, tokens) {
+    // The IL code of the methods with these tokens in one buffer of records:
+    // token (u32), size (u32), code. Size 0: no code (abstract, native, ...).
+    const c = catalogApi();
+    if (api.il === null)
+      throw new Error('this Mono runtime lacks the functions to read IL code');
+    return onMonoThread(() => {
+      const image = imageNamed(c, assembly);
+      const sizes = Memory.alloc(8);
+      const bodies = tokens.map(token => [token, ilCode(image, token, sizes)]);
+      const total = bodies.reduce((sum, [, code]) => sum + 8 + (code ? code.byteLength : 0), 0);
+      const out = new Uint8Array(total);
+      const view = new DataView(out.buffer);
+      let at = 0;
+      for (const [token, code] of bodies) {
+        view.setUint32(at, token, true);
+        view.setUint32(at + 4, code ? code.byteLength : 0, true);
+        at += 8;
+        if (code) {
+          out.set(new Uint8Array(code), at);
+          at += code.byteLength;
+        }
+      }
+      return out.buffer;
+    });
+  }
+
+  function ilCode(image, token, sizes) {
+    // A method's IL code (ArrayBuffer), null if it has none. On a Mono thread.
+    const method = api.getMethod(image, token, NULL);
+    if (method.isNull())
+      return null;
+    const header = api.il.header(method);
+    if (header.isNull())
+      return null;
+    try {
+      const code = api.il.code(header, sizes, sizes.add(4));
+      const size = sizes.readU32();
+      return code.isNull() || size === 0 ? null : code.readByteArray(size);
+    } finally {
+      api.il.free(header);  // frees only a header Mono made for the call
+    }
+  }
+
+  async function resolveTokens(assembly, tokens) {
+    // [assembly, token, signature] of the methods that tokens in the code of
+    // ``assembly`` name (MethodDef, MemberRef, MethodSpec); null for one Mono
+    // cannot resolve. A generic instance keeps its definition's token and
+    // names its type arguments in the signature (see resolveMethod).
+    const c = catalogApi();
+    return onMonoThread(() => {
+      const image = imageNamed(c, assembly);
+      return tokens.map(token => {
+        const method = api.getMethod(image, token, NULL);
+        if (method.isNull())
+          return null;
+        const owner = api.classImage(api.methodClass(method));
+        return [api.imageName(owner).readUtf8String(), api.methodToken(method),
+                signatureName(method) || ''];
+      });
+    });
+  }
+
   refresh();
   return {
     id: 'mono',
     refresh, locate, name, describe, identify, compile, assemblies, classes, methodsByToken,
+    methodBodies, resolveTokens,
     checkAll, compileAll, describeAll, cancelBatches, batchesRunning, prepare,
     objectClassName, classOf, layout, onRuntimeThread: onMonoThread, unityName,
     onMainThread, drainMain, properties, getProperty, signatureOf, findClass, findMethod,

@@ -24,7 +24,8 @@ from hermes.features import catalog_cache
 from hermes.features.assemblies import chosen_assemblies
 
 
-_AGENT_SOURCE = ENGINE_AGENT_SOURCE + load_agent_source(__file__)
+# Also the call graph's agent (see hermes.features.call_graph)
+AGENT_SOURCE = ENGINE_AGENT_SOURCE + load_agent_source(__file__)
 
 
 @dataclass(frozen=True)
@@ -171,7 +172,7 @@ class CatalogWorker(QThread):
             session = attach_session(self.pid)
             sessions.SESSIONS.set_frida_session(self, session)
             session.on("detached", lambda _reason, _crash: self._detached.set())
-            script = session.create_script(_AGENT_SOURCE)
+            script = session.create_script(AGENT_SOURCE)
             script.load()
             api = script.exports_sync
             found = api.assemblies()

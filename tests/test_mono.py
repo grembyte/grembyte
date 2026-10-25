@@ -426,6 +426,24 @@ const char *mono_image_get_name(Image *img) { return img->name; }
 const char *mono_image_get_filename(Image *img) { return img->file; }
 const char *mono_image_get_guid(Image *img) { return img->guid; }
 void *mono_get_method(void *img, uint32_t token, void *k) { (void)img; (void)k; return by_token(token); }
+/* IL code for the call graph: Loot.Take calls Inventory.AddGold (ldarg.0;
+   ldarg.1; call 0x06000001; ret), like its JIT code does. */
+typedef struct { const uint8_t *code; uint32_t size; } Header;
+static const uint8_t take_il[] = { 0x02, 0x03, 0x28, 0x01, 0x00, 0x00, 0x06, 0x2a };
+static const uint8_t add_gold_il[] = { 0x2a };
+void *mono_method_get_header(Method *m) {
+    static Header header;
+    if (m->token == 0x06000002u) header = (Header){ take_il, sizeof take_il };
+    else if (m->token == 0x06000001u) header = (Header){ add_gold_il, sizeof add_gold_il };
+    else return NULL;
+    return &header;
+}
+const uint8_t *mono_method_header_get_code(Header *h, uint32_t *size, uint32_t *max_stack) {
+    *size = h->size;
+    if (max_stack) *max_stack = 8;
+    return h->code;
+}
+void mono_metadata_free_mh(void *header) { (void)header; }
 void *mono_method_get_class(Method *m) { return m->klass; }
 void *mono_class_get_image(Class *k) { return k->image; }
 uint32_t mono_method_get_token(void *m) { return ((Method *)m)->token; }
@@ -904,6 +922,41 @@ def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
         read(fresh=True)
         assert not cached
     finally:
+        target.close()
+
+
+@requires_target
+def test_call_graph_reads_calls_from_il_code(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.call_graph import CallGraphWorker
+    from hermes.features.catalog import CatalogMethod
+
+    target = _MonoTarget(_build(tmp_path))
+    worker = CallGraphWorker(target.pid)
+    callees, callers, failed = [], [], []
+    worker.callees_found.connect(lambda _id, _method, calls, body: callees.append((calls, body)))
+    worker.callers_found.connect(lambda _id, _method, calls: callers.append(calls))
+    worker.request_failed.connect(lambda _id, message: failed.append(message))
+    worker.worker_failed.connect(failed.append)
+    take = CatalogMethod("Assembly-CSharp", "Game.Loot", "Take", "(int&,int)", "System.Void",
+                         True, 0x06000002, "Game.Loot:Take (int&,int)")
+    add_gold = CatalogMethod("Assembly-CSharp", "Game.Inventory", "AddGold", "(int&,int)",
+                             "System.Void", True, 0x06000001, "Game.Inventory:AddGold (int&,int)")
+    try:
+        worker.start()
+        worker.callees(take)
+        _wait_for(qt_app, lambda: callees or failed)
+        assert not failed
+        assert [(call.opcode, call.method) for call in callees[0][0]] == [("call", add_gold)]
+        worker.callers(add_gold)
+        _wait_for(qt_app, lambda: callers or failed)
+        assert not failed
+        assert [call.method.name for call in callers[0]] == ["Take"]
+        # The index is in the cache now.
+        assert list((tmp_path / "catalog-cache" / "mono" / "Assembly-CSharp").glob("*.calls.json.gz"))
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
         target.close()
 
 

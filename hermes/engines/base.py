@@ -37,7 +37,10 @@ Naming (``NAMING``), safe in exception handlers on game threads:
     code for such an identity.
 
 Catalog (``CATALOG``): ``assemblies()`` (with the MVID the catalog cache
-keys them by), ``classes(assembly)`` (with the methods' ECMA-335 flags).
+keys them by), ``classes(assembly)`` (with the methods' ECMA-335 flags). For the
+call graph: ``methodBodies(assembly, tokens)`` (their IL code, see
+hermes.features.call_graph) and ``resolveTokens(assembly, tokens)`` (the
+methods tokens in that code name).
 
 Trace (``TRACE``): ``methodsByToken(assembly, tokens)`` with ECMA-335 flags,
 ``checkAll(methods, progress)`` (which cannot be prepared safely),
