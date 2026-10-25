@@ -1,5 +1,7 @@
 """Object inspector: the fields of a managed object in a Mono game."""
 
+from datetime import datetime
+
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor, QGuiApplication  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
@@ -77,7 +79,8 @@ class ObjectInspectorDialog(QDialog):
     values come back through ``show_properties``.
 
     A field holding a number can be put on the address list, to watch,
-    change or freeze its value there.
+    change or freeze its value there. A string (field or property) gets a
+    link that shows it whole: ``show_text(value, name, time)``.
     """
 
     # pylint: disable=too-many-instance-attributes,too-many-arguments
@@ -86,7 +89,9 @@ class ObjectInspectorDialog(QDialog):
     address_requested = pyqtSignal(object)
 
     def __init__(self, translations, open_object, target=None, request=None,
-                 contents=None, captured=None, evaluate=None, name="", depth=1, parent=None):
+                 contents=None, captured=None, evaluate=None, name="", depth=1, parent=None,
+                 show_text=None):
+        # pylint: disable=too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -95,6 +100,7 @@ class ObjectInspectorDialog(QDialog):
         self._open_object = open_object
         self._request = request
         self._evaluate = evaluate
+        self._show_text = show_text
         self._captured = captured
         self.name = name
         self.depth = depth
@@ -156,7 +162,8 @@ class ObjectInspectorDialog(QDialog):
         header.setSectionResizeMode(_OFFSET, QHeaderView.ResizeMode.ResizeToContents)
         # Fixed: the size of cell widgets does not count for ResizeToContents.
         header.setSectionResizeMode(_OPEN, QHeaderView.ResizeMode.Fixed)
-        header.resizeSection(_OPEN, link_width(self.table, [self.translations["inspector.open"]]))
+        header.resizeSection(_OPEN, link_width(self.table, [
+            self.translations["inspector.open"], self.translations["inspector.text"]]))
         header.resizeSection(_TYPE, 200)
         resizable_columns(self.table)
         self.table.cellDoubleClicked.connect(lambda row, _column: self.open_row(row))
@@ -198,7 +205,8 @@ class ObjectInspectorDialog(QDialog):
         properties_header.setSectionResizeMode(_P_LINK, QHeaderView.ResizeMode.Fixed)
         properties_header.resizeSection(_P_TYPE, 200)
         properties_header.resizeSection(_P_LINK, link_width(self.properties_table, [
-            self.translations["inspector.open"], self.translations["inspector.evaluate"]]))
+            self.translations["inspector.open"], self.translations["inspector.evaluate"],
+            self.translations["inspector.text"]]))
         resizable_columns(self.properties_table)
         properties_layout.addWidget(self.properties_table, 1)
 
@@ -336,6 +344,8 @@ class ObjectInspectorDialog(QDialog):
             if target:
                 self.table.setCellWidget(row, _OPEN, link_label(
                     self.translations["inspector.open"], lambda row=row: self.open_row(row)))
+            elif not static and self._shows_text(value):
+                self.table.setCellWidget(row, _OPEN, self._text_link(value, field.get("name", "")))
         if 0 <= selected < len(fields):
             self.table.selectRow(selected)
         self.add_address_button.setEnabled(self.address_entry(self.table.currentRow()) is not None)
@@ -388,6 +398,20 @@ class ObjectInspectorDialog(QDialog):
             self.properties_table.setCellWidget(row, _P_LINK, link_label(
                 self.translations["inspector.open"],
                 lambda target=value["target"]: self._open_object(target, self, name)))
+        elif self._shows_text(value):
+            self.properties_table.setCellWidget(row, _P_LINK, self._text_link(value, name))
+
+    def _shows_text(self, value):
+        """Whether ``value`` is a string the text link can show whole."""
+        return self._show_text is not None and bool(value.get("string"))
+
+    def _text_link(self, value, name):
+        """A link that shows the string ``value`` (of field or property ``name``) whole."""
+        link = link_label(self.translations["inspector.text"], lambda: self._show_text(
+            value, name, self._captured if not self.live
+            else datetime.now().strftime("%H:%M:%S")))
+        link.setToolTip(self.translations["inspector.text_tooltip"])
+        return link
 
     def evaluate_properties(self, names):
         """Evaluate the named properties, or all of them for ``None``."""

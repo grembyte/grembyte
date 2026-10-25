@@ -61,3 +61,40 @@ def test_plain_text_and_a_cut_text(qt_app, translations):
         assert "nicht mehr verfügbar" in viewer.info_label.text()
     finally:
         viewer.close()
+
+
+def test_monitor_details_link_every_string(qt_app, translations, monkeypatch):
+    # pylint: disable=unused-argument,import-outside-toplevel,protected-access
+    from hermes.features.monitor import MethodMonitorWorker
+    from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+
+    # No game: the worker is not started, the call below is made up.
+    monkeypatch.setattr(MethodMonitorWorker, "start", lambda self: None)
+    fetched = []
+    monkeypatch.setattr(MethodMonitorWorker, "full_text",
+                        lambda self, text_id: fetched.append(text_id) or 1)
+    dialog = MethodMonitorDialog(translations, 999999)
+    try:
+        dialog.log.append([{"monitorId": 1, "time": 0, "args": [
+            {"name": "name", "text": '"statistic"', "string": True},
+            {"name": "count", "text": "3"},
+            {"name": "none", "text": "null"}],
+            "result": {"text": '"{\\"m_Statistics…', "string": True, "fullText": 9,
+                       "length": 4000}}])
+        dialog.log_view.selectRow(0)
+        links = [dialog.details.cellWidget(row, 2) for row in range(4)]
+        assert [link is not None for link in links] == [True, False, False, True]
+        assert "9 Zeichen" in links[0].toolTip() and "4000 Zeichen" in links[3].toolTip()
+
+        # A short string is all there; a long one comes from the agent.
+        links[0].linkActivated.emit("#")
+        viewer = dialog.findChildren(TextViewerDialog)[-1]
+        assert viewer.text == "statistic"
+        links[3].linkActivated.emit("#")
+        assert fetched == [9]
+        dialog._on_text_fetched(1, _SAVE)
+        assert dialog.findChildren(TextViewerDialog)[-1].data["m_PlayerIndex"] == 1
+    finally:
+        for viewer in dialog.findChildren(TextViewerDialog):
+            viewer.close()
+        dialog.close()

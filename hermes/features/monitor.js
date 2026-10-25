@@ -13,7 +13,11 @@ const MAX_STRING = 120;
 // fetched with fullText(id): e.g. a save game's JSON.
 const MAX_FULL_STRING = 8 * 1024 * 1024;
 const FULL_STRING_BUDGET = 32 * 1024 * 1024;
-const fullTexts = new Map();
+const fullTexts = new Map();  // id -> { text, key }, the oldest first
+// The id a string already kept has: the live inspector reads the same
+// strings again and again. Strings are immutable; address, length and start
+// tell one from another.
+const fullTextIds = new Map();
 let fullTextChars = 0;
 let nextFullText = 1;
 const REFERENCE_KINDS = new Set([0x12, 0x14, 0x15, 0x1c, 0x1d]);  // class, array, generic, object, szarray
@@ -189,37 +193,44 @@ function managedString(pointer) {
 }
 
 function stringValue(pointer) {
-  // A string as a logged value; a long one also keeps its whole text
-  // (``fullText``: the id for fullText(), ``length``: its characters).
+  // A string as a logged value (``string`` set unless null); a long one also
+  // keeps its whole text (``fullText``: the id for fullText(), ``length``:
+  // its characters).
   if (pointer.isNull())
     return { text: 'null' };
-  const value = { text: managedString(pointer) };
+  const value = { text: managedString(pointer), string: true };
   const length = pointer.add(OBJECT_HEADER).readS32();
   if (length > MAX_STRING) {
-    value.fullText = keepText(
-      pointer.add(OBJECT_HEADER + 4).readUtf16String(Math.min(length, MAX_FULL_STRING)));
+    value.fullText = keepText(pointer, length, value.text);
     value.length = length;
   }
   return value;
 }
 
-function keepText(text) {
+function keepText(pointer, length, start) {
+  const key = `${pointer}:${length}:${start}`;
+  const known = fullTextIds.get(key);
+  if (known !== undefined)
+    return known;
+  const text = pointer.add(OBJECT_HEADER + 4).readUtf16String(Math.min(length, MAX_FULL_STRING));
   const id = nextFullText++;
-  fullTexts.set(id, text);
+  fullTexts.set(id, { text, key });
+  fullTextIds.set(key, id);
   fullTextChars += text.length;
   for (const [oldest, kept] of fullTexts) {
     if (fullTextChars <= FULL_STRING_BUDGET || oldest === id)
       break;
     fullTexts.delete(oldest);
-    fullTextChars -= kept.length;
+    fullTextIds.delete(kept.key);
+    fullTextChars -= kept.text.length;
   }
   return id;
 }
 
 function fullText(id) {
   // The whole text of a long string value, or null when it was dropped.
-  const text = fullTexts.get(id);
-  return text === undefined ? null : text;
+  const kept = fullTexts.get(id);
+  return kept === undefined ? null : kept.text;
 }
 
 function withEnum(type, text) {

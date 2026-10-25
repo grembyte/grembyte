@@ -47,9 +47,10 @@ the same objects in snapshots and the inspector.
 Values are ``{text, target?, snapshot?}``. ``target`` is an object, array or
 struct the object inspector can open (``inspect``), ``snapshot`` its
 contents at the time of the call (like ``inspect`` returns them, or
-``{error}``) when the monitor records ``objects``. A string longer than ``text``
-shows has ``fullText`` (the id to fetch it whole with ``full_text``; the
-agent keeps the texts of recent calls) and ``length``.
+``{error}``) when the monitor records ``objects``. A string (not null) has
+``string`` set; one longer than ``text`` shows has ``fullText`` (the id to
+fetch it whole with ``full_text``; the agent keeps the texts of recent
+calls) and ``length``.
 
 Properties (parameterless getters, and a GameObject's components) are game
 code that Unity only allows on its main thread. ``evaluate`` queues the call

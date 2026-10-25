@@ -871,5 +871,7 @@
   "text_viewer.copy_tooltip": "Den Text in die Zwischenablage kopieren (im Baum: den gewählten Knoten)",
   "text_viewer.copy_node": "Knoten kopieren",
   "text_viewer.save": "Speichern …",
-  "text_viewer.close": "Schließen"
+  "text_viewer.close": "Schließen",
+  "inspector.text": "Text …",
+  "inspector.text_tooltip": "Den ganzen Text anzeigen, kopieren oder speichern; JSON auch als Baum"
 }

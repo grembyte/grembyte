@@ -1223,9 +1223,11 @@ def test_monitor_window_opens_objects_in_the_inspector(tmp_path, qt_app, transla
         assert inspector.table.item(0, 2).text() == "12.5"
         assert inspector.live_check.isVisibleTo(inspector)
 
-        # Owner and Rolls are objects: "öffnen" shows each in a new dialog.
+        # Owner and Rolls are objects: "öffnen" shows each in a new dialog;
+        # the string Name shows in the text viewer.
         opens = [inspector.table.cellWidget(row, 4) is not None for row in range(5)]
-        assert opens == [False, False, False, True, True]
+        assert opens == [False, False, True, True, True]
+        assert "Text …" in inspector.table.cellWidget(2, 4).text()
         inspector.table.cellWidget(3, 4).linkActivated.emit("#")
         assert len(dialog.inspectors) == 2
         owner = dialog.inspectors[1]
@@ -1314,6 +1316,49 @@ def test_inspector_puts_number_fields_on_the_address_list(qt_app, translations):
         dialog.close()
 
 
+def test_inspector_links_string_fields_to_the_text_viewer(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
+
+    shown = []
+    contents = {"name": "Kingmaker.SaveInfo", "address": "0x1000", "fields": [
+        {"name": "Name", "type": "System.String", "offset": 0x10, "static": False,
+         "value": {"text": '"Quicksave"', "string": True}},
+        {"name": "Json", "type": "System.String", "offset": 0x18, "static": False,
+         "value": {"text": '"{\\"m_Statistics…', "string": True, "fullText": 7,
+                   "length": 5000}},
+        {"name": "Empty", "type": "System.String", "offset": 0x20, "static": False,
+         "value": {"text": "null"}},
+        {"name": "Default", "type": "System.String", "offset": 0, "static": True,
+         "value": {"text": ""}},
+        {"name": "Count", "type": "System.Int32", "offset": 0x28, "static": False,
+         "value": {"text": "3"}},
+    ], "properties": [{"name": "Title", "type": "System.String", "static": False}]}
+    dialog = ObjectInspectorDialog(
+        translations, lambda *_: None, contents=contents, captured="07:58:56.016",
+        show_text=lambda value, name, time: shown.append((value.get("fullText"), name, time)))
+    try:
+        # Every string field gets the link, short ones too; null and static do not.
+        links = [dialog.table.cellWidget(row, 4) for row in range(5)]
+        assert [link is not None for link in links] == [True, True, False, False, False]
+        assert links[0].text().count("Text …") == 1
+        links[0].linkActivated.emit("#")
+        links[1].linkActivated.emit("#")
+        assert shown == [(None, "Name", "07:58:56.016"), (7, "Json", "07:58:56.016")]
+
+        dialog.show_properties([{"name": "Title", "value": {"text": '"A"', "string": True}}])
+        dialog.properties_table.cellWidget(0, 3).linkActivated.emit("#")
+        assert shown[-1] == (None, "Title", "07:58:56.016")
+    finally:
+        dialog.close()
+
+    # Without a viewer (show_text) there is no link.
+    plain = ObjectInspectorDialog(translations, lambda *_: None, contents=contents,
+                                  captured="07:58:56.016")
+    assert plain.table.cellWidget(0, 4) is None
+    plain.close()
+
+
 def test_inspector_shows_recorded_fields_without_reading_again(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
@@ -1387,7 +1432,7 @@ def test_properties_are_evaluated_on_the_main_thread(tmp_path, qt_app):
         assert values["Broken"]["error"]
         assert values["Broken"]["text"] == 'System.InvalidOperationException: "broken getter"'
         assert values["Count"] == {"text": "7"}
-        assert values["name"] == {"text": '"Miranda"'}
+        assert values["name"] == {"text": '"Miranda"', "string": True}
         game_object = values["gameObject"]
         assert game_object["text"].startswith('UnityEngine.GameObject "Miranda"@0x')
 

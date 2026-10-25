@@ -870,5 +870,7 @@
   "text_viewer.copy_tooltip": "Copy the text to the clipboard (in the tree: the selected node)",
   "text_viewer.copy_node": "Copy node",
   "text_viewer.save": "Save …",
-  "text_viewer.close": "Close"
+  "text_viewer.close": "Close",
+  "inspector.text": "Text …",
+  "inspector.text_tooltip": "Show, copy or save the whole text; JSON also as a tree"
 }

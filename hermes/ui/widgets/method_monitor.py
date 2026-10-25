@@ -1,5 +1,6 @@
 """Window of the method monitor: monitored C# methods and their calls."""
 
+import json
 from datetime import datetime
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QPoint, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
@@ -505,20 +506,29 @@ class MethodMonitorDialog(QDialog):
                 link.setToolTip(self.translations[
                     "monitor.fields_captured" if "snapshot" in value else "monitor.fields_current"])
                 self.details.setCellWidget(row, 2, link)
-            elif value.get("fullText"):
+            elif value.get("string"):
                 link = link_label(self.translations["monitor.full_text"],
                                   lambda row=row: self._inspect_detail(row, 2))
+                # A short string's text is all there, as a JSON string literal.
+                length = value.get("length") or len(json.loads(value["text"]))
                 link.setToolTip(self.translations["monitor.full_text_tooltip"].format(
-                    length=value.get("length", 0)))
+                    length=length))
                 self.details.setCellWidget(row, 2, link)
 
     # --- Long texts ------------------------------------------------------------
-    def _show_text(self, name, value):
-        """Open the whole text of a long string value in a window of its own."""
-        viewer = TextViewerDialog(self.translations, self.translations[
-            "monitor.full_text_title"].format(name=name, time=self._detail_time), parent=self)
-        self._text_requests[self._worker.full_text(value["fullText"])] = (viewer, value)
-        viewer.destroyed.connect(lambda _object, viewer=viewer: self._forget_text(viewer))
+    def _show_text(self, value, name, time=None):
+        """Open a string value whole in a window of its own; a long one comes
+        from the agent. ``time``: when the value was read (else the call's)."""
+        title = self.translations["monitor.full_text_title"].format(
+            name=name, time=time or self._detail_time)
+        if value.get("fullText"):
+            viewer = TextViewerDialog(self.translations, title, parent=self)
+            self._text_requests[self._worker.full_text(value["fullText"])] = (viewer, value)
+            viewer.destroyed.connect(lambda _object, viewer=viewer: self._forget_text(viewer))
+        else:
+            # Short: the text is all there, as a JSON string literal.
+            viewer = TextViewerDialog(self.translations, title, json.loads(value["text"]),
+                                      parent=self)
         viewer.show()
         viewer.activateWindow()
 
@@ -544,14 +554,14 @@ class MethodMonitorDialog(QDialog):
     # --- Object inspector ------------------------------------------------------
     def _inspect_detail(self, row, _column):
         """Show the fields of the object in details ``row``: as recorded at the
-        call if the monitor recorded objects, else as they are now. A long
-        string opens whole in a text viewer."""
+        call if the monitor recorded objects, else as they are now. A string
+        opens whole in a text viewer."""
         item = self.details.item(row, 0)
         value = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
         # "info ⇒": what info held after the call
         name = item.text().removesuffix(" ⇒") if item is not None else ""
-        if value and value.get("fullText"):
-            self._show_text(name, value)
+        if value and value.get("string"):
+            self._show_text(value, name)
             return
         if not value or not value.get("target"):
             return
@@ -559,7 +569,8 @@ class MethodMonitorDialog(QDialog):
             self._show_inspector(ObjectInspectorDialog(
                 self.translations, self.inspect, target=value["target"],
                 contents=value["snapshot"], captured=self._detail_time,
-                evaluate=self._request_evaluation, name=name, parent=self))
+                evaluate=self._request_evaluation, name=name, parent=self,
+                show_text=self._show_text))
         else:
             self.inspect(value["target"], name=name)
 
@@ -571,7 +582,8 @@ class MethodMonitorDialog(QDialog):
         self._show_inspector(ObjectInspectorDialog(
             self.translations, self.inspect, target=target, request=self._request_inspection,
             evaluate=self._request_evaluation, name=name,
-            depth=1 if origin is None else origin.depth + 1, parent=self), origin)
+            depth=1 if origin is None else origin.depth + 1, parent=self,
+            show_text=self._show_text), origin)
 
     def _show_inspector(self, inspector, origin=None):
         self.inspectors.append(inspector)
