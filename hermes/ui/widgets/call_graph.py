@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from hermes.engines.registry import resolve_engine
 from hermes.features.call_graph import CallGraphWorker, async_owner
 from hermes.ui.widgets.labels import SelectableText
-from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 
 _KIND, _METHOD, _ASSEMBLY = range(3)
 # Item data: the CatalogMethod of a row
@@ -162,6 +162,7 @@ class CallGraphDialog(QDialog):
         header.resizeSection(_KIND, 130)
         header.resizeSection(_ASSEMBLY, 200)
         resizable_columns(table)
+        copy_menu(table, self.translations)
         table.cellDoubleClicked.connect(lambda row, _column, table=table: self._open_row(table, row))
         table.currentCellChanged.connect(
             lambda row, _column, *_previous, table=table: self._choose(table, row))

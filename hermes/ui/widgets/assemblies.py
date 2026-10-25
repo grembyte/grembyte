@@ -24,7 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from hermes.engines.registry import resolve_engine
 from hermes.features.assemblies import missing_assemblies
 from hermes.features.catalog import CatalogWorker
-from hermes.ui.widgets.table import resizable_columns
+from hermes.ui.widgets.table import copy_menu, resizable_columns
 
 
 # Workers still listing when their dialog closed; kept until they finish.
@@ -149,6 +149,7 @@ class AssemblyDialog(QDialog):
         header.resizeSection(_CLASSES, 80)
         header.resizeSection(_KIND, 110)
         resizable_columns(self.table)
+        copy_menu(self.table, self.translations)
         self.table.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.table, 1)
 

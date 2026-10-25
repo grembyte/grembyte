@@ -895,5 +895,7 @@
   "calls.indexing": "Searching {assembly} ({done} of {total})",
   "calls.failed": "Error: {message}",
   "calls.copy_tooltip": "Copy the signature of the chosen (else the shown) method",
-  "calls.monitor_tooltip": "Monitor the chosen (else the shown) method in the method monitor"
+  "calls.monitor_tooltip": "Monitor the chosen (else the shown) method in the method monitor",
+  "table.copy_row": "Copy row",
+  "table.copy_cell": "Copy cell"
 }

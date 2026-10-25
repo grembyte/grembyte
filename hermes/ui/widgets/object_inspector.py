@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 
 from hermes.ui.widgets.labels import SelectableText
-from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.table import add_copy_actions, copy_menu, resizable_columns, set_row_height
 
 
 LIVE_INTERVAL_MS = 500
@@ -208,6 +208,7 @@ class ObjectInspectorDialog(QDialog):
             self.translations["inspector.open"], self.translations["inspector.evaluate"],
             self.translations["inspector.text"]]))
         resizable_columns(self.properties_table)
+        copy_menu(self.properties_table, self.translations)
         properties_layout.addWidget(self.properties_table, 1)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -299,6 +300,7 @@ class ObjectInspectorDialog(QDialog):
         item = self.table.item(row, _FIELD)
         open_object.setEnabled(bool(item and item.data(Qt.ItemDataRole.UserRole)))
         open_object.triggered.connect(lambda: self.open_row(row))
+        add_copy_actions(menu, self.table, position, self.translations)
         menu.exec(self.table.viewport().mapToGlobal(position))
 
     # --- Answers -----------------------------------------------------------------

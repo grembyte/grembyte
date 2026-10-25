@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from hermes.features.catalog import short_name
 from hermes.features.monitor import MethodMonitorWorker
 from hermes.ui.widgets.object_inspector import ObjectInspectorDialog, link_label, link_width
-from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from hermes.ui.widgets.text_viewer import TextViewerDialog
 
 
@@ -220,6 +220,7 @@ class MethodMonitorDialog(QDialog):
                 column, QHeaderView.ResizeMode.Stretch if column == _M_SIGNATURE
                 else QHeaderView.ResizeMode.ResizeToContents)
         resizable_columns(self.methods_table)
+        copy_menu(self.methods_table, self.translations)
         self.methods_table.itemSelectionChanged.connect(self._update_buttons)
         top_layout.addWidget(self.methods_table)
         buttons = QHBoxLayout()
@@ -269,6 +270,7 @@ class MethodMonitorDialog(QDialog):
         log_header.resizeSection(_C_RESULT, 110)
         log_header.resizeSection(_C_CALLER, 240)
         resizable_columns(self.log_view)
+        copy_menu(self.log_view, self.translations)
         self.log_view.selectionModel().currentRowChanged.connect(self._show_call)
         # A reset (clearing the log) does not report a new current row.
         self.log.modelReset.connect(lambda: self._show_call(QModelIndex()))
@@ -291,6 +293,7 @@ class MethodMonitorDialog(QDialog):
         details_header.resizeSection(2, link_width(self.details, [
             self.translations["monitor.object_details"], self.translations["monitor.full_text"]]))
         resizable_columns(self.details)
+        copy_menu(self.details, self.translations)
         self.details.setMaximumHeight(190)
         self.details.cellDoubleClicked.connect(self._inspect_detail)
         bottom_layout.addWidget(self.details)

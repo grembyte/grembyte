@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 
 from hermes.core.sessions import SESSIONS, SessionSignals, frida_agents, frida_gadgets
-from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 
 
 # How long closing Hermes waits for the sessions before it cuts them, and
@@ -95,6 +95,7 @@ class SessionsDialog(QDialog):
                 column, QHeaderView.ResizeMode.Stretch if column in (_KIND, _STATUS)
                 else QHeaderView.ResizeMode.ResizeToContents)
         resizable_columns(self.table)
+        copy_menu(self.table, self.translations)
         self.table.itemSelectionChanged.connect(self._update_buttons)
         layout.addWidget(self.table, 1)
 

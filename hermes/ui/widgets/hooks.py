@@ -40,7 +40,7 @@ from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.hook_debug import HookDebugWindow
 from hermes.ui.widgets.syntax_hint import SyntaxHint
-from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.table import add_copy_actions, resizable_columns, set_row_height
 
 
 # Upper bound for joining a hook worker from the GUI thread.
@@ -546,9 +546,9 @@ class HookPanel(QGroupBox):
         if row < 0:
             return
         self.table.selectRow(row)
-        menu = self.context_menu(self._selected_hook_id())
-        if menu is not None:
-            menu.exec(self.table.viewport().mapToGlobal(position))
+        menu = self.context_menu(self._selected_hook_id()) or QMenu(self)
+        add_copy_actions(menu, self.table, position, self.translations)
+        menu.exec(self.table.viewport().mapToGlobal(position))
 
     def context_menu(self, hook_id):
         """The context menu of a hook (None for an unknown id)."""

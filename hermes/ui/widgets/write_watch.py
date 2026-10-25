@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHeaderView,
 )
 
-from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 
 
 # Result table columns.
@@ -92,6 +92,7 @@ class WriteWatchDialog(QDialog):
                     else QHeaderView.ResizeMode.ResizeToContents,
                 )
             resizable_columns(self.results_table)
+            copy_menu(self.results_table, self.translations)
         self.results_table.verticalHeader().setVisible(False)
         set_row_height(self.results_table)
         self.results_table.itemSelectionChanged.connect(self._update_hook_button)

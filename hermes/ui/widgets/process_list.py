@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
 
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
-from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from hermes.ui.localization import load_translations
 
 
@@ -81,6 +81,7 @@ class ProcessSelectDialog(QDialog):
         ])
         self.list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         resizable_columns(self.list)
+        copy_menu(self.list, self.translations)
         self.list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.list.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.list.setAlternatingRowColors(True)

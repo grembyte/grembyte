@@ -32,7 +32,7 @@ from hermes.hooks.syntax import BODY, FUNCTION
 from hermes.ui.widgets.hooks import TransformForm, format_number, parse_number
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.syntax_hint import SyntaxHint, syntax_problem
-from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 
 
 NEW_TEMPLATE_SOURCE = """function (ctx) {
@@ -176,6 +176,7 @@ class TemplateDialog(QDialog):
         # text + padding, drop-down arrow and cell margins
         self.param_table.setColumnWidth(_KIND, widest + 64)
         resizable_columns(self.param_table)
+        copy_menu(self.param_table, self.translations)
         self.param_table.setMinimumHeight(140)
         layout.addWidget(self.param_table)
         param_buttons = QHBoxLayout()

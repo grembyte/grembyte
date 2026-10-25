@@ -23,7 +23,7 @@ from hermes.ui.styles.styles import STYLE
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.glyph_icon import glyph_icon
 from hermes.ui.widgets.process_list import ProcessSelectDialog
-from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.table import add_copy_actions, resizable_columns, set_row_height
 from hermes.core.pointer import chain_for_static_address, module_bases, resolve_chain
 from hermes.core.freeze import FreezeWorker, FrozenValue
 from hermes.core.scanner import (
@@ -1670,6 +1670,7 @@ class MainWindow(QMainWindow):
                     self.translations["address_table.pointer_remove"],
                     lambda: self._set_pointer(row, None),
                 )
+        add_copy_actions(menu, table, position, self.translations)
         menu.exec(table.viewport().mapToGlobal(position))
 
     def _watch_hook_target(self, spec, reads):

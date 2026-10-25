@@ -25,7 +25,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from hermes.features.favorites import METHOD, favorite_key, favorite_of
 from hermes.ui.widgets.labels import SelectableText
-from hermes.ui.widgets.table import resizable_columns
+from hermes.ui.widgets.table import copy_menu, resizable_columns
 
 
 # The star column comes first in every table that has one.
@@ -231,6 +231,7 @@ class FavoritesDialog(QDialog):
         header.resizeSection(_SOURCE, 120)
         header.resizeSection(_ADDED, 140)
         resizable_columns(self.table)
+        copy_menu(self.table, self.translations)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.itemDoubleClicked.connect(self._on_double_click)
         self.table.itemSelectionChanged.connect(self._show_selection)

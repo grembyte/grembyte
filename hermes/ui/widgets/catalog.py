@@ -26,7 +26,7 @@ from hermes.ui.widgets.favorites import (
     FavoriteColumn,
     set_up_favorite_column,
 )
-from hermes.ui.widgets.table import resizable_columns
+from hermes.ui.widgets.table import copy_menu, resizable_columns
 
 
 _FAVORITE, _CLASS, _METHOD, _RETURN, _STATIC, _ASSEMBLY = range(6)
@@ -219,6 +219,7 @@ class CatalogDialog(QDialog):
         header.resizeSection(_ASSEMBLY, 170)
         set_up_favorite_column(self.view, self.model, self._favorites, CATALOG)
         resizable_columns(self.view)
+        copy_menu(self.view, self.translations)
         self.view.selectionModel().currentRowChanged.connect(self._show_details)
         self.view.doubleClicked.connect(
             lambda index: index.column() != FAVORITE_COLUMN and self._request_monitor())

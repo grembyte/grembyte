@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QVBoxLayout,
 )
 
-from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.table import add_copy_actions, resizable_columns, set_row_height
 
 
 # Oldest entries are discarded beyond this many.
@@ -286,8 +286,9 @@ class HookDebugWindow(QDialog):
         if item is None:
             return
         self.table.selectRow(row)
-        self.context_menu(item.data(Qt.ItemDataRole.UserRole)).exec(
-            self.table.viewport().mapToGlobal(position))
+        menu = self.context_menu(item.data(Qt.ItemDataRole.UserRole))
+        add_copy_actions(menu, self.table, position, self.translations)
+        menu.exec(self.table.viewport().mapToGlobal(position))
 
     def _show_details(self):
         row = self.table.currentRow()

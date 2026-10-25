@@ -39,7 +39,7 @@ from hermes.ui.widgets.favorites import (
 )
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.trace_filters import TraceFilterPanel
-from hermes.ui.widgets.table import resizable_columns
+from hermes.ui.widgets.table import copy_menu, resizable_columns
 
 
 # The limits come from the settings (hermes.core.settings):
@@ -210,12 +210,14 @@ class TraceSequenceModel(_TableModel):
         return call.caller
 
 
-def trace_table(model, stretch_column, sortable=False, favorites=None, source=""):
+def trace_table(model, stretch_column, sortable=False, favorites=None, source="",
+                translations=None):
     """A table of trace results: whole rows, one at a time.
 
     ``sortable``: a click on a column header sorts by it; until then the
     rows keep the model's order. ``favorites``: the FavoriteStore the star
-    column marks the methods in, as found by ``source``.
+    column marks the methods in, as found by ``source``. With
+    ``translations`` the rows and cells can be copied (context menu).
     """
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     view = QTableView()
@@ -231,6 +233,8 @@ def trace_table(model, stretch_column, sortable=False, favorites=None, source=""
             else QHeaderView.ResizeMode.Interactive)
     set_up_favorite_column(view, model, favorites, source)
     resizable_columns(view)
+    if translations is not None:
+        copy_menu(view, translations)
     if sortable:
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         view.setSortingEnabled(True)
@@ -452,7 +456,8 @@ class TraceDialog(QDialog):
         self._show_selection()
 
     def _table(self, model, stretch_column, sortable=False):
-        view = trace_table(model, stretch_column, sortable, self._favorites, TRACE)
+        view = trace_table(model, stretch_column, sortable, self._favorites, TRACE,
+                           self.translations)
         view.doubleClicked.connect(
             lambda index: index.column() != FAVORITE_COLUMN and self._request_monitor())
         return view

@@ -896,5 +896,7 @@
   "calls.indexing": "Durchsuche {assembly} ({done} von {total})",
   "calls.failed": "Fehler: {message}",
   "calls.copy_tooltip": "Die Signatur der gewählten (sonst der angezeigten) Methode kopieren",
-  "calls.monitor_tooltip": "Die gewählte (sonst die angezeigte) Methode im Methoden-Monitor überwachen"
+  "calls.monitor_tooltip": "Die gewählte (sonst die angezeigte) Methode im Methoden-Monitor überwachen",
+  "table.copy_row": "Zeile kopieren",
+  "table.copy_cell": "Zelle kopieren"
 }

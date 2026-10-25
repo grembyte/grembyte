@@ -237,7 +237,8 @@ class NativeTraceDialog(QDialog):
         self._show_selection()
 
     def _table(self, model, stretch_column, sortable=False):
-        view = trace_table(model, stretch_column, sortable, self._favorites, NATIVE_TRACE)
+        view = trace_table(model, stretch_column, sortable, self._favorites, NATIVE_TRACE,
+                           self.translations)
         view.doubleClicked.connect(
             lambda index: index.column() != FAVORITE_COLUMN and self._request_memory())
         return view

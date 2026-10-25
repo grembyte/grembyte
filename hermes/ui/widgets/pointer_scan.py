@@ -32,7 +32,7 @@ from hermes.core.pointer import (
 from hermes.platform import ProcessMemory, main_module, read_mappings
 from hermes.db.repository.addresses import SavedPointerScan
 from hermes.ui.widgets.labels import WrappedLabel
-from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 
 
 # Rows shown in the result table; all candidates are kept and filtered.
@@ -259,6 +259,7 @@ class PointerScanDialog(QDialog):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         resizable_columns(self.table)
+        copy_menu(self.table, self.translations)
         self.table.itemSelectionChanged.connect(self._update_buttons)
         self.table.doubleClicked.connect(self._accept)
         layout.addWidget(self.table, 1)

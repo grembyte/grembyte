@@ -1,7 +1,16 @@
 """Shared settings for table widgets."""
 
-from PyQt6.QtCore import QEvent, QObject, QTimer  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import QHeaderView  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+    QAbstractButton,
+    QComboBox,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QTableWidget,
+)
 
 # Leaves room for the inline editors (line edits, combo boxes) of editable cells.
 TABLE_ROW_HEIGHT = 36
@@ -10,6 +19,67 @@ TABLE_ROW_HEIGHT = 36
 def set_row_height(table):
     """Give all rows of ``table`` the shared row height."""
     table.verticalHeader().setDefaultSectionSize(TABLE_ROW_HEIGHT)
+
+
+def cell_text(view, row, column):
+    """What a cell of ``view`` (a QTableView or QTableWidget) shows, as text.
+
+    Cell widgets count too: a ticked check box is "✓", a combo box or line
+    edit its text. A link (e.g. "Objekt-Details") is an action, not a value:
+    it gives "".
+    """
+    text = view.model().index(row, column).data(Qt.ItemDataRole.DisplayRole)
+    text = "" if text is None else str(text)
+    widget = view.cellWidget(row, column) if isinstance(view, QTableWidget) else None
+    if text or widget is None:
+        return text
+    for kind in (QComboBox, QLineEdit, QAbstractButton, QLabel):
+        found = widget if isinstance(widget, kind) else widget.findChild(kind)
+        if found is None:
+            continue
+        if isinstance(found, QComboBox):
+            return found.currentText()
+        if isinstance(found, QAbstractButton) and found.isCheckable():
+            return "✓" if found.isChecked() else ""
+        if isinstance(found, QLabel) and "<a " in found.text():
+            return ""
+        return found.text()
+    return ""
+
+
+def row_text(view, row):
+    """The cells of ``row`` that are not hidden, separated by tabs (for a spreadsheet)."""
+    header = view.horizontalHeader()
+    return "\t".join(cell_text(view, row, column) for column in range(header.count())
+                     if not header.isSectionHidden(column))
+
+
+def add_copy_actions(menu, view, position, translations):
+    """Add "copy row" and "copy cell" for the cell at ``position`` (viewport
+    coordinates of ``view``) to ``menu``; nothing outside the rows."""
+    index = view.indexAt(position)
+    if not index.isValid():
+        return
+    if not menu.isEmpty():
+        menu.addSeparator()
+    row, column = index.row(), index.column()
+    menu.addAction(translations["table.copy_row"],
+                   lambda: QGuiApplication.clipboard().setText(row_text(view, row)))
+    menu.addAction(translations["table.copy_cell"],
+                   lambda: QGuiApplication.clipboard().setText(cell_text(view, row, column)))
+
+
+def copy_menu(view, translations):
+    """Give ``view`` (a table without a context menu of its own) one that copies."""
+    view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+    def show(position):
+        menu = QMenu(view)
+        add_copy_actions(menu, view, position, translations)
+        if not menu.isEmpty():
+            menu.exec(view.viewport().mapToGlobal(position))
+
+    view.customContextMenuRequested.connect(show)
 
 
 def resizable_columns(view):
