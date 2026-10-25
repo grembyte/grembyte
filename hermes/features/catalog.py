@@ -20,7 +20,7 @@ from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
 from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
 from hermes.core.agent_source import load_agent_source
-from hermes.features import catalog_cache
+from hermes.features import catalog_cache, games
 from hermes.features.assemblies import chosen_assemblies
 
 
@@ -176,6 +176,7 @@ class CatalogWorker(QThread):
             script.load()
             api = script.exports_sync
             found = api.assemblies()
+            games.remember(self.pid, self.engine.id, found)
             self.assemblies_found.emit(found)
             names = self.assemblies
             if names is None:
@@ -213,3 +214,45 @@ class CatalogWorker(QThread):
         if cached:
             self.assembly_cached.emit(name)
         return classes
+
+
+class CachedCatalogWorker(QThread):
+    """Read the catalog of a game that is not running from the catalog cache.
+
+    ``game`` is a KnownGame (see hermes.features.games): the builds it loaded
+    when it was read last. The signals are CatalogWorker's; an assembly whose
+    build is not in the cache (never read, or pruned) gives
+    ``assembly_failed`` with ``NOT_CACHED``.
+    """
+
+    assemblies_found = pyqtSignal(list)
+    assembly_loaded = pyqtSignal(str, list)
+    assembly_cached = pyqtSignal(str)
+    assembly_failed = pyqtSignal(str, str)
+    catalog_failed = pyqtSignal(str)
+
+    NOT_CACHED = "not cached"
+
+    def __init__(self, game, assemblies=None, parent=None, engine=None):
+        super().__init__(parent)
+        self.game = game
+        self.assemblies = assemblies
+        self.engine = engine
+
+    def run(self):
+        found = self.game.assemblies
+        self.assemblies_found.emit(found)
+        names = self.assemblies
+        if names is None:
+            names = chosen_assemblies([a["name"] for a in found], (), self.engine)
+        mvids = self.game.mvids()
+        for name in names:
+            if self.isInterruptionRequested():
+                break
+            classes = catalog_cache.load(self.engine.id, name, mvids.get(name))
+            if classes is None:
+                self.assembly_failed.emit(name, self.NOT_CACHED)
+                continue
+            self.assembly_cached.emit(name)
+            self.assembly_loaded.emit(name, catalog_methods(name, classes, self.engine.id))
+

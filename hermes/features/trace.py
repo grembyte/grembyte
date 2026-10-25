@@ -40,7 +40,7 @@ from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-
 from hermes.core import activity, logs, settings
 from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
-from hermes.features import catalog_cache
+from hermes.features import catalog_cache, games
 from hermes.features.assemblies import chosen_assemblies
 from hermes.features.catalog import CatalogMethod
 from hermes.core.frida_attach import attach_session
@@ -488,6 +488,7 @@ class TraceWorker(AgentWorker):
         Assemblies come from the catalog cache, else from the agent.
         """
         found = api.assemblies()
+        games.remember(self.pid, self.engine.id, found)
         mvids = {a["name"]: a.get("mvid") for a in found}
         names = chosen_assemblies(list(mvids), self.selection, self.engine)
         classes_of = {}

@@ -935,7 +935,7 @@ def test_call_graph_reads_calls_from_il_code(tmp_path, qt_app):
     worker = CallGraphWorker(target.pid)
     callees, callers, failed = [], [], []
     worker.callees_found.connect(lambda _id, _method, calls, body: callees.append((calls, body)))
-    worker.callers_found.connect(lambda _id, _method, calls: callers.append(calls))
+    worker.callers_found.connect(lambda _id, _method, calls, _missing: callers.append(calls))
     worker.request_failed.connect(lambda _id, message: failed.append(message))
     worker.worker_failed.connect(failed.append)
     take = CatalogMethod("Assembly-CSharp", "Game.Loot", "Take", "(int&,int)", "System.Void",

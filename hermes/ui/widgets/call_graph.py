@@ -52,13 +52,16 @@ class CallGraphDialog(QDialog):
     # CatalogMethod to log the calls of
     monitor_requested = pyqtSignal(object)
 
-    def __init__(self, translations, pid, method, parent=None, engine=None, selection=()):
+    def __init__(self, translations, pid, method, parent=None, engine=None, selection=(),
+                 game=None):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.translations = translations
-        self.engine = resolve_engine(pid, engine)
+        # Offline: a KnownGame (see hermes.features.games), answers from the cache
+        self.game = game
+        self.engine = resolve_engine(pid, engine) if game is None else engine
         self.method = None
         # The method of the row chosen last in either table
         self._selected = None
@@ -71,7 +74,7 @@ class CallGraphDialog(QDialog):
         self.setWindowTitle(translations["calls.title"])
         self.resize(1000, 700)
         self._build_ui()
-        self._worker = CallGraphWorker(pid, engine=self.engine, selection=selection)
+        self._worker = CallGraphWorker(pid, engine=self.engine, selection=selection, game=game)
         self._worker.callees_found.connect(self._on_callees)
         self._worker.callers_found.connect(self._on_callers)
         self._worker.request_failed.connect(self._on_failed)
@@ -81,6 +84,9 @@ class CallGraphDialog(QDialog):
         self._worker.finished.connect(lambda: _running_workers.discard(worker))
         _running_workers.add(self._worker)
         self._worker.start()
+        if game is not None:
+            self.monitor_button.setEnabled(False)
+            self.monitor_button.setToolTip(self.translations["catalog.offline_no_monitor"])
         self.go_to(method)
 
     def _build_ui(self):
@@ -232,12 +238,15 @@ class CallGraphDialog(QDialog):
         self.status_label.setText(self.translations[key].format(
             count=len(calls) + len(body), method=method.name))
 
-    def _on_callers(self, request_id, _method, calls):
+    def _on_callers(self, request_id, _method, calls, missing):
         if request_id != self._caller_request:
             return
         self.callers_progress.hide()
         self._fill(self.callers_table, [(call.opcode, call.method) for call in calls])
-        if not calls:
+        if missing:
+            self.status_label.setText(self.translations["calls.not_searched"].format(
+                count=len(missing), assemblies=", ".join(missing)))
+        elif not calls:
             self.status_label.setText(self.translations["calls.no_callers"])
 
     def _on_progress(self, done, total, assembly):
@@ -250,6 +259,9 @@ class CallGraphDialog(QDialog):
         if request_id == self._caller_request:
             self.callers_progress.hide()
             self.callers_button.setEnabled(True)
+        if message == CallGraphWorker.NOT_CACHED:
+            self.status_label.setText(self.translations["calls.not_cached"])
+            return
         self.status_label.setText(self.translations["calls.failed"].format(message=message))
 
     def _on_worker_failed(self, message):

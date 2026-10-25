@@ -152,7 +152,7 @@ def test_dialog_navigates_and_searches_callers(monkeypatch):
         dialog.callers_button.click()
         dialog._worker.progress.emit(0, 2, "Assembly-CSharp")
         assert "Assembly-CSharp (0 von 2)" in dialog.callers_progress.format()
-        dialog._worker.callers_found.emit(2, load, [Call("call", move_next)])
+        dialog._worker.callers_found.emit(2, load, [Call("call", move_next)], [])
         assert dialog.callers_table.item(0, 1).text() == "Game.Loader:Load (async)"
 
         dialog.callees_table.setCurrentCell(0, 1)

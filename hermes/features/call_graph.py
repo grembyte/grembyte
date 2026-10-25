@@ -36,7 +36,7 @@ from hermes.core import sessions
 from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
 from hermes.engines.registry import resolve_engine
-from hermes.features import catalog_cache
+from hermes.features import catalog_cache, games
 from hermes.features.assemblies import chosen_assemblies
 from hermes.features.catalog import (
     AGENT_SOURCE,
@@ -252,6 +252,31 @@ def _method_of(target, lookup, engine):
 
 # --- Worker -----------------------------------------------------------------
 
+class NotCached(Exception):
+    """What a question needs is neither in the catalog cache nor readable:
+    the game is not running (offline, see CallGraphWorker)."""
+
+
+class _OfflineApi:
+    """Stands in for the agent of a game that is not running: it knows the
+    game's assemblies (a KnownGame, see hermes.features.games), nothing else."""
+
+    def __init__(self, game):
+        self.game = game
+
+    def assemblies(self):
+        return self.game.assemblies
+
+    def classes(self, name):
+        raise NotCached(name)
+
+    def method_bodies(self, name, _tokens):
+        raise NotCached(name)
+
+    def resolve_tokens(self, name, _tokens):
+        raise NotCached(name)
+
+
 class CallGraphWorker(QThread):
     """Keep a Frida session open and answer call graph questions about a process.
 
@@ -259,26 +284,34 @@ class CallGraphWorker(QThread):
     request id; answers come back through the signals. ``selection`` (the
     user's assembly selection, see hermes.features.assemblies) decides which
     assemblies are searched for callers.
+
+    With ``game`` (a KnownGame) instead of a running process the answers come
+    from the catalog cache alone; a question it cannot answer fails with
+    ``NOT_CACHED``, and callers are searched in the assemblies indexed before.
     """
 
     # request id, method (CatalogMethod), its Calls, the Calls of its body
     # in a compiler-made MoveNext (async methods, iterators)
     callees_found = pyqtSignal(int, object, list, list)
-    # request id, method, the Calls of the methods that call it
-    callers_found = pyqtSignal(int, object, list)
-    # request id, message
+    # request id, method, the Calls of the methods that call it, the
+    # assemblies not searched (offline: no call index in the cache)
+    callers_found = pyqtSignal(int, object, list, list)
+    # request id, message (NOT_CACHED: offline, not in the cache)
     request_failed = pyqtSignal(int, str)
     # assemblies indexed so far, of how many, the one at hand
     progress = pyqtSignal(int, int, str)
     worker_failed = pyqtSignal(str)
 
+    NOT_CACHED = "not cached"
+
     _requests = itertools.count(1)
 
-    def __init__(self, pid, parent=None, engine=None, selection=()):
+    def __init__(self, pid, parent=None, engine=None, selection=(), game=None):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.pid = pid
-        self.engine = resolve_engine(pid, engine)
+        self.game = game
+        self.engine = resolve_engine(pid, engine) if game is None else engine
         self.selection = frozenset(selection)
         self._commands = queue.Queue()
         self._detached = threading.Event()
@@ -301,6 +334,9 @@ class CallGraphWorker(QThread):
 
     @sessions.tracked(sessions.CATALOG)
     def run(self):
+        if self.game is not None:
+            self._serve(_OfflineApi(self.game))
+            return
         session = None
         script = None
         try:
@@ -309,19 +345,7 @@ class CallGraphWorker(QThread):
             session.on("detached", lambda _reason, _crash: self._detached.set())
             script = session.create_script(AGENT_SOURCE)
             script.load()
-            api = script.exports_sync
-            while not self.isInterruptionRequested() and not self._detached.is_set():
-                try:
-                    action, request_id, method = self._commands.get(timeout=0.05)
-                except queue.Empty:
-                    continue
-                try:
-                    if action == "callees":
-                        self._answer_callees(api, request_id, method)
-                    else:
-                        self._answer_callers(api, request_id, method)
-                except frida.RPCException as error:
-                    self.request_failed.emit(request_id, str(error).split("\n", 1)[0])
+            self._serve(script.exports_sync)
         except FRIDA_ERRORS + (frida.RPCException, OSError, RuntimeError) as error:
             if not self.isInterruptionRequested():
                 self.worker_failed.emit(str(error))
@@ -333,11 +357,27 @@ class CallGraphWorker(QThread):
                     except CLEANUP_ERRORS as error:
                         logs.cleanup_failed(error)
 
+    def _serve(self, api):
+        while not self.isInterruptionRequested() and not self._detached.is_set():
+            try:
+                action, request_id, method = self._commands.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            try:
+                if action == "callees":
+                    self._answer_callees(api, request_id, method)
+                else:
+                    self._answer_callers(api, request_id, method)
+            except NotCached:
+                self.request_failed.emit(request_id, self.NOT_CACHED)
+            except frida.RPCException as error:
+                self.request_failed.emit(request_id, str(error).split("\n", 1)[0])
+
     # --- Answers ---------------------------------------------------------------
     def _answer_callees(self, api, request_id, method):
         _mvid, classes, methods = self._assembly(api, method.assembly)
         machines = state_machines(method, methods.values())
-        index = self._known[method.assembly][3]
+        index = self._stored_index(api, method.assembly)
         if index is None:
             # Not indexed yet: read just these methods instead of the assembly.
             wanted = {method.token} | {machine.token for machine in machines}
@@ -356,19 +396,26 @@ class CallGraphWorker(QThread):
         names = chosen_assemblies(list(self._assembly_mvids(api)), self.selection, self.engine)
         if method.assembly not in names:
             names.append(method.assembly)
-        found = []
+        found, missing = [], []
         for done, name in enumerate(names):
             self.progress.emit(done, len(names), name)
             if self.isInterruptionRequested():
                 return
-            found.extend(callers_in(self._index(api, name), method, self._assembly(api, name)[2]))
+            try:
+                found.extend(callers_in(self._index(api, name), method,
+                                        self._assembly(api, name)[2]))
+            except NotCached:
+                missing.append(name)
         self.progress.emit(len(names), len(names), "")
-        self.callers_found.emit(request_id, method, found)
+        self.callers_found.emit(request_id, method, found, missing)
 
     # --- What is known of the assemblies ----------------------------------------
     def _assembly_mvids(self, api):
         if self._mvids is None:
-            self._mvids = {a["name"]: a.get("mvid") for a in api.assemblies()}
+            found = api.assemblies()
+            if self.game is None:
+                games.remember(self.pid, self.engine.id, found)
+            self._mvids = {a["name"]: a.get("mvid") for a in found}
         return self._mvids
 
     def _assembly(self, api, name):
@@ -387,16 +434,28 @@ class CallGraphWorker(QThread):
         known = self._known.get(assembly)
         return None if known is None else known[2].get(token)
 
-    def _index(self, api, name):
-        """The call index of assembly ``name`` (see build_call_index)."""
+    def _stored_index(self, api, name):
+        """The call index of ``name`` if made already (and still fitting), else None."""
+        if self._known[name][3] is None:
+            try:
+                self._index(api, name, build=False)
+            except NotCached:
+                return None
+        return self._known[name][3]
+
+    def _index(self, api, name, build=True):
+        """The call index of assembly ``name`` (see build_call_index); without
+        ``build`` only one from the cache (else NotCached)."""
         mvid, classes, methods = self._assembly(api, name)
         index = self._known[name][3]
         if index is None:
-            index = read_call_index(
-                self.engine.id, name, mvid, self._assembly_mvids(api),
-                lambda: build_call_index(
+            def make():
+                if not build:
+                    raise NotCached(name)
+                return build_call_index(
                     name, classes,
                     lambda tokens: split_bodies(api.method_bodies(name, tokens)),
-                    lambda tokens: api.resolve_tokens(name, tokens)))
+                    lambda tokens: api.resolve_tokens(name, tokens))
+            index = read_call_index(self.engine.id, name, mvid, self._assembly_mvids(api), make)
             self._known[name] = (mvid, classes, methods, index)
         return index

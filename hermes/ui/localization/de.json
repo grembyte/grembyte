@@ -898,5 +898,21 @@
   "calls.copy_tooltip": "Die Signatur der gewählten (sonst der angezeigten) Methode kopieren",
   "calls.monitor_tooltip": "Die gewählte (sonst die angezeigte) Methode im Methoden-Monitor überwachen",
   "table.copy_row": "Zeile kopieren",
-  "table.copy_cell": "Zelle kopieren"
+  "table.copy_cell": "Zelle kopieren",
+  "menu.offline_catalog": "Katalog (offline) …",
+  "games.menu_tooltip": "Den Katalog eines früher gelesenen Spiels aus dem Zwischenspeicher anzeigen, ohne dass das Spiel läuft",
+  "games.title": "Katalog (offline): Spiel wählen",
+  "games.hint": "Spiele, deren Katalog Hermes schon gelesen hat. Der Katalog zeigt den Stand des letzten Lesens; überwachen lässt sich offline nichts.",
+  "games.none": "Noch kein Spiel bekannt. Sobald der Katalog, der Trace oder die Aufruf-Ansicht ein laufendes Spiel gelesen hat, erscheint es hier.",
+  "games.column_game": "Spiel",
+  "games.column_engine": "Engine",
+  "games.column_updated": "Zuletzt gelesen",
+  "games.column_assemblies": "Assemblies",
+  "games.column_path": "Programm",
+  "games.open": "Katalog öffnen",
+  "catalog.title_offline": "{title} – {game} (offline, Stand {time})",
+  "catalog.offline_no_monitor": "Offline lässt sich nichts überwachen: dafür muss das Spiel laufen und angehängt sein",
+  "catalog.not_cached": "nicht im Zwischenspeicher: {assemblies}",
+  "calls.not_cached": "Offline nicht verfügbar: Der Code dieser Methode ist nicht im Zwischenspeicher (ihre Assembly wurde noch nicht nach Aufrufern durchsucht). Dafür muss das Spiel laufen.",
+  "calls.not_searched": "{count} Assemblies nicht durchsucht (nicht im Zwischenspeicher): {assemblies}"
 }

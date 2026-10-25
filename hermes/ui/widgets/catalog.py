@@ -1,5 +1,7 @@
 """Searchable catalog of the C# methods of a Mono game (e.g. a Unity game)."""
 
+from datetime import datetime
+
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
@@ -17,7 +19,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 
 from hermes.engines.registry import resolve_engine
 from hermes.features.assemblies import missing_assemblies
-from hermes.features.catalog import CatalogWorker
+from hermes.features.catalog import CachedCatalogWorker, CatalogWorker
 from hermes.features.favorites import CATALOG
 from hermes.ui.widgets.call_graph import CallGraphDialog
 from hermes.ui.widgets.favorites import (
@@ -146,6 +148,10 @@ class CatalogDialog(QDialog):
     an assembly selection (see hermes.ui.widgets.assemblies) only the
     selected assemblies are read and shown. Assemblies read before come from
     the catalog cache; "Reload" reads them anew.
+
+    Offline, ``game`` (a KnownGame, see hermes.features.games) is shown from
+    the catalog cache as it was read last, without a process (``pid`` None):
+    nothing can be monitored or read anew then.
     """
 
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
@@ -154,13 +160,14 @@ class CatalogDialog(QDialog):
     monitor_requested = pyqtSignal(object)
 
     def __init__(self, translations, pid, parent=None, engine=None, favorites=None,
-                 assembly_selection=None):
+                 assembly_selection=None, game=None):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
         self.translations = translations
         self.pid = pid
-        self.engine = resolve_engine(pid, engine)
+        self.game = game
+        self.engine = resolve_engine(pid, engine) if game is None else engine
         self.model = CatalogModel(translations, self.engine, self)
         self._favorites = favorites
         self._assembly_selection = assembly_selection
@@ -169,11 +176,20 @@ class CatalogDialog(QDialog):
         # Loaded assemblies that came from the catalog cache
         self._cached = set()
         self._failed = {}
+        # Offline: assemblies whose build is not in the cache
+        self._not_cached = set()
         self._error = None
         self._worker = None
-        self.setWindowTitle(translations["catalog.title"].format(engine=self.engine.display_name))
+        title = translations["catalog.title"].format(engine=self.engine.display_name)
+        if game is not None:
+            title = translations["catalog.title_offline"].format(
+                title=title, game=game.name,
+                time=datetime.fromtimestamp(game.updated).strftime("%d.%m.%Y %H:%M"))
+        self.setWindowTitle(title)
         self.resize(1000, 640)
         self._build_ui()
+        if game is not None:
+            self.reload_button.hide()
         self._filter_timer = QTimer(self)
         self._filter_timer.setSingleShot(True)
         self._filter_timer.setInterval(FILTER_DELAY_MS)
@@ -222,7 +238,8 @@ class CatalogDialog(QDialog):
         copy_menu(self.view, self.translations)
         self.view.selectionModel().currentRowChanged.connect(self._show_details)
         self.view.doubleClicked.connect(
-            lambda index: index.column() != FAVORITE_COLUMN and self._request_monitor())
+            lambda index: index.column() != FAVORITE_COLUMN and self.game is None
+            and self._request_monitor())
         self.model.modelReset.connect(lambda: self._show_details(QModelIndex()))
         layout.addWidget(self.view, 1)
 
@@ -243,7 +260,8 @@ class CatalogDialog(QDialog):
         details.addWidget(self.calls_button)
         self.monitor_button = QPushButton(self.translations["catalog.monitor"])
         self.monitor_button.setObjectName("btn_primary")
-        self.monitor_button.setToolTip(self.translations["catalog.monitor_tooltip"])
+        self.monitor_button.setToolTip(self.translations[
+            "catalog.offline_no_monitor" if self.game is not None else "catalog.monitor_tooltip"])
         self.monitor_button.setEnabled(False)
         self.monitor_button.clicked.connect(self._request_monitor)
         details.addWidget(self.monitor_button)
@@ -269,6 +287,7 @@ class CatalogDialog(QDialog):
         self._loaded.clear()
         self._cached.clear()
         self._failed.clear()
+        self._not_cached.clear()
         self._error = None
         self.model.clear()
         selection = self.selection()
@@ -281,8 +300,11 @@ class CatalogDialog(QDialog):
         self._start_worker(None, fresh)
 
     def _start_worker(self, assemblies, fresh=False):
-        worker = CatalogWorker(self.pid, assemblies, engine=self.engine,
-                               selection=self.selection(), fresh=fresh)
+        if self.game is not None:
+            worker = CachedCatalogWorker(self.game, assemblies, engine=self.engine)
+        else:
+            worker = CatalogWorker(self.pid, assemblies, engine=self.engine,
+                                   selection=self.selection(), fresh=fresh)
         worker.assemblies_found.connect(self._on_assemblies_found)
         worker.assembly_cached.connect(self._cached.add)
         worker.assembly_loaded.connect(self._on_assembly_loaded)
@@ -311,7 +333,10 @@ class CatalogDialog(QDialog):
         self._show_progress()
 
     def _on_assembly_failed(self, assembly, message):
-        self._failed[assembly] = message
+        if message == CachedCatalogWorker.NOT_CACHED:
+            self._not_cached.add(assembly)
+        else:
+            self._failed[assembly] = message
         self._show_progress()
 
     def _on_failed(self, message):
@@ -343,6 +368,7 @@ class CatalogDialog(QDialog):
     def _show_progress(self):
         pending = [a["name"] for a in self._assemblies
                    if a["name"] not in self._loaded and a["name"] not in self._failed
+                   and a["name"] not in self._not_cached
                    and self.model.shows_assembly(a["name"])]
         if pending:
             self.status_label.setText(self.translations["catalog.loading"].format(
@@ -355,9 +381,14 @@ class CatalogDialog(QDialog):
             shown=len(self.model.visible), total=len(self.model.methods),
             classes=len(classes), assemblies=len(self._loaded),
         )
-        if self._cached:
+        if self._cached and self.game is None:
             text += "  ·  " + self.translations["catalog.from_cache"].format(
                 count=len(self._cached))
+        shown_missing = sorted(name for name in self._not_cached
+                               if self.model.shows_assembly(name))
+        if shown_missing:
+            text += "  ·  " + self.translations["catalog.not_cached"].format(
+                assemblies=", ".join(shown_missing))
         selection = self.selection()
         if selection:
             text += "  ·  " + self.translations["catalog.assembly_selection"].format(
@@ -380,7 +411,7 @@ class CatalogDialog(QDialog):
         method = self.model.method_at(current.row()) if current.isValid() else None
         self.copy_button.setEnabled(method is not None)
         self.calls_button.setEnabled(method is not None)
-        self.monitor_button.setEnabled(method is not None)
+        self.monitor_button.setEnabled(method is not None and self.game is None)
         if method is None:
             self.details_label.setText("")
             return
@@ -394,7 +425,7 @@ class CatalogDialog(QDialog):
 
     def _request_monitor(self):
         method = self.selected_method()
-        if method is not None:
+        if method is not None and self.game is None:
             self.monitor_requested.emit(method)
 
     def _show_calls(self):
@@ -403,7 +434,7 @@ class CatalogDialog(QDialog):
         if method is None:
             return
         graph = CallGraphDialog(self.translations, self.pid, method, parent=self,
-                                engine=self.engine, selection=self.selection())
+                                engine=self.engine, selection=self.selection(), game=self.game)
         graph.monitor_requested.connect(self.monitor_requested.emit)
         graph.show()
 

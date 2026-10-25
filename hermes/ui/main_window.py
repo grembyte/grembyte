@@ -37,7 +37,7 @@ from hermes.core.scanner import (
 )
 from hermes.core.memory import UnknownModuleError, parse_address, write_process_value
 from hermes.engines import base as engine_base
-from hermes.engines.registry import ENGINES, detect_engine
+from hermes.engines.registry import ENGINES, detect_engine, engine_by_id
 from hermes.features.catalog import (
     catalog_method_from_identity,
     generic_parameters,
@@ -66,6 +66,7 @@ from hermes.hooks.engine import HookSpec
 from hermes.hooks.transforms import example_templates
 from hermes.ui.widgets.assemblies import AssemblyDialog, AssemblySelectionStore
 from hermes.ui.widgets.catalog import CatalogDialog
+from hermes.ui.widgets.known_games import KnownGamesDialog
 from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
@@ -442,6 +443,11 @@ class MainWindow(QMainWindow):
         self.act_catalog = view_menu.addAction(
             glyph_icon("{ }"), self.translations["menu.catalog"])
         self.act_catalog.triggered.connect(self._open_catalog)
+
+        self.act_offline_catalog = view_menu.addAction(
+            glyph_icon("{ }"), self.translations["menu.offline_catalog"])
+        self.act_offline_catalog.setToolTip(self.translations["games.menu_tooltip"])
+        self.act_offline_catalog.triggered.connect(self._open_offline_catalog)
 
         self.act_trace = view_menu.addAction(
             glyph_icon("◉"), self.translations["menu.trace"])
@@ -1306,6 +1312,19 @@ class MainWindow(QMainWindow):
         catalog.show()
         catalog.raise_()
         catalog.activateWindow()
+
+    def _open_offline_catalog(self):
+        """Show the catalog of a game read before, from the cache (no process needed)."""
+        dialog = KnownGamesDialog(self.translations, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.game is None:
+            return
+        game = dialog.game
+        catalog = CatalogDialog(self.translations, None, parent=self,
+                                engine=engine_by_id(game.engine), favorites=self._favorite_store,
+                                game=game)
+        catalog.monitor_requested.connect(self._monitor_method)
+        catalog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        catalog.show()
 
     def _open_assemblies(self):
         """Show the assemblies of the attached game, to limit the catalog and the trace."""
