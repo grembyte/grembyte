@@ -28,8 +28,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES
 from hermes.hooks.transforms import PARAMETER_NAME, TransformDefinition, TransformParameter
 from hermes.hooks.sandbox import TransformSandbox
+from hermes.hooks.syntax import BODY, FUNCTION
 from hermes.ui.widgets.hooks import TransformForm, format_number, parse_number
 from hermes.ui.widgets.labels import WrappedLabel
+from hermes.ui.widgets.syntax_hint import SyntaxHint, syntax_problem
 from hermes.ui.widgets.table import resizable_columns, set_row_height
 
 
@@ -193,6 +195,8 @@ class TemplateDialog(QDialog):
         )
         self.source_input.setMinimumHeight(180)
         layout.addWidget(self.source_input, 1)
+        self.syntax_hint = SyntaxHint(self.translations, self.source_input, FUNCTION)
+        layout.addWidget(self.syntax_hint)
         self.script_hint = WrappedLabel(self.translations["hooks.script_hint"])
         layout.addWidget(self.script_hint)
 
@@ -418,6 +422,9 @@ class TemplateDialog(QDialog):
             raise ValueError(self.translations["templates.name_required"])
         if not source.strip():
             raise ValueError(self.translations["templates.source_required"])
+        problem = self.syntax_hint.problem()
+        if problem is not None:
+            raise ValueError(problem)
         parameters, names = [], set()
         for param_name, label, kind, default, optional, choices in rows:
             if not PARAMETER_NAME.match(param_name):
@@ -447,6 +454,9 @@ class TemplateDialog(QDialog):
                 value = default or values[0]
             elif kind == "code":
                 value = default or None
+                problem = syntax_problem(self.translations, BODY, default)
+                if problem is not None:
+                    raise ValueError(f"{param_name}: {problem}")
             elif default:
                 try:
                     value = parse_number(default)

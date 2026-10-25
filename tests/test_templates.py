@@ -261,3 +261,38 @@ def test_method_template_test_run(qt_app, translations):  # pylint: disable=unus
     calling = TemplateTestDialog(translations, type(script)(
         "x", 'function (ctx) { return ctx.call("A.B"); }', kind="method"))
     assert "only works in the game" in calling.run().error
+
+
+def test_syntax_errors_block_saving(dialog, repository):
+    # pylint: disable=protected-access
+    dialog._new_template()
+    dialog.name_input.setText("Kaputt")
+    dialog.source_input.setPlainText("function (ctx) {\n  return ctx.new * ;\n}")
+    if not dialog.syntax_hint.problem():
+        pytest.skip("needs Frida's system session")
+    assert dialog.syntax_hint.text().startswith("Syntaxfehler in Zeile 2")
+
+    assert not dialog.save()
+    assert dialog.error_label.text().startswith("Syntaxfehler in Zeile 2")
+    assert all(t.name != "Kaputt" for t in repository.list_templates())
+
+    # The default of a code parameter is checked as a function body.
+    dialog.source_input.setPlainText("function (ctx) { return ctx.new; }")
+    assert dialog.syntax_hint.problem() is None
+    assert dialog.syntax_hint.text() == "✓ Syntax in Ordnung"
+    dialog._add_parameter_row(None)
+    _set_cell(dialog, 0, 0, "code")
+    dialog.param_table.cellWidget(0, 2).setCurrentIndex(2)  # code
+    _set_cell(dialog, 0, 3, "if (")
+    assert not dialog.save()
+    assert dialog.error_label.text().startswith("code: Syntaxfehler")
+
+    _set_cell(dialog, 0, 3, "return 1;")
+    assert dialog.save()
+
+
+def test_source_that_is_no_function_gets_a_hint(dialog):
+    dialog.source_input.setPlainText("ctx.new * 2")
+    if dialog.syntax_hint.problem() is None and not dialog.syntax_hint.text():
+        pytest.skip("needs Frida's system session")
+    assert dialog.syntax_hint.text().startswith("Hinweis:")

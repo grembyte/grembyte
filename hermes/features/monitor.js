@@ -8,6 +8,14 @@ const WIN64_REGS = ['rcx', 'rdx', 'r8', 'r9'];
 const WIN64_SHADOW = 32;
 const MAX_EVENTS = 200;
 const MAX_STRING = 120;
+// Longer strings are kept whole for a while (up to MAX_FULL_STRING
+// characters each, FULL_STRING_BUDGET in all, the oldest go first), to be
+// fetched with fullText(id): e.g. a save game's JSON.
+const MAX_FULL_STRING = 8 * 1024 * 1024;
+const FULL_STRING_BUDGET = 32 * 1024 * 1024;
+const fullTexts = new Map();
+let fullTextChars = 0;
+let nextFullText = 1;
 const REFERENCE_KINDS = new Set([0x12, 0x14, 0x15, 0x1c, 0x1d]);  // class, array, generic, object, szarray
 const monitors = new Map();
 const events = [];
@@ -180,6 +188,40 @@ function managedString(pointer) {
   return JSON.stringify(text) + (length > MAX_STRING ? '…' : '');
 }
 
+function stringValue(pointer) {
+  // A string as a logged value; a long one also keeps its whole text
+  // (``fullText``: the id for fullText(), ``length``: its characters).
+  if (pointer.isNull())
+    return { text: 'null' };
+  const value = { text: managedString(pointer) };
+  const length = pointer.add(OBJECT_HEADER).readS32();
+  if (length > MAX_STRING) {
+    value.fullText = keepText(
+      pointer.add(OBJECT_HEADER + 4).readUtf16String(Math.min(length, MAX_FULL_STRING)));
+    value.length = length;
+  }
+  return value;
+}
+
+function keepText(text) {
+  const id = nextFullText++;
+  fullTexts.set(id, text);
+  fullTextChars += text.length;
+  for (const [oldest, kept] of fullTexts) {
+    if (fullTextChars <= FULL_STRING_BUDGET || oldest === id)
+      break;
+    fullTexts.delete(oldest);
+    fullTextChars -= kept.length;
+  }
+  return id;
+}
+
+function fullText(id) {
+  // The whole text of a long string value, or null when it was dropped.
+  const text = fullTexts.get(id);
+  return text === undefined ? null : text;
+}
+
 function withEnum(type, text) {
   return type.enumName ? `${text} (${type.enumName})` : text;
 }
@@ -249,8 +291,7 @@ function readValue(type, address, ask = false) {
       return { text: `struct ${type.name}`,
                target: { address: address.toString(), klass: type.klass.toString() } };
     case T.STRING: {
-      const pointer = address.readPointer();
-      return { text: pointer.isNull() ? 'null' : managedString(pointer) };
+      return stringValue(address.readPointer());
     }
     default:
       if (REFERENCE_KINDS.has(type.kind))
@@ -279,7 +320,7 @@ function registerValue(type, raw, ask = false) {
     case T.R4:
     case T.R8: return { text: String(floatValue(raw, type.kind)) };
     case T.VALUETYPE: return { text: `struct ${type.name}` };
-    case T.STRING: return { text: raw.isNull() ? 'null' : managedString(raw) };
+    case T.STRING: return stringValue(raw);
     default:
       if (REFERENCE_KINDS.has(type.kind))
         return objectValue(raw, ask);
@@ -358,7 +399,7 @@ function resultValue(type, result) {
   if (result.isNull())
     return { text: 'null' };
   if (type.kind === T.STRING)
-    return { text: managedString(result) };
+    return stringValue(result);
   if (REFERENCE_KINDS.has(type.kind) || type.byref)
     return objectValue(result, true);
   return readValue(type, result.add(OBJECT_HEADER), true);
@@ -1365,6 +1406,7 @@ rpc.exports = {
   addMonitor,
   removeMonitor,
   inspect,
+  fullText,
   evaluate,
   addMethodHook,
   removeMethodHook,

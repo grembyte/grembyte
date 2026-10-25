@@ -36,8 +36,10 @@ from hermes.hooks.transforms import (
     as_template_transform,
     example_templates,
 )
+from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.hook_debug import HookDebugWindow
+from hermes.ui.widgets.syntax_hint import SyntaxHint
 from hermes.ui.widgets.table import resizable_columns, set_row_height
 
 
@@ -80,6 +82,8 @@ class TransformForm(QWidget):
         self.definition = definition
         self.translations = translations
         self._editors = {}
+        # Parameter name -> SyntaxHint of a code parameter
+        self._syntax_hints = {}
         values = values or {}
 
         layout = QFormLayout(self)
@@ -89,6 +93,11 @@ class TransformForm(QWidget):
             editor = self._create_editor(parameter, value)
             self._editors[parameter.name] = (parameter, editor)
             layout.addRow(parameter.label or parameter.name, editor)
+            if parameter.kind == "code":
+                # Run as a function body (see hermes.hooks.syntax)
+                hint = SyntaxHint(translations, editor, BODY, self)
+                self._syntax_hints[parameter.name] = hint
+                layout.addRow("", hint)
 
         if definition.description:
             hint = QLabel(definition.description)
@@ -120,6 +129,9 @@ class TransformForm(QWidget):
             if parameter.kind == "choice":
                 values[name] = editor.currentData()
             elif parameter.kind == "code":
+                problem = self._syntax_hints[name].problem()
+                if problem is not None:
+                    raise ValueError(f"{label}: {problem}")
                 values[name] = editor.toPlainText()
             else:
                 text = editor.text().strip()

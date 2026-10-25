@@ -1,6 +1,7 @@
 """The session registry, its window and the shutdown dialog, with fake workers."""
 
-import os
+import subprocess
+import sys
 import threading
 import time
 
@@ -61,12 +62,14 @@ def test_registry_tracks_running_workers_only(qt_app):
 def test_window_lists_sessions_and_cuts_a_hanging_one(qt_app, translations):
     worker = _Worker(4243, hangs=True)
     session = _start(qt_app, worker)
-    dialog = SessionsDialog(translations, lambda: os.getpid())
+    # A process without Frida agents (the tests' own may have one: the
+    # syntax check's, see hermes.hooks.syntax)
+    clean = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    dialog = SessionsDialog(translations, lambda: clean.pid)
     try:
         assert dialog.table.rowCount() == 1
         assert dialog.table.item(0, 0).text() == "Hooks (Frida)"
         assert dialog.table.item(0, 3).text() == "aktiv"
-        # This process has no Frida agent loaded.
         assert "0 Frida-Agenten" in dialog.agents_label.text()
 
         dialog.table.selectRow(0)
@@ -82,6 +85,8 @@ def test_window_lists_sessions_and_cuts_a_hanging_one(qt_app, translations):
         _wait_for(qt_app, lambda: dialog.table.rowCount() == 0)
     finally:
         dialog.close()
+        clean.kill()
+        clean.wait()
         worker.frida.detach()
         worker.wait(2000)
 

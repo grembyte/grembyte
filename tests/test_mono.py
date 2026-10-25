@@ -1591,6 +1591,27 @@ def test_hook_dialog_offers_method_templates_for_methods(qt_app, translations):
     assert dialog.transform.params == {"factor": 2} and dialog.label == "Schaden"
 
 
+def test_method_script_with_a_syntax_error_is_refused(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from PyQt6.QtWidgets import QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
+    from hermes.hooks.syntax import checker
+    from hermes.ui.widgets.hooks import HookDialog
+
+    if not checker().available:
+        return  # needs Frida's system session
+    dialog = HookDialog(translations, "", "", "", method="Health:DoDamage (single)")
+    dialog.template_combo.setCurrentIndex(1)  # the method script
+    editor = dialog.forms.currentWidget().findChild(QPlainTextEdit)
+    editor.setPlainText("const a = 1;\nreturn a * ;")
+    dialog._accept()
+    assert dialog.transform is None
+    assert "Syntaxfehler in Zeile 2" in dialog.error_label.text()
+
+    editor.setPlainText("return ctx.result * 2;")
+    dialog._accept()
+    assert dialog.transform.params["code"] == "return ctx.result * 2;"
+
+
 @requires_target
 def test_method_hooks_in_the_panel_are_saved_and_restored(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access,too-many-locals

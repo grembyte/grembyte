@@ -23,6 +23,7 @@ from hermes.features.catalog import short_name
 from hermes.features.monitor import MethodMonitorWorker
 from hermes.ui.widgets.object_inspector import ObjectInspectorDialog, link_label, link_width
 from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.text_viewer import TextViewerDialog
 
 
 # Calls kept in the log; older ones are dropped.
@@ -163,6 +164,8 @@ class MethodMonitorDialog(QDialog):
         # open object inspectors; inspection request id -> waiting inspector
         self.inspectors = []
         self._inspections = {}
+        # request id -> TextViewerDialog waiting for a long string's whole text
+        self._text_requests = {}
         self._detail_time = ""
         self.setWindowTitle(translations["monitor.title"])
         self.resize(1100, 700)
@@ -177,6 +180,8 @@ class MethodMonitorDialog(QDialog):
         self._worker.inspect_failed.connect(self._on_inspect_failed)
         self._worker.evaluated.connect(self._on_evaluated)
         self._worker.evaluate_failed.connect(self._on_evaluate_failed)
+        self._worker.text_fetched.connect(self._on_text_fetched)
+        self._worker.text_failed.connect(self._on_text_failed)
         self._worker.start()
 
     # --- UI ------------------------------------------------------------------
@@ -282,8 +287,8 @@ class MethodMonitorDialog(QDialog):
         details_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         details_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         details_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        details_header.resizeSection(
-            2, link_width(self.details, [self.translations["monitor.object_details"]]))
+        details_header.resizeSection(2, link_width(self.details, [
+            self.translations["monitor.object_details"], self.translations["monitor.full_text"]]))
         resizable_columns(self.details)
         self.details.setMaximumHeight(190)
         self.details.cellDoubleClicked.connect(self._inspect_detail)
@@ -500,16 +505,56 @@ class MethodMonitorDialog(QDialog):
                 link.setToolTip(self.translations[
                     "monitor.fields_captured" if "snapshot" in value else "monitor.fields_current"])
                 self.details.setCellWidget(row, 2, link)
+            elif value.get("fullText"):
+                link = link_label(self.translations["monitor.full_text"],
+                                  lambda row=row: self._inspect_detail(row, 2))
+                link.setToolTip(self.translations["monitor.full_text_tooltip"].format(
+                    length=value.get("length", 0)))
+                self.details.setCellWidget(row, 2, link)
+
+    # --- Long texts ------------------------------------------------------------
+    def _show_text(self, name, value):
+        """Open the whole text of a long string value in a window of its own."""
+        viewer = TextViewerDialog(self.translations, self.translations[
+            "monitor.full_text_title"].format(name=name, time=self._detail_time), parent=self)
+        self._text_requests[self._worker.full_text(value["fullText"])] = (viewer, value)
+        viewer.destroyed.connect(lambda _object, viewer=viewer: self._forget_text(viewer))
+        viewer.show()
+        viewer.activateWindow()
+
+    def _forget_text(self, viewer):
+        for request_id, (waiting, _value) in list(self._text_requests.items()):
+            if waiting is viewer:
+                del self._text_requests[request_id]
+
+    def _on_text_fetched(self, request_id, text):
+        viewer, value = self._text_requests.pop(request_id, (None, None))
+        if viewer is None:
+            return
+        if text is None:
+            viewer.show_missing()
+        else:
+            viewer.set_text(text, value.get("length"))
+
+    def _on_text_failed(self, request_id, message):
+        viewer, _value = self._text_requests.pop(request_id, (None, None))
+        if viewer is not None:
+            viewer.show_error(message)
 
     # --- Object inspector ------------------------------------------------------
     def _inspect_detail(self, row, _column):
         """Show the fields of the object in details ``row``: as recorded at the
-        call if the monitor recorded objects, else as they are now."""
+        call if the monitor recorded objects, else as they are now. A long
+        string opens whole in a text viewer."""
         item = self.details.item(row, 0)
         value = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        # "info ⇒": what info held after the call
+        name = item.text().removesuffix(" ⇒") if item is not None else ""
+        if value and value.get("fullText"):
+            self._show_text(name, value)
+            return
         if not value or not value.get("target"):
             return
-        name = item.text().removesuffix(" ⇒")  # "info ⇒": what info held after the call
         if "snapshot" in value:
             self._show_inspector(ObjectInspectorDialog(
                 self.translations, self.inspect, target=value["target"],

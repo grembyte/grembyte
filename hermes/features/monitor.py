@@ -47,7 +47,9 @@ the same objects in snapshots and the inspector.
 Values are ``{text, target?, snapshot?}``. ``target`` is an object, array or
 struct the object inspector can open (``inspect``), ``snapshot`` its
 contents at the time of the call (like ``inspect`` returns them, or
-``{error}``) when the monitor records ``objects``.
+``{error}``) when the monitor records ``objects``. A string longer than ``text``
+shows has ``fullText`` (the id to fetch it whole with ``full_text``; the
+agent keeps the texts of recent calls) and ``length``.
 
 Properties (parameterless getters, and a GameObject's components) are game
 code that Unity only allows on its main thread. ``evaluate`` queues the call
@@ -95,6 +97,9 @@ class MethodMonitorWorker(QThread):
     # request id, [{name, value}] of evaluated properties
     evaluated = pyqtSignal(int, list)
     evaluate_failed = pyqtSignal(int, str)
+    # request id, the whole text of a long string value (None: no longer kept)
+    text_fetched = pyqtSignal(int, object)
+    text_failed = pyqtSignal(int, str)
     monitor_failed = pyqtSignal(int, str)
     # calls, dropped calls per monitor id, all calls per monitor id
     calls = pyqtSignal(list, dict, dict)
@@ -139,6 +144,16 @@ class MethodMonitorWorker(QThread):
         """
         request_id = next(self._requests)
         self._commands.put(("evaluate", request_id, (target, list(names))))
+        return request_id
+
+    def full_text(self, text_id):
+        """Fetch the whole text of a long string value (its ``fullText``).
+
+        Expect text_fetched or text_failed. The agent keeps the texts of
+        recent calls only.
+        """
+        request_id = next(self._requests)
+        self._commands.put(("text", request_id, text_id))
         return request_id
 
     def remove_monitor(self, monitor_id):
@@ -205,6 +220,11 @@ class MethodMonitorWorker(QThread):
                     self.evaluated.emit(monitor_id, api.evaluate(*argument))
                 except frida.RPCException as error:
                     self.evaluate_failed.emit(monitor_id, str(error))
+            elif action == "text":
+                try:
+                    self.text_fetched.emit(monitor_id, api.full_text(argument))
+                except frida.RPCException as error:
+                    self.text_failed.emit(monitor_id, str(error))
         except frida.RPCException as error:
             self.monitor_failed.emit(monitor_id, str(error))
 
