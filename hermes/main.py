@@ -3,7 +3,6 @@
 import os
 import signal
 import sys
-from pathlib import Path
 
 from PyQt6.QtCore import QStandardPaths, QTimer  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
@@ -13,11 +12,10 @@ from hermes.core import activity, logs, settings
 from hermes.core.sessions import SESSIONS
 from hermes.db.engine import init_db
 from hermes.db.repository.settings import SettingsRepository
-from hermes.ui.main_window import MainWindow
+from hermes.ui.main_window import ICON_PATH, MainWindow
 from hermes.ui.activity_recorder import UiRecorder
 from hermes.ui.window_buttons import add_window_buttons
 
-ICON_PATH = Path(__file__).parent / "ui" / "resources" / "icon.svg"
 DESKTOP_FILE_NAME = "hermes-hook"
 WINDOWS_APP_ID = "hermes-hook.win"
 

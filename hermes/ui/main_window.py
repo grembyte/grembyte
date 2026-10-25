@@ -4,6 +4,7 @@ import itertools
 import platform
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 from sqlalchemy.exc import SQLAlchemyError
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
@@ -16,7 +17,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QInputDialog,
 )
 from PyQt6.QtCore import Qt, QSize, QTimer, QSettings  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QColor, QActionGroup  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtGui import QColor, QActionGroup, QIcon  # pylint: disable=import-error,no-name-in-module
 
 from hermes.ui.localization import load_translations
 from hermes.ui.styles.styles import STYLE
@@ -101,6 +102,11 @@ CLOSING_WORKER_TIMEOUT_MS = 3_000
 WRITE_WATCH_STOP_TIMEOUT_MS = 3000
 # Scan results beyond this many rows are kept but not shown in the table.
 RESULT_DISPLAY_LIMIT = 1000
+
+# The app icon (window and taskbar, see hermes.main; toolbar)
+ICON_PATH = Path(__file__).parent / "resources" / "icon.svg"
+# Its size next to the name in the toolbar
+BRAND_ICON_SIZE = 22
 
 
 def _platform_text():
@@ -541,9 +547,14 @@ class MainWindow(QMainWindow):
         tb.setIconSize(QSize(16, 16))
         self.addToolBar(tb)
 
+        logo = QLabel()
+        logo.setPixmap(QIcon(str(ICON_PATH)).pixmap(
+            QSize(BRAND_ICON_SIZE, BRAND_ICON_SIZE), self.devicePixelRatioF()))
+        logo.setContentsMargins(8, 0, 0, 0)
+        tb.addWidget(logo)
         title = QLabel(self.translations["app.brand"])
         title.setObjectName("lbl_title")
-        title.setContentsMargins(8, 0, 16, 0)
+        title.setContentsMargins(6, 0, 16, 0)
         tb.addWidget(title)
 
         tb.addSeparator()

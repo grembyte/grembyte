@@ -1,6 +1,6 @@
 {
   "app.window_title": "hermes-hook  //  v0.1.0",
-  "app.brand": "⚡ hermes-hook",
+  "app.brand": "hermes-hook",
   "app.no_process": "No process",
   "app.process_display": "{name}  (PID {pid})",
   "app.process_display_details": "{name}  (PID {pid}, {details})",
