@@ -928,7 +928,7 @@
   "call.log_placeholder": "Aufrufe und ihre Ergebnisse erscheinen hier.",
   "call.reading": "Lese die Parameter …",
   "call.no_parameters": "Die Methode hat keine Parameter.",
-  "call.unsupported": "Structs als Argumente werden nicht unterstützt.",
+  "call.unsupported": "Structs als Argumente werden nicht unterstützt (außer System.Guid).",
   "call.calling": "Rufe auf (wartet auf den Hauptthread des Spiels) …",
   "call.done": "Aufgerufen.",
   "call.threw": "Die Methode hat eine Ausnahme ausgelöst.",
@@ -943,12 +943,14 @@
   "call.placeholder_enum": "Zahlenwert von {type}",
   "call.placeholder_object": "null oder Adresse eines Objekts (0x…)",
   "call.placeholder_address": "Adresse (0x…)",
-  "call.placeholder_struct": "Struct {type}: nicht unterstützt",
+  "call.placeholder_struct": "Struct {type}: nicht unterstützt (nur System.Guid)",
   "call.error_integer": "„{text}“ ist keine Ganzzahl",
   "call.error_range": "{text} liegt nicht zwischen {low} und {high}",
   "call.error_number": "„{text}“ ist keine Zahl",
   "call.error_bool": "„{text}“ ist weder true noch false",
   "call.error_char": "„{text}“ ist nicht genau ein Zeichen",
   "call.error_address": "„{text}“ ist weder null noch eine Adresse",
-  "call.error_struct": "Structs ({type}) werden nicht unterstützt"
+  "call.error_struct": "Structs ({type}) werden nicht unterstützt",
+  "call.placeholder_guid": "GUID, z. B. 29ea711e-b1e9-47d6-beda-c89dce74b62c",
+  "call.error_guid": "„{text}“ ist keine GUID"
 }

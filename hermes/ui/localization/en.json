@@ -927,7 +927,7 @@
   "call.log_placeholder": "Calls and their results appear here.",
   "call.reading": "Reading the parameters …",
   "call.no_parameters": "The method has no parameters.",
-  "call.unsupported": "Structs cannot be passed as arguments.",
+  "call.unsupported": "Structs cannot be passed as arguments (but System.Guid).",
   "call.calling": "Calling (waiting for the game's main thread) …",
   "call.done": "Called.",
   "call.threw": "The method threw an exception.",
@@ -942,12 +942,14 @@
   "call.placeholder_enum": "Numeric value of {type}",
   "call.placeholder_object": "null or address of an object (0x…)",
   "call.placeholder_address": "Address (0x…)",
-  "call.placeholder_struct": "Struct {type}: not supported",
+  "call.placeholder_struct": "Struct {type}: not supported (System.Guid only)",
   "call.error_integer": "“{text}” is no integer",
   "call.error_range": "{text} is not between {low} and {high}",
   "call.error_number": "“{text}” is no number",
   "call.error_bool": "“{text}” is neither true nor false",
   "call.error_char": "“{text}” is not exactly one character",
   "call.error_address": "“{text}” is neither null nor an address",
-  "call.error_struct": "Structs ({type}) are not supported"
+  "call.error_struct": "Structs ({type}) are not supported",
+  "call.placeholder_guid": "GUID, e.g. 29ea711e-b1e9-47d6-beda-c89dce74b62c",
+  "call.error_guid": "“{text}” is no GUID"
 }

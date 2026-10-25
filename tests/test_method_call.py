@@ -74,6 +74,18 @@ def test_wrong_arguments_say_why(param_type, text, key, translations):
     assert translations[key].format(**raised.value.values)
 
 
+def test_guids_are_passed_in_the_byte_order_of_dotnet():
+    guid = _type(VALUETYPE, "System.Guid")
+    value = parse_argument(guid, " {29EA711E-B1E9-47D6-BEDA-C89DCE74B62C} ")
+    # Data1 (int), Data2 and Data3 (short) little-endian, the last 8 bytes as they are
+    assert value == {"struct": "1e71ea29e9b1d647bedac89dce74b62c",
+                     "guid": "29ea711e-b1e9-47d6-beda-c89dce74b62c"}
+    assert argument_text(value) == "29ea711e-b1e9-47d6-beda-c89dce74b62c"
+    with pytest.raises(ArgumentError) as raised:
+        parse_argument(guid, "pollaxe_exceptional")
+    assert raised.value.key == "call.error_guid"
+
+
 def test_arguments_are_logged_as_written_in_code():
     assert [argument_text(value) for value in ("Sword", 3, True, None, {"address": "0x10"})] \
         == ['"Sword"', "3", "true", "null", "0x10"]

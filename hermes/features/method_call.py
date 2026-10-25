@@ -3,13 +3,15 @@
 The method call dialog (hermes/ui/widgets/method_call.py) reads one text per
 parameter. ``parse_argument`` turns it into what the agent passes to the
 method (``callStatic`` in hermes/features/monitor.js): a number, bool,
-string, None (null) or ``{"address": "0x…"}`` (an object or IntPtr). The
+string, None (null), ``{"address": "0x…"}`` (an object or IntPtr) or
+``{"struct": "…"}`` (the bytes of a System.Guid, in hex). The
 types are those ``describe_call`` reports: ``{kind, byref, name, enumName?}``
 with ECMA-335 element types as kinds; an enum has the kind of its base type.
 """
 
 import json
 import math
+import uuid
 
 BOOLEAN, CHAR = 0x02, 0x03
 I1, U1, I2, U2, I4, U4, I8, U8 = range(0x04, 0x0c)
@@ -40,9 +42,17 @@ class ArgumentError(ValueError):
         self.values = values
 
 
+GUID = "System.Guid"
+
+
 def supported(param_type):
-    """Whether an argument of ``param_type`` can be typed in (structs cannot)."""
-    return param_type["kind"] != VALUETYPE
+    """Whether an argument of ``param_type`` can be typed in (structs but a Guid cannot)."""
+    return param_type["kind"] != VALUETYPE or is_guid(param_type)
+
+
+def is_guid(param_type):
+    """Whether ``param_type`` is System.Guid, typed in as text."""
+    return param_type["kind"] == VALUETYPE and param_type["name"] == GUID
 
 
 def _integer(text):
@@ -55,9 +65,17 @@ def _integer(text):
 
 def parse_argument(param_type, text):
     """The value of ``text`` for a parameter of ``param_type``; raises ArgumentError."""
+    # pylint: disable=too-many-return-statements,too-many-branches
     kind = param_type["kind"]
     if not supported(param_type):
         raise ArgumentError("call.error_struct", type=param_type["name"])
+    if is_guid(param_type):
+        try:
+            guid = uuid.UUID(text.strip())
+        except ValueError:
+            raise ArgumentError("call.error_guid", text=text) from None
+        # .NET keeps the first three groups little-endian, like bytes_le.
+        return {"struct": guid.bytes_le.hex(), "guid": str(guid)}
     if kind == STRING:
         return text
     if kind in REFERENCES or kind in (I, U):
@@ -106,7 +124,7 @@ def argument_text(value):
     if value is None:
         return "null"
     if isinstance(value, dict):
-        return value["address"]
+        return value.get("guid") or value["address"]
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):

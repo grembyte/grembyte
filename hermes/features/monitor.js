@@ -474,11 +474,20 @@ function describeCall(identity) {
 function callStatic(identity, args) {
   // Call a static method on Unity's main thread with the arguments the
   // dialog read (see hermes/features/method_call.py; an object or IntPtr as
-  // { address }): { result } with the value it returned, or { exception }.
+  // { address }, a struct such as a Guid as { struct: its bytes in hex }):
+  // { result } with the value it returned, or { exception }.
   return engine.onMainThread(() => {
     const method = staticMethod(identity);
-    const values = args.map(arg => (arg !== null && typeof arg === 'object'
-      ? ptr(arg.address) : arg));
+    const values = args.map(arg => {
+      if (arg === null || typeof arg !== 'object')
+        return arg;
+      if (arg.struct === undefined)
+        return ptr(arg.address);
+      const bytes = arg.struct.match(/../g).map(pair => parseInt(pair, 16));
+      const data = Memory.alloc(bytes.length);
+      data.writeByteArray(bytes);
+      return new ManagedObject(data, null, true);
+    });
     const { result, exception } = invokeMethod(method, null, values);
     if (!exception.isNull())
       return { exception: exceptionText(exception) };

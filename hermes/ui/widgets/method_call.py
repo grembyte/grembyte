@@ -25,6 +25,7 @@ from hermes.features.method_call import (
     STRING,
     ArgumentError,
     argument_text,
+    is_guid,
     parse_argument,
     supported,
 )
@@ -38,9 +39,12 @@ _last_arguments = {}
 
 def placeholder_key(param_type):
     """The translation of the hint an empty argument field shows."""
+    # pylint: disable=too-many-return-statements
     kind = param_type["kind"]
     if not supported(param_type):
         return "call.placeholder_struct"
+    if is_guid(param_type):
+        return "call.placeholder_guid"
     if param_type.get("enumName"):
         return "call.placeholder_enum"
     if kind == STRING:
