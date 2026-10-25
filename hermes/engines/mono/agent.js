@@ -126,7 +126,9 @@ const mono = (() => {
       stringNew: optional(() => blocking('mono_string_new', 'pointer', ['pointer', 'pointer'])),
       // Storing a reference in an object tells the garbage collector.
       writeBarrier: optional(() => exported('mono_gc_wbarrier_set_field', 'void',
-        ['pointer', 'pointer', 'pointer']))
+        ['pointer', 'pointer', 'pointer'])),
+      // The module version id the catalog cache keys an assembly by.
+      imageGuid: optional(() => exported('mono_image_get_guid', 'pointer', ['pointer']))
     };
   }
 
@@ -1394,8 +1396,15 @@ gpointer run_batch (gpointer data) {
     return onMonoThread(() => loadedImages(c).map(image => ({
       name: api.imageName(image).readUtf8String(),
       file: api.imageFile(image).readUtf8String(),
-      classes: Math.max(0, c.tableRows(image, TYPEDEF_TABLE) - 1)
+      classes: Math.max(0, c.tableRows(image, TYPEDEF_TABLE) - 1),
+      mvid: imageGuid(image)
     })));
+  }
+
+  function imageGuid(image) {
+    // Mono keeps the string; it is not to be freed.
+    const guid = api.imageGuid === null ? NULL : api.imageGuid(image);
+    return guid.isNull() ? null : guid.readUtf8String();
   }
 
   function methodEntry(c, method) {
@@ -1413,13 +1422,25 @@ gpointer run_batch (gpointer data) {
     ];
   }
 
-  function eachClass(c, assembly, visit) {
-    // visit(class name, [method, ...]) for the classes of one assembly; row
-    // 1 of its type table is the <Module> pseudo class. On a Mono thread.
+  function flagsOf(c, method, implFlags) {
+    // [flags, implementation flags] as Mono has them; implFlags: 4 bytes.
+    implFlags.writeU32(0);
+    const flags = c.methodFlags(method, implFlags);
+    return [flags, implFlags.readU32()];
+  }
+
+  function imageNamed(c, assembly) {
     const image = loadedImages(c).find(
       candidate => api.imageName(candidate).readUtf8String() === assembly);
     if (image === undefined)
       throw new Error(`assembly ${assembly} is not loaded`);
+    return image;
+  }
+
+  function eachClass(c, assembly, visit) {
+    // visit(class name, [method, ...]) for the classes of one assembly; row
+    // 1 of its type table is the <Module> pseudo class. On a Mono thread.
+    const image = imageNamed(c, assembly);
     const iterator = Memory.alloc(Process.pointerSize);
     const rows = c.tableRows(image, TYPEDEF_TABLE);
     for (let row = 2; row <= rows; row++) {
@@ -1439,32 +1460,36 @@ gpointer run_batch (gpointer data) {
   }
 
   async function classes(assembly) {
-    // [[class name, [method entry, ...]], ...] of one assembly.
+    // [[class name, [method entry + flags + implementation flags, ...]], ...]
+    // of one assembly; the trace chooses by the flags.
     const c = catalogApi();
     return onMonoThread(() => {
       const result = [];
+      const implFlags = Memory.alloc(4);
       eachClass(c, assembly, (className, methods) => {
-        result.push([className, methods.map(method => methodEntry(c, method))]);
+        result.push([className, methods.map(
+          method => [...methodEntry(c, method), ...flagsOf(c, method, implFlags)])]);
       });
       return result;
     });
   }
 
-  async function methods(assembly) {
-    // [{ className, method, entry, flags, implFlags }] of one assembly, for
-    // the trace: ``entry`` as in classes, the flags as Mono has them.
+  async function methodsByToken(assembly, tokens) {
+    // [{ className, method, entry, flags, implFlags }] of the methods with
+    // these tokens, for the trace: ``entry`` as in classes.
     const c = catalogApi();
     return onMonoThread(() => {
-      const result = [];
+      const image = imageNamed(c, assembly);
       const implFlags = Memory.alloc(4);
-      eachClass(c, assembly, (className, found) => {
-        for (const method of found) {
-          implFlags.writeU32(0);
-          const flags = c.methodFlags(method, implFlags);
-          result.push({ className, method, entry: methodEntry(c, method), flags,
-                        implFlags: implFlags.readU32() });
-        }
-      });
+      const result = [];
+      for (const token of tokens) {
+        const method = api.getMethod(image, token, NULL);
+        if (method.isNull())
+          continue;
+        const [flags, impl] = flagsOf(c, method, implFlags);
+        result.push({ className: cString(c.typeName(c.classType(api.methodClass(method)))),
+                      method, entry: methodEntry(c, method), flags, implFlags: impl });
+      }
       return result;
     });
   }
@@ -1472,7 +1497,7 @@ gpointer run_batch (gpointer data) {
   refresh();
   return {
     id: 'mono',
-    refresh, locate, name, describe, identify, compile, assemblies, classes, methods,
+    refresh, locate, name, describe, identify, compile, assemblies, classes, methodsByToken,
     checkAll, compileAll, describeAll, cancelBatches, batchesRunning, prepare,
     objectClassName, classOf, layout, onRuntimeThread: onMonoThread, unityName,
     onMainThread, drainMain, properties, getProperty, signatureOf, findClass, findMethod,

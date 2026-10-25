@@ -27,6 +27,7 @@ one looks for and the source of most noise.
 
 import re
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 
 _NUMBERS = frozenset({
     "int", "uint", "long", "ulong", "short", "ushort", "byte", "sbyte",
@@ -46,7 +47,20 @@ _PARTS = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
 
 def name_parts(text):
     """The lower-case parts of an identifier or a dotted name."""
-    return [part.lower() for part in _PARTS.findall(text)]
+    return list(_cached_parts(text))
+
+
+# The names of a game repeat (classes have many methods, methods share names):
+# what is known of a name or a part is worked out once. Filtering a catalog of
+# 170,000 methods took seconds per filter without it.
+@lru_cache(maxsize=None)
+def _cached_parts(text):
+    return tuple(part.lower() for part in _PARTS.findall(text))
+
+
+@lru_cache(maxsize=None)
+def _method_parts(class_name, name):
+    return _cached_parts(class_name) + _cached_parts(name)
 
 
 def _parse_words(text):
@@ -61,15 +75,25 @@ def is_generated(method):
 
 def has_number(method):
     """Whether a parameter or the result is a number."""
-    types = re.split(r"[(),&\s]+", f"{method.parameters} {method.return_type}")
+    return _has_number(method.parameters, method.return_type)
+
+
+@lru_cache(maxsize=None)
+def _has_number(parameters, return_type):
+    types = re.split(r"[(),&\s]+", f"{parameters} {return_type}")
     return any(name in _NUMBERS for name in types)
 
 
 def looks_like_change(method):
     """Whether the method's name says it changes a value."""
-    if method.name.startswith("set_"):
+    return _looks_like_change(method.name)
+
+
+@lru_cache(maxsize=None)
+def _looks_like_change(name):
+    if name.startswith("set_"):
         return True
-    parts = name_parts(method.name)
+    parts = _cached_parts(name)
     return bool(parts) and parts[0] in CHANGE_VERBS
 
 
@@ -83,8 +107,13 @@ def word_matches(word, part):
     return len(word) > SHORT_WORD and part.startswith(word)
 
 
+@lru_cache(maxsize=None)
+def _matches_part(words, part):
+    return any(word_matches(word, part) for word in words)
+
+
 def _matches_a_part(words, parts):
-    return any(word_matches(word, part) for word in words for part in parts)
+    return any(_matches_part(words, part) for part in parts)
 
 
 @dataclass(frozen=True)
@@ -104,7 +133,7 @@ class TraceFilter:
 
     def matches(self, method):
         """Whether ``method`` (a CatalogMethod) passes the filter."""
-        parts = name_parts(method.class_name) + name_parts(method.name)
+        parts = _method_parts(method.class_name, method.name)
         if self.words and not _matches_a_part(self.words, parts):
             return False
         if self.exclude and _matches_a_part(self.exclude, parts):

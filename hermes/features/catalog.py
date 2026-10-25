@@ -20,6 +20,7 @@ from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
 from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
 from hermes.core.agent_source import load_agent_source
+from hermes.features import catalog_cache
 from hermes.features.assemblies import chosen_assemblies
 
 
@@ -122,7 +123,8 @@ def catalog_methods(assembly, classes, engine="mono"):
         CatalogMethod(assembly, class_name, name, parameters, return_type, bool(static), token,
                       signature, engine)
         for class_name, methods in classes
-        for name, parameters, return_type, static, token, signature in methods
+        # the flags after the signature are for the trace
+        for name, parameters, return_type, static, token, signature, *_flags in methods
     ]
 
 
@@ -135,21 +137,29 @@ class CatalogWorker(QThread):
     see hermes.features.assemblies), or else every assembly that is not part
     of the framework. ``engine`` is the adapter (see hermes/engines),
     detected if not given.
+
+    An assembly read before in the same build comes from the catalog cache
+    (see hermes.features.catalog_cache), announced by ``assembly_cached``
+    before its ``assembly_loaded``; ``fresh`` reads every one anew.
     """
 
     assemblies_found = pyqtSignal(list)
     # assembly name, its methods (CatalogMethod)
     assembly_loaded = pyqtSignal(str, list)
+    # assembly name: its methods come from the cache
+    assembly_cached = pyqtSignal(str)
     # assembly name, error message
     assembly_failed = pyqtSignal(str, str)
     catalog_failed = pyqtSignal(str)
 
-    def __init__(self, pid, assemblies=None, parent=None, engine=None, selection=()):
+    def __init__(self, pid, assemblies=None, parent=None, engine=None, selection=(),
+                 fresh=False):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.pid = pid
         self.assemblies = assemblies
         self.selection = frozenset(selection)
+        self.fresh = fresh
         self.engine = resolve_engine(pid, engine)
         self._detached = threading.Event()
 
@@ -170,12 +180,14 @@ class CatalogWorker(QThread):
             if names is None:
                 names = chosen_assemblies([a["name"] for a in found], self.selection,
                                           self.engine)
+            mvids = {a["name"]: a.get("mvid") for a in found}
             for name in names:
                 if self.isInterruptionRequested() or self._detached.is_set():
                     break
                 try:
+                    classes = self._classes(api, name, mvids.get(name))
                     self.assembly_loaded.emit(
-                        name, catalog_methods(name, api.classes(name), self.engine.id))
+                        name, catalog_methods(name, classes, self.engine.id))
                 except frida.RPCException as error:
                     self.assembly_failed.emit(name, str(error))
         except FRIDA_ERRORS + (frida.RPCException, OSError, RuntimeError) as error:
@@ -192,3 +204,11 @@ class CatalogWorker(QThread):
                     session.detach()
                 except CLEANUP_ERRORS as error:
                     logs.cleanup_failed(error)
+
+    def _classes(self, api, name, mvid):
+        """The agent's ``classes`` answer for ``name``, from the cache if it has it."""
+        classes, cached = catalog_cache.read_classes(
+            self.engine.id, name, mvid, lambda: api.classes(name), self.fresh)
+        if cached:
+            self.assembly_cached.emit(name)
+        return classes

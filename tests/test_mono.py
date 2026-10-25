@@ -40,7 +40,7 @@ _FAKE_MONO_SOURCE = r"""
 
 typedef struct Class Class;
 typedef struct { const char *name; int kind; int byref; Class *klass; } Type;
-typedef struct { const char *name; const char *file; } Image;
+typedef struct { const char *name; const char *file; const char *guid; } Image;
 typedef struct { const char *name; Type *type; uint32_t offset; uint32_t flags; } Field;
 struct Class {
     Type type;
@@ -93,9 +93,11 @@ typedef struct {
    UnityEngine.Component[] and System.InvalidOperationException;
    UnityEngine.CoreModule: UnityEngine.Object, .Component and .GameObject;
    R3.ReactiveProperty`1 (in Assembly-CSharp) and its instance for int. */
-static Image game = { "Assembly-CSharp", "/game/Assembly-CSharp.dll" };
-static Image corlib = { "mscorlib", "/game/mscorlib.dll" };
-static Image unity = { "UnityEngine.CoreModule", "/game/UnityEngine.CoreModule.dll" };
+static Image game = { "Assembly-CSharp", "/game/Assembly-CSharp.dll",
+                      "6F9619FF-8B86-D011-B42D-00C04FC964FF" };
+static Image corlib = { "mscorlib", "/game/mscorlib.dll",
+                        "0B5A6C1E-3F2D-4E7A-9C8B-1D2E3F4A5B6C" };
+static Image unity = { "UnityEngine.CoreModule", "/game/UnityEngine.CoreModule.dll", NULL };
 static Class classes[17];
 static Type t_void = { "System.Void", 0x01 }, t_int = { "System.Int32", 0x08 },
     t_int_ref = { "System.Int32&", 0x08, 1 }, t_float = { "System.Single", 0x0c },
@@ -422,6 +424,7 @@ void *mono_image_loaded(const char *name) {
 }
 const char *mono_image_get_name(Image *img) { return img->name; }
 const char *mono_image_get_filename(Image *img) { return img->file; }
+const char *mono_image_get_guid(Image *img) { return img->guid; }
 void *mono_get_method(void *img, uint32_t token, void *k) { (void)img; (void)k; return by_token(token); }
 void *mono_method_get_class(Method *m) { return m->klass; }
 void *mono_class_get_image(Class *k) { return k->image; }
@@ -831,7 +834,7 @@ def test_hook_is_found_by_its_method_after_a_restart(tmp_path, qt_app, translati
 
 @requires_target
 def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
-    # pylint: disable=import-outside-toplevel,unused-argument
+    # pylint: disable=import-outside-toplevel,unused-argument,too-many-locals
     from hermes.engines.registry import detect_engine
     from hermes.features.catalog import CatalogMethod, CatalogWorker
 
@@ -840,11 +843,15 @@ def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
         assert detect_engine(target.pid).id == "mono"
         assert detect_engine(os.getpid()) is None
 
-        def read(assemblies=None):
+        cached = []
+
+        def read(assemblies=None, fresh=False):
             found, loaded, failed = [], {}, []
-            worker = CatalogWorker(target.pid, assemblies)
+            cached.clear()
+            worker = CatalogWorker(target.pid, assemblies, fresh=fresh)
             worker.assemblies_found.connect(found.extend)
             worker.assembly_loaded.connect(loaded.__setitem__)
+            worker.assembly_cached.connect(cached.append)
             worker.catalog_failed.connect(failed.append)
             worker.start()
             _wait_for(qt_app, worker.isFinished)
@@ -853,8 +860,11 @@ def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
             return found, loaded
 
         found, loaded = read()
-        assert [(a["name"], a["classes"]) for a in found] == [
-            ("Assembly-CSharp", 7), ("mscorlib", 5), ("UnityEngine.CoreModule", 4)]
+        assert [(a["name"], a["classes"], a["mvid"]) for a in found] == [
+            ("Assembly-CSharp", 7, "6F9619FF-8B86-D011-B42D-00C04FC964FF"),
+            ("mscorlib", 5, "0B5A6C1E-3F2D-4E7A-9C8B-1D2E3F4A5B6C"),
+            ("UnityEngine.CoreModule", 4, None)]
+        assert not cached
         # Framework assemblies are only read on request.
         assert loaded == {"Assembly-CSharp": [
             CatalogMethod("Assembly-CSharp", "Game.Inventory", "AddGold", "(int&,int)",
@@ -883,6 +893,16 @@ def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
         assert loaded["Assembly-CSharp"][0].signature == "Game.Inventory:AddGold (int&,int)"
         _found, loaded = read(["mscorlib"])
         assert [m.signature for m in loaded["mscorlib"]] == ["System.Object:ToString ()"]
+
+        # Read again: the same builds come from the cache, unless fresh.
+        first = loaded
+        _found, loaded = read(["Assembly-CSharp", "mscorlib", "UnityEngine.CoreModule"])
+        assert cached == ["Assembly-CSharp", "mscorlib"]
+        assert loaded["mscorlib"] == first["mscorlib"]
+        _found, again = read()
+        assert again["Assembly-CSharp"] == loaded["Assembly-CSharp"]
+        read(fresh=True)
+        assert not cached
     finally:
         target.close()
 
@@ -898,6 +918,14 @@ def test_catalog_dialog_searches_methods(tmp_path, qt_app, translations):
         _wait_for(qt_app, lambda: dialog._worker is None)
         assert dialog.model.rowCount() == 9
         assert "9 von 9 Methoden" in dialog.status_label.text()
+        assert "Zwischenspeicher" not in dialog.status_label.text()
+        dialog.reload()
+        _wait_for(qt_app, lambda: dialog._worker is None)
+        assert dialog.model.rowCount() == 9
+        assert "1 aus dem Zwischenspeicher" in dialog.status_label.text()
+        dialog.reload_button.click()
+        _wait_for(qt_app, lambda: dialog._worker is None)
+        assert "Zwischenspeicher" not in dialog.status_label.text()
 
         dialog.search_input.setText("loot TAKE")
         dialog._apply_filter()
@@ -1844,6 +1872,7 @@ def test_catalog_method_from_a_hook_identity():
 @requires_target
 def test_mono_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
+    from hermes.features.catalog import CatalogMethod
     from hermes.features.trace import NEW, SAME, TraceWorker, analyze, recording_calls
 
     target = _MonoTarget(_build(tmp_path))
@@ -1908,6 +1937,17 @@ def test_mono_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
 
         # Without a baseline everything the scenario called is new.
         assert [row.verdict for row in analyze(scenario)] == [NEW, NEW, NEW]
+
+        # The methods to choose from: the catalog cache has them now.
+        found = []
+        worker.candidates_found.connect(lambda methods, skipped: found.append((methods, skipped)))
+        worker.candidates()
+        _wait_for(qt_app, lambda: found or failed)
+        assert not failed
+        methods, skipped = found[0]
+        assert len(methods) == 8 and skipped["generic"] == 1
+        assert all(isinstance(method, CatalogMethod) for method in methods)
+        assert (tmp_path / "catalog-cache" / "mono" / "Assembly-CSharp").is_dir()
     finally:
         worker.requestInterruption()
         worker.wait(5000)
@@ -1999,6 +2039,8 @@ def test_trace_dialog_traces_a_preselection(tmp_path, qt_app, translations):
         _wait_for(qt_app, lambda: dialog.filter_panel.candidates is not None)
         panel = dialog.filter_panel
         total = len(panel.candidates)
+        # The progress bar gave way to the count of the choice.
+        assert dialog.loading_bar.isHidden() and not dialog.choice_label.isHidden()
         assert dialog.choice_label.text() == translations["trace.filters_count"].format(
             count=total, total=total)
         # Under Wine the dialog refuses more than its limit (here: one method)
@@ -2041,6 +2083,8 @@ def test_mono_trace_preparation_can_be_cancelled(tmp_path, qt_app):
         worker.trace([])
         _wait_for(qt_app, lambda: any(step == "compile" for step, *_rest in progress))
         assert ("compile", 0, 7, "Game.Inventory:AddGold (int&,int)") in progress
+        # Before: reading the methods to choose from
+        assert progress[:2] == [("catalog", 0, 1, "Assembly-CSharp"), ("catalog", 1, 1, "")]
         began = time.monotonic()
         worker.cancel()
         _wait_for(qt_app, lambda: failed)

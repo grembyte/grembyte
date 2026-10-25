@@ -36,9 +36,10 @@ Naming (``NAMING``), safe in exception handlers on game threads:
     token, method, offset}``), and (a promise of) ``{start, size}`` of its
     code for such an identity.
 
-Catalog (``CATALOG``): ``assemblies()``, ``classes(assembly)``.
+Catalog (``CATALOG``): ``assemblies()`` (with the MVID the catalog cache
+keys them by), ``classes(assembly)`` (with the methods' ECMA-335 flags).
 
-Trace (``TRACE``): ``methods(assembly)`` with ECMA-335 flags,
+Trace (``TRACE``): ``methodsByToken(assembly, tokens)`` with ECMA-335 flags,
 ``checkAll(methods, progress)`` (which cannot be prepared safely),
 ``compileAll(methods, progress)``, ``describeAll(addresses)``,
 ``cancelBatches()``, ``batchesRunning()``.

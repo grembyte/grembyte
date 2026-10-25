@@ -1,9 +1,5 @@
 const EVENT_CAPACITY = EVENT_CAPACITY_VALUE;
 const EVENT_SIZE = 32;
-const METHOD_ABSTRACT = 0x0400;
-const METHOD_PINVOKE = 0x2000;
-const IMPL_CODE_TYPE = 0x0003;  // native or runtime (delegates) instead of IL
-const IMPL_INTERNAL_CALL = 0x1000;
 const PHASES = { baseline: 1, scenario: 2 };
 
 // Runs in the game's threads on every call of a traced method.
@@ -69,59 +65,22 @@ function resumeAfterHooking(paused) {
   resumeThreads(paused);
 }
 
-function matches(words, text) {
-  const lower = text.toLowerCase();
-  return words.every(word => lower.includes(word));
-}
-
-function untraceable(found) {
-  // Why a method cannot be traced, or null.
-  if (found.flags & METHOD_ABSTRACT)
-    return 'abstract';
-  if ((found.flags & METHOD_PINVOKE) || (found.implFlags & (IMPL_CODE_TYPE | IMPL_INTERNAL_CALL)))
-    return 'native';
-  // Open generics have no code of their own: List`1, Method<T>; Mono names
-  // the class of a definition 'Ns.List<T>', its methods 'Ns.List`1:Add (T)'.
-  const full = found.entry[5];
-  const open = full.indexOf(' (');
-  const head = open < 0 ? full : full.substring(0, open);
-  if (found.className.includes('`') || /`\d+:/.test(head)
-      || head.substring(head.lastIndexOf(':') + 1) !== found.entry[0])
-    return 'generic';
-  return null;
-}
-
 async function select(spec) {
-  // The methods of spec.assemblies matching spec.words that can be traced;
-  // with spec.methods ([[assembly, token], ...]) only those.
-  const wanted = spec.methods ? new Set(spec.methods.map(([a, token]) => `${a}\t${token}`)) : null;
-  const chosen = [];
-  const skipped = { abstract: 0, native: 0, generic: 0 };
-  for (const assembly of spec.assemblies) {
-    for (const found of await engine.methods(assembly)) {
-      if (!matches(spec.words, `${found.className}:${found.entry[0]} ${assembly}`))
-        continue;
-      const reason = untraceable(found);
-      if (reason !== null)
-        skipped[reason]++;
-      else if (wanted === null || wanted.has(`${assembly}\t${found.entry[4]}`))
-        chosen.push({ assembly, ...found });
-    }
+  // The methods of spec.methods ([[assembly, token], ...]): Hermes chose
+  // them by the catalog (see trace.py), counting in spec.skipped those that
+  // cannot be traced.
+  const tokens = new Map();
+  for (const [assembly, token] of spec.methods) {
+    if (!tokens.has(assembly))
+      tokens.set(assembly, []);
+    tokens.get(assembly).push(token);
   }
-  return { chosen, skipped };
-}
-
-async function plan(spec) {
-  const { chosen, skipped } = await select(spec);
-  return { methods: chosen.length, skipped };
-}
-
-async function candidates(spec) {
-  // Every method a trace of spec could hook, with its signature, to choose
-  // from (see trace_filters.py); nothing is compiled.
-  const { chosen, skipped } = await select(spec);
-  return { methods: chosen.map(found => [found.assembly, found.className, ...found.entry]),
-           skipped };
+  const chosen = [];
+  for (const [assembly, wanted] of tokens) {
+    for (const found of await engine.methodsByToken(assembly, wanted))
+      chosen.push({ assembly, ...found });
+  }
+  return { chosen, skipped: { ...spec.skipped } };
 }
 
 // Interceptors set at a time before other scripts of the agent get a turn
@@ -420,8 +379,9 @@ rpc.exports = {
   assemblies() {
     return engine.assemblies();
   },
-  plan,
-  candidates,
+  classes(assembly) {
+    return engine.classes(assembly);
+  },
   start,
   begin,
   finish,

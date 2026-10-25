@@ -1,6 +1,6 @@
 """Window of the Mono trace: which C# methods a scenario in the game runs."""
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSplitter,
     QTableView,
@@ -53,6 +54,9 @@ _ROW_COLUMNS = (
     "trace.column_rate", "trace.column_baseline", "trace.column_verdict",
 )
 _S_FAVORITE, _S_TIME, _S_THREAD, _S_METHOD, _S_CALLER = range(5)
+# Typing in the free-text filter pauses this long before the choice is counted.
+CHOICE_DELAY_MS = 200
+
 _SEQUENCE_COLUMNS = (
     FAVORITE_COLUMN_KEY, "trace.column_time", "trace.column_thread", "trace.column_method", "trace.column_caller",
 )
@@ -355,10 +359,20 @@ class TraceDialog(QDialog):
         self.filter_panel = TraceFilterPanel(self.translations, self._filter_repository, self)
         self.filter_panel.selection_changed.connect(self._show_choice)
         layout.addWidget(self.filter_panel)
-        self.choice_label = QLabel(self.translations["trace.filters_loading"])
+        self.choice_label = QLabel("")
         self.choice_label.setStyleSheet("color: #8b949e;")
         layout.addWidget(self.choice_label)
-        self.filter_input.textChanged.connect(lambda _text: self._show_choice())
+        # In the choice label's place while the method list loads
+        self.loading_bar = QProgressBar()
+        self.loading_bar.setTextVisible(True)
+        layout.addWidget(self.loading_bar)
+        self._show_loading(0, 0, "")
+        # Typing pauses this long before the choice is counted again.
+        self._choice_timer = QTimer(self)
+        self._choice_timer.setSingleShot(True)
+        self._choice_timer.setInterval(CHOICE_DELAY_MS)
+        self._choice_timer.timeout.connect(self._show_choice)
+        self.filter_input.textChanged.connect(lambda _text: self._choice_timer.start())
 
         steps = QHBoxLayout()
         self.baseline_button = QPushButton(self.translations["trace.baseline"])
@@ -519,16 +533,29 @@ class TraceDialog(QDialog):
             self._stale_candidates = True
 
     def _reload_candidates(self):
+        self._show_loading(0, 0, "")
         self.filter_panel.set_candidates(None)
         self._worker.candidates()
 
     def _on_candidates(self, methods, _skipped):
+        self.loading_bar.hide()
+        self.choice_label.show()
         self.filter_panel.set_candidates(methods)
+
+    def _show_loading(self, done, total, assembly):
+        """Show how far the method list is read: ``done`` of ``total`` assemblies."""
+        self.choice_label.hide()
+        self.loading_bar.show()
+        # 0 of 0: busy until the worker knows the assemblies
+        self.loading_bar.setRange(0, total)
+        self.loading_bar.setValue(done)
+        text = self.translations["trace.filters_loading"] if total == 0 else             self.translations["trace.filters_loading_progress"].format(
+                done=done, total=total, assembly=assembly)
+        self.loading_bar.setFormat(text.replace("%", "%%"))
 
     def _show_choice(self):
         chosen = self.filter_panel.selection(self._words())
         if chosen is None:
-            self.choice_label.setText(self.translations["trace.filters_loading"])
             return
         text = self.translations["trace.filters_count"].format(
             count=len(chosen), total=len(self.filter_panel.candidates))
@@ -560,6 +587,9 @@ class TraceDialog(QDialog):
         self._worker.trace(self._words())
 
     def _on_progress(self, step, done, total, current):
+        if step == "catalog" and self.filter_panel.candidates is None:
+            self._show_loading(done, total, current)
+            return
         text = self.translations[f"trace.progress_{step}"].format(done=done, total=total)
         if current:
             text += f"\n{current}"

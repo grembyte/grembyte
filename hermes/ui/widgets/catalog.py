@@ -95,8 +95,15 @@ class CatalogModel(FavoriteColumn, QAbstractTableModel):
 
     # --- Content ---------------------------------------------------------
     def add(self, methods):
+        # Only the new methods are filtered: refiltering all of them for
+        # every assembly took half a minute for a few hundred assemblies.
         self.methods.extend(methods)
-        self._apply()
+        shown = [method for method in methods if self._shows(method)]
+        if shown:
+            first = len(self.visible)
+            self.beginInsertRows(QModelIndex(), first, first + len(shown) - 1)
+            self.visible.extend(shown)
+            self.endInsertRows()
 
     def clear(self):
         self.methods = []
@@ -121,12 +128,12 @@ class CatalogModel(FavoriteColumn, QAbstractTableModel):
     def favorite_item(self, row):
         return self.method_at(row)
 
+    def _shows(self, method):
+        return self.shows_assembly(method.assembly) and matches(self._words, method)
+
     def _apply(self):
         self.beginResetModel()
-        self.visible = [
-            method for method in self.methods
-            if self.shows_assembly(method.assembly) and matches(self._words, method)
-        ]
+        self.visible = [method for method in self.methods if self._shows(method)]
         self.endResetModel()
 
 
@@ -136,7 +143,8 @@ class CatalogDialog(QDialog):
     Not modal, so the scanner stays usable. Game assemblies are read when the
     dialog opens, framework assemblies only when they are to be shown. With
     an assembly selection (see hermes.ui.widgets.assemblies) only the
-    selected assemblies are read and shown.
+    selected assemblies are read and shown. Assemblies read before come from
+    the catalog cache; "Reload" reads them anew.
     """
 
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
@@ -157,6 +165,8 @@ class CatalogDialog(QDialog):
         self._assembly_selection = assembly_selection
         self._assemblies = []
         self._loaded = set()
+        # Loaded assemblies that came from the catalog cache
+        self._cached = set()
         self._failed = {}
         self._error = None
         self._worker = None
@@ -186,7 +196,7 @@ class CatalogDialog(QDialog):
         bar.addWidget(self.framework_check)
         self.reload_button = QPushButton(self.translations["catalog.reload"])
         self.reload_button.setToolTip(self.translations["catalog.reload_tooltip"])
-        self.reload_button.clicked.connect(self.reload)
+        self.reload_button.clicked.connect(lambda: self.reload(fresh=True))
         bar.addWidget(self.reload_button)
         layout.addLayout(bar)
 
@@ -242,11 +252,15 @@ class CatalogDialog(QDialog):
         store = self._assembly_selection
         return store.selection if store is not None else frozenset()
 
-    def reload(self):
-        """Read the catalog anew, e.g. after the game loaded more assemblies."""
+    def reload(self, fresh=False):
+        """Read the catalog again, e.g. after the game loaded more assemblies.
+
+        ``fresh`` reads every assembly anew instead of taking it from the cache.
+        """
         self._stop_worker()
         self._assemblies = []
         self._loaded.clear()
+        self._cached.clear()
         self._failed.clear()
         self._error = None
         self.model.clear()
@@ -257,12 +271,13 @@ class CatalogDialog(QDialog):
         self.framework_check.setEnabled(not selection)
         self.framework_check.setToolTip(self.translations[
             "catalog.framework_selection_tooltip" if selection else "catalog.framework_tooltip"])
-        self._start_worker(None)
+        self._start_worker(None, fresh)
 
-    def _start_worker(self, assemblies):
+    def _start_worker(self, assemblies, fresh=False):
         worker = CatalogWorker(self.pid, assemblies, engine=self.engine,
-                               selection=self.selection())
+                               selection=self.selection(), fresh=fresh)
         worker.assemblies_found.connect(self._on_assemblies_found)
+        worker.assembly_cached.connect(self._cached.add)
         worker.assembly_loaded.connect(self._on_assembly_loaded)
         worker.assembly_failed.connect(self._on_assembly_failed)
         worker.catalog_failed.connect(self._on_failed)
@@ -333,6 +348,9 @@ class CatalogDialog(QDialog):
             shown=len(self.model.visible), total=len(self.model.methods),
             classes=len(classes), assemblies=len(self._loaded),
         )
+        if self._cached:
+            text += "  ·  " + self.translations["catalog.from_cache"].format(
+                count=len(self._cached))
         selection = self.selection()
         if selection:
             text += "  ·  " + self.translations["catalog.assembly_selection"].format(

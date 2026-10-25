@@ -5,7 +5,9 @@ it adds or removes its hooks, the game's threads are paused where the
 platform needs it (Wine, see ``pauseThreads``).
 
 The trace hooks many methods at once, e.g. all methods of the game's
-assemblies, to find the one worth monitoring or hooking:
+assemblies, to find the one worth monitoring or hooking. It chooses them by
+the catalog (see hermes.features.catalog_cache), so once the assemblies are
+cached, listing and filtering them needs no reading in the game:
 
 1. ``start`` compiles the chosen methods (like the method monitor does) and
    puts a Frida interceptor on each. The interceptors call a small C
@@ -28,6 +30,7 @@ Like the method monitor, the trace notices when Mono frees traced code
 """
 
 import queue
+import re
 import threading
 from dataclasses import dataclass
 
@@ -37,6 +40,7 @@ from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-
 from hermes.core import activity, logs, settings
 from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
+from hermes.features import catalog_cache
 from hermes.features.assemblies import chosen_assemblies
 from hermes.features.catalog import CatalogMethod
 from hermes.core.frida_attach import attach_session
@@ -56,6 +60,14 @@ MIN_EXTRA_CALLS = 3
 
 NEW, MORE, SAME = "new", "more", "same"
 
+# ECMA-335 method flags, as the catalog has them
+METHOD_ABSTRACT = 0x0400
+METHOD_PINVOKE = 0x2000
+IMPL_CODE_TYPE = 0x0003  # native or runtime (delegates) instead of IL
+IMPL_INTERNAL_CALL = 0x1000
+# ``Ns.List`1:Add``: a method of a generic class's definition
+_GENERIC_CLASS = re.compile(r"`\d+:")
+
 _AGENT_TEMPLATE = ENGINE_AGENT_SOURCE + load_agent_source(__file__)
 
 
@@ -70,6 +82,48 @@ def trace_methods(rows, engine="mono"):
                       signature, engine)
         for assembly, class_name, name, parameters, return_type, static, token, signature in rows
     ]
+
+
+def untraceable(class_name, name, signature, flags, impl_flags):
+    """Why a method cannot be traced (``"abstract"``, ``"native"``, ``"generic"``), else None."""
+    if flags & METHOD_ABSTRACT:
+        return "abstract"
+    if flags & METHOD_PINVOKE or impl_flags & (IMPL_CODE_TYPE | IMPL_INTERNAL_CALL):
+        return "native"
+    # Open generics have no code of their own: List`1, Method<T>; Mono names
+    # the class of a definition 'Ns.List<T>', its methods 'Ns.List`1:Add (T)'.
+    head = signature.split(" (", 1)[0]
+    if ("`" in class_name or _GENERIC_CLASS.search(head)
+            or head[head.rfind(":") + 1:] != name):
+        return "generic"
+    return None
+
+
+def select_methods(classes_of, words, engine="mono"):
+    """The methods of ``classes_of`` matching ``words`` that a trace can hook.
+
+    ``classes_of`` maps assemblies to their catalog ``classes`` answer (with
+    the flags). Returns the CatalogMethods and how many matching methods
+    cannot be traced: ``{abstract, native, generic}``.
+    """
+    words = [word.lower() for word in words]
+    chosen = []
+    skipped = {"abstract": 0, "native": 0, "generic": 0}
+    for assembly, classes in classes_of.items():
+        for class_name, methods in classes:
+            for entry in methods:
+                name, parameters, return_type, static, token, signature, flags, impl_flags = entry
+                text = f"{class_name}:{name} {assembly}".lower()
+                if not all(word in text for word in words):
+                    continue
+                reason = untraceable(class_name, name, signature, flags, impl_flags)
+                if reason is not None:
+                    skipped[reason] += 1
+                else:
+                    chosen.append(CatalogMethod(assembly, class_name, name, parameters,
+                                                return_type, bool(static), token, signature,
+                                                engine))
+    return chosen, skipped
 
 
 @dataclass(frozen=True)
@@ -427,27 +481,38 @@ class TraceWorker(AgentWorker):
     def run(self):
         self._run_agent()
 
-    def _spec(self, api, argument):
-        """The agent's spec: words, or {"methods": [[assembly, token], ...]}."""
-        if isinstance(argument, dict):
-            methods = argument["methods"]
-            return {"assemblies": sorted({assembly for assembly, _token in methods}),
-                    "words": [word.lower() for word in argument.get("words", [])],
-                    "methods": methods}
-        names = chosen_assemblies([a["name"] for a in api.assemblies()], self.selection,
-                                  self.engine)
-        return {"assemblies": names, "words": [word.lower() for word in argument]}
+    def _select(self, api, words):
+        """The assemblies a trace covers, their traceable methods matching
+        ``words`` and the count of the others (see select_methods).
+
+        Assemblies come from the catalog cache, else from the agent.
+        """
+        found = api.assemblies()
+        mvids = {a["name"]: a.get("mvid") for a in found}
+        names = chosen_assemblies(list(mvids), self.selection, self.engine)
+        classes_of = {}
+        for done, name in enumerate(names):
+            self.progress.emit("catalog", done, len(names), name)
+            classes_of[name] = catalog_cache.read_classes(
+                self.engine.id, name, mvids[name], lambda name=name: api.classes(name))[0]
+        self.progress.emit("catalog", len(names), len(names), "")
+        return (names, *select_methods(classes_of, words, self.engine.id))
 
     def _run_command(self, api, action, argument):
         if action == "plan":
-            spec = self._spec(api, argument)
-            self.planned.emit({**api.plan(spec), "assemblies": spec["assemblies"]})
+            names, methods, skipped = self._select(api, argument)
+            self.planned.emit({"methods": len(methods), "skipped": skipped,
+                               "assemblies": names})
         elif action == "candidates":
-            answer = api.candidates(self._spec(api, argument))
-            self.candidates_found.emit(trace_methods(answer["methods"], self.engine.id),
-                                       answer["skipped"])
+            _names, methods, skipped = self._select(api, argument)
+            self.candidates_found.emit(methods, skipped)
         elif action == "start":
-            answer = api.start(self._spec(api, argument))
+            # words, or {"methods": [[assembly, token], ...], "words": [...]}
+            words = argument["words"] if isinstance(argument, dict) else argument
+            _names, methods, skipped = self._select(api, words)
+            chosen = (argument["methods"] if isinstance(argument, dict)
+                      else [[method.assembly, method.token] for method in methods])
+            answer = api.start({"methods": chosen, "skipped": skipped})
             self.started.emit(trace_methods(answer.pop("methods"), self.engine.id), answer)
         else:
             super()._run_command(api, action, argument)

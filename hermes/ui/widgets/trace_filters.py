@@ -100,7 +100,7 @@ class TraceFilterPanel(QWidget):
             right.addWidget(button)
         self.generated_check = QCheckBox(self.translations["trace.filter_generated"])
         self.generated_check.setToolTip(self.translations["trace.filter_generated_tooltip"])
-        self.generated_check.toggled.connect(lambda _checked: self._changed())
+        self.generated_check.toggled.connect(lambda _checked: self._changed(recount=True))
         right.addWidget(self.generated_check)
         right.addStretch()
         layout.addLayout(right)
@@ -161,8 +161,11 @@ class TraceFilterPanel(QWidget):
         self.list.blockSignals(False)
         self._changed()
 
-    def _changed(self):
-        self._update_counts()
+    def _changed(self, recount=False):
+        # What each filter picks only changes with the candidates, the
+        # generated-code switch and the filters themselves, not with a tick.
+        if recount:
+            self._update_counts()
         self._update_buttons()
         self.selection_changed.emit()
 
