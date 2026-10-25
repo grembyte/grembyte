@@ -62,6 +62,15 @@ Alternatively the application can be started straight from the project directory
 ./.venv/bin/python main.py
 ```
 
+`scripts/hermes-hook.sh` activates the virtual environment and starts the application from any working directory. To start Hermes from the desktop menu (KDE, GNOME, …), install a menu entry for the current user; it appears under Development and Games:
+
+```bash
+./scripts/install-desktop-entry.sh              # install or update the entry
+./scripts/install-desktop-entry.sh --uninstall  # remove it
+```
+
+The entry points to the project directory, so run the script again after moving the repository.
+
 The language is German or English depending on the system locale (English for any other locale). It can be chosen under **Settings → General …**, or for one start with an environment variable, which applies while the setting is "as the system":
 
 ```bash
