@@ -215,3 +215,70 @@ def test_favorites_window_handles_several_at_once(qt_app, repository, process_id
         dialog.table.model().index(0, 0),
         QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
     assert dialog.selection_label.text() == GOLD.signature
+
+
+def test_favorites_window_sorts_by_column(qt_app, repository, process_id, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
+
+    store = FavoriteStore(repository)
+    store.set_process(process_id)
+    store.toggle(GOLD, CATALOG)
+    store.toggle(ROLL, NATIVE_TRACE)
+    dialog = FavoritesDialog(translations, store)
+    header = dialog.table.horizontalHeader()
+    names = lambda: [dialog.table.item(row, 1).text()  # noqa: E731
+                     for row in range(dialog.table.rowCount())]
+
+    assert names() == ["PlayerInventory:AddCurrency", "roll_dice"]  # the order added in
+    dialog.table.selectRow(1)
+    header.setSortIndicator(1, Qt.SortOrder.DescendingOrder)
+    assert names() == ["roll_dice", "PlayerInventory:AddCurrency"]
+    # The selection stays with its favorite, the rows with theirs.
+    assert dialog.selected_favorite().label == "roll_dice"
+    dialog.table.item(1, 3).setText("Gold")
+    assert repository.list_favorites(process_id)[0].note == "Gold"
+    header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+    assert names() == ["PlayerInventory:AddCurrency", "roll_dice"]
+
+
+def test_catalog_sorts_by_column_and_keeps_the_selection(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PyQt6.QtCore import QItemSelectionModel, Qt  # pylint: disable=import-error,no-name-in-module
+    from PyQt6.QtWidgets import QTableView  # pylint: disable=import-error,no-name-in-module
+    from hermes.ui.widgets.catalog import CatalogModel
+
+    class Engine:  # pylint: disable=too-few-public-methods
+        @staticmethod
+        def is_framework_assembly(_assembly):
+            return False
+
+    sell = CatalogMethod("Assembly-CSharp", "Game.Shop", "Sell", "(int)", "bool",
+                         True, 0x06000001, "Game.Shop:Sell (int)")
+    load = CatalogMethod("Loader", "Boot", "Load", "()", "void",
+                         False, 0x06000002, "Boot:Load ()")
+    model = CatalogModel(translations, Engine())
+    view = QTableView()
+    view.setModel(model)
+    model.add([GOLD, sell])
+    view.selectionModel().setCurrentIndex(
+        model.index(1, 1), QItemSelectionModel.SelectionFlag.ClearAndSelect
+        | QItemSelectionModel.SelectionFlag.Rows)
+    classes = lambda: [model.method_at(row).class_name  # noqa: E731
+                       for row in range(model.rowCount())]
+
+    model.sort(1, Qt.SortOrder.AscendingOrder)
+    assert classes() == ["Game.PlayerInventory", "Game.Shop"]
+    model.sort(4, Qt.SortOrder.DescendingOrder)  # static ones first
+    assert model.method_at(view.currentIndex().row()) is sell
+    model.add([load])  # read later, sorted in
+    assert classes() == ["Game.Shop", "Game.PlayerInventory", "Boot"]
+    model.sort(1, Qt.SortOrder.AscendingOrder)
+    assert classes() == ["Boot", "Game.PlayerInventory", "Game.Shop"]
+    assert model.method_at(view.currentIndex().row()) is sell
+    model.set_filter("game", False)
+    assert classes() == ["Game.PlayerInventory", "Game.Shop"]
+    model.sort(-1, Qt.SortOrder.AscendingOrder)  # the order read in
+    model.set_filter("", False)
+    assert classes() == ["Game.PlayerInventory", "Game.Shop", "Boot"]

@@ -54,7 +54,10 @@ def matches(words, method):
 
 
 class CatalogModel(FavoriteColumn, QAbstractTableModel):
-    """All methods read so far; shows those matching the search."""
+    """All methods read so far; shows those matching the search.
+
+    Sorts by a column when the view asks; column -1 is the order they were read in.
+    """
 
     def __init__(self, translations, engine, parent=None):
         super().__init__(parent)
@@ -66,6 +69,8 @@ class CatalogModel(FavoriteColumn, QAbstractTableModel):
         self._framework = False
         # The user's assembly selection; empty for none
         self.selection = frozenset()
+        self._sort_column = -1
+        self._sort_order = Qt.SortOrder.AscendingOrder
 
     # --- Qt model --------------------------------------------------------
     def rowCount(self, parent=QModelIndex()):  # pylint: disable=invalid-name
@@ -96,6 +101,11 @@ class CatalogModel(FavoriteColumn, QAbstractTableModel):
             method.assembly,
         )[index.column()]
 
+    def sort(self, column, order=Qt.SortOrder.AscendingOrder):
+        self._sort_column = column
+        self._sort_order = order
+        self._resort()
+
     # --- Content ---------------------------------------------------------
     def add(self, methods):
         # Only the new methods are filtered: refiltering all of them for
@@ -107,6 +117,8 @@ class CatalogModel(FavoriteColumn, QAbstractTableModel):
             self.beginInsertRows(QModelIndex(), first, first + len(shown) - 1)
             self.visible.extend(shown)
             self.endInsertRows()
+            if self._sort_column >= 0:
+                self._resort()
 
     def clear(self):
         self.methods = []
@@ -136,8 +148,42 @@ class CatalogModel(FavoriteColumn, QAbstractTableModel):
 
     def _apply(self):
         self.beginResetModel()
-        self.visible = [method for method in self.methods if self._shows(method)]
+        self.visible = self._sorted(
+            [method for method in self.methods if self._shows(method)])
         self.endResetModel()
+
+    def _sorted(self, methods):
+        column = self._sort_column
+        if column < 0 or column >= len(_COLUMNS):
+            return methods
+        keys = {
+            _FAVORITE: lambda method: (self.favorites is not None
+                                       and self.favorites.is_favorite(method)),
+            _CLASS: lambda method: method.class_name.lower(),
+            _METHOD: lambda method: (method.name.lower(), method.parameters),
+            _RETURN: lambda method: method.return_type.lower(),
+            _STATIC: lambda method: method.static,
+            _ASSEMBLY: lambda method: method.assembly.lower(),
+        }
+        return sorted(methods, key=keys[column],
+                      reverse=self._sort_order == Qt.SortOrder.DescendingOrder)
+
+    def _resort(self):
+        """Sort the shown methods anew; selection and current row stay on their methods."""
+        self.layoutAboutToBeChanged.emit()
+        before = self.persistentIndexList()
+        old = self.visible
+        if self._sort_column < 0:
+            # Back to the order they were read in
+            self.visible = [method for method in self.methods if self._shows(method)]
+        else:
+            self.visible = self._sorted(old)
+        rows = {id(method): row for row, method in enumerate(self.visible)}
+        self.changePersistentIndexList(
+            before, [self.index(rows[id(old[index.row()])], index.column())
+                     if index.isValid() and index.row() < len(old) else QModelIndex()
+                     for index in before])
+        self.layoutChanged.emit()
 
 
 class CatalogDialog(QDialog):
@@ -234,6 +280,10 @@ class CatalogDialog(QDialog):
         header.resizeSection(_STATIC, 70)
         header.resizeSection(_ASSEMBLY, 170)
         set_up_favorite_column(self.view, self.model, self._favorites, CATALOG)
+        # A click on a column header sorts by it, a third one restores the order read in.
+        header.setSortIndicatorClearable(True)
+        header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        self.view.setSortingEnabled(True)
         resizable_columns(self.view)
         copy_menu(self.view, self.translations)
         self.view.selectionModel().currentRowChanged.connect(self._show_details)

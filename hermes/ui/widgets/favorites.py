@@ -230,6 +230,13 @@ class FavoritesDialog(QDialog):
         header.resizeSection(_LOCATION, 220)
         header.resizeSection(_SOURCE, 120)
         header.resizeSection(_ADDED, 140)
+        # A click on a column header sorts by it, a third one restores the order added in.
+        # The rows are sorted here, not by the table: rows stand for ``_shown``.
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        header.setSortIndicatorClearable(True)
+        header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        header.sortIndicatorChanged.connect(lambda _column, _order: self.refresh())
         resizable_columns(self.table)
         copy_menu(self.table, self.translations)
         self.table.itemChanged.connect(self._on_item_changed)
@@ -271,7 +278,7 @@ class FavoritesDialog(QDialog):
         current = self.selected_favorite()
         words = self.search_input.text().lower().split()
         favorites = self.store.favorites()
-        self._shown = [favorite for favorite in favorites if favorite.matches(words)]
+        self._shown = self._sorted([favorite for favorite in favorites if favorite.matches(words)])
         self._filling = True
         self.table.setRowCount(len(self._shown))
         for row, favorite in enumerate(self._shown):
@@ -302,6 +309,26 @@ class FavoritesDialog(QDialog):
         self.status_label.setText(t["favorites.count"].format(
             shown=len(self._shown), total=len(favorites)))
         self._show_selection()
+
+    def _sorted(self, favorites):
+        """``favorites`` in the order the header's sort indicator asks for."""
+        header = self.table.horizontalHeader()
+        column = header.sortIndicatorSection()
+        if column < 0 or column >= len(_COLUMNS):
+            return favorites
+        t = self.translations
+        keys = {
+            _KIND: lambda favorite: favorite.kind,
+            _NAME: lambda favorite: favorite.label.lower(),
+            _LOCATION: lambda favorite: favorite.location.lower(),
+            _NOTE: lambda favorite: (not favorite.note, favorite.note.lower()),
+            _SOURCE: lambda favorite: t.get(f"favorites.source_{favorite.source}",
+                                            favorite.source).lower(),
+            _ADDED: lambda favorite: (favorite.created_at is None,
+                                      favorite.created_at or 0),
+        }
+        return sorted(favorites, key=keys[column],
+                      reverse=header.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder)
 
     def _select(self, keys, current_key):
         """Select the rows of the favorites with ``keys``; ``current_key`` gets the focus."""
