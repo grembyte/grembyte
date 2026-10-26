@@ -65,6 +65,10 @@ const MAX_INSTRUCTION_SIZE = 15;
 const SYNC_WINDOW = 48;
 const MASK64 = (1n << 64n) - 1n;
 const JMP_SIZE = 5;
+// "jmp rel8": the short jump to a code cave where the jmp fits (see installSite)
+const SHORT_JMP_SIZE = 2;
+// Functions start 16-byte aligned; int3 padding before such a start is never executed.
+const FUNCTION_ALIGNMENT = 16;
 const NEAR_DISTANCE = 0x7ff00000;
 const RED_ZONE = 128;
 const FXSAVE_AREA = 512;
@@ -907,7 +911,7 @@ function onAfter(site, _block) {
   }
 }
 
-function buildTrampoline(site) {
+function buildTrampoline(site, needed) {
   const origin = site.writeIns.address;
   const code = Memory.alloc(Process.pageSize, { near: origin, maxDistance: NEAR_DISTANCE });
   Memory.protect(code, Process.pageSize, 'rwx');
@@ -917,7 +921,7 @@ function buildTrampoline(site) {
   emitCallback(w, site.before);
   let patchSize = 0;
   let first = true;
-  while (patchSize < JMP_SIZE) {
+  while (patchSize < needed) {
     const total = r.readOne();
     if (total === 0)
       throw new Error(`Unable to relocate code at ${origin.add(patchSize)}`);
@@ -934,16 +938,19 @@ function buildTrampoline(site) {
     w.putJmpAddress(origin.add(patchSize));
   // Tiny functions such as "add [rdi], esi; ret" end before the jmp fits;
   // the alignment padding behind them is never executed and may be reused.
-  while (patchSize < JMP_SIZE) {
+  while (patchSize < needed) {
     let padding = null;
     try {
       padding = Instruction.parse(origin.add(patchSize));
     } catch (_error) {
     }
-    if (padding === null || (padding.mnemonic !== 'nop' && padding.mnemonic !== 'int3'))
-      throw new Error(
-        `Only ${patchSize} bytes of code at ${origin} before it ends, need ${JMP_SIZE}; `
+    if (padding === null || (padding.mnemonic !== 'nop' && padding.mnemonic !== 'int3')) {
+      const error = new Error(
+        `Only ${patchSize} bytes of code at ${origin} before it ends, need ${needed}; `
         + 'hook the caller instead');
+      error.tooShort = true;
+      throw error;
+    }
     patchSize += padding.size;
   }
   w.flush();
@@ -953,7 +960,67 @@ function buildTrampoline(site) {
   return { code, patchSize };
 }
 
-function installSite(writeIns, writeOp) {
+// A run of int3 padding within reach of a "jmp rel8" from the end of the
+// write's short jump, for the jmp to the trampoline. Only padding that ends
+// at an aligned function start counts: int3 bytes elsewhere may be part of
+// an instruction. A cave in use holds a jmp and no longer looks like padding.
+function findCave(origin, patchSize, code) {
+  const from = origin.add(SHORT_JMP_SIZE);
+  const range = Process.findRangeByAddress(origin);
+  if (range === null)
+    return null;
+  const rangeEnd = range.base.add(range.size);
+  let start = from.sub(128);
+  if (start.compare(range.base) < 0)
+    start = range.base;
+  let end = from.add(127 + JMP_SIZE);
+  if (end.compare(rangeEnd) > 0)
+    end = rangeEnd;
+  const size = end.sub(start).toInt32();
+  const bytes = new Uint8Array(start.readByteArray(size));
+  const patched = [origin.sub(start).toInt32(), origin.sub(start).toInt32() + patchSize];
+
+  let best = null;
+  let i = 0;
+  while (i < size) {
+    if (bytes[i] !== 0xcc) {
+      i++;
+      continue;
+    }
+    let runEnd = i;
+    while (runEnd < size && bytes[runEnd] === 0xcc)
+      runEnd++;
+    const runStart = i;
+    i = runEnd;
+    // A run cut off by the window may go on; its end is not known to be aligned.
+    if (runEnd === size && end.compare(rangeEnd) < 0)
+      continue;
+    if (start.add(runEnd).and(FUNCTION_ALIGNMENT - 1).toInt32() !== 0)
+      continue;
+    // The last bytes of the run, next to the function start, are surely padding.
+    for (let at = runEnd - JMP_SIZE; at > runStart; at--) {
+      if (at < patched[1] && at + JMP_SIZE > patched[0])
+        continue;
+      const cave = start.add(at);
+      const offset = cave.sub(from).toInt32();
+      if (offset < -128 || offset > 127)
+        continue;
+      if (!jmpReaches(cave, code))
+        continue;
+      if (best === null || Math.abs(offset) < Math.abs(best.offset))
+        best = { cave, offset };
+      break;
+    }
+  }
+  return best;
+}
+
+function jmpReaches(from, to) {
+  const distance = BigInt(to.toString()) - BigInt(from.add(JMP_SIZE).toString());
+  return distance >= -(1n << 31n) && distance < (1n << 31n);
+}
+
+function installSite(writeIns, writeOp, shortJump) {
   const key = writeIns.address.toString();
   const existing = sites.get(key);
   if (existing !== undefined)
@@ -961,23 +1028,51 @@ function installSite(writeIns, writeOp) {
   if (Process.arch !== 'x64')
     throw new Error(`Write hooks are only implemented for x64, not ${Process.arch}`);
 
-  const site = { writeIns, writeOp, hooks: new Map() };
+  const site = { writeIns, writeOp, hooks: new Map(), cave: null };
   site.bytes = hexBytes(writeIns.address.readByteArray(writeIns.size));
   site.context = codeContext(writeIns);
   site.before = new NativeCallback(block => onBefore(site, block), 'void', ['pointer']);
   site.after = new NativeCallback(block => onAfter(site, block), 'void', ['pointer']);
-  const { code, patchSize } = buildTrampoline(site);
-
   const origin = writeIns.address;
-  const distance = BigInt(code.toString()) - BigInt(origin.add(JMP_SIZE).toString());
-  if (distance < -(1n << 31n) || distance >= (1n << 31n))
+  let built;
+  try {
+    built = buildTrampoline(site, JMP_SIZE);
+  } catch (error) {
+    if (!shortJump || !error.tooShort)
+      throw error;
+    // Too little code for the jmp (a tiny function followed directly by the
+    // next one): a short jump to int3 padding nearby, which jumps on to the
+    // trampoline. Only the write is relocated; the rest stays in place.
+    built = buildTrampoline(site, SHORT_JMP_SIZE);
+    const found = findCave(origin, built.patchSize, built.code);
+    if (found === null)
+      throw new Error(`${error.message}; no int3 padding for a short jump within 128 bytes`);
+    site.cave = found.cave;
+  }
+  const { code, patchSize } = built;
+
+  if (!jmpReaches(site.cave === null ? origin : site.cave, code))
     throw new Error(`Trampoline at ${code} is out of jmp range from ${origin}`);
   site.code = code;
   site.patchSize = patchSize;
   site.original = origin.readByteArray(patchSize);
+  if (site.cave !== null) {
+    // The cave first: the write jumps there as soon as it is patched.
+    Memory.patchCode(site.cave, JMP_SIZE, c => {
+      const w = new X86Writer(c, { pc: site.cave });
+      w.putJmpAddress(code);
+      w.flush();
+      w.dispose();
+    });
+  }
   Memory.patchCode(origin, patchSize, c => {
     const w = new X86Writer(c, { pc: origin });
-    w.putJmpAddress(code);
+    if (site.cave === null) {
+      w.putJmpAddress(code);
+    } else {
+      const offset = site.cave.sub(origin.add(SHORT_JMP_SIZE)).toInt32();
+      w.putBytes([0xeb, offset & 0xff]);
+    }
     while (w.offset < patchSize)
       w.putNop();
     w.flush();
@@ -995,6 +1090,7 @@ function uninstallSite(site) {
   });
   sites.delete(origin.toString());
   // A thread may still be running inside the trampoline; keep it mapped.
+  // The same holds for the cave, which keeps its jmp to the trampoline.
   retiredSites.push(site);
 }
 
@@ -1095,7 +1191,7 @@ function addHook(spec) {
     writeOp = candidate.op;
   }
 
-  const site = installSite(writeIns, writeOp);
+  const site = installSite(writeIns, writeOp, spec.shortJump === true);
   const learned = resolveCallers(spec.callers, writeIns.address);
   const hook = {
     id: spec.id,
@@ -1135,6 +1231,7 @@ function addHook(spec) {
     resumePc: site.writeIns.next.toString(),
     trampoline: site.code.toString(),
     patchSize: site.patchSize,
+    cave: site.cave === null ? null : site.cave.toString(),
     operandSize: site.writeOp.size,
     callers: hook.callers.size,
     transform: spec.transform.kind

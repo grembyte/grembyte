@@ -36,6 +36,8 @@
   "settings.wine_trace_limit_off": "no limit",
   "settings.large_trace": "Trace: ask first from methods",
   "settings.large_trace_tooltip": "From this many methods the trace asks before it starts: Mono has to compile them all, which takes time and slows the game down. Applies to trace windows opened afterwards.",
+  "settings.hook_short_jump": "Hooks: short jump in tight spots (experimental)",
+  "settings.hook_short_jump_tooltip": "When a write sits in a tiny function with less than 5 bytes before the next one, the hook jumps with 2 bytes to int3 padding nearby and from there to its code. The padding is found by a heuristic; if it guesses wrong, the game crashes. Applies to hooks installed afterwards.",
   "settings.trace_sequence": "Trace: entries in the sequence",
   "settings.trace_sequence_tooltip": "How many calls the trace and the native trace write into the sequence during the scenario (32 bytes per entry in the game); further ones are only counted. Raise it when the window reports dropped ones. Applies from the next time a trace starts following.",
   "settings.language": "Language",

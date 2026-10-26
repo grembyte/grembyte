@@ -36,6 +36,8 @@
   "settings.wine_trace_limit_off": "kein Limit",
   "settings.large_trace": "Trace: nachfragen ab Methoden",
   "settings.large_trace_tooltip": "Ab so vielen Methoden fragt der Trace vor dem Start nach: Mono muss sie alle übersetzen, das dauert und verlangsamt das Spiel. Gilt für Trace-Fenster, die danach geöffnet werden.",
+  "settings.hook_short_jump": "Hooks: Short Jump bei Platzmangel (experimentell)",
+  "settings.hook_short_jump_tooltip": "Liegt ein Schreibbefehl in einer winzigen Funktion mit weniger als 5 Bytes bis zur nächsten, springt der Hook mit 2 Bytes zu int3-Füllbytes in der Nähe und von dort zu seinem Code. Die Füllbytes werden per Heuristik gefunden; liegt sie falsch, stürzt das Spiel ab. Gilt für danach installierte Hooks.",
   "settings.trace_sequence": "Trace: Einträge in der Reihenfolge",
   "settings.trace_sequence_tooltip": "Wie viele Aufrufe der Trace und der native Trace im Szenario in die Reihenfolge schreiben (32 Bytes je Eintrag im Spiel); weitere werden nur gezählt. Größer, wenn das Fenster „verworfen“ meldet. Gilt ab dem nächsten Start einer Verfolgung.",
   "settings.language": "Sprache",

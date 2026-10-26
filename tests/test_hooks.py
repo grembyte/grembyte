@@ -381,6 +381,94 @@ def test_hook_works_while_its_target_is_write_watched(tmp_path, qt_app):
         target.close()
 
 
+# A setter of 3 bytes ("mov [rdi], esi; ret") with the next function right
+# behind it: too little room for the 5-byte jmp. int3 padding follows.
+_CRAMPED_ASM = r"""
+    .text
+    .p2align 4
+    .globl setter
+setter:
+    movl %esi, (%rdi)
+    ret
+    .globl next_fn
+next_fn:
+    leal 1(%rdi), %eax
+    ret
+    .p2align 4, 0xcc
+    .globl third_fn
+third_fn:
+    movl %edi, %eax
+    ret
+    .section .note.GNU-stack,"",@progbits
+"""
+
+_CRAMPED_SOURCE = r"""
+#include <stdio.h>
+#include <unistd.h>
+void setter(int *p, int v);
+int next_fn(int);
+static int gold = 100;
+int main(void) {
+    char command[16];
+    int amount;
+    printf("%d %p %p\n", getpid(), (void *)&gold, (void *)setter);
+    fflush(stdout);
+    while (scanf("%15s %d", command, &amount) == 2) {
+        setter(&gold, gold + amount);
+        printf("%d %d\n", gold, next_fn(amount));
+        fflush(stdout);
+    }
+    return 0;
+}
+"""
+
+
+@requires_target
+@pytest.mark.parametrize("short_jump", [False, True])
+def test_short_jump_hooks_a_write_without_room_for_the_jmp(tmp_path, qt_app, short_jump):
+    # pylint: disable=import-outside-toplevel
+    from hermes.core import settings
+    from hermes.hooks.engine import HookWorker
+
+    (tmp_path / "target.c").write_text(_CRAMPED_SOURCE)
+    (tmp_path / "cramped.S").write_text(_CRAMPED_ASM)
+    binary = tmp_path / "target"
+    subprocess.run(["gcc", "-O1", str(tmp_path / "target.c"), str(tmp_path / "cramped.S"),
+                    "-o", str(binary)], check=True)
+    process = subprocess.Popen(
+        [str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    pid, address, setter = process.stdout.readline().split()
+    target = _Target.__new__(_Target)
+    target.process, target.pid, target.address = process, int(pid), int(address, 16)
+
+    settings.apply({"hook_short_jump": short_jump})
+    worker = HookWorker(target.pid)
+    installed, failed = {}, {}
+    worker.hook_installed.connect(lambda hook_id, info: installed.update({hook_id: info}))
+    worker.hook_failed.connect(lambda hook_id, message: failed.update({hook_id: message}))
+    try:
+        worker.start()
+        hook_id = worker.add_hook(HookSpec(
+            target.address, "int32", MultiplyTransform(10), write_pc=int(setter, 16)
+        ))
+        _wait_for(qt_app, lambda: hook_id in installed or hook_id in failed)
+        if not short_jump:
+            assert "need 5" in failed[hook_id]
+            assert target.send("add", 1) == (101, 2)
+            return
+        assert not failed
+        assert installed[hook_id]["patchSize"] == 2 and installed[hook_id]["cave"]
+        # The ret and the next function behind the write are left alone.
+        assert target.send("add", 1) == (110, 2)
+        assert target.send("add", 5) == (160, 6)
+    finally:
+        settings.reset()
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
 def _watch_hits(target, command, reads):
     """Run the watch agent around one command and return its hits."""
     import frida  # pylint: disable=import-outside-toplevel

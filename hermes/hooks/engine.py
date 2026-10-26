@@ -14,6 +14,13 @@ This works independently of how the write is encoded (``add [mem], reg``,
 ``mov [mem], reg``, ``sub``, ...). Several hooks may share one write site;
 they run in the order they were added. Only x86-64 targets are supported.
 
+The jump takes 5 bytes. A tiny function (``mov [rcx+8], edx; ret``) may end
+before that, with the next function right behind it. With the setting
+``hook_short_jump`` the agent then writes a 2-byte ``jmp rel8`` over the
+write instead, to int3 padding within 128 bytes that ends at an aligned
+function start, and puts the jump to the trampoline there. Off by default:
+padding is found by a heuristic.
+
 A hook either targets one fixed address or, when no address is given (e.g. a
 hook restored from module + offset after the game was restarted), whatever
 address the hooked instruction writes on each call.
@@ -78,6 +85,7 @@ from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-
 
 from hermes.core import logs
 from hermes.core import sessions
+from hermes.core import settings
 from hermes.engines.registry import ENGINE_AGENT_SOURCE
 from hermes.core.pointer import PointerChain
 from hermes.core.frida_attach import attach_session
@@ -370,7 +378,9 @@ class HookWorker(QThread):
         api = script.exports_sync
         try:
             if action == "add":
-                info = api.add_hook(argument.to_agent(hook_id))
+                payload = argument.to_agent(hook_id)
+                payload["shortJump"] = settings.get("hook_short_jump")
+                info = api.add_hook(payload)
                 if info.get("training"):
                     self.hook_training.emit(hook_id, {})
                 else:

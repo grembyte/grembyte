@@ -31,6 +31,7 @@ def test_values_start_at_their_defaults():
     assert settings.get("activity_log") is True
     assert settings.get("wine_trace_limit") == 5000
     assert settings.get("trace_sequence") == 100_000
+    assert settings.get("hook_short_jump") is False
     assert settings.language() is None  # the system's
     assert set(settings.values()) == {setting.key for setting in settings.SETTINGS}
 
