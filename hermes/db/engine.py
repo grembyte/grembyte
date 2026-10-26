@@ -78,3 +78,26 @@ def add_missing_columns(db_engine=engine):
                 connection.execute(text(
                     f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column_type}'
                 ))
+
+
+def database_size(db_engine=engine):
+    """Bytes of the database file and how many of them are free pages."""
+    with db_engine.connect() as connection:
+        page_size = connection.execute(text("PRAGMA page_size")).scalar()
+        pages = connection.execute(text("PRAGMA page_count")).scalar()
+        free = connection.execute(text("PRAGMA freelist_count")).scalar()
+    return page_size * pages, page_size * free
+
+
+def vacuum_db(db_engine=engine):
+    """Rebuild the database without its free pages; returns the sizes before and after.
+
+    SQLite keeps the space of deleted rows (e.g. large pointer scans) in the
+    file. VACUUM cannot run inside a transaction, hence the autocommit
+    connection; it fails while another connection writes.
+    """
+    before, _free = database_size(db_engine)
+    with db_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        connection.execute(text("VACUUM"))
+    after, _free = database_size(db_engine)
+    return before, after

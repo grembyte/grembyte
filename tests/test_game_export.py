@@ -1,10 +1,10 @@
-"""Export of the entries saved per game as JSON, and its window."""
+"""Export of the entries saved per game as JSON, its import, and their windows."""
 
 import json
 from datetime import date
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from hermes.db import models  # noqa: F401  pylint: disable=unused-import
@@ -21,8 +21,10 @@ from hermes.db.models import (
 from hermes.db.repository.game_export import (
     EXPORT_FORMAT,
     GameExportRepository,
+    ImportFormatError,
     export_file_name,
     game_platform,
+    read_export,
 )
 
 from tests.test_hooks import fixture_qt_app, fixture_translations  # pylint: disable=unused-import
@@ -145,3 +147,114 @@ def test_dialog_suggests_the_name_and_keeps_a_changed_one(qt_app, translations, 
     export = json.loads(dialog.exported_path.read_text(encoding="utf-8"))
     assert export["game"] == "DarkSoulsIII.ex"
     assert export["processes"][0]["addresses"][0]["pointer_scan"] is not None
+
+
+def _process_id(sessions, name, path):
+    with sessions() as session:
+        return session.scalars(
+            select(Process.id).where(Process.name == name, Process.path == path)).one()
+
+
+def _labels(sessions, model, process_id):
+    with sessions() as session:
+        return [record.label for record in session.scalars(
+            select(model).where(model.process_id == process_id).order_by(model.id))]
+
+
+def test_import_mixes_in_what_the_target_does_not_hold(sessions, repository):
+    export = repository.export_game("DarkSoulsIII.ex", pointer_scans=True)
+    # A third Proton version: a new process, as attaching saves it.
+    with sessions() as session:
+        target = Process(name="DarkSoulsIII.ex", path="/steam/Proton 12/wine64-preloader")
+        session.add(target)
+        session.commit()
+        target_id = target.id
+
+    result = repository.import_export(export, target_id)
+    assert result.added == {"addresses": 1, "hooks": 1, "method_hooks": 0, "favorites": 0,
+                            "pointer_scans": 1}
+    assert result.templates == 0  # "Begrenzen" exists with the same code
+    with sessions() as session:
+        [hook] = session.scalars(select(Hook).where(Hook.process_id == target_id))
+        assert session.get(HookTemplate, hook.template_id).name == "Begrenzen"
+        [address] = session.scalars(select(Address).where(Address.process_id == target_id))
+        scan = session.scalars(
+            select(PointerScan).where(PointerScan.address_id == address.id)).one()
+        assert scan.chains == [{"module": "DarkSoulsIII.exe", "offsets": [8]}]
+        assert session.get(Process, target_id).path == "/steam/Proton 12/wine64-preloader"
+
+    again = repository.import_export(export, target_id)
+    assert sum(again.added.values()) == 0
+    assert again.skipped == {"addresses": 1, "hooks": 1, "method_hooks": 0, "favorites": 0}
+
+
+def test_import_replaces_the_targets_entries(sessions, repository):
+    poe = _process_id(sessions, "PillarsOfEternity", "/steam/common/PoE/PillarsOfEternity")
+    export = repository.export_game("DarkSoulsIII.ex", pointer_scans=True)
+    export["processes"][0]["addresses"][0]["label"] = "Souls (imported)"
+
+    result = repository.import_export(export, poe, replace=True)
+    assert result.added["addresses"] == 1 and result.added["pointer_scans"] == 1
+    assert _labels(sessions, Address, poe) == ["Souls (imported)"]
+    assert _labels(sessions, MethodHook, poe) == []
+    with sessions() as session:
+        assert not list(session.scalars(
+            select(FavoriteRecord).where(FavoriteRecord.process_id == poe)))
+    # Again: the pointer scan of the replaced address is gone as well.
+    repository.import_export(export, poe, replace=True)
+    assert _labels(sessions, Address, poe) == ["Souls (imported)"]
+    with sessions() as session:
+        assert len(list(session.scalars(select(PointerScan)))) == 2
+
+
+def test_a_changed_template_is_added_under_a_new_name(sessions, repository):
+    export = repository.export_game("DarkSoulsIII.ex")
+    export["templates"][0]["source"] = "function (ctx) { return 1; }"
+    target = _process_id(sessions, "PillarsOfEternity", "/steam/common/PoE/PillarsOfEternity")
+
+    assert repository.import_export(export, target).templates == 1
+    assert repository.import_export(export, target).templates == 0
+    with sessions() as session:
+        [hook] = session.scalars(select(Hook).where(Hook.process_id == target))
+        assert session.get(HookTemplate, hook.template_id).name == "Begrenzen (Import)"
+
+
+def test_only_exports_of_hermes_hook_are_read(tmp_path, repository):
+    path = tmp_path / "export.json"
+    repository.write_export("DarkSoulsIII.ex", path)
+    assert read_export(path)["game"] == "DarkSoulsIII.ex"
+    for content in ("{", "[]", '{"format": "other"}',
+                    json.dumps({"format": EXPORT_FORMAT, "version": 99, "processes": []})):
+        path.write_text(content, encoding="utf-8")
+        with pytest.raises(ImportFormatError):
+            read_export(path)
+
+
+def test_import_dialog_selects_the_target_and_imports(qt_app, translations, sessions,
+                                                      repository, tmp_path, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PyQt6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
+    from hermes.ui.widgets.game_export import GameImportDialog
+
+    path = tmp_path / "export.json"
+    repository.write_export("PillarsOfEternity", path)
+    souls = _process_id(sessions, "DarkSoulsIII.ex", PROTON_EXP)
+    dialog = GameImportDialog(translations, repository, current=souls)
+    assert not dialog.import_button.isEnabled()
+    assert dialog.selected_process.process_id == souls
+
+    dialog.load_file(path)
+    # The attached process is of another game: the file's game is selected.
+    assert dialog.selected_process.name == "PillarsOfEternity"
+    assert dialog.merge.isChecked() and dialog.import_button.isEnabled()
+    dialog.table.selectRow(
+        [process.process_id for process in dialog.processes].index(souls))
+    assert "PillarsOfEternity" in dialog.status.text()
+
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *_args: QMessageBox.StandardButton.Yes)
+    dialog.replace.setChecked(True)
+    dialog.import_button.click()
+    assert dialog.process_id == souls
+    assert dialog.result.added["method_hooks"] == 1 and dialog.result.added["favorites"] == 1
+    assert _labels(sessions, Hook, souls) == []

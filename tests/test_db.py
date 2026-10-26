@@ -260,3 +260,24 @@ def test_legacy_db_is_copied_once(tmp_path):
     assert not adopt_legacy_db(path, legacy)
     assert path.read_bytes() == b"new"
     assert not adopt_legacy_db(tmp_path / "data" / "other.db", tmp_path / "missing.db")
+
+
+def test_vacuum_frees_the_space_of_deleted_rows(tmp_path):
+    # pylint: disable=import-outside-toplevel
+    from sqlalchemy import text
+
+    from hermes.db.engine import database_size, vacuum_db
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE junk (data BLOB)"))
+        connection.execute(text("INSERT INTO junk VALUES (zeroblob(2000000))"))
+        connection.execute(text("DROP TABLE junk"))
+    size, free = database_size(engine)
+    assert free > 1_900_000
+
+    before, after = vacuum_db(engine)
+    assert before == size and after < 200_000
+    assert database_size(engine)[1] == 0
+    engine.dispose()

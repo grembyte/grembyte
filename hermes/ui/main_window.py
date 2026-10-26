@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHeaderView, QStatusBar, QToolBar, QDialog,
     QAbstractItemView, QFormLayout,
     QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox, QTabWidget, QSizePolicy,
-    QInputDialog,
+    QInputDialog, QApplication,
 )
 from PyQt6.QtCore import Qt, QSize, QTimer, QSettings  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor, QActionGroup, QIcon  # pylint: disable=import-error,no-name-in-module
@@ -57,6 +57,7 @@ from hermes.core.write_watch import (
     create_watch_worker,
     watch_size_for_type,
 )
+from hermes.db.engine import DB_PATH, database_size, vacuum_db
 from hermes.db.repository.addresses import AddressRepository, address_pointer
 from hermes.db.repository.assembly_selections import AssemblySelectionRepository
 from hermes.db.repository.favorites import FavoriteRepository
@@ -70,7 +71,7 @@ from hermes.ui.widgets.assemblies import AssemblyDialog, AssemblySelectionStore
 from hermes.ui.widgets.catalog import CatalogDialog
 from hermes.ui.widgets.known_games import KnownGamesDialog
 from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
-from hermes.ui.widgets.game_export import GameExportDialog
+from hermes.ui.widgets.game_export import GameExportDialog, GameImportDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
 from hermes.ui.widgets.settings_dialog import SettingsDialog
@@ -413,6 +414,15 @@ class MainWindow(QMainWindow):
             glyph_icon("⇪"), self.translations["menu.export"])
         self.act_export.setToolTip(self.translations["menu.export_tooltip"])
         self.act_export.triggered.connect(self._open_export)
+        self.act_import = file_menu.addAction(
+            glyph_icon("⇩"), self.translations["menu.import"])
+        self.act_import.setToolTip(self.translations["menu.import_tooltip"])
+        self.act_import.triggered.connect(self._open_import)
+        file_menu.addSeparator()
+        self.act_vacuum = file_menu.addAction(
+            glyph_icon("⇲"), self.translations["menu.vacuum"])
+        self.act_vacuum.setToolTip(self.translations["menu.vacuum_tooltip"])
+        self.act_vacuum.triggered.connect(self._vacuum_database)
 
         settings_menu = menu_bar.addMenu(self.translations["menu.settings"])
         settings_menu.setToolTipsVisible(True)
@@ -494,6 +504,48 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.lbl_status.setText(
                 self.translations["export.done"].format(path=dialog.exported_path))
+
+    def _open_import(self):
+        """Import an export file into a saved process; the attached one comes first."""
+        dialog = GameImportDialog(self.translations, GameExportRepository(),
+                                  current=self._process_id, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        added = dialog.result.added
+        self.lbl_status.setText(self.translations["import.done"].format(
+            skipped=sum(dialog.result.skipped.values()), templates=dialog.result.templates,
+            **added))
+        if dialog.process_id == self._process_id and self._current_pid is not None:
+            # Show the imported entries; the hooks are installed anew.
+            self._close_pointer_dialogs()
+            self._load_saved_addresses()
+            self._favorite_store.set_process(self._process_id)
+            if self.hook_panel is not None:
+                self.hook_panel.set_process(None)
+                self.hook_panel.set_process(self._current_pid, self._process_id)
+
+    def _vacuum_database(self):
+        """Shrink the database file by the space of deleted entries, after asking."""
+        title = self.translations["vacuum.title"]
+        try:
+            size, free = database_size()
+        except SQLAlchemyError as error:
+            QMessageBox.warning(self, title, self.translations["vacuum.failed"].format(error=error))
+            return
+        if QMessageBox.question(self, title, self.translations["vacuum.confirm"].format(
+                path=DB_PATH, size=size / 1e6, free=free / 1e6),
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            before, after = vacuum_db()
+        except SQLAlchemyError as error:
+            QMessageBox.warning(self, title, self.translations["vacuum.failed"].format(error=error))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.lbl_status.setText(self.translations["vacuum.done"].format(
+            before=before / 1e6, after=after / 1e6))
 
     def _open_settings(self):
         """Show the general settings; what changes takes effect at once (or after a restart)."""
