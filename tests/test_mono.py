@@ -255,11 +255,17 @@ static const uint8_t broken_il[] = { 0x73, 0x0d, 0x00, 0x00, 0x06, 0x26, 0x16, 0
 static const uint8_t update_il[] = {
     0x16, 0x45, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x72, 0x01, 0x00, 0x00, 0x70, 0x26, 0x28, 0x01, 0x00, 0x00, 0x06, 0x2a };
+/* IL code for the call graph: Loot.Take calls Inventory.AddGold (ldarg.0;
+   ldarg.1; call 0x06000001; ret), like its JIT code does. */
+static const uint8_t take_il[] = { 0x02, 0x03, 0x28, 0x01, 0x00, 0x00, 0x06, 0x2a };
+static const uint8_t add_gold_il[] = { 0x2a };
 static Method methods[] = {
     { "Game.Inventory:AddGold", "Game.Inventory:AddGold (int&,int)", ADD_GOLD,
-      &classes[0], "AddGold", STATIC, &t_void, 2, { &t_int_ref, &t_int }, { "gold", "amount" } },
+      &classes[0], "AddGold", STATIC, &t_void, 2, { &t_int_ref, &t_int }, { "gold", "amount" },
+      .il = add_gold_il, .il_size = sizeof add_gold_il },
     { "Game.Loot:Take", "Game.Loot:Take (int&,int)", TAKE,
-      &classes[1], "Take", STATIC, &t_void, 2, { &t_int_ref, &t_int }, { "gold", "amount" } },
+      &classes[1], "Take", STATIC, &t_void, 2, { &t_int_ref, &t_int }, { "gold", "amount" },
+      .il = take_il, .il_size = sizeof take_il },
     { "System.Object:ToString", "System.Object:ToString ()", 0x06000003u,
       &classes[2], "ToString", 0, &t_string },
     { "Game.Combat:RollDamage",
@@ -426,24 +432,6 @@ const char *mono_image_get_name(Image *img) { return img->name; }
 const char *mono_image_get_filename(Image *img) { return img->file; }
 const char *mono_image_get_guid(Image *img) { return img->guid; }
 void *mono_get_method(void *img, uint32_t token, void *k) { (void)img; (void)k; return by_token(token); }
-/* IL code for the call graph: Loot.Take calls Inventory.AddGold (ldarg.0;
-   ldarg.1; call 0x06000001; ret), like its JIT code does. */
-typedef struct { const uint8_t *code; uint32_t size; } Header;
-static const uint8_t take_il[] = { 0x02, 0x03, 0x28, 0x01, 0x00, 0x00, 0x06, 0x2a };
-static const uint8_t add_gold_il[] = { 0x2a };
-void *mono_method_get_header(Method *m) {
-    static Header header;
-    if (m->token == 0x06000002u) header = (Header){ take_il, sizeof take_il };
-    else if (m->token == 0x06000001u) header = (Header){ add_gold_il, sizeof add_gold_il };
-    else return NULL;
-    return &header;
-}
-const uint8_t *mono_method_header_get_code(Header *h, uint32_t *size, uint32_t *max_stack) {
-    *size = h->size;
-    if (max_stack) *max_stack = 8;
-    return h->code;
-}
-void mono_metadata_free_mh(void *header) { (void)header; }
 void *mono_method_get_class(Method *m) { return m->klass; }
 void *mono_class_get_image(Class *k) { return k->image; }
 uint32_t mono_method_get_token(void *m) { return ((Method *)m)->token; }
@@ -951,7 +939,7 @@ def test_call_graph_reads_calls_from_il_code(tmp_path, qt_app):
         worker.callers(add_gold)
         _wait_for(qt_app, lambda: callers or failed)
         assert not failed
-        assert [call.method.name for call in callers[0]] == ["Take"]
+        assert [call.method.name for call in callers[0]] == ["Take", "Update"]
         # The index is in the cache now.
         assert list((tmp_path / "catalog-cache" / "mono" / "Assembly-CSharp").glob("*.calls.json.gz"))
     finally:

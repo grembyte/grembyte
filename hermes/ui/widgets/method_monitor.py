@@ -3,6 +3,7 @@
 import json
 from datetime import datetime
 
+from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QPoint, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
@@ -527,7 +528,7 @@ class MethodMonitorDialog(QDialog):
         if value.get("fullText"):
             viewer = TextViewerDialog(self.translations, title, parent=self)
             self._text_requests[self._worker.full_text(value["fullText"])] = (viewer, value)
-            viewer.destroyed.connect(lambda _object, viewer=viewer: self._forget_text(viewer))
+            viewer.destroyed.connect(self._forget_texts)
         else:
             # Short: the text is all there, as a JSON string literal.
             viewer = TextViewerDialog(self.translations, title, json.loads(value["text"]),
@@ -535,9 +536,14 @@ class MethodMonitorDialog(QDialog):
         viewer.show()
         viewer.activateWindow()
 
-    def _forget_text(self, viewer):
+    # Slots for ``destroyed`` are bound methods, not lambdas: PyQt does not
+    # call a bound method of a dialog the garbage collector is taking apart,
+    # while a lambda's ``self`` may already be cleared then (a fatal error in
+    # the slot). The destroyed object is not the wrapper we keep, but that
+    # one is marked as deleted already.
+    def _forget_texts(self, _object=None):
         for request_id, (waiting, _value) in list(self._text_requests.items()):
-            if waiting is viewer:
+            if sip.isdeleted(waiting):
                 del self._text_requests[request_id]
 
     def _on_text_fetched(self, request_id, text):
@@ -591,18 +597,18 @@ class MethodMonitorDialog(QDialog):
     def _show_inspector(self, inspector, origin=None):
         self.inspectors.append(inspector)
         inspector.address_requested.connect(self.address_requested.emit)
-        inspector.destroyed.connect(lambda _object, inspector=inspector: self._forget(inspector))
+        inspector.destroyed.connect(self._forget_inspectors)
         if origin is not None:
             # Opened from another dialog: a little offset, so both stay visible.
             inspector.move(origin.pos() + QPoint(32, 32))
         inspector.show()
         inspector.activateWindow()
 
-    def _forget(self, inspector):
-        if inspector in self.inspectors:
-            self.inspectors.remove(inspector)
+    def _forget_inspectors(self, _object=None):
+        self.inspectors = [inspector for inspector in self.inspectors
+                           if not sip.isdeleted(inspector)]
         for request_id, waiting in list(self._inspections.items()):
-            if waiting is inspector:
+            if sip.isdeleted(waiting):
                 del self._inspections[request_id]
 
     def _request_inspection(self, target, inspector):
