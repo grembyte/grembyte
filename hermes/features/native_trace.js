@@ -20,7 +20,13 @@ const STEER_PASSES = 8;
 // counts it. Functions sit in a hash table by address (slot = function to
 // the C side), first calls per thread in another one.
 const C_SOURCE = `
+/* Frida 17.24's capstone.h stops TinyCC with a "#pragma message" for
+   compilers it does not know; as __IBMC__ it takes the GCC attributes,
+   which TinyCC understands. */
+#define CAPSTONE_STATIC
+#define __IBMC__ 1
 #include <gum/gumstalker.h>
+#undef __IBMC__
 
 #define FUNCTIONS ${FUNCTION_CAPACITY}
 #define FIRSTS ${FIRST_CAPACITY}

@@ -1,6 +1,6 @@
-alembic==1.20.0
+alembic==1.20.1
 capstone==5.0.9
-frida==17.23.3
+frida==17.24.3
 greenlet==3.5.6
 iniconfig==2.3.1
 Mako==1.4.3
@@ -9,7 +9,7 @@ MarkupSafe==3.0.4
 mdurl==0.1.2
 numpy==2.5.4
 packaging==26.3
-pluggy==1.6.0
+pluggy==1.7.0
 psutil==7.2.2
 pyelftools==0.33
 Pygments==2.21.0
@@ -18,5 +18,5 @@ PyQt6-Qt6==6.11.2
 PyQt6_sip==13.13.0
 pytest==9.1.1
 rich==15.0.0
-SQLAlchemy==2.1.4
+SQLAlchemy==2.1.6
 typing_extensions==4.16.0
