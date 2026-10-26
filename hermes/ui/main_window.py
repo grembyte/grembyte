@@ -60,6 +60,7 @@ from hermes.core.write_watch import (
 from hermes.db.repository.addresses import AddressRepository, address_pointer
 from hermes.db.repository.assembly_selections import AssemblySelectionRepository
 from hermes.db.repository.favorites import FavoriteRepository
+from hermes.db.repository.game_export import GameExportRepository
 from hermes.db.repository.hooks import HookRepository
 from hermes.db.repository.settings import SettingsRepository
 from hermes.db.repository.trace_filters import TraceFilterRepository
@@ -69,6 +70,7 @@ from hermes.ui.widgets.assemblies import AssemblyDialog, AssemblySelectionStore
 from hermes.ui.widgets.catalog import CatalogDialog
 from hermes.ui.widgets.known_games import KnownGamesDialog
 from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
+from hermes.ui.widgets.game_export import GameExportDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
 from hermes.ui.widgets.settings_dialog import SettingsDialog
@@ -333,6 +335,7 @@ class MainWindow(QMainWindow):
             self.translations["hooks.db_failed"].format(message=message)))
         self._assemblies_dialog = None
         self._process_id = None
+        self._process_name = None
         self._address_keys = itertools.count(1)
         self._filling_addresses = False
         self._pointer_dialogs = {}
@@ -404,6 +407,13 @@ class MainWindow(QMainWindow):
     def _build_menu(self):
         """Create the menu bar and the watch-backend switch."""
         menu_bar = self.menuBar()
+        file_menu = menu_bar.addMenu(self.translations["menu.file"])
+        file_menu.setToolTipsVisible(True)
+        self.act_export = file_menu.addAction(
+            glyph_icon("⇪"), self.translations["menu.export"])
+        self.act_export.setToolTip(self.translations["menu.export_tooltip"])
+        self.act_export.triggered.connect(self._open_export)
+
         settings_menu = menu_bar.addMenu(self.translations["menu.settings"])
         settings_menu.setToolTipsVisible(True)
         self.act_settings = settings_menu.addAction(
@@ -476,6 +486,14 @@ class MainWindow(QMainWindow):
         self.act_favorites.setToolTip(self.translations["favorites.button_tooltip"])
         self.act_favorites.triggered.connect(self._open_favorites)
         self._update_catalog_button()
+
+    def _open_export(self):
+        """Export what is saved for a game as JSON; the attached one comes first."""
+        dialog = GameExportDialog(self.translations, GameExportRepository(),
+                                  current=self._process_name, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.lbl_status.setText(
+                self.translations["export.done"].format(path=dialog.exported_path))
 
     def _open_settings(self):
         """Show the general settings; what changes takes effect at once (or after a restart)."""
@@ -2002,6 +2020,7 @@ class MainWindow(QMainWindow):
                 self._process_bits = None
                 self._process_timer.start()
                 self._process_id = process_id
+                self._process_name = dlg.selected_name
                 self._favorite_store.set_process(process_id)
                 self._assembly_selection.set_process(process_id)
                 self._load_saved_addresses()
@@ -2066,6 +2085,7 @@ class MainWindow(QMainWindow):
         self._update_catalog_button()
         self._process_start_time = None
         self._process_id = None
+        self._process_name = None
         self._reset_scan()
         if self.addr_table is not None:
             self.addr_table.setRowCount(0)
