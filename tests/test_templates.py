@@ -32,7 +32,7 @@ def fixture_repository(tmp_path, translations):
     engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
     Base.metadata.create_all(engine)
     repository = HookRepository(sessionmaker(bind=engine))
-    repository.ensure_templates(example_templates(translations))
+    repository.ensure_templates(example_templates())
     yield repository
     engine.dispose()
 
@@ -59,7 +59,7 @@ def test_choices_round_trip():
 
 def test_dialog_lists_templates(dialog):
     assert dialog.template_list.count() == 5
-    assert dialog.name_input.text() == dialog.template_list.item(0).text() == "Begrenzen"
+    assert dialog.name_input.text() == dialog.template_list.item(0).text() == "Clamp"
     assert dialog.param_table.rowCount() == 2
     assert not dialog.is_dirty()
 
@@ -88,14 +88,14 @@ def test_edit_choice_parameter(dialog, repository):
     # pylint: disable=protected-access
     row = next(
         i for i in range(dialog.template_list.count())
-        if dialog.template_list.item(i).text() == "Multiplikator"
+        if dialog.template_list.item(i).text() == "Multiplier"
     )
     dialog.template_list.setCurrentRow(row)
     _set_cell(dialog, 1, 5, "increase=Mehr; both=Immer")
 
     assert dialog.save()
 
-    saved = next(t for t in repository.list_templates() if t.name == "Multiplikator")
+    saved = next(t for t in repository.list_templates() if t.name == "Multiplier")
     assert saved.parameters[1].choices == ("increase", "both")
     assert saved.parameters[1].choice_labels == ("Mehr", "Immer")
 
@@ -104,7 +104,7 @@ def test_edit_choice_parameter(dialog, repository):
     ("name", "param_name", "default", "message"),
     [
         ("", "factor", "1", "Namen"),
-        ("Multiplikator", "factor", "1", "bereits"),
+        ("Multiplier", "factor", "1", "bereits"),
         ("Neu", "1factor", "1", "kein gültiger Parametername"),
         ("Neu", "factor", "viel", "Standardwert"),
     ],
@@ -131,7 +131,7 @@ def test_delete_template(dialog, repository, monkeypatch):
     dialog._delete_template()
 
     assert sorted(t.name for t in repository.list_templates()) == [
-        "Ergebnis × Faktor", "Fester Wert", "Methoden-Skript", "Multiplikator"
+        "Fixed value", "Method script", "Multiplier", "Result × factor"
     ]
     assert dialog.template_list.count() == 4
     assert dialog.name_input.text() == dialog.template_list.currentItem().text()
@@ -158,7 +158,7 @@ def test_template_test_dialog_runs_definition(dialog, translations):
 
     row = next(
         i for i in range(dialog.template_list.count())
-        if dialog.template_list.item(i).text() == "Multiplikator"
+        if dialog.template_list.item(i).text() == "Multiplier"
     )
     dialog.template_list.setCurrentRow(row)
     test = TemplateTestDialog(translations, dialog.editor_definition(), dialog)
@@ -221,14 +221,14 @@ def test_debug_window_lists_filters_and_pauses(qt_app, translations):
 def test_method_templates_keep_their_kind_and_code(dialog, repository):
     # pylint: disable=protected-access
     script = next(i for i in range(dialog.template_list.count())
-                  if dialog.template_list.item(i).text() == "Methoden-Skript")
+                  if dialog.template_list.item(i).text() == "Method script")
     dialog.template_list.setCurrentRow(script)
     assert dialog.hook_kind_combo.currentData() == "method"
     assert "ctx.result" in dialog.script_hint.text()
     # The code parameter keeps its kind and its multi-line default.
     assert dialog.param_table.cellWidget(0, 2).currentData() == "code"
     assert dialog.save()
-    saved = next(t for t in repository.list_templates() if t.name == "Methoden-Skript")
+    saved = next(t for t in repository.list_templates() if t.name == "Method script")
     assert saved.kind == "method"
     assert saved.parameters[0].kind == "code" and "attacker" in saved.parameters[0].default
 
@@ -245,14 +245,14 @@ def test_method_template_test_run(qt_app, translations):  # pylint: disable=unus
     # pylint: disable=import-outside-toplevel
     from hermes.ui.widgets.templates import TemplateTestDialog
 
-    multiply = example_templates(translations)["method_multiply"]
+    multiply = example_templates()["method_multiply"]
     dialog = TemplateTestDialog(translations, multiply)
     dialog.result_input.setText("15")
     result = dialog.run()
     assert result.value == 30
     assert "15" in dialog.result_label.text() and "30" in dialog.result_label.text()
 
-    script = example_templates(translations)["method_script"]
+    script = example_templates()["method_script"]
     dialog = TemplateTestDialog(translations, script)
     result = dialog.run()
     # The example reads ctx.args.attacker, which only exists in the game.

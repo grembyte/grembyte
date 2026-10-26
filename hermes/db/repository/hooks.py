@@ -8,6 +8,9 @@ from hermes.hooks.transforms import (
     TemplateTransform,
     TransformDefinition,
     as_template_transform,
+    english_example,
+    example_seed,
+    example_templates,
 )
 
 
@@ -218,6 +221,44 @@ class HookRepository:
             if template is not None:
                 session.delete(template)
             session.commit()
+
+    def translate_examples(self):
+        """Give example templates and the hooks made from them their English texts.
+
+        Earlier versions saved the examples in the language of the interface.
+        Only their German texts are replaced (see ``english_example``); what
+        the user changed stays. A hook belongs to an example through its
+        template, or, when that is gone, through its name and unchanged code.
+        Returns the number of templates and hooks changed.
+        """
+        sources = {seed: definition.source for seed, definition in example_templates().items()}
+        changed = 0
+        with self._sessions() as session:
+            seeds = {}
+            for template in session.scalars(
+                    select(HookTemplate).where(HookTemplate.seed_key.is_not(None))):
+                if template.seed_key not in sources:
+                    continue
+                seeds[template.id] = template.seed_key
+                texts = english_example(template.seed_key, template.name,
+                                        template.description, template.parameters)
+                if texts != (template.name, template.description, template.parameters):
+                    template.name, template.description, template.parameters = texts
+                    changed += 1
+            for model in (Hook, MethodHook):
+                for hook in session.scalars(select(model)):
+                    seed = seeds.get(hook.template_id)
+                    if seed is None:
+                        seed = example_seed(hook.transform_name)
+                        if seed is None or sources[seed] != hook.transform_source:
+                            continue
+                    name, _description, parameters = english_example(
+                        seed, hook.transform_name, "", hook.transform_parameters)
+                    if (name, parameters) != (hook.transform_name, hook.transform_parameters):
+                        hook.transform_name, hook.transform_parameters = name, parameters
+                        changed += 1
+            session.commit()
+        return changed
 
     def ensure_templates(self, examples):
         """Create the example templates ``{seed_key: definition}`` that are missing.

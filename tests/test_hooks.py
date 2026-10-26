@@ -557,7 +557,7 @@ def test_hook_dialog_lists_example_templates(qt_app, translations):
     dialog = HookDialog(translations, "0x1000", "int32", "game+0x10")
 
     names = [dialog.template_combo.itemText(i) for i in range(dialog.template_combo.count())]
-    assert names == ["Multiplikator", "Fester Wert", "Begrenzen"]
+    assert names == ["Multiplier", "Fixed value", "Clamp"]
     assert not dialog.template_notice.isVisibleTo(dialog)
 
 
@@ -574,7 +574,7 @@ def test_hook_dialog_builds_transform_from_form(qt_app, translations):
 
     assert dialog.result() == dialog.DialogCode.Accepted
     assert isinstance(dialog.transform, TemplateTransform)
-    assert dialog.transform.definition.name == "Multiplikator"
+    assert dialog.transform.definition.name == "Multiplier"
     assert dialog.transform.params == {"factor": 16, "direction": "increase"}
     assert dialog.transform.source == MultiplyTransform.source.strip()
     assert dialog.label == "Gold"
@@ -605,7 +605,7 @@ def test_hook_dialog_reports_invalid_input(qt_app, translations):
     dialog._accept()
 
     assert dialog.transform is None
-    assert "Faktor" in dialog.error_label.text()
+    assert "Factor" in dialog.error_label.text()
 
 
 def test_hook_dialog_prefills_transform_without_template(qt_app, translations):

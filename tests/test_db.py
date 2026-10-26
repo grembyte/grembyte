@@ -92,32 +92,32 @@ def test_update_and_delete_hook(repository):
 
 
 def test_example_templates_are_created_once(repository):
-    examples = example_templates(load_translations("de"))
+    examples = example_templates()
 
     repository.ensure_templates(examples)
     repository.ensure_templates(examples)
 
     templates = repository.list_templates()
     assert sorted(t.name for t in templates) == [
-        "Begrenzen", "Ergebnis × Faktor", "Fester Wert", "Methoden-Skript", "Multiplikator"]
-    multiply = next(t for t in templates if t.name == "Multiplikator")
+        "Clamp", "Fixed value", "Method script", "Multiplier", "Result × factor"]
+    multiply = next(t for t in templates if t.name == "Multiplier")
     assert multiply == examples["multiply"]
-    assert multiply.parameters[1].choice_labels[0] == "Nur Erhöhungen"
+    assert multiply.parameters[1].choice_labels[0] == "Increases only"
     assert multiply.kind == "value"
     # Method hook examples keep their kind.
-    method = next(t for t in templates if t.name == "Ergebnis × Faktor")
+    method = next(t for t in templates if t.name == "Result × factor")
     assert method.kind == "method" and method == examples["method_multiply"]
 
 
 def test_example_templates_respect_existing_names(repository):
-    examples = example_templates(load_translations("de"))
-    repository.save_template(TransformDefinition("Multiplikator", "ctx => 1"))
+    examples = example_templates()
+    repository.save_template(TransformDefinition("Multiplier", "ctx => 1"))
 
     repository.ensure_templates(examples)
 
     templates = repository.list_templates()
     assert len(templates) == 5
-    assert next(t for t in templates if t.name == "Multiplikator").source == "ctx => 1"
+    assert next(t for t in templates if t.name == "Multiplier").source == "ctx => 1"
 
 
 def test_save_template_rejects_duplicate_names(repository):
@@ -281,3 +281,64 @@ def test_vacuum_frees_the_space_of_deleted_rows(tmp_path):
     assert before == size and after < 200_000
     assert database_size(engine)[1] == 0
     engine.dispose()
+
+
+def test_german_examples_and_their_hooks_become_english(repository):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.db.models import Hook, HookTemplate, MethodHook
+    from hermes.hooks.transforms import GERMAN_EXAMPLE_TEXTS
+
+    examples = example_templates()
+    multiply = examples["multiply"].parameters_json()
+    multiply[0]["label"] = "Faktor"
+    multiply[1]["label"] = "Anwenden auf"
+    multiply[1]["choices"] = [["increase", "Nur Erhöhungen"], ["decrease", "Nur Verringerungen"],
+                              ["both", "Alle Änderungen"]]
+    script = examples["method_script"].parameters_json()
+    script[0]["label"] = "Skript"
+    script[0]["default"] = GERMAN_EXAMPLE_TEXTS["method_script.code_default"][1]
+    process_id = repository.get_or_create_process("game", "/opt/game/game")
+    with repository._sessions() as session:
+        german = HookTemplate(name="Multiplikator", source=examples["multiply"].source,
+                              parameters=multiply, seed_key="multiply", description="")
+        own_script = HookTemplate(name="Mein Skript", source=examples["method_script"].source,
+                                  parameters=script, seed_key="method_script",
+                                  description="Selbst geschrieben", kind="method")
+        mine = HookTemplate(name="Multi_2", source="ctx => 1", parameters=multiply)
+        session.add_all([german, own_script, mine])
+        session.flush()
+        session.add_all([
+            Hook(process_id=process_id, label="Gold", module="game", module_offset=1,
+                 instruction_bytes="01", value_type="int32", template_id=german.id,
+                 transform_name="Multiplikator", transform_source=german.source,
+                 transform_parameters=multiply, transform_params={"factor": 2}),
+            # Its template was deleted: found by the name and the unchanged code.
+            Hook(process_id=process_id, label="Clamped", module="game", module_offset=2,
+                 instruction_bytes="01", value_type="int32", template_id=99,
+                 transform_name="Begrenzen", transform_source=examples["clamp"].source,
+                 transform_parameters=examples["clamp"].parameters_json(),
+                 transform_params={}),
+            MethodHook(process_id=process_id, label="DoDamage", managed={"token": 1},
+                       template_id=own_script.id, transform_name="Methoden-Skript",
+                       transform_source=own_script.source, transform_parameters=script,
+                       transform_params={"code": "// mein Code"}),
+        ])
+        session.commit()
+
+    assert repository.translate_examples() == 5
+    assert repository.translate_examples() == 0
+    templates = {t.name: t for t in repository.list_templates()}
+    assert templates["Multiplier"].parameters == examples["multiply"].parameters
+    # A name and a description the user wrote stay; the German labels go.
+    assert templates["Mein Skript"].description == "Selbst geschrieben"
+    assert templates["Mein Skript"].parameters == examples["method_script"].parameters
+    assert templates["Multi_2"].parameters[0].label == "Faktor"
+    with repository._sessions() as session:
+        names = {hook.label: hook for hook in session.query(Hook)}
+        assert names["Gold"].transform_name == "Multiplier"
+        assert names["Gold"].transform_parameters[1]["choices"][0] == ["increase", "Increases only"]
+        assert names["Clamped"].transform_name == "Clamp"
+        method = session.query(MethodHook).one()
+        assert method.transform_name == "Method script"
+        assert method.transform_parameters[0]["label"] == "Script"
+        assert method.transform_params == {"code": "// mein Code"}

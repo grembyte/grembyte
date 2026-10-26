@@ -180,7 +180,7 @@ class HookDialog(QDialog):
         self.caller_depth = 1
         self._editing = transform is not None
         if templates is None:
-            templates = list(example_templates(translations).values())
+            templates = list(example_templates().values())
         kind = "value" if method is None else "method"
         templates = [template for template in templates if template.kind == kind]
         self._options, self._values, self._copy_index, self._template = (
@@ -967,10 +967,10 @@ class HookPanel(QGroupBox):
     def templates(self):
         """Return the hook templates to choose from."""
         if self._repository is None:
-            return list(example_templates(self.translations).values())
+            return list(example_templates().values())
         templates = self._store(self._repository.list_templates)
         if templates is None:
-            return list(example_templates(self.translations).values())
+            return list(example_templates().values())
         return templates
 
     def _restore_saved_hooks(self):

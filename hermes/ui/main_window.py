@@ -70,6 +70,7 @@ from hermes.hooks.transforms import example_templates
 from hermes.ui.widgets.assemblies import AssemblyDialog, AssemblySelectionStore
 from hermes.ui.widgets.catalog import CatalogDialog
 from hermes.ui.widgets.known_games import KnownGamesDialog
+from hermes.ui.widgets.database_entries import DeleteEntriesDialog
 from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 from hermes.ui.widgets.game_export import GameExportDialog, GameImportDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
@@ -419,6 +420,10 @@ class MainWindow(QMainWindow):
         self.act_import.setToolTip(self.translations["menu.import_tooltip"])
         self.act_import.triggered.connect(self._open_import)
         file_menu.addSeparator()
+        self.act_delete_entries = file_menu.addAction(
+            glyph_icon("✕"), self.translations["menu.delete_entries"])
+        self.act_delete_entries.setToolTip(self.translations["menu.delete_entries_tooltip"])
+        self.act_delete_entries.triggered.connect(self._open_delete_entries)
         self.act_vacuum = file_menu.addAction(
             glyph_icon("⇲"), self.translations["menu.vacuum"])
         self.act_vacuum.setToolTip(self.translations["menu.vacuum_tooltip"])
@@ -515,14 +520,38 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(self.translations["import.done"].format(
             skipped=sum(dialog.result.skipped.values()), templates=dialog.result.templates,
             **added))
-        if dialog.process_id == self._process_id and self._current_pid is not None:
-            # Show the imported entries; the hooks are installed anew.
-            self._close_pointer_dialogs()
-            self._load_saved_addresses()
-            self._favorite_store.set_process(self._process_id)
-            if self.hook_panel is not None:
-                self.hook_panel.set_process(None)
-                self.hook_panel.set_process(self._current_pid, self._process_id)
+        if dialog.process_id == self._process_id:
+            self._reload_saved_entries()
+
+    def _reload_saved_entries(self):
+        """Show the saved entries of the attached program anew after the database changed.
+
+        Its hooks are removed and installed again as saved.
+        """
+        if self._current_pid is None:
+            return
+        self._close_pointer_dialogs()
+        self._load_saved_addresses()
+        self._favorite_store.set_process(self._process_id)
+        if self.hook_panel is not None:
+            self.hook_panel.set_process(None)
+            self.hook_panel.set_process(self._current_pid, self._process_id)
+
+    def _open_delete_entries(self):
+        """Delete chosen entries of saved processes, or the processes themselves."""
+        dialog = DeleteEntriesDialog(self.translations, GameExportRepository(),
+                                     current=self._process_id, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        totals = {}
+        for counts in dialog.deleted.values():
+            for kind, count in counts.items():
+                totals[kind] = totals.get(kind, 0) + count
+        self.lbl_status.setText(self.translations["delete_entries.done"].format(
+            entries=sum(count for kind, count in totals.items() if kind != "process"),
+            processes=totals.get("process", 0)))
+        if self._process_id in dialog.deleted:
+            self._reload_saved_entries()
 
     def _vacuum_database(self):
         """Shrink the database file by the space of deleted entries, after asking."""
@@ -2148,7 +2177,8 @@ class MainWindow(QMainWindow):
     def _ensure_example_templates(self):
         """Create the example hook templates that do not exist yet."""
         try:
-            self._hook_repository.ensure_templates(example_templates(self.translations))
+            self._hook_repository.translate_examples()
+            self._hook_repository.ensure_templates(example_templates())
         except SQLAlchemyError:
             # The status bar does not exist yet; dialogs report DB errors later.
             pass

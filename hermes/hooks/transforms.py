@@ -23,9 +23,8 @@ and uint64 values are passed as JavaScript numbers and are only exact up to
 
 New transforms subclass ``ValueTransform``, set ``kind`` and ``source`` and
 register themselves with ``@register_transform``. Declaring ``parameters``
-lets the UI build an input form for the transform automatically; labels are
-looked up as ``transform.<kind>`` and ``transform.<kind>.<parameter>`` in the
-translation catalogs and fall back to ``title`` / the parameter name.
+lets the UI build an input form for the transform automatically; labels
+fall back to ``title`` / the parameter name.
 ``ScriptTransform`` accepts an arbitrary function source for one-off
 experiments.
 
@@ -52,7 +51,7 @@ class TransformParameter:
     ``kind`` is ``"number"``, ``"choice"`` (one of ``choices``) or ``"code"``
     (multi-line text). ``optional`` parameters may be left empty (``None``).
     ``label`` and ``choice_labels`` (parallel to ``choices``) are display
-    texts used by templates; built-in transforms use the translations.
+    texts used by templates.
     """
 
     name: str
@@ -406,10 +405,87 @@ if (attacker && !/^(Player|Companion)_/.test(attacker.name))
 }
 
 
-def example_templates(translations):
-    """Return the example template definitions labelled in the UI language."""
-    def tr(key, fallback):
-        return translations.get(key, fallback)
+# Texts of the example templates. They are English whatever the language of
+# the interface: templates are data, saved once and shared by exports.
+EXAMPLE_TEXTS = {
+    "multiply": "Multiplier",
+    "multiply.factor": "Factor",
+    "multiply.direction": "Apply to",
+    "freeze": "Fixed value",
+    "freeze.value": "Value",
+    "clamp": "Clamp",
+    "clamp.minimum": "Minimum",
+    "clamp.maximum": "Maximum",
+    "choice.increase": "Increases only",
+    "choice.decrease": "Decreases only",
+    "choice.both": "All changes",
+    "method_multiply": "Result × factor",
+    "method_multiply.factor": "Factor",
+    "method_multiply.description":
+        "Multiplies the method's result, e.g. the damage of Health:DoDamage.",
+    "method_script": "Method script",
+    "method_script.code": "Script",
+    "method_script.description":
+        "Your own JavaScript with ctx.args, ctx.this, ctx.result and ctx.call(…). After the "
+        "call a returned value replaces the result, before the call assignments change "
+        "arguments and fields (choose When above).",
+}
+
+# German texts earlier versions saved the examples with (keys as in
+# EXAMPLE_TEXTS, ``<seed>.<parameter>_default`` for code). Only these are
+# translated in saved templates and hooks; texts the user changed stay.
+GERMAN_EXAMPLE_TEXTS = {
+    "multiply": ("Multiplikator",),
+    "multiply.factor": ("Faktor",),
+    "multiply.direction": ("Anwenden auf",),
+    "freeze": ("Fester Wert",),
+    "freeze.value": ("Wert",),
+    "clamp": ("Begrenzen",),
+    "choice.increase": ("Nur Erhöhungen",),
+    "choice.decrease": ("Nur Verringerungen",),
+    "choice.both": ("Alle Änderungen",),
+    "method_multiply": ("Ergebnis × Faktor",),
+    "method_multiply.factor": ("Faktor",),
+    "method_multiply.description": (
+        "Multipliziert das Ergebnis der Methode, z. B. den Schaden von Health:DoDamage.",),
+    "method_script": ("Methoden-Skript",),
+    "method_script.code": ("Skript",),
+    "method_script.description": (
+        "Eigenes JavaScript mit ctx.args, ctx.this, ctx.result und ctx.call(…). Nach dem "
+        "Aufruf ersetzt ein zurückgegebener Wert das Ergebnis, vor dem Aufruf ändern "
+        "Zuweisungen Argumente und Felder (Zeitpunkt oben wählen).",
+        "Eigenes JavaScript mit ctx.args, ctx.this, ctx.result und ctx.call(…); Objekte "
+        "haben .name, .field(), .get(), .call() und .component(). Ein zurückgegebener Wert "
+        "ersetzt das Ergebnis.",
+    ),
+    "method_script.code_default": (
+        """// ctx.phase ("before"/"after"), ctx.args.<Name>, ctx.this, ctx.result, ctx.log(...)
+// Objekte: .name, .className, Felder und Eigenschaften direkt (z. B. .IsPartyMember),
+// .field("x"), .get("Eigenschaft"), .call("Methode", ...), .component("Typ")
+// Statische Methoden: ctx.call("Namespace.Klasse.Methode", ...)
+// Nach dem Aufruf: return ersetzt das Ergebnis, ohne return bleibt es.
+// Vor dem Aufruf: ctx.args.x = …, obj.Feld = … ändern, womit die Methode arbeitet.
+const attacker = ctx.args.attacker;
+if (attacker && !/^(Player|Companion)_/.test(attacker.name))
+  return ctx.result * 2;
+""",
+        """// ctx.args.<Name>, ctx.this, ctx.result, ctx.params, ctx.log(...)
+// Objekte: .name, .className, .field("x"), .get("Eigenschaft"),
+// .call("Methode", ...), .component("Typ")
+// Statische Methoden: ctx.call("Namespace.Klasse.Methode", ...)
+// Ein zurückgegebener Wert ersetzt das Ergebnis, ohne return bleibt es.
+const attacker = ctx.args.attacker;
+if (attacker && !/^(Player|Companion)_/.test(attacker.name))
+  return ctx.result * 2;
+""",
+    ),
+}
+
+
+def example_templates():
+    """Return the example template definitions ``{seed_key: definition}``."""
+    def text(key, fallback):
+        return EXAMPLE_TEXTS.get(key, fallback)
 
     examples = {}
     for kind in EXAMPLE_TEMPLATE_KINDS:
@@ -421,33 +497,73 @@ def example_templates(translations):
                 default=parameter.default,
                 choices=parameter.choices,
                 optional=parameter.optional,
-                label=tr(f"transform.{kind}.{parameter.name}", parameter.name),
+                label=text(f"{kind}.{parameter.name}", parameter.name),
                 choice_labels=tuple(
-                    tr(f"transform.choice.{choice}", str(choice))
-                    for choice in parameter.choices
+                    text(f"choice.{choice}", str(choice)) for choice in parameter.choices
                 ),
             )
             for parameter in cls.parameters
         )
         examples[kind] = TransformDefinition(
-            name=tr(f"transform.{kind}", cls.title or kind),
+            name=text(kind, cls.title or kind),
             source=cls.source.strip(),
             parameters=parameters,
-            description=tr(f"transform.{kind}.description", ""),
+            description=text(f"{kind}.description", ""),
         )
     for seed, (source, parameters) in METHOD_EXAMPLES.items():
         examples[seed] = TransformDefinition(
-            name=tr(f"transform.{seed}", seed),
+            name=text(seed, seed),
             source=source,
             parameters=tuple(
                 TransformParameter(
-                    name=parameter.name, kind=parameter.kind,
-                    default=tr(f"transform.{seed}.{parameter.name}_default", parameter.default),
-                    label=tr(f"transform.{seed}.{parameter.name}", parameter.name),
+                    name=parameter.name, kind=parameter.kind, default=parameter.default,
+                    label=text(f"{seed}.{parameter.name}", parameter.name),
                 )
                 for parameter in parameters
             ),
-            description=tr(f"transform.{seed}.description", ""),
+            description=text(f"{seed}.description", ""),
             kind="method",
         )
     return examples
+
+
+def example_seed(name):
+    """The seed key of the example a German ``name`` was saved for, or None."""
+    for seed in (*EXAMPLE_TEMPLATE_KINDS, *METHOD_EXAMPLES):
+        if name in GERMAN_EXAMPLE_TEXTS.get(seed, ()):
+            return seed
+    return None
+
+
+def english_example(seed, name, description, parameters):
+    """``name``, ``description`` and ``parameters`` (JSON) of a saved example in English.
+
+    Only the German texts of earlier versions are replaced: a name, label or
+    script the user changed stays as it is.
+    """
+    english = example_templates()[seed]
+
+    def swap(key, value, new):
+        return new if value in GERMAN_EXAMPLE_TEXTS.get(key, ()) else value
+
+    name = swap(seed, name, english.name)
+    if not description or description in GERMAN_EXAMPLE_TEXTS.get(f"{seed}.description", ()):
+        description = english.description or description
+    by_name = {parameter.name: parameter for parameter in english.parameters}
+    translated = []
+    for parameter in parameters or []:
+        parameter = dict(parameter)
+        new = by_name.get(parameter.get("name"))
+        if new is not None:
+            key = f"{seed}.{new.name}"
+            parameter["label"] = swap(key, parameter.get("label"), new.label)
+            if new.kind == "code":
+                parameter["default"] = swap(f"{key}_default", parameter.get("default"),
+                                            new.default)
+            parameter["choices"] = [
+                [choice, swap(f"choice.{choice}", label, new.choice_label(new.choices.index(choice))
+                              if choice in new.choices else label)]
+                for choice, label in parameter.get("choices") or []
+            ]
+        translated.append(parameter)
+    return name, description, translated

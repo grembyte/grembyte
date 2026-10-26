@@ -11,6 +11,9 @@ they were exported from. It either replaces what the process holds or mixes
 the file's entries in, leaving out those it holds already (``merge``). A
 template of the file is linked to a local one of the same name and code,
 else added (under a new name if the name is taken).
+
+``delete_entries`` removes chosen kinds of entries of a saved process, or
+the process itself with everything saved for it.
 """
 
 import json
@@ -24,6 +27,7 @@ from sqlalchemy import DateTime, delete, func, select
 from hermes.db.engine import SESSION_LOCAL
 from hermes.db.models import (
     Address,
+    AssemblySelectionRecord,
     FavoriteRecord,
     Hook,
     HookTemplate,
@@ -45,6 +49,8 @@ _COUNTED = (
     ("method_hooks", MethodHook),
     ("favorites", FavoriteRecord),
 )
+# Kinds of entries ``delete_entries`` can delete
+DELETABLE = ("addresses", "pointer_scans", "hooks", "method_hooks", "favorites")
 
 
 @dataclass
@@ -219,6 +225,34 @@ class GameExportRepository:
             "method_hooks": rows(MethodHook),
             "favorites": rows(FavoriteRecord),
         }
+
+    def delete_entries(self, process_id, kinds, remove_process=False):
+        """Delete the entries of the ``kinds`` (keys of the export) of a saved process.
+
+        Deleting addresses deletes their pointer scans as well.
+        ``remove_process`` deletes the process with all its entries and its
+        assembly selection. Returns {kind: number deleted}.
+        """
+        kinds = set(DELETABLE) if remove_process else set(kinds)
+        if "addresses" in kinds:
+            kinds.add("pointer_scans")
+        deleted = {}
+        with self._sessions() as session:
+            addresses = select(Address.id).where(Address.process_id == process_id)
+            if "pointer_scans" in kinds:
+                deleted["pointer_scans"] = session.execute(
+                    delete(PointerScan).where(PointerScan.address_id.in_(addresses))).rowcount
+            for key, model in _COUNTED:
+                if key in kinds:
+                    deleted[key] = session.execute(
+                        delete(model).where(model.process_id == process_id)).rowcount
+            if remove_process:
+                session.execute(delete(AssemblySelectionRecord).where(
+                    AssemblySelectionRecord.process_id == process_id))
+                deleted["process"] = session.execute(
+                    delete(Process).where(Process.id == process_id)).rowcount
+            session.commit()
+        return deleted
 
     def import_export(self, export, process_id, replace=False):
         """Put the entries of ``export`` into the saved process ``process_id``."""

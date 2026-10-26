@@ -1704,7 +1704,7 @@ def test_hook_dialog_offers_method_templates_for_methods(qt_app, translations):
 
     dialog = HookDialog(translations, "", "", "", method="Health:DoDamage (single)")
     names = [dialog.template_combo.itemText(i) for i in range(dialog.template_combo.count())]
-    assert names == ["Ergebnis × Faktor", "Methoden-Skript"]
+    assert names == ["Result × factor", "Method script"]
     assert not hasattr(dialog, "caller_depth_input")
     dialog.label_input.setText("Schaden")
     dialog._accept()  # pylint: disable=protected-access
