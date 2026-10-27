@@ -10,6 +10,11 @@ once and every worker then shares.
 The session handed out records itself in the activity log (activity.py):
 the agents loaded and unloaded, every RPC, script errors, and why the
 session ended. It stands in for Frida's session and script otherwise.
+
+The gadget under Wine closes the connection on any message from hermes
+larger than 128 KiB (Frida 17.24.3, Proton Experimental; agent to hermes is
+not limited). Larger agents go there through a small loader that receives
+the source in parts and evaluates it.
 """
 
 import threading
@@ -19,6 +24,33 @@ import frida
 
 from hermes.core import activity, wine_gadget
 from hermes.platform import is_wine_process
+
+# Agents above this size are sent to the gadget in parts.
+GADGET_SOURCE_LIMIT = 100_000
+# Characters per part; even escaped as \uXXXX in JSON it stays below the limit.
+GADGET_SOURCE_PART = 16_000
+GADGET_LOAD_TIMEOUT = 30.0
+LOADER_MESSAGE = "hermes:source"
+LOADED_KEY = "hermes:loaded"
+# Indirect eval runs the agent as global code, as Frida would.
+LOADER_SOURCE = f"""\
+const parts = [];
+function onPart(message) {{
+  if (message.part !== undefined) {{
+    parts.push(message.part);
+    recv('{LOADER_MESSAGE}', onPart);
+    return;
+  }}
+  const source = parts.join('');
+  parts.length = 0;
+  try {{
+    (0, eval)(source + '\\n//# sourceURL=/agent.js');
+  }} finally {{
+    send({{ '{LOADED_KEY}': true }});
+  }}
+}}
+recv('{LOADER_MESSAGE}', onPart);
+"""
 
 
 def attach_session(pid):
@@ -40,7 +72,7 @@ def attach_session(pid):
     activity.record("attached", pid=pid, session=session_number, kind=kind,
                     via="gadget" if wine else "frida.attach",
                     seconds=round(time.monotonic() - began, 3))
-    return RecordedSession(session, pid, session_number, kind)
+    return RecordedSession(session, pid, session_number, kind, gadget=wine)
 
 
 FRIDA_THREAD_NAME = "frida-events"
@@ -56,11 +88,12 @@ def _name_frida_thread():
 class RecordedSession:
     """A Frida session that notes its scripts and its end in the activity log."""
 
-    def __init__(self, session, pid, number, kind):
+    def __init__(self, session, pid, number, kind, gadget=False):
         self._session = session
         self.pid = pid
         self.number = number
         self.kind = kind
+        self.gadget = gadget
         session.on("detached", self._on_detached)
 
     def __getattr__(self, name):
@@ -77,6 +110,9 @@ class RecordedSession:
                         reason=str(reason), in_flight=activity.in_flight(), **fields)
 
     def create_script(self, source, *args, **kwargs):
+        if self.gadget and len(source.encode()) > GADGET_SOURCE_LIMIT:
+            script = self._session.create_script(LOADER_SOURCE, *args, **kwargs)
+            return RecordedScript(script, self, len(source), deferred=source)
         script = self._session.create_script(source, *args, **kwargs)
         return RecordedScript(script, self, len(source))
 
@@ -85,13 +121,21 @@ class RecordedSession:
         return self._session.detach()
 
 
+def _is_loaded_message(message):
+    payload = message.get("payload")
+    return (message.get("type") == "send" and isinstance(payload, dict)
+            and payload.get(LOADED_KEY) is True)
+
+
 class RecordedScript:
     """A Frida script that notes its loading, unloading, RPCs and errors."""
 
-    def __init__(self, script, session, size):
+    def __init__(self, script, session, size, deferred=None):
         self._script = script
         self._session = session
         self._size = size
+        # The agent's source when the script is the gadget loader
+        self._deferred = deferred
         self.agent = f"{session.kind or 'agent'}#{activity.new_agent()}"
         self._loaded = None
         self._exports = None
@@ -108,6 +152,8 @@ class RecordedScript:
 
             def callback(message, data):  # pylint: disable=function-redefined
                 _name_frida_thread()
+                if _is_loaded_message(message):
+                    return None
                 if message.get("type") == "error":
                     activity.record("agent_error", **self._fields(),
                                     description=message.get("description"),
@@ -120,6 +166,8 @@ class RecordedScript:
         began = time.monotonic()
         try:
             result = self._script.load()
+            if self._deferred is not None:
+                self._load_deferred()
         except Exception as error:
             activity.record("agent_load_failed", **self._fields(), error=str(error))
             raise
@@ -127,6 +175,27 @@ class RecordedScript:
         activity.record("agent_loaded", **self._fields(), size=self._size,
                         seconds=round(self._loaded - began, 3))
         return result
+
+    def _load_deferred(self):
+        # Like Frida's load: returns once the agent's global code has run;
+        # its errors arrive as "error" messages.
+        loaded = threading.Event()
+
+        def on_message(message, _data):
+            if _is_loaded_message(message):
+                loaded.set()
+
+        source, self._deferred = self._deferred, None
+        self._script.on("message", on_message)
+        try:
+            for start in range(0, len(source), GADGET_SOURCE_PART):
+                self._script.post({"type": LOADER_MESSAGE,
+                                   "part": source[start:start + GADGET_SOURCE_PART]})
+            self._script.post({"type": LOADER_MESSAGE})
+            if not loaded.wait(GADGET_LOAD_TIMEOUT):
+                raise frida.TimedOutError("Timed out while loading the agent through the gadget")
+        finally:
+            self._script.off("message", on_message)
 
     def unload(self):
         activity.flush(self.agent)

@@ -319,6 +319,8 @@ class NativeMonitorDialog(QDialog):
         log_bar.addWidget(self.changes_check)
         self.pause_button = QPushButton(t["monitor.pause"])
         self.pause_button.setCheckable(True)
+        self.pause_button.toggled.connect(lambda paused: self.pause_button.setText(
+            t["monitor.resume" if paused else "monitor.pause"]))
         log_bar.addWidget(self.pause_button)
         clear_button = QPushButton(t["monitor.clear"])
         clear_button.clicked.connect(self._clear)

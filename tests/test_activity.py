@@ -230,6 +230,39 @@ def test_frida_sessions_note_agents_rpcs_and_their_end(activity_file):
     assert entries[-1]["reason"] == "application-requested"
 
 
+@requires_target
+def test_large_agents_reach_the_gadget_in_parts(activity_file):
+    # pylint: disable=import-outside-toplevel
+    import frida
+
+    from hermes.core.frida_attach import GADGET_SOURCE_LIMIT, RecordedSession
+
+    process = subprocess.Popen(["sleep", "30"])
+    try:
+        _wait_for_sleeping(process.pid)
+        # The loader path as under Wine, on a native process
+        session = RecordedSession(frida.attach(process.pid), process.pid, 0, "test", gadget=True)
+        source = ("const base = 40;\n"
+                  "rpc.exports = { add(a) { return base + a; } };\n"
+                  "send({ kind: 'ready', text: 'ä\\u2028\"' });\n"
+                  + "// padding \\ \" ä\n" * (GADGET_SOURCE_LIMIT // 10))
+        messages = []
+        script = session.create_script(source)
+        script.on("message", lambda message, _data: messages.append(message))
+        script.load()
+        assert script.exports_sync.add(2) == 42
+        assert [message["payload"] for message in messages] == [
+            {"kind": "ready", "text": "ä\""}]
+        script.unload()
+        session.detach()
+    finally:
+        process.kill()
+        process.wait()
+    loaded = next(entry for entry in _events(activity_file, "agent_loaded")
+                  if entry["pid"] == process.pid)
+    assert loaded["size"] == len(source)
+
+
 def test_clicks_actions_and_windows_are_recorded(activity_file, qt_app):
     # pylint: disable=import-outside-toplevel
     from PyQt6.QtWidgets import QComboBox, QDialog, QMenu, QPushButton, QVBoxLayout
