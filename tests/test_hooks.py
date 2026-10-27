@@ -1,6 +1,7 @@
 """Tests for value transforms, Frida write hooks and the hook UI."""
 
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -466,6 +467,95 @@ def test_short_jump_hooks_a_write_without_room_for_the_jmp(tmp_path, qt_app, sho
         settings.reset()
         worker.requestInterruption()
         worker.wait(5000)
+        target.close()
+
+
+# A write function made by the interpreter itself: needs no compiler.
+_CTYPES_TARGET = r"""
+import ctypes, os, sys
+WRITE = [0x89, 0x11] if sys.platform == "win32" else [0x89, 0x37]  # mov [rcx|rdi], edx|esi
+CODE = bytes(WRITE + [0x90] * 4 + [0xc3])
+if sys.platform == "win32":
+    alloc = ctypes.windll.kernel32.VirtualAlloc
+    alloc.restype = ctypes.c_void_p
+    function = alloc(None, 4096, 0x3000, 0x40)
+    ctypes.memmove(function, CODE, len(CODE))
+else:
+    import mmap
+    page = mmap.mmap(-1, 4096, prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC)
+    page.write(CODE)
+    function = ctypes.addressof(ctypes.c_char.from_buffer(page))
+write = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_int32)(function)
+gold = ctypes.c_int32(100)
+print(os.getpid(), hex(ctypes.addressof(gold)), hex(function), flush=True)
+for line in sys.stdin:
+    _command, amount = line.split()
+    write(ctypes.addressof(gold), gold.value + int(amount))
+    print(gold.value, 0, flush=True)
+"""
+
+_CTYPES_WRITE = [0x89, 0x11] if sys.platform == "win32" else [0x89, 0x37]
+
+requires_x64_attach = pytest.mark.skipif(
+    platform.machine().lower() not in {"amd64", "x86_64"} or not _ptrace_allowed(),
+    reason="needs an x86-64 process to attach to",
+)
+
+
+@requires_x64_attach
+def test_hook_reverted_by_the_game_is_reported_and_patched_again(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import frida
+
+    from hermes.core import settings
+    from hermes.ui.widgets.hooks import HookPanel
+
+    script = tmp_path / "target.py"
+    script.write_text(_CTYPES_TARGET)
+    process = subprocess.Popen([sys.executable, "-I", str(script)],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    pid, address, function = process.stdout.readline().split()
+    target = _Target.__new__(_Target)
+    target.process, target.pid, target.address = process, int(pid), int(address, 16)
+    original = _CTYPES_WRITE + [0x90] * 3
+
+    def revert():
+        # What anti-tamper code does: restore the original bytes.
+        session = frida.attach(target.pid)
+        restore = session.create_script(
+            f"Memory.patchCode(ptr('{function}'), 5, c => c.writeByteArray({original}));")
+        restore.load()
+        restore.unload()
+        session.detach()
+
+    panel = HookPanel(translations)
+    status = lambda: panel.table.item(0, 4).text()  # pylint: disable=unnecessary-lambda-assignment
+    try:
+        panel.set_process(target.pid)
+        panel.add_hook(HookSpec(target.address, "int32", MultiplyTransform(10),
+                                write_pc=int(function, 16), label="Gold"), "write")
+        _wait_for(qt_app, lambda: status() == "Aktiv")
+        assert target.send("add", 1)[0] == 110
+
+        revert()
+        _wait_for(qt_app, lambda: status() == "Vom Spiel entfernt")
+        assert target.send("add", 1)[0] == 111
+        assert "Gold" in panel.status_label.text()
+        # Paused and resumed, the hook still shows that the game removed it.
+        panel.table.selectRow(0)
+        panel._toggle_selected()
+        panel._toggle_selected()
+        assert status() == "Vom Spiel entfernt"
+
+        settings.apply({"hook_repatch": True})
+        _wait_for(qt_app, lambda: status() == "Aktiv")
+        assert target.send("add", 1)[0] == 121
+        revert()
+        _wait_for(qt_app, lambda: "2×" in panel.table.item(0, 4).toolTip())
+        assert status() == "Aktiv" and target.send("add", 1)[0] == 131
+    finally:
+        settings.reset()
+        panel.shutdown(timeout_ms=None)
         target.close()
 
 

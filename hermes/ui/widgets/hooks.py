@@ -55,6 +55,7 @@ _STATUS_COLORS = {
     "paused": "#8b949e",
     "failed": "#f85149",
     "error": "#f85149",
+    "reverted": "#db6d28",
     "disconnected": "#8b949e",
 }
 
@@ -630,7 +631,7 @@ class HookPanel(QGroupBox):
     def _update_buttons(self):
         state = self._hooks.get(self._selected_hook_id())
         live = state is not None and state["status"] in {
-            "active", "paused", "error", "training"
+            "active", "paused", "error", "training", "reverted"
         }
         self.btn_edit.setEnabled(live)
         self.btn_toggle.setEnabled(live)
@@ -1088,6 +1089,10 @@ class HookPanel(QGroupBox):
         worker.managed_failed.connect(
             lambda hook_id, message: self._on_managed_failed(worker, hook_id, message)
         )
+        worker.site_state.connect(
+            lambda hook_ids, site_state, reverts:
+            self._on_site_state(worker, hook_ids, site_state, reverts)
+        )
         worker.hook_debug.connect(
             lambda events, dropped: self._on_debug_events(worker, events, dropped)
         )
@@ -1166,6 +1171,37 @@ class HookPanel(QGroupBox):
         self.status_label.setText(self.translations["hooks.managed_failed"].format(
             label=self._hooks[hook_id]["spec"].label or hook_id, message=message
         ))
+
+    def _on_site_state(self, worker, hook_ids, site_state, reverts):
+        """The game reverted a hooked write site, or it is patched again.
+
+        A reverted site runs the game's original code: its hooks no longer
+        apply although nothing failed. Paused hooks show it once resumed.
+        """
+        if not self._is_current(worker):
+            return
+        reverted = site_state in {"reverted", "changed"}
+        labels = []
+        for hook_id in hook_ids:
+            state = self._hooks.get(hook_id)
+            if state is None:
+                continue
+            labels.append(state["spec"].label or str(hook_id))
+            if reverted:
+                state["reverted"] = site_state
+                if state["status"] in {"active", "error"}:
+                    self._set_status(hook_id, "reverted", self._reverted_tooltip(state))
+            else:
+                state.pop("reverted", None)
+                if state["status"] in {"reverted", "active"}:
+                    self._set_status(hook_id, "active", self.translations[
+                        "hooks.repatched_tooltip"].format(count=reverts))
+        if labels and site_state != "restored":
+            self.status_label.setText(self.translations[f"hooks.site_{site_state}"].format(
+                label=", ".join(labels), count=reverts))
+
+    def _reverted_tooltip(self, state):
+        return self.translations[f"hooks.status_reverted_{state['reverted']}"]
 
     def _remember_trampoline(self, info, write):
         try:
@@ -1384,7 +1420,9 @@ class HookPanel(QGroupBox):
     def _edit_selected(self):
         hook_id = self._selected_hook_id()
         state = self._hooks.get(hook_id)
-        if state is None or state["status"] not in {"active", "paused", "error", "training"}:
+        if state is None or state["status"] not in {
+            "active", "paused", "error", "training", "reverted"
+        }:
             return
         spec = state["spec"]
         if state.get("kind") == "method":
@@ -1436,8 +1474,12 @@ class HookPanel(QGroupBox):
             update = (self._repository.update_method_hook if state.get("kind") == "method"
                       else self._repository.update_hook)
             self._store(update, state["saved_id"], enabled=enable)
-        resumed = "training" if state.get("training") else "active"
-        self._set_status(hook_id, resumed if enable else "paused")
+        if not enable:
+            self._set_status(hook_id, "paused")
+        elif state.get("reverted"):
+            self._set_status(hook_id, "reverted", self._reverted_tooltip(state))
+        else:
+            self._set_status(hook_id, "training" if state.get("training") else "active")
 
     def _remove_selected(self):
         hook_id = self._selected_hook_id()
@@ -1453,7 +1495,7 @@ class HookPanel(QGroupBox):
         worker = self._worker_of(state)
         if (worker is not None
                 and state["status"] in {
-                    "installing", "active", "paused", "error", "training"
+                    "installing", "active", "paused", "error", "training", "reverted"
                 }):
             worker.remove_hook(hook_id)
         else:

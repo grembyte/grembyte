@@ -99,6 +99,10 @@ const debugDropped = new Map();
 const hooks = new Map();
 const sites = new Map();
 const retiredSites = [];
+// Flushes (100 ms each) between checks whether the game reverted a site.
+const SITE_CHECK_TICKS = 10;
+// Patch a site again when the game restored its original code (setRepatch).
+let repatchReverted = false;
 // Code bytes kept on each side of a write instruction to recognize it in
 // JIT code, which is generated anew (elsewhere) on every start.
 const CONTEXT_SIZE = 32;
@@ -1056,38 +1060,117 @@ function installSite(writeIns, writeOp, shortJump) {
   site.code = code;
   site.patchSize = patchSize;
   site.original = origin.readByteArray(patchSize);
+  site.originalHex = hexBytes(site.original);
+  site.caveOriginalHex = site.cave === null ? null : readHex(site.cave, JMP_SIZE);
+  patchSite(site);
+  site.patchedHex = readHex(origin, patchSize);
+  site.cavePatchedHex = site.cave === null ? null : readHex(site.cave, JMP_SIZE);
+  site.reverted = false;
+  site.reverts = 0;
+  sites.set(key, site);
+  return site;
+}
+
+function patchSite(site) {
+  // The jmp (or short jump and cave) into the site's trampoline.
+  const origin = site.writeIns.address;
   if (site.cave !== null) {
     // The cave first: the write jumps there as soon as it is patched.
     Memory.patchCode(site.cave, JMP_SIZE, c => {
       const w = new X86Writer(c, { pc: site.cave });
-      w.putJmpAddress(code);
+      w.putJmpAddress(site.code);
       w.flush();
       w.dispose();
     });
   }
-  Memory.patchCode(origin, patchSize, c => {
+  Memory.patchCode(origin, site.patchSize, c => {
     const w = new X86Writer(c, { pc: origin });
     if (site.cave === null) {
-      w.putJmpAddress(code);
+      w.putJmpAddress(site.code);
     } else {
       const offset = site.cave.sub(origin.add(SHORT_JMP_SIZE)).toInt32();
       w.putBytes([0xeb, offset & 0xff]);
     }
-    while (w.offset < patchSize)
+    while (w.offset < site.patchSize)
       w.putNop();
     w.flush();
     w.dispose();
   });
-  sites.set(key, site);
-  return site;
+}
+
+// --- Reverted sites ---------------------------------------------------------
+// Anti-tamper code in some games (e.g. Arxan in Dark Souls III) checks its
+// code and repairs changes: the original write is back, the hook silently
+// stops. Every SITE_CHECK_TICKS flushes the agent compares each site with
+// the bytes it wrote and reports a change ('site-state'). With repatching
+// on, a site whose original code is back is patched again.
+
+function siteState(site) {
+  // 'intact', 'reverted' (original or patched bytes, may be patched again),
+  // 'changed' (other code: left alone) or null if the code is unreadable
+  // (e.g. JIT code the runtime freed).
+  const origin = readHex(site.writeIns.address, site.patchSize);
+  const cave = site.cave === null ? null : readHex(site.cave, JMP_SIZE);
+  if (origin === null || (site.cave !== null && cave === null))
+    return null;
+  if (origin === site.patchedHex && cave === site.cavePatchedHex)
+    return 'intact';
+  const known = (origin === site.patchedHex || origin === site.originalHex)
+    && (cave === site.cavePatchedHex || cave === site.caveOriginalHex);
+  return known ? 'reverted' : 'changed';
+}
+
+function reportSite(site, state) {
+  send({
+    kind: 'site-state',
+    hookIds: Array.from(site.hooks.keys()),
+    state,
+    reverts: site.reverts
+  });
+}
+
+function checkSites() {
+  for (const site of sites.values()) {
+    const state = siteState(site);
+    if (state === null)
+      continue;
+    if (state === 'intact') {
+      if (site.reverted) {
+        site.reverted = false;
+        reportSite(site, 'restored');
+      }
+      continue;
+    }
+    const fresh = !site.reverted;
+    if (fresh)
+      site.reverts += 1;
+    if (state === 'reverted' && repatchReverted) {
+      try {
+        patchSite(site);
+        site.reverted = false;
+        reportSite(site, 'repatched');
+        continue;
+      } catch (error) {
+        if (fresh)
+          reportAgentError(`repatch ${site.writeIns.address}`, error);
+      }
+    }
+    if (fresh) {
+      site.reverted = true;
+      reportSite(site, state);
+    }
+  }
 }
 
 function uninstallSite(site) {
   const origin = site.writeIns.address;
   const original = new Uint8Array(site.original);
-  Memory.patchCode(origin, site.patchSize, c => {
-    c.writeByteArray(Array.from(original));
-  });
+  // Code the game restored or changed is left as it is.
+  if (readHex(origin, site.patchSize) === site.patchedHex) {
+    Memory.patchCode(origin, site.patchSize, c => {
+      c.writeByteArray(Array.from(original));
+    });
+  }
   sites.delete(origin.toString());
   // A thread may still be running inside the trampoline; keep it mapped.
   // The same holds for the cave, which keeps its jmp to the trampoline.
@@ -1529,8 +1612,11 @@ function flushStats() {
   }
 }
 
+let flushTicks = 0;
 const flushTimer = setInterval(() => {
   engine.refresh();
+  if (++flushTicks % SITE_CHECK_TICKS === 0)
+    checkSites();
   flushStats();
 }, 100);
 send({
@@ -1554,6 +1640,10 @@ rpc.exports = {
     const hook = requireHook(id);
     hook.transform = compileTransform(spec);
     hook.errorReported = false;
+    return true;
+  },
+  setRepatch(enabled) {
+    repatchReverted = enabled;
     return true;
   },
   setDebug(id, enabled) {

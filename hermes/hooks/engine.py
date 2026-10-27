@@ -70,6 +70,13 @@ saved with it is installed right away after a restart: Mono compiles the
 method and the agent finds the write instruction in its code. Training is
 the fallback when that fails (``managed-failed``).
 
+Anti-tamper code in some games (e.g. Arxan in Dark Souls III) repairs
+patched code: the original write is back and the hook stops without an
+error. Once a second the agent compares every site with the bytes it wrote
+and reports a change (``site_state``: reverted, changed, repatched,
+restored). With the setting ``hook_repatch`` it patches a site whose
+original code is back again; off by default, as it races the game's checks.
+
 In debug mode a hook reports every call (values, caller, ``ctx.log()``
 output, errors with stack) and every write it skipped, with the reason.
 At most ``MAX_DEBUG_EVENTS`` events are sent per 100 ms; the rest is counted.
@@ -262,6 +269,9 @@ class HookWorker(QThread):
     site_method = pyqtSignal(list, str, object)
     # hook id, why its C# method did not lead to the write site; it trains
     managed_failed = pyqtSignal(int, str)
+    # hook ids sharing a write site, its state (reverted, changed, repatched,
+    # restored) and how often the game reverted it
+    site_state = pyqtSignal(list, str, int)
     # debug events of hooks in debug mode, events dropped per hook id
     hook_debug = pyqtSignal(list, dict)
     # console.log output of the agent and its transforms: level, text
@@ -337,6 +347,8 @@ class HookWorker(QThread):
             if ready.get("accessStub"):
                 start = int(ready["accessStub"], 16)
                 self.access_stub = (start, start + ready.get("accessStubSize", 0x1000))
+            script.exports_sync.set_repatch(settings.get("hook_repatch"))
+            settings.subscribe(self._on_settings_changed)
             self.session_ready.emit(ready.get("arch", ""))
 
             while (not self.isInterruptionRequested()
@@ -358,6 +370,7 @@ class HookWorker(QThread):
             if not self.isInterruptionRequested():
                 self.worker_failed.emit(str(error))
         finally:
+            settings.unsubscribe(self._on_settings_changed)
             if script is not None:
                 try:
                     script.exports_sync.dispose()
@@ -405,8 +418,14 @@ class HookWorker(QThread):
             elif action == "debug":
                 api.set_debug(hook_id, argument)
                 self.hook_updated.emit(hook_id)
+            elif action == "repatch":
+                api.set_repatch(argument)
         except frida.RPCException as error:
             self.hook_failed.emit(hook_id, str(error))
+
+    def _on_settings_changed(self, changed):
+        if "hook_repatch" in changed:
+            self._commands.put(("repatch", 0, changed["hook_repatch"]))
 
     def _on_message(self, message, _data):
         if message.get("type") == "error":
@@ -447,6 +466,10 @@ class HookWorker(QThread):
             )
         elif kind == "managed-failed":
             self.managed_failed.emit(payload.get("hookId", 0), payload.get("error", ""))
+        elif kind == "site-state":
+            self.site_state.emit(
+                payload.get("hookIds", []), payload.get("state", ""), payload.get("reverts", 0)
+            )
         elif kind == "callers-ambiguous":
             self.callers_ambiguous.emit(payload.get("hookId", 0))
         elif kind == "callers-dropped":
