@@ -71,6 +71,13 @@ Alternatively the application can be started straight from the project directory
 
 The entry points to the project directory, so run the script again after moving the repository.
 
+On Windows, `scripts\hermes-hook.cmd` starts the application the same way. For the Start menu and the taskbar, install a shortcut for the current user, then right click "Hermes Hook" in the Start menu and choose "Pin to taskbar":
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-windows-shortcut.ps1             # install or update
+powershell -ExecutionPolicy Bypass -File scripts\install-windows-shortcut.ps1 -Uninstall  # remove it
+```
+
 The language is German or English depending on the system locale (English for any other locale). It can be chosen under **Settings → General …**, or for one start with an environment variable, which applies while the setting is "as the system":
 
 ```bash
