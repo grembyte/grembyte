@@ -1306,14 +1306,18 @@ class HookPanel(QGroupBox):
         own accesses to the target are dropped.
         """
         translated = []
-        stub = self._worker.access_stub if self._worker is not None else None
+        worker = self._worker
+        own = [] if worker is None else [
+            code for code in (worker.access_stub, getattr(worker, "fast_code", None))
+            if code is not None
+        ]
         for hit in hits:
             try:
                 pc = int(hit["pc"], 16)
             except (KeyError, TypeError, ValueError):
                 pc = None
-            if stub is not None and pc is not None and stub[0] <= pc < stub[1]:
-                continue  # a hook's own read of the target
+            if pc is not None and any(start <= pc < end for start, end in own):
+                continue  # a hook's own access to the target
             try:
                 original = self._original_write(int(hit["pc"], 16))
             except (KeyError, TypeError, ValueError):

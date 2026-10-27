@@ -91,6 +91,18 @@ next instruction, where the transform runs and it moves back. Patch checks
 cannot see it, but it uses one of the three debug register slots the write
 watch leaves (shared with trainings) and each write traps twice.
 
+The trampoline calls C first (``FAST_SOURCE`` in engine.js, a Frida
+CModule): it computes the written address, checks the hook's switch, its
+fixed target and its learned callers (its own copy of the stack scan,
+taught by the JavaScript scan what each return address it met means) and
+runs the built-in
+manipulations (``ValueTransform.to_agent()["native"]``: multiply, freeze,
+clamp, also as copies in templates) itself. JavaScript only runs for what
+C cannot decide (scripts, debug mode, caller learning, pointer targets,
+unknown stack layouts). The agent's JavaScript runs one thread at a time;
+a game thread descheduled there stalled every other hooked thread for a
+scheduler slice and dropped frames.
+
 In debug mode a hook reports every call (values, caller, ``ctx.log()``
 output, errors with stack) and every write it skipped, with the reason.
 At most ``MAX_DEBUG_EVENTS`` events are sent per 100 ms; the rest is counted.
@@ -317,6 +329,8 @@ class HookWorker(QThread):
         self._ready_payload = None
         # (start, end) of the agent's own memory-access code, once it is ready
         self.access_stub = None
+        # (start, end) of the agent's C code, which reads and writes targets too
+        self.fast_code = None
         self._agent_error = None
         self._detach_reason = None
 
@@ -373,6 +387,9 @@ class HookWorker(QThread):
             if ready.get("accessStub"):
                 start = int(ready["accessStub"], 16)
                 self.access_stub = (start, start + ready.get("accessStubSize", 0x1000))
+            if ready.get("fastCode"):
+                start = int(ready["fastCode"], 16)
+                self.fast_code = (start, start + ready.get("fastCodeSize", 0x1000))
             script.exports_sync.set_repatch(settings.get("hook_repatch"))
             script.exports_sync.set_profiling(settings.get("hook_profiling"))
             settings.subscribe(self._on_settings_changed)
@@ -501,10 +518,10 @@ class HookWorker(QThread):
             sites = payload.get("sites", [])
             for site in sites:
                 _profile_log.info(
-                    "hooks %s: %d calls/s, %d skipped; wait avg %.1f max %.1f us; "
+                    "hooks %s: %d calls/s, %d skipped, %d in JS; wait avg %.1f max %.1f us; "
                     "run avg %.1f max %.1f us", site.get("hookIds"), site.get("calls", 0),
-                    site.get("skipped", 0), site.get("waitAvg", 0), site.get("waitMax", 0),
-                    site.get("runAvg", 0), site.get("runMax", 0))
+                    site.get("skipped", 0), site.get("js", 0), site.get("waitAvg", 0),
+                    site.get("waitMax", 0), site.get("runAvg", 0), site.get("runMax", 0))
             self.hook_profile.emit(sites)
         elif kind == "site-state":
             self.site_state.emit(

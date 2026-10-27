@@ -80,6 +80,7 @@ class PtraceHookWorker(PtraceWatchpointEngine):
     def __init__(self, pid, parent=None):
         super().__init__(pid, parent)
         self.access_stub = None  # Frida-only; kept for interface parity
+        self.fast_code = None
         self._commands = queue.Queue()
         self._ids = itertools.count(1)
         self._hooks = {}          # hook id -> hook state

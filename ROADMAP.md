@@ -233,8 +233,34 @@ Found with Dark Souls III (Arxan/GuardIT):
   once per site, and caller signatures take the stack slots of the last scan first
   (`siteSignature`): ~8 µs, caller check +1.5 µs instead of +3.5 µs. The rest is the transform
   and its context (~3 µs), the two calls into JS with the saved state (~1.5 µs) and reading
-  the old value. Further gains need the filters (address, caller) in C (CModule), so that
-  writes the hook skips never enter JavaScript.
+  the old value.
+- **Frame drops came from the agent's lock, not the average cost:** measured in Dark Souls III
+  (setting "Hooks: measure their cost"): 100–350 writes/s per site, most of them skipped
+  (other callers), but again and again a hooked thread waited ~28–37 ms (twice a Windows
+  scheduler slice), once up to 400 ms: a game thread descheduled while it held the agent's
+  JavaScript lock stalls every other hooked thread.
+- **C fast path (2026-10-27):** the trampoline calls a CModule (`FAST_SOURCE` in
+  `hermes/hooks/engine.js`). It checks address, switch and learned callers and runs multiply, freeze and
+  clamp itself (`native_spec` in `transforms.py` recognises them by their code, also copies
+  such as "Clamp (Import)"). Writes pending between before and after are kept per thread in a
+  table per site. A hooked write now costs ~0.1 µs instead of ~8–18 µs in the test process; a
+  foreign caller is rejected in C after its first write (3003 of 3004 writes without JS).
+- Learned (DS3, first try of the fast path): caching one stack layout per site (the slots of
+  the last scan) did not work there: the scan finds the return address at different distances
+  from rsp (stale return addresses in the locals of a large frame), the layout changed on nearly
+  every write and the TP hook still ran in JavaScript. Now C runs its own copy of the scan
+  (`native_frames`): slot by slot, executable values only, with a table of what the JavaScript
+  scan decided about each (value, function) pair (`fast_teach_verdict`, `fast_teach_skip`).
+  `GetCurrentThreadStackLimits` keeps it on the thread's stack; without it (Linux) callers are
+  checked in JavaScript. Caller check ~0.1 µs; in the test a caller whose return address lay
+  deeper (through `qsort`) needed JavaScript once in 56 032 writes. Dark Souls III: steady frame
+  time, "0 in JS" for TP and FP. A fixed-address hook that learns callers still runs in
+  JavaScript.
+- Learned: the rare writes that still need JavaScript (new stack values, e.g. at a bonfire)
+  took 60–120 ms each in Dark Souls III and dropped a frame: `Process.findRangeByAddress` costs
+  11 ms there (it walks all ranges of the process) and the scan asked it for every stack value.
+  Now both scans use one sorted snapshot of executable memory (`isExecutable`, refreshed every
+  5 s, ~25 ms).
 
 ## Activity log (implemented 2026-10-22)
 

@@ -187,6 +187,7 @@ class ValueTransform:
             "kind": self.kind,
             "source": self.source,
             "params": self.params,
+            "native": native_spec(self.source, self.params),
         }
 
     def describe(self):
@@ -349,13 +350,43 @@ class TemplateTransform(ValueTransform):
         return values
 
     def to_agent(self):
-        return {"kind": self.definition.name, "source": self.source, "params": self.params}
+        return {"kind": self.definition.name, "source": self.source, "params": self.params,
+                "native": native_spec(self.source, self.params)}
 
     def describe(self):
         details = ", ".join(
             f"{key}={value}" for key, value in self.params.items() if value is not None
         )
         return f"{self.definition.name}({details})"
+
+
+def _code(source):
+    return " ".join(source.split())
+
+
+def native_spec(source, params):
+    """The built-in manipulation ``source`` is a copy of, for the agent to run in C.
+
+    ``{"op": "multiply", "factor", "direction"}``, ``{"op": "freeze", "value"}``
+    or ``{"op": "clamp", "minimum", "maximum"}``; None for other code (it runs
+    in JavaScript). Copies of the examples in templates and imports count by
+    their code, whatever their name.
+    """
+    code = _code(source)
+    try:
+        if code == _code(MultiplyTransform.source):
+            return {"op": "multiply", "factor": float(params["factor"]),
+                    "direction": params.get("direction", "increase")}
+        if code == _code(FreezeTransform.source):
+            return {"op": "freeze", "value": float(params["value"])}
+        if code == _code(ClampTransform.source):
+            minimum, maximum = params.get("minimum"), params.get("maximum")
+            return {"op": "clamp",
+                    "minimum": None if minimum is None else float(minimum),
+                    "maximum": None if maximum is None else float(maximum)}
+    except (KeyError, TypeError, ValueError):
+        return None
+    return None
 
 
 def as_template_transform(transform):

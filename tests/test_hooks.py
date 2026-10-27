@@ -24,6 +24,7 @@ from hermes.hooks.transforms import (
     ValueTransform,
     available_transforms,
     create_transform,
+    native_spec,
     register_transform,
 )
 
@@ -70,6 +71,22 @@ def test_custom_transforms_can_be_registered():
     finally:
         from hermes.hooks import transforms  # pylint: disable=import-outside-toplevel
         del transforms._TRANSFORMS["test-double"]  # pylint: disable=protected-access
+
+
+def test_builtin_manipulations_are_run_natively():
+    assert MultiplyTransform(10).to_agent()["native"] == {
+        "op": "multiply", "factor": 10.0, "direction": "increase"}
+    assert FreezeTransform(5).to_agent()["native"] == {"op": "freeze", "value": 5.0}
+    assert ClampTransform(maximum=7).to_agent()["native"] == {
+        "op": "clamp", "minimum": None, "maximum": 7.0}
+    # A copy in a template (or an import) counts by its code, not its name.
+    copy = TransformDefinition("Clamp (Import)", ClampTransform.source.strip(),
+                               ClampTransform.parameters)
+    assert TemplateTransform(copy, minimum=350, maximum=407).to_agent()["native"] == {
+        "op": "clamp", "minimum": 350.0, "maximum": 407.0}
+    assert ScriptTransform("ctx => ctx.new + 1").to_agent()["native"] is None
+    changed = ClampTransform.source.replace("value = maximum;", "value = maximum - 1;")
+    assert native_spec(changed, {"minimum": None, "maximum": 7}) is None
 
 
 def test_hook_spec_requires_a_code_location():
@@ -577,6 +594,39 @@ def _read_code(pid, address, size):
     script.unload()
     session.detach()
     return code
+
+
+@requires_x64_attach
+def test_hooked_writes_stay_out_of_javascript(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.core import settings
+    from hermes.hooks.engine import HookWorker
+
+    target, function = _start_ctypes_target(tmp_path)
+    settings.apply({"hook_profiling": True})
+    worker = HookWorker(target.pid)
+    installed, profiles, events = {}, [], []
+    worker.hook_installed.connect(lambda hook_id, info: installed.update({hook_id: info}))
+    worker.hook_profile.connect(profiles.extend)
+    worker.hook_events.connect(events.extend)
+    try:
+        worker.start()
+        hook_id = worker.add_hook(HookSpec(None, "int32", MultiplyTransform(10),
+                                           write_pc=int(function, 16), caller_depth=0))
+        _wait_for(qt_app, lambda: hook_id in installed)
+        assert target.send("add", 1)[0] == 110
+        assert target.send("add", -5)[0] == 105  # increases only
+        assert target.send("add", 2)[0] == 125
+        _wait_for(qt_app, lambda: profiles and sum(p["calls"] for p in profiles) >= 3)
+        # The built-in manipulation ran in C: no call went to JavaScript.
+        assert sum(p["js"] for p in profiles) == 0
+        _wait_for(qt_app, lambda: sum(e["count"] for e in events) == 3)
+        assert events[-1]["last"]["result"] == 125
+    finally:
+        settings.reset()
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
 
 
 @requires_x64_attach

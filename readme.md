@@ -174,6 +174,8 @@ jmp back
 
 Since Hermes only works with the old and the new value, it does not matter whether the game uses `add [mem], reg`, `mov [mem], reg` or `sub`. If the same instruction is also used for other objects (e.g. the enemies' gold), the hook only acts on its target: the watched address, the address of its pointer chain or, after a restart without a chain, the learned callers. Several hooks can share a write instruction; they run in the order they were created.
 
+`before` and `after` are C functions (a Frida CModule): they check the target address and the learned callers and run the built-in manipulations (multiply, fixed value, clamp, also as copies in templates) themselves, so a hooked write costs a fraction of a microsecond. Only scripts of your own, the debug mode, caller learning and pointer chains run in JavaScript. The agent's JavaScript runs one thread at a time: a game thread that has to wait there can drop frames.
+
 Limitations:
 
 - x86-64 processes only.

@@ -81,8 +81,6 @@ const SAVED_REGS = [
 const MAX_CALLER_DEPTH = 4;
 const CALLER_SCAN_SLOTS = 256;
 const MAX_CALLERS = 64;
-// Caller signatures remembered per write site for its fast path (siteSignature).
-const MAX_VERIFIED_CALLERS = 1024;
 const CALL_SIZES = [5, 2, 3, 6, 7, 4];
 const MAX_DEBUG_EVENTS = 200;
 // Largest distance from a function's start to code in it (for code without symbols).
@@ -254,25 +252,65 @@ function remember(cache, key, value) {
   return value;
 }
 
+// Executable memory as sorted, merged [start, end) pairs: the stack scan
+// asks for every value it meets, and Process.findRangeByAddress walks all
+// ranges of the process (11 ms per call in Dark Souls III). The C scan uses
+// the same snapshot (refreshFastRanges), so both decide alike.
+let executableRanges = null;
+
+function loadExecutableRanges() {
+  const ranges = Process.enumerateRanges('--x')
+    .map(r => [r.base, r.base.add(r.size)])
+    .sort((a, b) => a[0].compare(b[0]));
+  const merged = [];
+  for (const [start, end] of ranges) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && start.compare(last[1]) <= 0) {
+      if (end.compare(last[1]) > 0)
+        last[1] = end;
+    } else {
+      merged.push([start, end]);
+    }
+  }
+  executableRanges = merged;
+  return merged;
+}
+
+function isExecutable(address) {
+  const ranges = executableRanges ?? loadExecutableRanges();
+  let low = 0;
+  let high = ranges.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (address.compare(ranges[middle][0]) < 0)
+      high = middle - 1;
+    else if (address.compare(ranges[middle][1]) >= 0)
+      low = middle + 1;
+    else
+      return true;
+  }
+  return false;
+}
+
 function callBefore(address) {
   // The call a return address follows: { target } (null for an indirect call), or null.
   const key = address.toString();
   const known = callCache.get(key);
   if (known !== undefined)
     return known;
+  // Not cached outside executable memory: the value may be code later (JIT).
+  if (!isExecutable(address))
+    return null;
   let result = null;
-  const range = Process.findRangeByAddress(address);
-  if (range !== null && range.protection.includes('x')) {
-    for (const size of CALL_SIZES) {
-      try {
-        const ins = Instruction.parse(address.sub(size));
-        if (ins.mnemonic === 'call' && ins.next.equals(address)) {
-          const operand = ins.operands[0];
-          result = { target: operand.type === 'imm' ? ptr(operand.value.toString()) : null };
-          break;
-        }
-      } catch (_error) {
+  for (const size of CALL_SIZES) {
+    try {
+      const ins = Instruction.parse(address.sub(size));
+      if (ins.mnemonic === 'call' && ins.next.equals(address)) {
+        const operand = ins.operands[0];
+        result = { target: operand.type === 'imm' ? ptr(operand.value.toString()) : null };
+        break;
       }
+    } catch (_error) {
     }
   }
   return remember(callCache, key, result);
@@ -400,6 +438,7 @@ function callerFrame(frameRsp, inside) {
   // at ``frameRsp``, and the slot holding it; null if not found.
   const symbolStart = functionStart(inside);
   const known = symbolStart === null ? null : frameSize(symbolStart, inside);
+  teachSkip(inside, known);
   // A known frame is skipped: its locals only hold stale return addresses,
   // and a large one (kilobytes of locals) would use up the slots to scan.
   let cursor = known === null ? frameRsp : frameRsp.add(known);
@@ -411,10 +450,12 @@ function callerFrame(frameRsp, inside) {
       return null;
     }
     const start = calledStart(value, inside);
+    const below = start === null || start === true ? null : frameSize(start, inside);
+    if (start !== null || isExecutable(value))
+      teachVerdict(value, inside, start, below);
     if (start === null)
       continue;
     if (known === null && start !== true) {
-      const below = frameSize(start, inside);
       if (below !== null && cursor.sub(frameRsp).compare(ptr(below)) < 0)
         continue;  // inside the frame the call made
     }
@@ -445,37 +486,6 @@ function callerFrames(rsp, depth, pc) {
 function callerSignature(rsp, depth, pc) {
   const found = callerFrames(rsp, depth, pc);
   return found === null ? null : found.key;
-}
-
-function siteSignature(site, rsp, depth) {
-  // callerSignature for a hooked write, which may run thousands of times a
-  // second. Functions with a fixed frame keep their return address at the
-  // same distance from rsp on every run, so the slots of the last scan are
-  // read first: return addresses seen there before (verified by a scan)
-  // are taken as they are. Only a new combination is scanned.
-  if (site.frameLayouts === undefined)
-    site.frameLayouts = new Map();  // depth -> { offsets, verified: Set }
-  const layout = site.frameLayouts.get(depth);
-  if (layout !== undefined) {
-    try {
-      const key = layout.offsets.map(offset => rsp.add(offset).readPointer().toString()).join(',');
-      if (layout.verified.has(key))
-        return key;
-    } catch (_error) {
-    }
-  }
-  const found = callerFrames(rsp, depth, site.writeIns.address);
-  if (found === null)
-    return null;
-  let current = layout;
-  if (current === undefined || current.offsets.join() !== found.offsets.join()) {
-    current = { offsets: found.offsets, verified: new Set() };
-    site.frameLayouts.set(depth, current);
-  }
-  if (current.verified.size >= MAX_VERIFIED_CALLERS)
-    current.verified.clear();
-  current.verified.add(found.key);
-  return found.key;
 }
 
 function plausibleCallers(addresses, pc) {
@@ -846,8 +856,16 @@ function profileEvents() {
   const perMicrosecond = ticksPerMicrosecond();
   const events = [];
   for (const site of sites.values()) {
+    if (site.fast !== undefined) {
+      fast.takeProfile(site.fast, fastScratch.profile);
+      if (site.profile === undefined)
+        site.profile = newProfile();
+      site.profile.calls = fastScratch.profile.readS32();
+      site.profile.skipped = fastScratch.profile.add(4).readS32();
+      site.profile.js = fastScratch.profile.add(8).readS32();
+    }
     const profile = site.profile;
-    if (profile === undefined || perMicrosecond === 0)
+    if (profile === undefined || perMicrosecond === 0 || (profile.calls === 0 && profile.waits === 0))
       continue;
     const us = ticks => Math.round(ticks / perMicrosecond * 10) / 10;
     const callbacks = Math.max(profile.waits, 1);
@@ -855,6 +873,7 @@ function profileEvents() {
       hookIds: Array.from(site.hooks.keys()),
       calls: profile.calls,
       skipped: profile.skipped,
+      js: profile.js ?? profile.calls,
       waitAvg: us(profile.waitTicks / callbacks),
       waitMax: us(profile.waitMax),
       runAvg: us(profile.runTicks / callbacks),
@@ -865,7 +884,7 @@ function profileEvents() {
   return events;
 }
 
-function emitCallback(w, callback) {
+function emitCallback(w, callback, data = null) {
   // Preserve everything the game might have live: red zone, flags, all GPRs
   // and the SSE state (the JS callback is free to clobber xmm registers).
   w.putLeaRegRegOffset('rsp', 'rsp', -RED_ZONE);
@@ -877,7 +896,7 @@ function emitCallback(w, callback) {
   w.putSubRegImm('rsp', FXSAVE_AREA);
   w.putBytes(FXSAVE64_RSP);
   w.putBytes(RDTSC_TO_RAX);  // rax and rdx are saved in the block
-  w.putCallAddressWithArguments(callback, ['rbx', 'rax']);
+  w.putCallAddressWithArguments(callback, data === null ? ['rbx', 'rax'] : ['rbx', 'rax', data]);
   w.putBytes(FXRSTOR64_RSP);
   w.putMovRegReg('rsp', 'rbx');
   for (const reg of SAVED_REGS.slice().reverse())
@@ -955,6 +974,958 @@ function planAddress(plan, regs) {
 
 function overlapsPointer(start, size, target, targetSize) {
   return start.compare(target.add(targetSize)) < 0 && target.compare(start.add(size)) < 0;
+}
+
+// --- Fast path ----------------------------------------------------------------
+// A hooked write calls C first (FAST_SOURCE): it computes the address, checks
+// the hook's switch, address and learned callers, and runs the built-in
+// manipulations (multiply, freeze, clamp) itself. JavaScript only runs for
+// what C cannot decide: scripts, debug mode, caller learning, pointer
+// targets, stack layouts not seen yet. Game threads otherwise never wait for
+// the agent's lock: a thread descheduled while holding it stalled every other
+// hooked thread for a scheduler slice (~15-30 ms, frame drops in games).
+//
+// C reads its tables without a lock. An entry is written before its valid
+// flag, a cleared table first loses its flags. Writes pending between
+// before and after are kept per thread in a small table per site, taken by
+// an atomic counter (Frida's TinyCC has no compare-and-swap).
+const FAST_MAX_HOOKS = 8;
+const FAST_CODE_RANGES = 4096;
+// sizeof (Frames) in FAST_SOURCE, with room to spare.
+const FRAMES_TABLE_SIZE = 8 + 2 * 8 + 2 * FAST_CODE_RANGES * 16 + 8 + 8192 * 32 + 8 + 1024 * 16 + 4096;
+const FAST_DEPTHS = MAX_CALLER_DEPTH;
+const FAST_OP = { js: 0, multiply: 1, freeze: 2, clamp: 3 };
+const FAST_DIRECTION = { both: 0, increase: 1, decrease: 2 };
+const FAST_TYPE = {
+  int8: 0, int16: 1, int32: 2, int64: 3, uint8: 4, uint16: 5, uint32: 6, uint64: 7,
+  float: 8, double: 9
+};
+const FAST_SOURCE = `
+#include <glib.h>
+
+#define MAX_HOOKS ${FAST_MAX_HOOKS}
+#define MAX_DEPTH ${FAST_DEPTHS}
+#define MAX_ACCEPTED ${MAX_CALLERS}
+#define PENDING 64
+#define SCAN_SLOTS ${CALLER_SCAN_SLOTS}
+#define CODE_RANGES 4096
+#define VERDICTS 8192
+#define SKIPS 1024
+#define RSP_FROM_BLOCK ${8 * SAVED_REGS.length + 8 + RED_ZONE}
+#define SLOT_NONE (-1)
+#define SLOT_RIP (-2)
+#define SLOT_RSP (-3)
+
+enum { VT_I8, VT_I16, VT_I32, VT_I64, VT_U8, VT_U16, VT_U32, VT_U64, VT_F32, VT_F64 };
+enum { OP_JS, OP_MULTIPLY, OP_FREEZE, OP_CLAMP };
+
+typedef gint (*JsBefore) (gpointer block, guint64 tsc, guint32 mask);
+typedef void (*JsAfter) (gpointer block, guint64 tsc);
+
+typedef struct {
+  volatile gint enabled;
+  gint fast;
+  gint fixed;
+  gint filter_address;
+  guint64 target;
+  gint size;
+  gint depth;
+  volatile gint accepted_count;
+  guint64 accepted[MAX_ACCEPTED][MAX_DEPTH];
+  gint value_type;
+  gint integer;
+  double lo;
+  double hi;
+  gint op;
+  gint direction;
+  gint has_min;
+  gint has_max;
+  double a;
+  double b;
+  volatile gint count;
+  double last_old;
+  double last_new;
+  double last_result;
+  guint64 last_address;
+  guint64 last_tid;
+} FastHook;
+
+/* What the JavaScript scan (callerFrame) found out about a stack value:
+   kind 0: no call leads from it to inside, 1: an indirect one, 2: a direct
+   one whose function takes below bytes of stack (-1: unknown). */
+typedef struct {
+  volatile gint valid;
+  gint kind;
+  gint below;
+  gint unused;
+  guint64 value;
+  guint64 inside;
+} Verdict;
+
+/* Stack a function known by its symbol takes (-1: none known). */
+typedef struct {
+  volatile gint valid;
+  gint known;
+  guint64 inside;
+} Skip;
+
+typedef struct {
+  guint64 start;
+  guint64 end;
+} Range;
+
+/* Shared by all sites: callerFrame's knowledge, executable memory. */
+typedef struct {
+  gint have_limits;
+  volatile gint active;
+  gint range_count[2];
+  Range ranges[2][CODE_RANGES];
+  gint verdicts_used;
+  Verdict verdicts[VERDICTS];
+  gint skips_used;
+  Skip skips[SKIPS];
+} Frames;
+
+typedef struct {
+  volatile gint busy;
+  volatile guint32 tid;
+  guint32 native;
+  gint js;
+  FastHook *hooks[MAX_HOOKS];
+  guint64 target[MAX_HOOKS];
+  double old[MAX_HOOKS];
+} Pending;
+
+typedef struct {
+  gint plan_ok;
+  gint base_slot;
+  gint base_low;
+  gint index_slot;
+  gint index_low;
+  gint shift;
+  gint64 disp;
+  guint64 rip;
+  gint op_size;
+  guint64 rip_of_write;
+  volatile gint hook_count;
+  FastHook *hooks[MAX_HOOKS];
+  JsBefore js_before;
+  JsAfter js_after;
+  volatile gint in_use;
+  volatile gint calls;
+  volatile gint skipped;
+  volatile gint js_calls;
+  Pending pending[PENDING];
+} FastSite;
+
+extern guint32 os_thread_id (void);
+extern void stack_limits (guint64 *low, guint64 *high);
+extern Frames frames_table;
+
+static void
+zero (gpointer p, gsize size)
+{
+  guint8 *b = p;
+  gsize i;
+  for (i = 0; i != size; i++)
+    b[i] = 0;
+}
+
+gsize fast_site_size (void) { return sizeof (FastSite); }
+gsize fast_frames_size (void) { return sizeof (Frames); }
+gsize fast_hook_size (void) { return sizeof (FastHook); }
+
+void
+fast_site_init (FastSite *s, gint plan_ok, gint base_slot, gint base_low, gint index_slot,
+    gint index_low, gint shift, gint64 disp, guint64 rip, gint op_size, guint64 write_pc,
+    gpointer js_before, gpointer js_after)
+{
+  zero (s, sizeof (FastSite));
+  s->rip_of_write = write_pc;
+  s->plan_ok = plan_ok;
+  s->base_slot = base_slot;
+  s->base_low = base_low;
+  s->index_slot = index_slot;
+  s->index_low = index_low;
+  s->shift = shift;
+  s->disp = disp;
+  s->rip = rip;
+  s->op_size = op_size;
+  s->js_before = js_before;
+  s->js_after = js_after;
+}
+
+void
+fast_site_set_hooks (FastSite *s, gint count, FastHook **hooks)
+{
+  gint i;
+  s->hook_count = 0;
+  for (i = 0; i != count; i++)
+    s->hooks[i] = hooks[i];
+  s->hook_count = count;
+}
+
+void
+fast_hook_init (FastHook *h)
+{
+  zero (h, sizeof (FastHook));
+}
+
+void
+fast_hook_configure (FastHook *h, gint fast, gint fixed, gint filter_address, guint64 target,
+    gint size, gint depth, gint value_type, gint integer, double lo, double hi)
+{
+  h->fast = 0;
+  h->fixed = fixed;
+  h->filter_address = filter_address;
+  h->target = target;
+  h->size = size;
+  h->depth = depth;
+  h->value_type = value_type;
+  h->integer = integer;
+  h->lo = lo;
+  h->hi = hi;
+  h->fast = fast;
+}
+
+void
+fast_hook_transform (FastHook *h, gint op, gint direction, gint has_min, gint has_max,
+    double a, double b)
+{
+  h->op = OP_JS;
+  h->direction = direction;
+  h->has_min = has_min;
+  h->has_max = has_max;
+  h->a = a;
+  h->b = b;
+  h->op = op;
+}
+
+void fast_hook_enable (FastHook *h, gint enabled) { h->enabled = enabled; }
+
+void
+fast_hook_accept (FastHook *h, guint64 *frames)
+{
+  gint k;
+  if (h->accepted_count == MAX_ACCEPTED)
+    return;
+  for (k = 0; k != MAX_DEPTH; k++)
+    h->accepted[h->accepted_count][k] = frames[k];
+  h->accepted_count = h->accepted_count + 1;
+}
+
+gint
+fast_hook_take (FastHook *h, double *last, guint64 *where)
+{
+  gint count = h->count;
+  if (count == 0)
+    return 0;
+  g_atomic_int_add (&h->count, -count);
+  last[0] = h->last_old;
+  last[1] = h->last_new;
+  last[2] = h->last_result;
+  where[0] = h->last_address;
+  where[1] = h->last_tid;
+  return count;
+}
+
+void
+fast_site_take_profile (FastSite *s, gint *out)
+{
+  out[0] = s->calls;
+  out[1] = s->skipped;
+  out[2] = s->js_calls;
+  g_atomic_int_add (&s->calls, -out[0]);
+  g_atomic_int_add (&s->skipped, -out[1]);
+  g_atomic_int_add (&s->js_calls, -out[2]);
+}
+
+static guint32
+mix (guint64 a, guint64 b)
+{
+  guint64 h = (1469598103934665603ULL ^ a) * 1099511628211ULL;
+  h = (h ^ b) * 1099511628211ULL;
+  return (guint32) (h ^ (h >> 29));
+}
+
+void
+fast_frames_init (gint have_limits)
+{
+  zero (&frames_table, sizeof (Frames));
+  frames_table.have_limits = have_limits;
+}
+
+/* Executable memory, written to the buffer not in use and then switched. */
+void
+fast_set_ranges (gint count, Range *ranges)
+{
+  gint next = 1 - frames_table.active;
+  gint i;
+  if (count > CODE_RANGES)
+    count = CODE_RANGES;
+  for (i = 0; i != count; i++)
+    frames_table.ranges[next][i] = ranges[i];
+  frames_table.range_count[next] = count;
+  frames_table.active = next;
+}
+
+void
+fast_teach_verdict (guint64 value, guint64 inside, gint kind, gint below)
+{
+  guint32 i = mix (value, inside) & (VERDICTS - 1);
+  gint n;
+  if (frames_table.verdicts_used >= VERDICTS * 3 / 4)
+  {
+    for (n = 0; n != VERDICTS; n++)
+      frames_table.verdicts[n].valid = 0;
+    frames_table.verdicts_used = 0;
+  }
+  for (n = 0; n != VERDICTS; n++, i = (i + 1) & (VERDICTS - 1))
+  {
+    Verdict *v = &frames_table.verdicts[i];
+    if (v->valid)
+    {
+      if (v->value == value && v->inside == inside)
+        return;
+      continue;
+    }
+    v->value = value;
+    v->inside = inside;
+    v->kind = kind;
+    v->below = below;
+    v->valid = 1;
+    frames_table.verdicts_used++;
+    return;
+  }
+}
+
+void
+fast_teach_skip (guint64 inside, gint known)
+{
+  guint32 i = mix (inside, 0) & (SKIPS - 1);
+  gint n;
+  if (frames_table.skips_used >= SKIPS * 3 / 4)
+  {
+    for (n = 0; n != SKIPS; n++)
+      frames_table.skips[n].valid = 0;
+    frames_table.skips_used = 0;
+  }
+  for (n = 0; n != SKIPS; n++, i = (i + 1) & (SKIPS - 1))
+  {
+    Skip *s = &frames_table.skips[i];
+    if (s->valid)
+    {
+      if (s->inside == inside)
+        return;
+      continue;
+    }
+    s->inside = inside;
+    s->known = known;
+    s->valid = 1;
+    frames_table.skips_used++;
+    return;
+  }
+}
+
+static Verdict *
+find_verdict (guint64 value, guint64 inside)
+{
+  guint32 i = mix (value, inside) & (VERDICTS - 1);
+  gint n;
+  for (n = 0; n != VERDICTS; n++, i = (i + 1) & (VERDICTS - 1))
+  {
+    Verdict *v = &frames_table.verdicts[i];
+    if (!v->valid)
+      return NULL;
+    if (v->value == value && v->inside == inside)
+      return v;
+  }
+  return NULL;
+}
+
+static gint
+find_skip (guint64 inside, gint *known)
+{
+  guint32 i = mix (inside, 0) & (SKIPS - 1);
+  gint n;
+  for (n = 0; n != SKIPS; n++, i = (i + 1) & (SKIPS - 1))
+  {
+    Skip *s = &frames_table.skips[i];
+    if (!s->valid)
+      return 0;
+    if (s->inside == inside)
+    {
+      *known = s->known;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static gint
+executable (guint64 value)
+{
+  gint active = frames_table.active;
+  Range *ranges = frames_table.ranges[active];
+  gint low = 0, high = frames_table.range_count[active] - 1;
+  while (low <= high)
+  {
+    gint middle = (low + high) / 2;
+    if (value < ranges[middle].start)
+      high = middle - 1;
+    else if (value >= ranges[middle].end)
+      low = middle + 1;
+    else
+      return 1;
+  }
+  return 0;
+}
+
+/* callerFrames of the agent with what it taught: 1 with the frames, 0 if
+   the scan finds none (no signature), -1 if it needs a value not taught. */
+static gint
+native_frames (guint64 rsp, guint64 pc, gint depth, guint64 *frames)
+{
+  guint64 low, high, frame_rsp = rsp, inside = pc;
+  gint k;
+  if (!frames_table.have_limits)
+    return -1;
+  stack_limits (&low, &high);
+  for (k = 0; k != depth; k++)
+  {
+    guint64 cursor;
+    gint known, slot, found = 0;
+    if (!find_skip (inside, &known))
+      return -1;
+    cursor = known >= 0 ? frame_rsp + known : frame_rsp;
+    for (slot = 0; slot != SCAN_SLOTS; slot++, cursor += 8)
+    {
+      guint64 value;
+      Verdict *v;
+      if (cursor < low || cursor + 8 > high)
+        return 0;
+      value = *(guint64 *) cursor;
+      if (!executable (value))
+        continue;
+      v = find_verdict (value, inside);
+      if (v == NULL)
+        return -1;
+      if (v->kind == 0)
+        continue;
+      if (known < 0 && v->kind == 2 && v->below >= 0 && cursor - frame_rsp < (guint64) v->below)
+        continue;
+      frames[k] = value;
+      inside = value;
+      frame_rsp = cursor + 8;
+      found = 1;
+      break;
+    }
+    if (!found)
+      return 0;
+  }
+  return 1;
+}
+
+static gint
+frames_equal (const guint64 *a, const guint64 *b, gint depth)
+{
+  gint k;
+  for (k = 0; k != depth; k++)
+  {
+    if (a[k] != b[k])
+      return 0;
+  }
+  return 1;
+}
+
+static guint64
+register_value (guint8 *block, gint slot, gint low)
+{
+  guint64 value = slot == SLOT_RSP ? (guint64) (block + RSP_FROM_BLOCK)
+      : *(guint64 *) (block + slot);
+  return low ? (value & 0xffffffffULL) : value;
+}
+
+static guint64
+site_address (FastSite *s, guint8 *block)
+{
+  guint64 address = 0;
+  if (s->base_slot == SLOT_RIP)
+    address = s->rip;
+  else if (s->base_slot != SLOT_NONE)
+    address = register_value (block, s->base_slot, s->base_low);
+  if (s->index_slot != SLOT_NONE)
+    address += register_value (block, s->index_slot, s->index_low) << s->shift;
+  return address + (guint64) s->disp;
+}
+
+/* 1: a learned caller, 0: another caller (or none found), -1: ask JavaScript. */
+static gint
+caller_verdict (FastSite *s, FastHook *h, guint64 rsp)
+{
+  guint64 frames[MAX_DEPTH];
+  gint n, found = native_frames (rsp, s->rip_of_write, h->depth, frames);
+  if (found <= 0)
+    return found;
+  for (n = 0; n != h->accepted_count; n++)
+  {
+    if (frames_equal (h->accepted[n], frames, h->depth))
+      return 1;
+  }
+  return 0;
+}
+
+static double
+read_value (guint64 address, gint type)
+{
+  gpointer p = (gpointer) address;
+  switch (type)
+  {
+    case VT_I8: return *(gint8 *) p;
+    case VT_I16: return *(gint16 *) p;
+    case VT_I32: return *(gint32 *) p;
+    case VT_I64: return (double) *(gint64 *) p;
+    case VT_U8: return *(guint8 *) p;
+    case VT_U16: return *(guint16 *) p;
+    case VT_U32: return *(guint32 *) p;
+    case VT_U64: return (double) (gint64) *(guint64 *) p;
+    case VT_F32: return *(float *) p;
+    default: return *(double *) p;
+  }
+}
+
+static void
+write_value (guint64 address, gint type, double value)
+{
+  gpointer p = (gpointer) address;
+  gint64 whole = (gint64) value;
+  switch (type)
+  {
+    case VT_I8: *(gint8 *) p = (gint8) whole; break;
+    case VT_I16: *(gint16 *) p = (gint16) whole; break;
+    case VT_I32: *(gint32 *) p = (gint32) whole; break;
+    case VT_I64: *(gint64 *) p = whole; break;
+    case VT_U8: *(guint8 *) p = (guint8) whole; break;
+    case VT_U16: *(guint16 *) p = (guint16) whole; break;
+    case VT_U32: *(guint32 *) p = (guint32) whole; break;
+    case VT_U64: *(guint64 *) p = (guint64) whole; break;
+    case VT_F32: *(float *) p = (float) value; break;
+    default: *(double *) p = value; break;
+  }
+}
+
+/* As normalize() in the agent: integers truncated into their range. */
+static gint
+normalize (FastHook *h, double *value)
+{
+  double x = *value;
+  if (x != x || x > 1.7e308 || x < -1.7e308)
+    return 0;
+  if (h->integer)
+  {
+    if (x < h->lo)
+      x = h->lo;
+    if (x > h->hi)
+      x = h->hi;
+    x = (double) (gint64) x;
+  }
+  *value = x;
+  return 1;
+}
+
+static void
+apply (FastHook *h, guint64 target, double old, guint32 tid)
+{
+  double current = read_value (target, h->value_type);
+  double result = current;
+  gint change = 1;
+  if (h->op == OP_MULTIPLY)
+  {
+    double delta = current - old;
+    if ((h->direction == 1 && delta <= 0) || (h->direction == 2 && delta >= 0))
+      change = 0;
+    else
+      result = old + delta * h->a;
+  }
+  else if (h->op == OP_FREEZE)
+  {
+    result = h->a;
+  }
+  else
+  {
+    if (h->has_min && result < h->a)
+      result = h->a;
+    if (h->has_max && result > h->b)
+      result = h->b;
+  }
+  if (change)
+  {
+    if (!normalize (h, &result))
+      return;
+    if (result != current)
+      write_value (target, h->value_type, result);
+  }
+  h->last_old = old;
+  h->last_new = current;
+  h->last_result = result;
+  h->last_address = target;
+  h->last_tid = tid;
+  g_atomic_int_add (&h->count, 1);
+}
+
+static Pending *
+claim (FastSite *s, guint32 tid)
+{
+  gint i;
+  if (s->in_use != 0)
+  {
+    /* A write whose after never ran (an exception unwound past it). */
+    for (i = 0; i != PENDING; i++)
+    {
+      Pending *p = &s->pending[i];
+      if (p->busy != 0 && p->tid == tid)
+        return p;
+    }
+  }
+  for (i = 0; i != PENDING; i++)
+  {
+    Pending *p = &s->pending[i];
+    if (g_atomic_int_add (&p->busy, 1) == 0)
+    {
+      p->tid = tid;
+      g_atomic_int_add (&s->in_use, 1);
+      return p;
+    }
+    g_atomic_int_add (&p->busy, -1);
+  }
+  return NULL;
+}
+
+void
+fast_before (guint8 *block, guint64 tsc, FastSite *s)
+{
+  guint32 js = 0, native = 0;
+  FastHook *hooks[MAX_HOOKS];
+  guint64 targets[MAX_HOOKS];
+  double olds[MAX_HOOKS];
+  guint64 rsp = (guint64) (block + RSP_FROM_BLOCK);
+  guint64 address = 0;
+  gint have_address = 0;
+  gint count = s->hook_count;
+  gint i, js_pending = 0;
+  Pending *p;
+
+  g_atomic_int_add (&s->calls, 1);
+  for (i = 0; i != count; i++)
+  {
+    FastHook *h = s->hooks[i];
+    guint64 target;
+    if (!h->enabled)
+      continue;
+    if (!h->fast || !s->plan_ok)
+    {
+      js |= 1u << i;
+      continue;
+    }
+    if (h->depth > 0 && h->accepted_count > 0)
+    {
+      gint verdict = caller_verdict (s, h, rsp);
+      if (verdict < 0)
+      {
+        js |= 1u << i;
+        continue;
+      }
+      if (verdict == 0)
+        continue;
+    }
+    if (!have_address)
+    {
+      address = site_address (s, block);
+      have_address = 1;
+    }
+    target = address;
+    if (h->fixed)
+    {
+      if (h->filter_address
+          && !(address < h->target + h->size && h->target < address + s->op_size))
+        continue;
+      target = h->target;
+    }
+    if (h->op == OP_JS)
+    {
+      js |= 1u << i;
+      continue;
+    }
+    native |= 1u << i;
+    hooks[i] = h;
+    targets[i] = target;
+    olds[i] = read_value (target, h->value_type);
+  }
+  if (js == 0 && native == 0)
+  {
+    g_atomic_int_add (&s->skipped, 1);
+    return;
+  }
+  if (js != 0)
+  {
+    g_atomic_int_add (&s->js_calls, 1);
+    js_pending = s->js_before (block, tsc, js);
+  }
+  if (native == 0 && !js_pending)
+    return;
+  p = claim (s, os_thread_id ());
+  if (p == NULL)
+    return;
+  p->native = native;
+  p->js = js_pending;
+  for (i = 0; i != count; i++)
+  {
+    if ((native & (1u << i)) == 0)
+      continue;
+    p->hooks[i] = hooks[i];
+    p->target[i] = targets[i];
+    p->old[i] = olds[i];
+  }
+}
+
+void
+fast_after (guint8 *block, guint64 tsc, FastSite *s)
+{
+  Pending *p = NULL;
+  guint32 tid, native;
+  gint i, js;
+  if (s->in_use == 0)
+    return;
+  tid = os_thread_id ();
+  for (i = 0; i != PENDING; i++)
+  {
+    if (s->pending[i].busy != 0 && s->pending[i].tid == tid)
+    {
+      p = &s->pending[i];
+      break;
+    }
+  }
+  if (p == NULL)
+    return;
+  native = p->native;
+  js = p->js;
+  for (i = 0; i != MAX_HOOKS; i++)
+  {
+    if ((native & (1u << i)) != 0)
+      apply (p->hooks[i], p->target[i], p->old[i], tid);
+  }
+  p->tid = 0;
+  g_atomic_int_add (&s->in_use, -1);
+  g_atomic_int_add (&p->busy, -1);
+  if (js)
+    s->js_after (block, tsc);
+}
+`;
+
+const fast = Process.arch !== 'x64' ? null : (() => {
+  const threadId = WINDOWS
+    ? Process.getModuleByName('kernel32.dll').getExportByName('GetCurrentThreadId')
+    : Module.getGlobalExportByName('gettid');
+  // GetCurrentThreadStackLimits keeps the scan on the thread's stack; without
+  // it (Linux) callers are checked in JavaScript.
+  const limits = WINDOWS
+    ? Process.getModuleByName('kernel32.dll').findExportByName('GetCurrentThreadStackLimits')
+    : null;
+  const table = Memory.alloc(FRAMES_TABLE_SIZE);
+  const cm = new CModule(FAST_SOURCE, {
+    os_thread_id: threadId,
+    stack_limits: limits ?? threadId,  // never called without limits
+    frames_table: table
+  });
+  const exclusive = { scheduling: 'exclusive' };
+  const fn = (name, ret, args) => new NativeFunction(cm[name], ret, args, exclusive);
+  // Frida hides its own memory from the ranges: the pages its functions span.
+  const functions = ['fast_before', 'fast_after', 'fast_site_init', 'fast_teach_verdict']
+    .map(name => cm[name]);
+  const low = functions.reduce((a, b) => (a.compare(b) < 0 ? a : b)).and(ptr(Process.pageSize - 1).not());
+  const high = functions.reduce((a, b) => (a.compare(b) > 0 ? a : b)).add(Process.pageSize)
+    .and(ptr(Process.pageSize - 1).not());
+  const range = { base: low, size: high.sub(low).toInt32() };
+  if (Number(new NativeFunction(cm.fast_frames_size, 'size_t', [], exclusive)()) > FRAMES_TABLE_SIZE)
+    throw new Error('FRAMES_TABLE_SIZE is smaller than the C table');
+  new NativeFunction(cm.fast_frames_init, 'void', ['int'], exclusive)(limits === null ? 0 : 1);
+  return {
+    cm,
+    table,
+    before: cm.fast_before,
+    after: cm.fast_after,
+    // The C code reads and writes targets: write watch hits there are the hooks' own.
+    codeRange: range,
+    siteSize: fn('fast_site_size', 'size_t', [])(),
+    hookSize: fn('fast_hook_size', 'size_t', [])(),
+    siteInit: fn('fast_site_init', 'void', ['pointer', 'int', 'int', 'int', 'int', 'int', 'int',
+      'int64', 'uint64', 'int', 'uint64', 'pointer', 'pointer']),
+    setHooks: fn('fast_site_set_hooks', 'void', ['pointer', 'int', 'pointer']),
+    hookInit: fn('fast_hook_init', 'void', ['pointer']),
+    configure: fn('fast_hook_configure', 'void', ['pointer', 'int', 'int', 'int', 'uint64', 'int',
+      'int', 'int', 'int', 'double', 'double']),
+    transform: fn('fast_hook_transform', 'void', ['pointer', 'int', 'int', 'int', 'int', 'double',
+      'double']),
+    enable: fn('fast_hook_enable', 'void', ['pointer', 'int']),
+    accept: fn('fast_hook_accept', 'void', ['pointer', 'pointer']),
+    take: fn('fast_hook_take', 'int', ['pointer', 'pointer', 'pointer']),
+    takeProfile: fn('fast_site_take_profile', 'void', ['pointer', 'pointer']),
+    teachVerdict: fn('fast_teach_verdict', 'void', ['uint64', 'uint64', 'int', 'int']),
+    teachSkip: fn('fast_teach_skip', 'void', ['uint64', 'int']),
+    setRanges: fn('fast_set_ranges', 'void', ['int', 'pointer'])
+  };
+})();
+// Scratch memory for calls into the C code (only the agent's thread uses it).
+const fastScratch = fast === null ? null : {
+  frames: Memory.alloc(8 * FAST_DEPTHS),
+  hooks: Memory.alloc(Process.pointerSize * FAST_MAX_HOOKS),
+  last: Memory.alloc(8 * 3),
+  where: Memory.alloc(8 * 2),
+  profile: Memory.alloc(4 * 3)
+};
+// FastHooks of removed hooks: a game thread may still read them.
+const retiredFastHooks = [];
+
+function slotOf(part) {
+  // Where C finds an address register in the block (see FAST_SOURCE).
+  if (part === null)
+    return [-1, 0];
+  if (part.name === 'rsp')
+    return [-3, part.low ? 1 : 0];
+  return [REGISTER_SLOTS[part.name], part.low ? 1 : 0];
+}
+
+function initFastSite(site) {
+  // The C side of a trampoline site; its hooks are added by updateFastSite.
+  if (site.addressPlan === undefined)
+    site.addressPlan = addressPlan(site.writeIns, site.writeOp);
+  const plan = site.addressPlan;
+  site.fast = Memory.alloc(Number(fast.siteSize));
+  site.order = [];
+  site.jsBefore = new NativeCallback(
+    (block, entered, mask) => (onBefore(site, blockRegisters(block), entered, mask) ? 1 : 0),
+    'int', ['pointer', 'uint64', 'uint32']);
+  site.jsAfter = new NativeCallback((_block, entered) => onAfter(site, entered),
+    'void', ['pointer', 'uint64']);
+  const [baseSlot, baseLow] = plan === null || plan.rip !== null ? [plan === null ? -1 : -2, 0]
+    : slotOf(plan.base);
+  const [indexSlot, indexLow] = plan === null ? [-1, 0] : slotOf(plan.index);
+  fast.siteInit(site.fast, plan === null ? 0 : 1, baseSlot, baseLow, indexSlot, indexLow,
+    plan === null ? 0 : plan.shift, plan === null ? 0 : plan.disp,
+    plan === null || plan.rip === null ? 0 : uint64(plan.rip.toString()),
+    site.writeOp.size, uint64(site.writeIns.address.toString()), site.jsBefore, site.jsAfter);
+}
+
+function updateFastSite(site) {
+  // Hands C the site's hooks in the order onBefore's mask counts them.
+  site.order = Array.from(site.hooks.values());
+  site.order.forEach((hook, i) => {
+    fastScratch.hooks.add(i * Process.pointerSize).writePointer(hook.fast);
+  });
+  fast.setHooks(site.fast, site.order.length, fastScratch.hooks);
+}
+
+function nativeTransform(spec) {
+  // [op, direction, hasMin, hasMax, a, b] for C, from the transform's ``native``.
+  const native = spec.native;
+  if (native === null || native === undefined)
+    return [FAST_OP.js, 0, 0, 0, 0, 0];
+  if (native.op === 'multiply')
+    return [FAST_OP.multiply, FAST_DIRECTION[native.direction] ?? 0, 0, 0, native.factor, 0];
+  if (native.op === 'freeze')
+    return [FAST_OP.freeze, 0, 0, 0, native.value, 0];
+  if (native.op === 'clamp')
+    return [FAST_OP.clamp, 0, native.minimum === null ? 0 : 1, native.maximum === null ? 0 : 1,
+      native.minimum ?? 0, native.maximum ?? 0];
+  return [FAST_OP.js, 0, 0, 0, 0, 0];
+}
+
+function configureFastHook(hook) {
+  // What C may decide for the hook; the rest goes to onBefore.
+  if (hook.fast === undefined)
+    return;
+  const fixed = hook.target !== null;
+  // A fixed target with callers learns them on every write: JavaScript.
+  const canFast = !hook.debug && hook.pointer === null && !(fixed && hook.callerDepth > 0);
+  const limits = hook.io.limits;
+  fast.configure(hook.fast, canFast ? 1 : 0, fixed ? 1 : 0, hook.filterAddress ? 1 : 0,
+    fixed ? uint64(hook.target.toString()) : 0, hook.io.size,
+    !fixed && hook.callers.size > 0 ? hook.callerDepth : 0, FAST_TYPE[hook.valueType],
+    limits === null ? 0 : 1, limits === null ? 0 : limits[0], limits === null ? 0 : limits[1]);
+  const [op, direction, hasMin, hasMax, a, b] = nativeTransform(hook.transformSpec);
+  fast.transform(hook.fast, op, direction, hasMin, hasMax, a, b);
+  fast.enable(hook.fast, hook.enabled ? 1 : 0);
+}
+
+function writeFrames(key) {
+  // A caller signature ("0x…,0x…") as the frames C compares.
+  const frames = key.split(',');
+  for (let k = 0; k < FAST_DEPTHS; k++)
+    fastScratch.frames.add(8 * k).writeU64(k < frames.length ? uint64(frames[k]) : 0);
+  return fastScratch.frames;
+}
+
+function initFastHook(hook) {
+  hook.fast = Memory.alloc(Number(fast.hookSize));
+  fast.hookInit(hook.fast);
+  for (const key of hook.callers.keys())
+    fast.accept(hook.fast, writeFrames(key));
+  configureFastHook(hook);
+}
+
+function teachVerdict(value, inside, start, below) {
+  // What callerFrame decided about a stack value: C decides the same from now on.
+  if (fast === null)
+    return;
+  const kind = start === null ? 0 : start === true ? 1 : 2;
+  fast.teachVerdict(uint64(value.toString()), uint64(inside.toString()), kind,
+    below === null || below === undefined ? -1 : below);
+}
+
+function teachSkip(inside, known) {
+  if (fast !== null)
+    fast.teachSkip(uint64(inside.toString()), known === null ? -1 : known);
+}
+
+let fastRangesAt = 0;
+// Flushes (100 ms each) between snapshots of executable memory.
+const RANGES_REFRESH_TICKS = 50;
+
+function refreshFastRanges() {
+  // A new snapshot of executable memory for both scans (new modules, JIT
+  // code); it takes ~25 ms in large games, during which a hook needing
+  // JavaScript waits.
+  if (hooks.size === 0)
+    return;
+  const merged = loadExecutableRanges();
+  if (fast === null)
+    return;
+  const count = Math.min(merged.length, FAST_CODE_RANGES);
+  if (fastScratch.ranges === undefined)
+    fastScratch.ranges = Memory.alloc(16 * FAST_CODE_RANGES);
+  merged.slice(0, count).forEach(([start, end], i) => {
+    fastScratch.ranges.add(16 * i).writePointer(start);
+    fastScratch.ranges.add(16 * i + 8).writePointer(end);
+  });
+  fast.setRanges(count, fastScratch.ranges);
+  fastRangesAt = Date.now();
+}
+
+function takeFastStats(hook) {
+  // Writes C manipulated since the last flush, added to the hook's stats.
+  if (hook.fast === undefined)
+    return;
+  const count = fast.take(hook.fast, fastScratch.last, fastScratch.where);
+  if (count === 0)
+    return;
+  hook.stats.count += count;
+  hook.stats.last = {
+    old: fastScratch.last.readDouble(),
+    new: fastScratch.last.add(8).readDouble(),
+    result: fastScratch.last.add(16).readDouble(),
+    threadId: fastScratch.where.add(8).readU64().toNumber(),
+    address: fastScratch.where.readPointer()
+  };
 }
 
 function reportAgentError(where, error) {
@@ -1035,27 +2006,33 @@ function pendingWrite(site, regs) {
     },
     signature(depth) {
       if (!signatures.has(depth))
-        signatures.set(depth, siteSignature(site, regs.get('rsp'), depth));
+        signatures.set(depth, callerSignature(regs.get('rsp'), depth, site.writeIns.address));
       return signatures.get(depth);
     }
   };
 }
 
-function onBefore(site, regs, entered) {
+function onBefore(site, regs, entered, mask) {
+  // With a ``mask`` (from the C fast path) only those hooks of site.order;
+  // returns whether onAfter has work.
   const start = profiling ? Number(readTsc()) : 0;
   let taken = false;
+  let pending = false;
   try {
     if (site.method === undefined && engineFound)
       nameSite(site);
     const threadId = Process.getCurrentThreadId();
     const write = pendingWrite(site, regs);
-    for (const hook of site.hooks.values()) {
+    const candidates = mask === undefined ? Array.from(site.hooks.values())
+      : site.order.filter((_hook, i) => (mask & (1 << i)) !== 0);
+    for (const hook of candidates) {
       if (!hook.enabled)
         continue;
       const { target, skip } = hook.pointer !== null ? pointerTarget(hook, write)
         : hook.target === null ? dynamicTarget(hook, write) : fixedTarget(hook, write);
       if (target !== undefined) {
         taken = true;
+        pending = true;
         hook.pending.set(threadId, {
           target,
           old: readTarget(hook.io, target),
@@ -1074,6 +2051,7 @@ function onBefore(site, regs, entered) {
         } else {
           // Show the value before and after the write, as for applied calls.
           entry.old = peekTarget(hook.io, address);
+          pending = true;
           hook.pending.set(threadId, { target: address, skipped: entry });
         }
       }
@@ -1083,10 +2061,13 @@ function onBefore(site, regs, entered) {
   }
   if (profiling) {
     const profile = profileCall(site, entered, start);
-    profile.calls += 1;
-    if (!taken)
-      profile.skipped += 1;
+    if (site.fast === undefined) {  // the C fast path counts its own calls
+      profile.calls += 1;
+      if (!taken)
+        profile.skipped += 1;
+    }
   }
+  return pending;
 }
 
 function onAfter(site, entered) {
@@ -1119,7 +2100,7 @@ function buildTrampoline(site, needed) {
   const w = new X86Writer(code, { pc: code });
   const r = new X86Relocator(origin, w);
 
-  emitCallback(w, site.before);
+  emitCallback(w, site.before, site.fast ?? null);
   let patchSize = 0;
   let first = true;
   while (patchSize < needed) {
@@ -1129,7 +2110,7 @@ function buildTrampoline(site, needed) {
     patchSize = total;
     r.writeOne();
     if (first) {
-      emitCallback(w, site.after);
+      emitCallback(w, site.after, site.fast ?? null);
       first = false;
     }
     if (r.eoi)
@@ -1232,11 +2213,17 @@ function installSite(writeIns, writeOp, shortJump) {
   const site = { writeIns, writeOp, hooks: new Map(), cave: null, breakpoint: false };
   site.bytes = hexBytes(writeIns.address.readByteArray(writeIns.size));
   site.context = codeContext(writeIns);
-  site.before = new NativeCallback(
-    (block, entered) => onBefore(site, blockRegisters(block), entered),
-    'void', ['pointer', 'uint64']);
-  site.after = new NativeCallback((_block, entered) => onAfter(site, entered),
-    'void', ['pointer', 'uint64']);
+  if (fast !== null) {
+    initFastSite(site);
+    site.before = fast.before;
+    site.after = fast.after;
+  } else {
+    site.before = new NativeCallback(
+      (block, entered) => onBefore(site, blockRegisters(block), entered),
+      'void', ['pointer', 'uint64']);
+    site.after = new NativeCallback((_block, entered) => onAfter(site, entered),
+      'void', ['pointer', 'uint64']);
+  }
   const origin = writeIns.address;
   let built;
   try {
@@ -1659,6 +2646,8 @@ function addHook(spec) {
   const site = existingSite !== undefined ? existingSite
     : spec.breakpoint === true ? installBreakpointSite(writeIns, writeOp)
       : installSite(writeIns, writeOp, spec.shortJump === true);
+  if (site.fast !== undefined && site.hooks.size >= FAST_MAX_HOOKS)
+    throw new Error(`At most ${FAST_MAX_HOOKS} hooks share a write site`);
   const learned = resolveCallers(spec.callers, writeIns.address);
   const hook = {
     id: spec.id,
@@ -1678,6 +2667,7 @@ function addHook(spec) {
     foreignCallers: new Set(),
     ambiguousReported: false,
     transform,
+    transformSpec: spec.transform,
     enabled: spec.enabled,
     debug: false,
     pending: new Map(),
@@ -1686,6 +2676,12 @@ function addHook(spec) {
   };
   site.hooks.set(spec.id, hook);
   hooks.set(spec.id, hook);
+  if (site.fast !== undefined) {
+    initFastHook(hook);
+    updateFastSite(site);
+    if (fastRangesAt === 0)
+      refreshFastRanges();
+  }
   if (learned.dropped > 0) {
     reportCallers(hook);  // saved without them
     send({ kind: 'callers-dropped', hookId: spec.id, count: learned.dropped });
@@ -1959,6 +2955,11 @@ function removeHook(id) {
     return false;
   hooks.delete(id);
   hook.site.hooks.delete(id);
+  if (hook.fast !== undefined) {
+    fast.enable(hook.fast, 0);
+    retiredFastHooks.push(hook.fast);
+    updateFastSite(hook.site);
+  }
   if (hook.site.hooks.size === 0)
     uninstallSite(hook.site);
   return true;
@@ -1974,6 +2975,7 @@ function requireHook(id) {
 function flushStats() {
   const events = [];
   for (const hook of hooks.values()) {
+    takeFastStats(hook);
     if (hook.stats.count === 0)
       continue;
     const last = hook.stats.last;
@@ -2002,6 +3004,8 @@ function flushStats() {
 let flushTicks = 0;
 const flushTimer = setInterval(() => {
   engineFound = engine.refresh();
+  if (flushTicks % RANGES_REFRESH_TICKS === 0)
+    refreshFastRanges();
   if (++flushTicks % SITE_CHECK_TICKS === 0) {
     checkSites();
     if (profiling) {
@@ -2019,7 +3023,9 @@ send({
   kind: 'ready',
   arch: Process.arch,
   accessStub: accessStub.toString(),
-  accessStubSize: Process.pageSize
+  accessStubSize: Process.pageSize,
+  fastCode: fast === null ? null : fast.codeRange.base.toString(),
+  fastCodeSize: fast === null ? 0 : fast.codeRange.size
 });
 
 rpc.exports = {
@@ -2035,7 +3041,9 @@ rpc.exports = {
     }
     const hook = requireHook(id);
     hook.transform = compileTransform(spec);
+    hook.transformSpec = spec;
     hook.errorReported = false;
+    configureFastHook(hook);
     return true;
   },
   setRepatch(enabled) {
@@ -2054,7 +3062,9 @@ rpc.exports = {
       training.debug = enabled;
       return true;
     }
-    requireHook(id).debug = enabled;
+    const hook = requireHook(id);
+    hook.debug = enabled;
+    configureFastHook(hook);
     return true;
   },
   setEnabled(id, enabled) {
@@ -2067,6 +3077,7 @@ rpc.exports = {
     hook.enabled = enabled;
     if (!enabled)
       hook.pending.clear();
+    configureFastHook(hook);
     return true;
   },
   dispose() {
