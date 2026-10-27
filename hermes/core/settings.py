@@ -55,6 +55,7 @@ SETTINGS = (
     Setting("large_trace", INT, 5000, minimum=100, maximum=100_000, step=500),
     Setting("hook_short_jump", BOOL, False),
     Setting("hook_repatch", BOOL, False),
+    Setting("hook_profiling", BOOL, False),
     Setting("trace_sequence", INT, 100_000, minimum=1000, maximum=500_000, step=10_000),
     Setting("language", CHOICE, "system", choices=("system", "de", "en"), restart=True),
 )

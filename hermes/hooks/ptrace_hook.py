@@ -66,7 +66,8 @@ class PtraceHookWorker(PtraceWatchpointEngine):
     # Frida-only; kept for interface parity
     site_method = pyqtSignal(list, str, object)
     managed_failed = pyqtSignal(int, str)
-    site_state = pyqtSignal(list, str, int)
+    site_state = pyqtSignal(list, str, int, str)
+    hook_profile = pyqtSignal(list)
     hook_debug = pyqtSignal(list, dict)
     agent_log = pyqtSignal(str, str)
     agent_warning = pyqtSignal(str)

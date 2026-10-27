@@ -75,8 +75,8 @@ class HookRepository:
     def add_hook(self, process_id, *, label, module, module_offset,
                  instruction_bytes, instruction_text, value_type, transform,
                  enabled=True, caller_depth=1, callers=(), pointer=None, signature=None,
-                 managed=None):
-        # pylint: disable=too-many-arguments
+                 managed=None, breakpoint=False):
+        # pylint: disable=too-many-arguments,redefined-builtin
         """Save a hook and return its id."""
         with self._sessions() as session:
             hook = Hook(
@@ -93,6 +93,7 @@ class HookRepository:
                 pointer=None if pointer is None else pointer.to_json(),
                 signature=signature,
                 managed=managed,
+                breakpoint=breakpoint,
             )
             _store_transform(hook, transform)
             session.add(hook)
@@ -100,8 +101,8 @@ class HookRepository:
             return hook.id
 
     def update_hook(self, hook_id, *, label=None, transform=None, enabled=None,
-                    callers=None, managed=None):
-        # pylint: disable=too-many-arguments
+                    callers=None, managed=None, breakpoint=None):
+        # pylint: disable=too-many-arguments,redefined-builtin
         """Change the given fields of a saved hook; ``None`` keeps a field."""
         with self._sessions() as session:
             hook = session.get(Hook, hook_id)
@@ -117,6 +118,8 @@ class HookRepository:
                 hook.callers = [list(map(list, frames)) for frames in callers]
             if managed is not None:
                 hook.managed = managed
+            if breakpoint is not None:
+                hook.breakpoint = breakpoint
             session.commit()
 
     # ------------------------------------------------------------------

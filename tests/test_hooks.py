@@ -510,13 +510,7 @@ def test_hook_reverted_by_the_game_is_reported_and_patched_again(tmp_path, qt_ap
     from hermes.core import settings
     from hermes.ui.widgets.hooks import HookPanel
 
-    script = tmp_path / "target.py"
-    script.write_text(_CTYPES_TARGET)
-    process = subprocess.Popen([sys.executable, "-I", str(script)],
-                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-    pid, address, function = process.stdout.readline().split()
-    target = _Target.__new__(_Target)
-    target.process, target.pid, target.address = process, int(pid), int(address, 16)
+    target, function = _start_ctypes_target(tmp_path)
     original = _CTYPES_WRITE + [0x90] * 3
 
     def revert():
@@ -555,6 +549,67 @@ def test_hook_reverted_by_the_game_is_reported_and_patched_again(tmp_path, qt_ap
         assert status() == "Aktiv" and target.send("add", 1)[0] == 131
     finally:
         settings.reset()
+        panel.shutdown(timeout_ms=None)
+        target.close()
+
+
+def _start_ctypes_target(tmp_path):
+    """Start _CTYPES_TARGET; returns the _Target and its write function (hex)."""
+    script = tmp_path / "target.py"
+    script.write_text(_CTYPES_TARGET)
+    process = subprocess.Popen([sys.executable, "-I", str(script)],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    pid, address, function = process.stdout.readline().split()
+    target = _Target.__new__(_Target)
+    target.process, target.pid, target.address = process, int(pid), int(address, 16)
+    return target, function
+
+
+def _read_code(pid, address, size):
+    import frida  # pylint: disable=import-outside-toplevel
+
+    session = frida.attach(pid)
+    code = []
+    script = session.create_script(
+        f"send(Array.from(new Uint8Array(ptr('{address}').readByteArray({size}))));")
+    script.on("message", lambda message, _data: code.extend(message["payload"]))
+    script.load()
+    script.unload()
+    session.detach()
+    return code
+
+
+@requires_x64_attach
+def test_breakpoint_hook_leaves_the_code_untouched(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import dataclasses
+
+    from hermes.ui.widgets.hooks import HookPanel
+
+    target, function = _start_ctypes_target(tmp_path)
+    code = _read_code(target.pid, function, 7)
+    panel = HookPanel(translations)
+    status = lambda: panel.table.item(0, 4).text()  # pylint: disable=unnecessary-lambda-assignment
+    try:
+        panel.set_process(target.pid)
+        hook_id = panel.add_hook(HookSpec(target.address, "int32", MultiplyTransform(10),
+                                          write_pc=int(function, 16), breakpoint=True,
+                                          label="Gold"), "write")
+        _wait_for(qt_app, lambda: status() == "Aktiv")
+        assert "Slot 1" in panel.table.item(0, 2).toolTip()
+        assert target.send("add", 1)[0] == 110
+        assert target.send("add", 2)[0] == 130
+        assert _read_code(target.pid, function, 7) == code
+
+        # Switched to a patched jump, the hook is installed anew in place.
+        state = panel._hooks[hook_id]
+        state["spec"] = dataclasses.replace(state["spec"], breakpoint=False)
+        panel._reinstall(hook_id)
+        _wait_for(qt_app, lambda: panel.table.rowCount() == 1 and status() == "Aktiv")
+        assert "Trampolin" in panel.table.item(0, 2).toolTip()
+        assert target.send("add", 1)[0] == 140
+        assert _read_code(target.pid, function, 7) != code
+    finally:
         panel.shutdown(timeout_ms=None)
         target.close()
 

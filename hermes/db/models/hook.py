@@ -24,6 +24,8 @@ class Hook(Base):  # pylint: disable=too-few-public-methods
     after a restart, training is the fallback.
     ``callers`` holds the learned caller signatures, each a list of
     ``caller_depth`` ``[module, offset]`` return addresses.
+    With ``breakpoint`` the hook uses a hardware breakpoint instead of a
+    patched jump (see ``HookSpec.breakpoint``); NULL in older rows means no.
 
     The manipulation is a copy of the template it was created from
     (``template_id``), so editing or deleting the template does not change
@@ -54,6 +56,7 @@ class Hook(Base):  # pylint: disable=too-few-public-methods
     pointer = Column(JSON, nullable=True)                # PointerChain.to_json() of the target
     signature = Column(JSON, nullable=True)              # code around a JIT write instruction
     managed = Column(JSON, nullable=True)                # C# method of a JIT write instruction
+    breakpoint = Column(Boolean, nullable=True)          # hardware breakpoint, no code patch
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     process = relationship("Process", back_populates="hooks")

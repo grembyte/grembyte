@@ -81,6 +81,8 @@ const SAVED_REGS = [
 const MAX_CALLER_DEPTH = 4;
 const CALLER_SCAN_SLOTS = 256;
 const MAX_CALLERS = 64;
+// Caller signatures remembered per write site for its fast path (siteSignature).
+const MAX_VERIFIED_CALLERS = 1024;
 const CALL_SIZES = [5, 2, 3, 6, 7, 4];
 const MAX_DEBUG_EVENTS = 200;
 // Largest distance from a function's start to code in it (for code without symbols).
@@ -103,11 +105,16 @@ const retiredSites = [];
 const SITE_CHECK_TICKS = 10;
 // Patch a site again when the game restored its original code (setRepatch).
 let repatchReverted = false;
+// Measure the hooked writes per site (setProfiling): calls, how long a game
+// thread waited from entering the trampoline until its JavaScript ran (the
+// agent runs one thread at a time), and how long that ran.
+let profiling = false;
 // Code bytes kept on each side of a write instruction to recognize it in
 // JIT code, which is generated anew (elsewhere) on every start.
 const CONTEXT_SIZE = 32;
-// Hardware watchpoint slots for training; slot 0 is used by the write watch.
-const TRAINING_SLOTS = [1, 2, 3];
+// Debug register slots for trainings and breakpoint sites; slot 0 is used
+// by the write watch.
+const DEBUG_SLOTS = [1, 2, 3];
 // Share of context bytes that must match; JIT code embeds absolute
 // addresses that differ between runs.
 const TRAINING_MIN_SIMILARITY = 0.6;
@@ -119,7 +126,7 @@ let trainingScheduled = false;
 // While a write watch runs, trainings rest: enumerating threads while one of
 // them handles the watch's trap deadlocks Frida (and the game).
 let trainingPaused = false;
-let trainingHandlerInstalled = false;
+let exceptionHandlerInstalled = false;
 
 function toBigInt(value) {
   return BigInt(ptr(value).toString()) & MASK64;
@@ -416,9 +423,11 @@ function callerFrame(frameRsp, inside) {
   return null;
 }
 
-function callerSignature(rsp, depth, pc) {
-  // The return addresses of the ``depth`` calls that led to ``pc``, innermost first.
+function callerFrames(rsp, depth, pc) {
+  // The return addresses of the ``depth`` calls that led to ``pc``, innermost
+  // first, as ``key``, and the distances of their slots from ``rsp``.
   const frames = [];
+  const offsets = [];
   let inside = pc;
   let frameRsp = rsp;
   while (frames.length < depth) {
@@ -426,10 +435,47 @@ function callerSignature(rsp, depth, pc) {
     if (found === null)
       return null;
     frames.push(found.value.toString());
+    offsets.push(found.slot.sub(rsp).toInt32());
     inside = found.value;
     frameRsp = found.slot.add(Process.pointerSize);  // the caller's after the return
   }
-  return frames.join(',');
+  return { key: frames.join(','), offsets };
+}
+
+function callerSignature(rsp, depth, pc) {
+  const found = callerFrames(rsp, depth, pc);
+  return found === null ? null : found.key;
+}
+
+function siteSignature(site, rsp, depth) {
+  // callerSignature for a hooked write, which may run thousands of times a
+  // second. Functions with a fixed frame keep their return address at the
+  // same distance from rsp on every run, so the slots of the last scan are
+  // read first: return addresses seen there before (verified by a scan)
+  // are taken as they are. Only a new combination is scanned.
+  if (site.frameLayouts === undefined)
+    site.frameLayouts = new Map();  // depth -> { offsets, verified: Set }
+  const layout = site.frameLayouts.get(depth);
+  if (layout !== undefined) {
+    try {
+      const key = layout.offsets.map(offset => rsp.add(offset).readPointer().toString()).join(',');
+      if (layout.verified.has(key))
+        return key;
+    } catch (_error) {
+    }
+  }
+  const found = callerFrames(rsp, depth, site.writeIns.address);
+  if (found === null)
+    return null;
+  let current = layout;
+  if (current === undefined || current.offsets.join() !== found.offsets.join()) {
+    current = { offsets: found.offsets, verified: new Set() };
+    site.frameLayouts.set(depth, current);
+  }
+  if (current.verified.size >= MAX_VERIFIED_CALLERS)
+    current.verified.clear();
+  current.verified.add(found.key);
+  return found.key;
 }
 
 function plausibleCallers(addresses, pc) {
@@ -585,6 +631,10 @@ function frameText(address) {
   return engine.describe(address) || address.toString();
 }
 
+// Whether the process has a runtime that names code (Mono), as of the last
+// flush; until then no hooked write asks for the name of its site.
+let engineFound = engine.id !== null;
+
 function nameSite(site) {
   // Mono only names JIT code for its own threads, i.e. the game's.
   const location = engine.locate(site.writeIns.address);
@@ -690,7 +740,10 @@ function writeValue(io, target, value) {
   }
 }
 
+function ignoreLog() {}
+
 function applyTransform(hook, threadId, pending) {
+  // Runs on every hooked write: strings are only made when a transform asks.
   const { target, old: oldValue } = pending;
   const current = readTarget(hook.io, target);
   const logs = hook.debug ? [] : null;
@@ -701,11 +754,11 @@ function applyTransform(hook, threadId, pending) {
     params: hook.transform.params,
     state: hook.transform.state,
     valueType: hook.valueType,
-    address: target.toString(),
-    writePc: hook.site.writeIns.address.toString(),
+    get address() { return target.toString(); },
+    get writePc() { return hook.site.writeIns.address.toString(); },
     threadId,
     hookId: hook.id,
-    log: logs === null ? () => {} : (...args) => { logs.push(formatLog(args)); }
+    log: logs === null ? ignoreLog : (...args) => { logs.push(formatLog(args)); }
   };
   const entry = logs === null ? null : {
     threadId,
@@ -741,7 +794,75 @@ function applyTransform(hook, threadId, pending) {
     pushDebug(hook, entry);
   }
   hook.stats.count += 1;
-  hook.stats.last = { old: oldValue, new: current, result, threadId, address: target.toString() };
+  // The address is made a string when the stats are sent (flushStats).
+  hook.stats.last = { old: oldValue, new: current, result, threadId, address: target };
+}
+
+// rdtsc; shl rdx, 32; or rax, rdx: the time stamp counter in rax.
+const RDTSC_TO_RAX = [0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0];
+// The time stamp counter, 0 where write hooks do not run (not x64).
+const readTsc = Process.arch !== 'x64' ? () => 0 : (() => {
+  const code = Memory.alloc(Process.pageSize);
+  code.writeByteArray(RDTSC_TO_RAX.concat([0xc3]));
+  Memory.protect(code, Process.pageSize, 'r-x');
+  // Both kept: Frida frees the page with its last reference.
+  // Exclusive: a call must not let go of the agent's lock, or measuring
+  // would add waits of its own.
+  const native = { code, fn: new NativeFunction(code, 'uint64', [], { scheduling: 'exclusive' }) };
+  return () => native.fn();
+})();
+const tscOrigin = { ticks: Number(readTsc()), ms: Date.now() };
+
+function ticksPerMicrosecond() {
+  const ms = Date.now() - tscOrigin.ms;
+  return ms <= 0 ? 0 : (Number(readTsc()) - tscOrigin.ticks) / (ms * 1000);
+}
+
+function newProfile() {
+  return { calls: 0, skipped: 0, waitTicks: 0, waitMax: 0, waits: 0, runTicks: 0, runMax: 0 };
+}
+
+function profileCall(site, entered, start) {
+  // One JavaScript callback of a hooked write: waiting before, running after ``start``.
+  const end = Number(readTsc());
+  if (site.profile === undefined)
+    site.profile = newProfile();
+  const profile = site.profile;
+  if (entered !== undefined) {
+    const wait = start - Number(entered);
+    profile.waitTicks += wait;
+    profile.waits += 1;
+    if (wait > profile.waitMax)
+      profile.waitMax = wait;
+  }
+  const run = end - start;
+  profile.runTicks += run;
+  if (run > profile.runMax)
+    profile.runMax = run;
+  return profile;
+}
+
+function profileEvents() {
+  const perMicrosecond = ticksPerMicrosecond();
+  const events = [];
+  for (const site of sites.values()) {
+    const profile = site.profile;
+    if (profile === undefined || perMicrosecond === 0)
+      continue;
+    const us = ticks => Math.round(ticks / perMicrosecond * 10) / 10;
+    const callbacks = Math.max(profile.waits, 1);
+    events.push({
+      hookIds: Array.from(site.hooks.keys()),
+      calls: profile.calls,
+      skipped: profile.skipped,
+      waitAvg: us(profile.waitTicks / callbacks),
+      waitMax: us(profile.waitMax),
+      runAvg: us(profile.runTicks / callbacks),
+      runMax: us(profile.runMax)
+    });
+    site.profile = newProfile();
+  }
+  return events;
 }
 
 function emitCallback(w, callback) {
@@ -755,7 +876,8 @@ function emitCallback(w, callback) {
   w.putAndRegU32('rsp', 0xfffffff0);
   w.putSubRegImm('rsp', FXSAVE_AREA);
   w.putBytes(FXSAVE64_RSP);
-  w.putCallAddressWithArguments(callback, ['rbx']);
+  w.putBytes(RDTSC_TO_RAX);  // rax and rdx are saved in the block
+  w.putCallAddressWithArguments(callback, ['rbx', 'rax']);
   w.putBytes(FXRSTOR64_RSP);
   w.putMovRegReg('rsp', 'rbx');
   for (const reg of SAVED_REGS.slice().reverse())
@@ -764,13 +886,75 @@ function emitCallback(w, callback) {
   w.putLeaRegRegOffset('rsp', 'rsp', RED_ZONE);
 }
 
-function readRegisters(block) {
-  const regs = {};
-  SAVED_REGS.forEach((name, i) => {
-    regs[name] = block.add(8 * (SAVED_REGS.length - 1 - i)).readPointer();
-  });
-  regs.rsp = block.add(8 * SAVED_REGS.length + 8 + RED_ZONE);
-  return regs;
+// Offset of each saved register in the block emitCallback hands over.
+const REGISTER_SLOTS = Object.fromEntries(
+  SAVED_REGS.map((name, i) => [name, 8 * (SAVED_REGS.length - 1 - i)]));
+
+function blockRegisters(block) {
+  // The registers of a trampoline call, each read when asked for: reading
+  // all of them costs more than the rest of a hooked write.
+  return {
+    get(name) {
+      return name === 'rsp' ? block.add(8 * SAVED_REGS.length + 8 + RED_ZONE)
+        : block.add(REGISTER_SLOTS[name]).readPointer();
+    }
+  };
+}
+
+function contextRegisters(context) {
+  // The registers of an exception's context (breakpoint sites).
+  return { get: name => context[name] };
+}
+
+function registerPart(name) {
+  // The 64-bit register holding ``name`` and whether only its low half counts
+  // (32-bit addressing on x86-64: eax -> rax, r8d -> r8).
+  if (name === undefined)
+    return null;
+  if (name === 'rip' || REGISTER_SLOTS[name] !== undefined || name === 'rsp')
+    return { name, low: false };
+  const wide = /^e[a-z]{2}$/.test(name) ? 'r' + name.slice(1)
+    : /^r\d+d$/.test(name) ? name.slice(0, -1) : null;
+  if (wide === null || (REGISTER_SLOTS[wide] === undefined && wide !== 'rsp'))
+    throw new Error(`unsupported address register ${name}`);
+  return { name: wide, low: true };
+}
+
+function addressPlan(ins, op) {
+  // How to compute the written address from the registers, worked out once
+  // per site; null if it cannot be (fs:/gs: segments).
+  const mem = op.value;
+  if (mem.segment !== undefined && mem.segment !== 'ds' && mem.segment !== 'ss')
+    return null;
+  try {
+    return {
+      base: mem.base === 'rip' ? null : registerPart(mem.base),
+      rip: mem.base === 'rip' ? ins.next : null,
+      index: registerPart(mem.index),
+      shift: Math.log2(mem.scale || 1),
+      disp: mem.disp || 0
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function planRegister(regs, part) {
+  const value = regs.get(part.name);
+  return part.low ? value.and(0xffffffff) : value;
+}
+
+function planAddress(plan, regs) {
+  // NativePointer arithmetic wraps at 64 bits like the CPU's.
+  let address = plan.rip !== null ? plan.rip
+    : plan.base !== null ? planRegister(regs, plan.base) : ptr(0);
+  if (plan.index !== null)
+    address = address.add(planRegister(regs, plan.index).shl(plan.shift));
+  return plan.disp < 0 ? address.sub(-plan.disp) : address.add(plan.disp);
+}
+
+function overlapsPointer(start, size, target, targetSize) {
+  return start.compare(target.add(targetSize)) < 0 && target.compare(start.add(size)) < 0;
 }
 
 function reportAgentError(where, error) {
@@ -784,7 +968,7 @@ function fixedTarget(hook, write) {
   const address = write.address();
   if (address === null)
     return { target: hook.target };
-  const hit = overlaps(address, write.site.writeOp.size, hook.targetValue, hook.io.size);
+  const hit = overlapsPointer(address, write.site.writeOp.size, hook.target, hook.io.size);
   if (hook.callerDepth > 0)
     learnCaller(hook, write.signature(hook.callerDepth), hit);
   return hit ? { target: hook.target } : { skip: 'address' };
@@ -799,7 +983,7 @@ function dynamicTarget(hook, write) {
     reportError(hook, new Error(`Cannot compute the address written by ${write.site.writeIns}`));
     return { skip: 'no-address' };
   }
-  return { target: toPointer(address) };
+  return { target: address };
 }
 
 function resolvePointer(pointer) {
@@ -829,44 +1013,49 @@ function pointerTarget(hook, write) {
     return { skip: 'pointer' };
   const address = write.address();
   if (address !== null
-      && !overlaps(address, write.site.writeOp.size, toBigInt(target), hook.io.size))
+      && !overlapsPointer(address, write.site.writeOp.size, target, hook.io.size))
     return { skip: 'address' };
   return { target };
 }
 
-function pendingWrite(site, block) {
-  // Registers, address and caller signatures are computed at most once per write.
-  let regs = null;
+function pendingWrite(site, regs) {
+  // The address (a NativePointer) and caller signatures are computed at
+  // most once per write.
   let address;
   const signatures = new Map();
-  const registers = () => (regs === null ? (regs = readRegisters(block)) : regs);
   return {
     site,
     address() {
-      if (address === undefined)
-        address = effectiveAddress(site.writeIns, site.writeOp, registers());
+      if (address === undefined) {
+        if (site.addressPlan === undefined)
+          site.addressPlan = addressPlan(site.writeIns, site.writeOp);
+        address = site.addressPlan === null ? null : planAddress(site.addressPlan, regs);
+      }
       return address;
     },
     signature(depth) {
       if (!signatures.has(depth))
-        signatures.set(depth, callerSignature(registers().rsp, depth, site.writeIns.address));
+        signatures.set(depth, siteSignature(site, regs.get('rsp'), depth));
       return signatures.get(depth);
     }
   };
 }
 
-function onBefore(site, block) {
+function onBefore(site, regs, entered) {
+  const start = profiling ? Number(readTsc()) : 0;
+  let taken = false;
   try {
-    if (site.method === undefined)
+    if (site.method === undefined && engineFound)
       nameSite(site);
     const threadId = Process.getCurrentThreadId();
-    const write = pendingWrite(site, block);
+    const write = pendingWrite(site, regs);
     for (const hook of site.hooks.values()) {
       if (!hook.enabled)
         continue;
       const { target, skip } = hook.pointer !== null ? pointerTarget(hook, write)
         : hook.target === null ? dynamicTarget(hook, write) : fixedTarget(hook, write);
       if (target !== undefined) {
+        taken = true;
         hook.pending.set(threadId, {
           target,
           old: readTarget(hook.io, target),
@@ -877,25 +1066,31 @@ function onBefore(site, block) {
         const entry = {
           threadId,
           skipped: skip,
-          address: address === null ? null : toPointer(address).toString(),
+          address: address === null ? null : address.toString(),
           caller: callerText(hook, write)
         };
         if (address === null) {
           pushDebug(hook, entry);
         } else {
           // Show the value before and after the write, as for applied calls.
-          const target = toPointer(address);
-          entry.old = peekTarget(hook.io, target);
-          hook.pending.set(threadId, { target, skipped: entry });
+          entry.old = peekTarget(hook.io, address);
+          hook.pending.set(threadId, { target: address, skipped: entry });
         }
       }
     }
   } catch (error) {
     reportAgentError(`before ${site.writeIns.address}`, error);
   }
+  if (profiling) {
+    const profile = profileCall(site, entered, start);
+    profile.calls += 1;
+    if (!taken)
+      profile.skipped += 1;
+  }
 }
 
-function onAfter(site, _block) {
+function onAfter(site, entered) {
+  const start = profiling ? Number(readTsc()) : 0;
   try {
     const threadId = Process.getCurrentThreadId();
     for (const hook of site.hooks.values()) {
@@ -913,6 +1108,8 @@ function onAfter(site, _block) {
   } catch (error) {
     reportAgentError(`after ${site.writeIns.address}`, error);
   }
+  if (profiling)
+    profileCall(site, entered, start);
 }
 
 function buildTrampoline(site, needed) {
@@ -1032,11 +1229,14 @@ function installSite(writeIns, writeOp, shortJump) {
   if (Process.arch !== 'x64')
     throw new Error(`Write hooks are only implemented for x64, not ${Process.arch}`);
 
-  const site = { writeIns, writeOp, hooks: new Map(), cave: null };
+  const site = { writeIns, writeOp, hooks: new Map(), cave: null, breakpoint: false };
   site.bytes = hexBytes(writeIns.address.readByteArray(writeIns.size));
   site.context = codeContext(writeIns);
-  site.before = new NativeCallback(block => onBefore(site, block), 'void', ['pointer']);
-  site.after = new NativeCallback(block => onAfter(site, block), 'void', ['pointer']);
+  site.before = new NativeCallback(
+    (block, entered) => onBefore(site, blockRegisters(block), entered),
+    'void', ['pointer', 'uint64']);
+  site.after = new NativeCallback((_block, entered) => onAfter(site, entered),
+    'void', ['pointer', 'uint64']);
   const origin = writeIns.address;
   let built;
   try {
@@ -1106,31 +1306,55 @@ function patchSite(site) {
 // on, a site whose original code is back is patched again.
 
 function siteState(site) {
-  // 'intact', 'reverted' (original or patched bytes, may be patched again),
-  // 'changed' (other code: left alone) or null if the code is unreadable
-  // (e.g. JIT code the runtime freed).
+  // 'intact', 'reverted' (may be patched again), 'changed' (other code: left
+  // alone) or null if the code is unreadable (e.g. JIT code the runtime freed).
+  // Only the write's own bytes decide: with the original write back, nothing
+  // jumps to the cave any more, so other code there just needs a new cave.
   const origin = readHex(site.writeIns.address, site.patchSize);
   const cave = site.cave === null ? null : readHex(site.cave, JMP_SIZE);
   if (origin === null || (site.cave !== null && cave === null))
     return null;
   if (origin === site.patchedHex && cave === site.cavePatchedHex)
     return 'intact';
-  const known = (origin === site.patchedHex || origin === site.originalHex)
-    && (cave === site.cavePatchedHex || cave === site.caveOriginalHex);
-  return known ? 'reverted' : 'changed';
+  if (origin === site.originalHex)
+    return 'reverted';
+  // Still jumping to a cave the game restored to padding: patch it again.
+  return origin === site.patchedHex && cave === site.caveOriginalHex ? 'reverted' : 'changed';
 }
 
-function reportSite(site, state) {
+function repatchSite(site) {
+  // A cave holding other code now (e.g. anti-tamper code that wrote over the
+  // padding) is given up for new padding nearby.
+  if (site.cave !== null) {
+    const cave = readHex(site.cave, JMP_SIZE);
+    if (cave !== site.cavePatchedHex && cave !== site.caveOriginalHex) {
+      const found = findCave(site.writeIns.address, site.patchSize, site.code);
+      if (found === null)
+        throw new Error('no int3 padding left for the short jump');
+      site.cave = found.cave;
+      site.caveOriginalHex = readHex(site.cave, JMP_SIZE);
+    }
+  }
+  patchSite(site);
+  site.cavePatchedHex = site.cave === null ? null : readHex(site.cave, JMP_SIZE);
+}
+
+function reportSite(site, state, error = null) {
+  site.reportedState = state;
+  site.reportedError = error;
   send({
     kind: 'site-state',
     hookIds: Array.from(site.hooks.keys()),
     state,
-    reverts: site.reverts
+    reverts: site.reverts,
+    error
   });
 }
 
 function checkSites() {
   for (const site of sites.values()) {
+    if (site.breakpoint)
+      continue;  // the game's code is untouched
     const state = siteState(site);
     if (state === null)
       continue;
@@ -1141,28 +1365,32 @@ function checkSites() {
       }
       continue;
     }
-    const fresh = !site.reverted;
-    if (fresh)
+    if (!site.reverted)
       site.reverts += 1;
+    site.reverted = true;
+    let error = null;
     if (state === 'reverted' && repatchReverted) {
       try {
-        patchSite(site);
+        repatchSite(site);
         site.reverted = false;
         reportSite(site, 'repatched');
         continue;
-      } catch (error) {
-        if (fresh)
-          reportAgentError(`repatch ${site.writeIns.address}`, error);
+      } catch (e) {
+        error = String(e.message || e);
       }
     }
-    if (fresh) {
-      site.reverted = true;
-      reportSite(site, state);
-    }
+    // Anti-tamper code may decrypt and encrypt the code around the site:
+    // 'changed' turns into 'reverted' and back. Each change is reported.
+    if (state !== site.reportedState || error !== site.reportedError)
+      reportSite(site, state, error);
   }
 }
 
 function uninstallSite(site) {
+  if (site.breakpoint) {
+    uninstallBreakpointSite(site);
+    return;
+  }
   const origin = site.writeIns.address;
   const original = new Uint8Array(site.original);
   // Code the game restored or changed is left as it is.
@@ -1175,6 +1403,160 @@ function uninstallSite(site) {
   // A thread may still be running inside the trampoline; keep it mapped.
   // The same holds for the cave, which keeps its jmp to the trampoline.
   retiredSites.push(site);
+}
+
+// --- Breakpoint sites -------------------------------------------------------
+// A site hooked by a hardware breakpoint leaves the game's code untouched,
+// for games whose anti-tamper code repairs patches. Frida resumes from a
+// breakpoint without the resume flag, so the trap would repeat at once;
+// instead the breakpoint moves on every trap. On the write instruction the
+// hooks take the old value (onBefore) and the breakpoint moves to the next
+// instruction; the write runs natively, and on the next instruction the
+// transforms run (onAfter) and the breakpoint moves back. Each trap costs a
+// few microseconds: fine for a value written every frame, not for a hot loop.
+// Debug registers belong to a thread: threads started later are armed by
+// the flush timer, at most every BREAKPOINT_ARM_TICKS.
+const BREAKPOINT_ARM_TICKS = 5;
+// thread id -> Thread whose debug registers hold the breakpoint sites
+const breakpointThreads = new Map();
+// address -> { site, after }: the write instruction and the one after it
+const breakpointAddresses = new Map();
+// Addresses of removed breakpoint sites, for traps raised just before.
+const retiredBreakpoints = new Set();
+
+function installBreakpointSite(writeIns, writeOp) {
+  const key = writeIns.address.toString();
+  const existing = sites.get(key);
+  if (existing !== undefined)
+    return existing;
+  if (Process.arch !== 'x64')
+    throw new Error(`Write hooks are only implemented for x64, not ${Process.arch}`);
+  const next = writeIns.next.toString();
+  if (breakpointAddresses.has(key) || breakpointAddresses.has(next))
+    throw new Error(`Another breakpoint hook uses the code at ${writeIns.address}`);
+  const slot = freeDebugSlot();
+  if (slot === null)
+    throw new Error(`No free hardware breakpoint: ${DEBUG_SLOTS.length} at most, `
+      + 'shared with hooks in training');
+  const site = {
+    writeIns, writeOp, hooks: new Map(), cave: null, code: null, patchSize: 0,
+    breakpoint: true, slot
+  };
+  site.bytes = hexBytes(writeIns.address.readByteArray(writeIns.size));
+  site.context = codeContext(writeIns);
+  ensureExceptionHandler();
+  breakpointAddresses.set(key, { site, after: false });
+  breakpointAddresses.set(next, { site, after: true });
+  retiredBreakpoints.delete(key);
+  retiredBreakpoints.delete(next);
+  sites.set(key, site);
+  for (const thread of breakpointThreads.values())
+    armBreakpoint(thread, site, writeIns.address);
+  armNewThreads();
+  return site;
+}
+
+function armBreakpoint(thread, site, address) {
+  try {
+    thread.setHardwareBreakpoint(site.slot, address);
+    return true;
+  } catch (_error) {
+    return false;  // the thread exited, or it is the agent's own
+  }
+}
+
+function armNewThreads() {
+  // Arms the threads started since the last call; forgets those that ended.
+  const current = new Set();
+  for (const thread of Process.enumerateThreads()) {
+    current.add(thread.id);
+    if (breakpointThreads.has(thread.id))
+      continue;
+    let armed = false;
+    for (const site of sites.values()) {
+      if (site.breakpoint)
+        armed = armBreakpoint(thread, site, site.writeIns.address) || armed;
+    }
+    if (armed)
+      breakpointThreads.set(thread.id, thread);
+  }
+  for (const id of Array.from(breakpointThreads.keys())) {
+    if (!current.has(id))
+      breakpointThreads.delete(id);
+  }
+}
+
+function hasBreakpointSites() {
+  for (const site of sites.values()) {
+    if (site.breakpoint)
+      return true;
+  }
+  return false;
+}
+
+function uninstallBreakpointSite(site) {
+  for (const thread of Process.enumerateThreads()) {
+    try {
+      thread.unsetHardwareBreakpoint(site.slot);
+    } catch (_error) {
+    }
+  }
+  const key = site.writeIns.address.toString();
+  const next = site.writeIns.next.toString();
+  breakpointAddresses.delete(key);
+  breakpointAddresses.delete(next);
+  retiredBreakpoints.add(key);
+  retiredBreakpoints.add(next);
+  sites.delete(key);
+  if (!hasBreakpointSites())
+    breakpointThreads.clear();
+}
+
+function onBreakpointException(details) {
+  // true if the trap was a breakpoint site's, else undefined.
+  const pc = details.context.pc.toString();
+  const entry = breakpointAddresses.get(pc);
+  if (entry === undefined)
+    return retiredBreakpoints.has(pc) ? true : undefined;
+  const { site, after } = entry;
+  const id = Process.getCurrentThreadId();
+  let thread = breakpointThreads.get(id);
+  if (thread === undefined) {
+    thread = Process.enumerateThreads().find(t => t.id === id);
+    if (thread === undefined)
+      return undefined;
+    breakpointThreads.set(id, thread);
+  }
+  if (after)
+    onAfter(site);
+  else
+    onBefore(site, contextRegisters(details.context));
+  const moveTo = after ? site.writeIns.address : site.writeIns.next;
+  if (!armBreakpoint(thread, site, moveTo)) {
+    // The trap would repeat forever: this thread goes without the hook.
+    try {
+      thread.unsetHardwareBreakpoint(site.slot);
+    } catch (error) {
+      reportAgentError(`breakpoint ${pc}`, error);
+    }
+  }
+  return true;
+}
+
+function ensureExceptionHandler() {
+  // Installed once and kept: removing it could let a late trap through.
+  if (exceptionHandlerInstalled)
+    return;
+  Process.setExceptionHandler(onException);
+  exceptionHandlerInstalled = true;
+}
+
+function onException(details) {
+  // Linux reports hardware data watchpoint traps as 'single-step'.
+  if (details.type !== 'breakpoint' && details.type !== 'single-step')
+    return false;
+  const handled = onBreakpointException(details);
+  return handled === undefined ? onTrainingException(details) : handled;
 }
 
 // --- C# methods: hooks on JIT code found again by their method ------------
@@ -1274,13 +1656,14 @@ function addHook(spec) {
     writeOp = candidate.op;
   }
 
-  const site = installSite(writeIns, writeOp, spec.shortJump === true);
+  const site = existingSite !== undefined ? existingSite
+    : spec.breakpoint === true ? installBreakpointSite(writeIns, writeOp)
+      : installSite(writeIns, writeOp, spec.shortJump === true);
   const learned = resolveCallers(spec.callers, writeIns.address);
   const hook = {
     id: spec.id,
     site,
     target,
-    targetValue: target === null ? null : toBigInt(target),
     valueType: spec.valueType,
     io,
     filterAddress: spec.filterAddress,
@@ -1312,8 +1695,9 @@ function addHook(spec) {
     id: spec.id,
     writeInstruction: describeInstruction(site),
     resumePc: site.writeIns.next.toString(),
-    trampoline: site.code.toString(),
+    trampoline: site.code === null ? null : site.code.toString(),
     patchSize: site.patchSize,
+    breakpoint: site.breakpoint ? site.slot : null,
     cave: site.cave === null ? null : site.cave.toString(),
     operandSize: site.writeOp.size,
     callers: hook.callers.size,
@@ -1357,11 +1741,7 @@ function startTraining(spec) {
 function startTrainingWatch() {
   if (trainingTimer !== null)
     return;
-  // Installed once and kept: removing it could let a late trap through.
-  if (!trainingHandlerInstalled) {
-    Process.setExceptionHandler(onTrainingException);
-    trainingHandlerInstalled = true;
-  }
+  ensureExceptionHandler();
   // No thread observer: setting a watchpoint starts a helper thread, and
   // reporting it to the observer while the agent sets one deadlocks.
   // New threads are armed by this timer instead.
@@ -1420,15 +1800,19 @@ function armTraining(thread, training) {
   }
 }
 
-function freeTrainingSlot() {
+function freeDebugSlot() {
   const used = new Set(Array.from(trainings.values(), t => t.slot));
-  return TRAINING_SLOTS.find(slot => !used.has(slot)) ?? null;
+  for (const site of sites.values()) {
+    if (site.breakpoint)
+      used.add(site.slot);
+  }
+  return DEBUG_SLOTS.find(slot => !used.has(slot)) ?? null;
 }
 
 function updateTrainings() {
   for (const training of trainings.values()) {
     if (training.slot === null)
-      training.slot = freeTrainingSlot();
+      training.slot = freeDebugSlot();
     if (training.slot === null)
       continue;
     // The chain leads elsewhere e.g. after loading a game, or nowhere yet.
@@ -1460,9 +1844,6 @@ function stopTraining(training) {
 }
 
 function onTrainingException(details) {
-  // Linux reports hardware data watchpoint traps as 'single-step'.
-  if (details.type !== 'breakpoint' && details.type !== 'single-step')
-    return false;
   if (!trainingThreads.has(Process.getCurrentThreadId()))
     return false;
   if (trainingTimer === null)
@@ -1489,7 +1870,8 @@ function processTrainingHits() {
 function trainingCandidate(training, pc) {
   // A write that is hooked already runs relocated in its trampoline.
   for (const site of sites.values()) {
-    if (pc.compare(site.code) >= 0 && pc.compare(site.code.add(Process.pageSize)) < 0)
+    if (site.code !== null && pc.compare(site.code) >= 0
+        && pc.compare(site.code.add(Process.pageSize)) < 0)
       return { ins: site.writeIns, bytes: site.bytes, context: site.context };
   }
   const { ins } = resolveWriteInstruction(pc, training.target, training.io.size);
@@ -1594,7 +1976,12 @@ function flushStats() {
   for (const hook of hooks.values()) {
     if (hook.stats.count === 0)
       continue;
-    events.push({ hookId: hook.id, count: hook.stats.count, last: hook.stats.last });
+    const last = hook.stats.last;
+    events.push({
+      hookId: hook.id,
+      count: hook.stats.count,
+      last: last === null ? null : { ...last, address: last.address.toString() }
+    });
     hook.stats.count = 0;
   }
   if (events.length > 0)
@@ -1614,9 +2001,18 @@ function flushStats() {
 
 let flushTicks = 0;
 const flushTimer = setInterval(() => {
-  engine.refresh();
-  if (++flushTicks % SITE_CHECK_TICKS === 0)
+  engineFound = engine.refresh();
+  if (++flushTicks % SITE_CHECK_TICKS === 0) {
     checkSites();
+    if (profiling) {
+      const profile = profileEvents();
+      if (profile.length > 0)
+        send({ kind: 'profile', sites: profile });
+    }
+  }
+  // Enumerating threads while one handles a write watch's trap deadlocks.
+  if (flushTicks % BREAKPOINT_ARM_TICKS === 0 && !trainingPaused && hasBreakpointSites())
+    armNewThreads();
   flushStats();
 }, 100);
 send({
@@ -1646,6 +2042,12 @@ rpc.exports = {
     repatchReverted = enabled;
     return true;
   },
+  setProfiling(enabled) {
+    profiling = enabled;
+    for (const site of sites.values())
+      site.profile = undefined;
+    return true;
+  },
   setDebug(id, enabled) {
     const training = trainings.get(id);
     if (training !== undefined) {
@@ -1671,7 +2073,7 @@ rpc.exports = {
     clearInterval(flushTimer);
     for (const training of Array.from(trainings.values()))
       stopTraining(training);
-    if (trainingHandlerInstalled)
+    if (exceptionHandlerInstalled)
       Thread.sleep(0.1);  // let late traps reach the handler before unloading
     for (const id of Array.from(hooks.keys()))
       removeHook(id);

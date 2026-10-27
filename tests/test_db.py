@@ -69,6 +69,7 @@ def test_hooks_round_trip(repository):
     assert hook_transform(saved).describe() == "multiply(factor=10, direction=increase)"
     assert saved.enabled
     assert (saved.caller_depth, saved.callers) == (1, [])
+    assert not saved.breakpoint
 
 
 def test_update_and_delete_hook(repository):
@@ -78,6 +79,7 @@ def test_update_and_delete_hook(repository):
     repository.update_hook(hook_id, label="Mana", transform=ScriptTransform("ctx => 1"))
     repository.update_hook(hook_id, enabled=False)
     repository.update_hook(hook_id, callers=[[("game", 0x2000)]])
+    repository.update_hook(hook_id, breakpoint=True)
     [saved] = repository.list_hooks(process_id)
 
     assert saved.label == "Mana"
@@ -86,6 +88,7 @@ def test_update_and_delete_hook(repository):
     assert saved.transform_params == {}
     assert not saved.enabled
     assert saved.callers == [[["game", 0x2000]]]
+    assert saved.breakpoint
 
     repository.delete_hook(hook_id)
     assert repository.list_hooks(process_id) == []

@@ -77,12 +77,27 @@ and reports a change (``site_state``: reverted, changed, repatched,
 restored). With the setting ``hook_repatch`` it patches a site whose
 original code is back again; off by default, as it races the game's checks.
 
+With the setting ``hook_profiling`` the agent measures every hooked write
+and reports once a second per site (``hook_profile``, also in the log): how
+often the site ran and how many writes all its hooks skipped, how long a
+game thread waited from entering the trampoline until its JavaScript ran
+(the agent runs one thread at a time, so other threads in a hook, its
+timers and garbage collection make it wait) and how long that ran, in µs
+on average and at most, per callback (two per write).
+
+A hook with ``breakpoint`` leaves the game's code untouched: a hardware
+breakpoint on the write instruction takes the old value and moves to the
+next instruction, where the transform runs and it moves back. Patch checks
+cannot see it, but it uses one of the three debug register slots the write
+watch leaves (shared with trainings) and each write traps twice.
+
 In debug mode a hook reports every call (values, caller, ``ctx.log()``
 output, errors with stack) and every write it skipped, with the reason.
 At most ``MAX_DEBUG_EVENTS`` events are sent per 100 ms; the rest is counted.
 """
 
 import itertools
+import logging
 import queue
 import threading
 from dataclasses import dataclass, field
@@ -107,6 +122,8 @@ from hermes.core.agent_source import load_agent_source
 
 
 MAX_CALLER_DEPTH = 4
+
+_profile_log = logging.getLogger("hermes.hook_profile")
 
 
 _AGENT_SOURCE = load_agent_source(__file__)
@@ -140,6 +157,9 @@ class HookSpec:
     with a ``pointer`` lets the agent train: it installs the hook at the first
     write to the target from matching code.
 
+    With ``breakpoint`` the write is hooked by a hardware breakpoint instead
+    of a jump patched into the code (see the module docstring).
+
     ``managed`` (``{image, file, token, method, offset}`` from the agent's
     ``site-method`` message) names the C# method of a write site in Mono JIT
     code: the agent lets Mono compile it and looks for ``instruction_bytes``
@@ -163,6 +183,7 @@ class HookSpec:
     pointer: PointerChain | None = None
     signature: dict | None = None
     managed: dict | None = None
+    breakpoint: bool = False
     label: str = field(default="", compare=False)
 
     @property
@@ -217,6 +238,7 @@ class HookSpec:
             },
             "signature": self.signature,
             "managed": self.managed,
+            "breakpoint": self.breakpoint,
             "transform": self.transform.to_agent(),
         }
 
@@ -270,8 +292,12 @@ class HookWorker(QThread):
     # hook id, why its C# method did not lead to the write site; it trains
     managed_failed = pyqtSignal(int, str)
     # hook ids sharing a write site, its state (reverted, changed, repatched,
-    # restored) and how often the game reverted it
-    site_state = pyqtSignal(list, str, int)
+    # restored), how often the game reverted it and why patching it again
+    # failed ("" if it did not)
+    site_state = pyqtSignal(list, str, int, str)
+    # timings per write site, once a second with hook_profiling: dicts with
+    # hookIds, calls, skipped, waitAvg, waitMax, runAvg, runMax (µs)
+    hook_profile = pyqtSignal(list)
     # debug events of hooks in debug mode, events dropped per hook id
     hook_debug = pyqtSignal(list, dict)
     # console.log output of the agent and its transforms: level, text
@@ -348,6 +374,7 @@ class HookWorker(QThread):
                 start = int(ready["accessStub"], 16)
                 self.access_stub = (start, start + ready.get("accessStubSize", 0x1000))
             script.exports_sync.set_repatch(settings.get("hook_repatch"))
+            script.exports_sync.set_profiling(settings.get("hook_profiling"))
             settings.subscribe(self._on_settings_changed)
             self.session_ready.emit(ready.get("arch", ""))
 
@@ -420,12 +447,16 @@ class HookWorker(QThread):
                 self.hook_updated.emit(hook_id)
             elif action == "repatch":
                 api.set_repatch(argument)
+            elif action == "profiling":
+                api.set_profiling(argument)
         except frida.RPCException as error:
             self.hook_failed.emit(hook_id, str(error))
 
     def _on_settings_changed(self, changed):
         if "hook_repatch" in changed:
             self._commands.put(("repatch", 0, changed["hook_repatch"]))
+        if "hook_profiling" in changed:
+            self._commands.put(("profiling", 0, changed["hook_profiling"]))
 
     def _on_message(self, message, _data):
         if message.get("type") == "error":
@@ -466,9 +497,19 @@ class HookWorker(QThread):
             )
         elif kind == "managed-failed":
             self.managed_failed.emit(payload.get("hookId", 0), payload.get("error", ""))
+        elif kind == "profile":
+            sites = payload.get("sites", [])
+            for site in sites:
+                _profile_log.info(
+                    "hooks %s: %d calls/s, %d skipped; wait avg %.1f max %.1f us; "
+                    "run avg %.1f max %.1f us", site.get("hookIds"), site.get("calls", 0),
+                    site.get("skipped", 0), site.get("waitAvg", 0), site.get("waitMax", 0),
+                    site.get("runAvg", 0), site.get("runMax", 0))
+            self.hook_profile.emit(sites)
         elif kind == "site-state":
             self.site_state.emit(
-                payload.get("hookIds", []), payload.get("state", ""), payload.get("reverts", 0)
+                payload.get("hookIds", []), payload.get("state", ""),
+                payload.get("reverts", 0), payload.get("error") or "",
             )
         elif kind == "callers-ambiguous":
             self.callers_ambiguous.emit(payload.get("hookId", 0))

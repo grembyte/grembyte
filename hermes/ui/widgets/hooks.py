@@ -164,18 +164,20 @@ class HookDialog(QDialog):
 
     With ``method`` (a method's signature) the dialog creates a method hook:
     ``address``, ``value_type`` and ``site`` are not shown then, and ``phase``
-    (before or after the call) can be chosen.
+    (before or after the call) can be chosen. A write hook chooses how it is
+    installed: a jump patched into the code or a hardware ``breakpoint``.
     """
 
     def __init__(self, translations, address, value_type, site,
                  transform=None, label="", templates=None, pointer=None, method=None,
-                 phase="after", parent=None):
-        # pylint: disable=too-many-arguments
+                 phase="after", breakpoint=False, parent=None):
+        # pylint: disable=too-many-arguments,redefined-builtin
         super().__init__(parent)
         self.translations = translations
         self.pointer = pointer
         self.method = method
         self.phase = phase
+        self.breakpoint = breakpoint
         self.transform = None
         self.label = label
         self.caller_depth = 1
@@ -254,6 +256,14 @@ class HookDialog(QDialog):
             )
             self.caller_depth_input.setToolTip(self.translations["hooks.caller_depth_hint"])
             form.addRow(self.translations["hooks.caller_depth"], self.caller_depth_input)
+        if self.method is None:
+            self.install_combo = QComboBox()
+            for hardware in (False, True):
+                key = "breakpoint" if hardware else "patch"
+                self.install_combo.addItem(self.translations[f"hooks.install_{key}"], hardware)
+            self.install_combo.setCurrentIndex(1 if self.breakpoint else 0)
+            self.install_combo.setToolTip(self.translations["hooks.install_tooltip"])
+            form.addRow(self.translations["hooks.install"], self.install_combo)
         if self.method is not None:
             self.phase_combo = QComboBox()
             for phase in PHASES:
@@ -369,6 +379,8 @@ class HookDialog(QDialog):
         self.label = self.label_input.text().strip()
         if self.method is not None:
             self.phase = self.phase_combo.currentData()
+        else:
+            self.breakpoint = self.install_combo.currentData()
         if self.pointer is not None or self.method is not None:
             self.caller_depth = 0
         elif not self._editing:
@@ -422,6 +434,7 @@ def spec_from_saved(saved):
         module_offset=None if jit else saved.module_offset,
         signature=saved.signature if jit else None,
         managed=saved.managed if jit else None,
+        breakpoint=bool(saved.breakpoint),
         instruction_bytes=saved.instruction_bytes,
         enabled=saved.enabled,
         caller_depth=saved.caller_depth,
@@ -1038,6 +1051,7 @@ class HookPanel(QGroupBox):
             caller_depth=spec.caller_depth,
             callers=spec.callers,
             pointer=spec.pointer,
+            breakpoint=spec.breakpoint,
         )
         if jit and state["saved_id"] is not None:
             self.status_label.setText(self.translations["hooks.saved_for_training"])
@@ -1089,9 +1103,12 @@ class HookPanel(QGroupBox):
         worker.managed_failed.connect(
             lambda hook_id, message: self._on_managed_failed(worker, hook_id, message)
         )
+        worker.hook_profile.connect(
+            lambda sites: self._on_profile(worker, sites)
+        )
         worker.site_state.connect(
-            lambda hook_ids, site_state, reverts:
-            self._on_site_state(worker, hook_ids, site_state, reverts)
+            lambda hook_ids, site_state, reverts, error:
+            self._on_site_state(worker, hook_ids, site_state, reverts, error)
         )
         worker.hook_debug.connect(
             lambda events, dropped: self._on_debug_events(worker, events, dropped)
@@ -1134,16 +1151,16 @@ class HookPanel(QGroupBox):
         info = state["installed"]
         write = info.get("writeInstruction", {})
         site = write.get("method") or state.get("method") or write.get("site", "")
-        self._set_cell(
-            hook_id,
-            2,
-            f"{site}   {write.get('text', '')}",
-            tooltip=self.translations["hooks.site_tooltip"].format(
+        if info.get("breakpoint") is not None:
+            tooltip = self.translations["hooks.site_tooltip_breakpoint"].format(
+                address=write.get("address", ""), slot=info["breakpoint"])
+        else:
+            tooltip = self.translations["hooks.site_tooltip"].format(
                 address=write.get("address", ""),
                 trampoline=info.get("trampoline", ""),
                 size=info.get("patchSize", ""),
-            ),
-        )
+            )
+        self._set_cell(hook_id, 2, f"{site}   {write.get('text', '')}", tooltip=tooltip)
 
     def _on_site_method(self, worker, hook_ids, method, managed):
         """Name the write site once the game ran it (Mono JIT code only).
@@ -1172,11 +1189,12 @@ class HookPanel(QGroupBox):
             label=self._hooks[hook_id]["spec"].label or hook_id, message=message
         ))
 
-    def _on_site_state(self, worker, hook_ids, site_state, reverts):
+    def _on_site_state(self, worker, hook_ids, site_state, reverts, error=""):
         """The game reverted a hooked write site, or it is patched again.
 
         A reverted site runs the game's original code: its hooks no longer
         apply although nothing failed. Paused hooks show it once resumed.
+        ``error`` tells why patching it again failed.
         """
         if not self._is_current(worker):
             return
@@ -1189,7 +1207,8 @@ class HookPanel(QGroupBox):
             labels.append(state["spec"].label or str(hook_id))
             if reverted:
                 state["reverted"] = site_state
-                if state["status"] in {"active", "error"}:
+                state["repatch_error"] = error
+                if state["status"] in {"active", "error", "reverted"}:
                     self._set_status(hook_id, "reverted", self._reverted_tooltip(state))
             else:
                 state.pop("reverted", None)
@@ -1197,11 +1216,44 @@ class HookPanel(QGroupBox):
                     self._set_status(hook_id, "active", self.translations[
                         "hooks.repatched_tooltip"].format(count=reverts))
         if labels and site_state != "restored":
-            self.status_label.setText(self.translations[f"hooks.site_{site_state}"].format(
-                label=", ".join(labels), count=reverts))
+            text = self.translations[f"hooks.site_{site_state}"].format(
+                label=", ".join(labels), count=reverts)
+            if error:
+                text += " " + self.translations["hooks.repatch_failed"].format(message=error)
+            self.status_label.setText(text)
+
+    def _on_profile(self, worker, sites):
+        """Show the timings of each hook's write site on its count of applications."""
+        if not self._is_current(worker):
+            return
+        for site in sites:
+            tooltip = self.translations["hooks.profile_tooltip"].format(
+                calls=site.get("calls", 0), skipped=site.get("skipped", 0),
+                wait_avg=site.get("waitAvg", 0), wait_max=site.get("waitMax", 0),
+                run_avg=site.get("runAvg", 0), run_max=site.get("runMax", 0))
+            for hook_id in site.get("hookIds", []):
+                state = self._hooks.get(hook_id)
+                if state is not None:
+                    self._set_cell(hook_id, 5, str(state["count"]), tooltip=tooltip)
 
     def _reverted_tooltip(self, state):
-        return self.translations[f"hooks.status_reverted_{state['reverted']}"]
+        tooltip = self.translations[f"hooks.status_reverted_{state['reverted']}"]
+        if state.get("repatch_error"):
+            tooltip += "\n\n" + self.translations["hooks.repatch_failed"].format(
+                message=state["repatch_error"])
+        return tooltip
+
+    def uses_debug_registers(self):
+        """Whether a hook holds hardware breakpoints or watchpoints in the process.
+
+        Hooks in training watch their target, breakpoint hooks their write.
+        """
+        return any(
+            state["status"] == "training"
+            or (state.get("kind") != "method" and state["spec"].breakpoint
+                and state["status"] in {"active", "paused", "error"})
+            for state in self._hooks.values()
+        )
 
     def _remember_trampoline(self, info, write):
         try:
@@ -1438,21 +1490,27 @@ class HookPanel(QGroupBox):
             label=spec.label,
             templates=self.templates(),
             pointer=spec.pointer,
+            breakpoint=spec.breakpoint,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         state["spec"] = dataclasses.replace(
-            spec, transform=dialog.transform, label=dialog.label
+            spec, transform=dialog.transform, label=dialog.label,
+            breakpoint=dialog.breakpoint,
         )
-        self._worker.set_transform(hook_id, dialog.transform)
         if state["saved_id"] is not None:
             self._store(
                 self._repository.update_hook,
                 state["saved_id"],
                 label=dialog.label,
                 transform=dialog.transform,
+                breakpoint=dialog.breakpoint,
             )
+        if dialog.breakpoint != spec.breakpoint:
+            self._reinstall(hook_id)
+            return
+        self._worker.set_transform(hook_id, dialog.transform)
         self._set_cell(
             hook_id, 0, self._label_text(state["spec"], state.get("debug", False))
         )
@@ -1460,6 +1518,20 @@ class HookPanel(QGroupBox):
         self._set_cell(hook_id, 3, dialog.transform.describe())
         if state["status"] == "error":
             self._set_status(hook_id, "active")
+
+    def _reinstall(self, hook_id):
+        """Install a hook anew, e.g. by breakpoint instead of a patched jump.
+
+        The new hook keeps the saved one; its row replaces the old one.
+        """
+        state = self._hooks[hook_id]
+        site_item = self.table.item(self._row_of(hook_id), 2)
+        site = site_item.text() if site_item is not None else ""
+        saved_id = state["saved_id"]
+        state["saved_id"] = None
+        state["removing"] = True
+        self._worker.remove_hook(hook_id)
+        self.add_hook(state["spec"], site, saved_id=saved_id)
 
     def _toggle_selected(self):
         hook_id = self._selected_hook_id()

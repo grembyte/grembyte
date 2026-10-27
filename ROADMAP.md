@@ -179,11 +179,62 @@ subpackage with an `EngineAdapter` subclass and an agent part that registers its
 - **Save game diff:** compare two save games to recognise values and layout, then search
   memory for them.
 
+### 8. Register hooks at any code address
+
+Today a hook needs a write instruction: it relocates the write and hands old and new value
+to the transform. Some values are better changed elsewhere, before they are written:
+
+- **Write sites that cannot be hooked:** in Dark Souls III the souls are stored by a tiny
+  setter (`mov [rcx+0x74], eax; ret` at `DarkSoulsIII.exe+0x465f13`), too short for the 5-byte
+  jump. The short jump needs int3 padding nearby, which Arxan overwrites at run time, and Arxan
+  restores the setter's code anyway (see "Write hooks under anti-tamper protection" below).
+- **The value is computed before it is stored:** the native function monitor showed at the
+  return address `+0x5a5436` in the caller: `rax` = new souls, `rbx` = souls gained,
+  `rsi` = old souls. A hook there could set `rax = rsi + rbx * factor` before the setter runs.
+
+Proposal: a hook type on any instruction (not only writes) whose script gets the registers
+(`ctx.regs.rax`, …, also flags and xmm if needed) and may change them before the instruction
+runs; optionally memory through `ctx.read`/`ctx.write`.
+
+- Reuses the trampoline of the write hooks (relocation, saved registers, short jump), the
+  caller learning, the debug window and saving as module + offset
+- Created from the native function monitor (call site or return address of a logged call, with
+  the registers seen there) and from the disassembler view
+- Templates in the same system as value templates (`kind: "registers"`), e.g. "scale register
+  difference": `rax = rsi + (rax - rsi) * factor`
+- Open: write back the registers from the block of the trampoline (today they are only read);
+  instructions that cannot be relocated (`rip`-relative jumps are handled by Frida's relocator)
+
 ### Recommendation
 
 **1 (Stalker diff trace)** and **2 (accesses of an instruction)** bring the most
 independent of any engine and use much of what exists. Among the adapters, **Unreal** would
 be the next big step, **IL2CPP** the most obvious one for Unity games without Mono.
+
+## Write hooks under anti-tamper protection (2026-10-27)
+
+Found with Dark Souls III (Arxan/GuardIT):
+
+- **Patched sites are repaired:** Arxan restores the original code of checked functions, the
+  hook then stops without an error. The agent compares every site with the bytes it wrote once
+  a second and reports `site-state` (hook status "Removed by game"); with the setting
+  `hook_repatch` it patches a site whose original code is back again. Arxan also decrypts and
+  encrypts code at run time: a site may read as "changed" for a while, and int3 padding used as
+  a short jump cave can be overwritten (the cave is then looked for anew).
+- **Debug registers are detected:** with debug registers set on all threads at an address that
+  is never executed, the game crashed about 11 s later, jumping to the same unmapped address
+  (`0x7ff7ab63b120`) as in the two crashes before (a breakpoint hook and a write watch). So
+  hook installation as hardware breakpoint (`HookSpec.breakpoint`, leaves the code untouched)
+  is no option there, and write watches must stay short. When a game ends within 30 s after
+  Hermes used debug registers in it, the main window says so.
+- **Performance:** a hooked write cost ~18 µs in a test process, mostly JavaScript work: all
+  16 registers read into an object (~7 µs) and the address computed with BigInt (~3.5 µs).
+  Now registers are read on demand, the address with NativePointer arithmetic from a plan made
+  once per site, and caller signatures take the stack slots of the last scan first
+  (`siteSignature`): ~8 µs, caller check +1.5 µs instead of +3.5 µs. The rest is the transform
+  and its context (~3 µs), the two calls into JS with the saved state (~1.5 µs) and reading
+  the old value. Further gains need the filters (address, caller) in C (CModule), so that
+  writes the hook skips never enter JavaScript.
 
 ## Activity log (implemented 2026-10-22)
 

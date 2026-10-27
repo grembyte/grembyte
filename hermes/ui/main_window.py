@@ -3,6 +3,7 @@
 import itertools
 import platform
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -98,6 +99,10 @@ from hermes.ui.widgets.write_watch import WriteWatchDialog
 
 # How often to check whether the attached process is still running.
 PROCESS_CHECK_INTERVAL_MS = 1000
+# A game that ends this long after Hermes last used debug registers in it may
+# have detected them (anti-debug code, e.g. Arxan in Dark Souls III, checks
+# them every few seconds).
+DEBUG_REGISTER_CRASH_WINDOW_S = 30
 # How long closing the window waits for the Frida workers of the C# windows
 # (trace, method monitor) to remove their interceptors before it goes on;
 # the shutdown dialog waits for what still runs then.
@@ -364,6 +369,8 @@ class MainWindow(QMainWindow):
         self._write_watch_worker = None
         self._write_watch_dialog = None
         self._write_watch_stopping = False
+        # time.monotonic() when debug registers were last seen in use
+        self._debug_registers_used = None
         self._settings = QSettings("hermes-hook", "hermes-hook")
         self._watch_backend = self._settings.value("watch_backend", BACKEND_FRIDA)
         if self._watch_backend not in WATCH_BACKENDS:
@@ -1905,6 +1912,7 @@ class MainWindow(QMainWindow):
         # Hooks in training watch the process too; they rest meanwhile.
         if self.hook_panel is not None:
             self.hook_panel.pause_trainings(True)
+        self._debug_registers_used = time.monotonic()
         worker = create_watch_worker(
             self._watch_backend,
             self._current_pid,
@@ -1971,6 +1979,7 @@ class MainWindow(QMainWindow):
             trap_pc=trap_pc,
             caller_depth=dialog.caller_depth,
             pointer=pointer,
+            breakpoint=dialog.breakpoint,
             label=dialog.label,
         )
         self.hook_panel.add_hook(spec, site)
@@ -2121,18 +2130,34 @@ class MainWindow(QMainWindow):
             return False
         start_time = process_start_time(self._current_pid)
         if start_time is not None and start_time == self._process_start_time:
+            if self._debug_registers_in_use():
+                self._debug_registers_used = time.monotonic()
             if self._engine is None:
                 # The runtime may load after attaching early during the game's start.
                 self._update_catalog_button()
             self._update_backend_label()
             return True
         process = self._current_proc
-        activity.record("process_exited", pid=self._current_pid, name=self._current_name)
+        debug_registers = (
+            self._debug_registers_in_use() or (
+                self._debug_registers_used is not None
+                and time.monotonic() - self._debug_registers_used
+                < DEBUG_REGISTER_CRASH_WINDOW_S))
+        activity.record("process_exited", pid=self._current_pid, name=self._current_name,
+                        debug_registers=debug_registers)
         self._detach_process()
-        self.lbl_status.setText(
-            self.translations["app.process_exited"].format(process=process)
-        )
+        message = self.translations["app.process_exited"].format(process=process)
+        if debug_registers:
+            message += " " + self.translations["app.process_exited_debug_registers"]
+            self.lbl_status.setToolTip(self.translations["app.debug_registers_hint"])
+        self.lbl_status.setText(message)
         return False
+
+    def _debug_registers_in_use(self):
+        """Whether a write watch, a hook in training or a breakpoint hook runs."""
+        watch = self._write_watch_worker
+        return ((watch is not None and watch.isRunning())
+                or (self.hook_panel is not None and self.hook_panel.uses_debug_registers()))
 
     def _detach_process(self):
         """Stop all work on the attached process and reset the window."""
@@ -2160,6 +2185,7 @@ class MainWindow(QMainWindow):
         self._close_catalog()
 
         self._current_pid = None
+        self._debug_registers_used = None
         self._engine = None
         self._current_name = None
         self._process_bits = None
