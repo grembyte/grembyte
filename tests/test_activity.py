@@ -252,7 +252,7 @@ def test_large_agents_reach_the_gadget_in_parts(activity_file):
         script.load()
         assert script.exports_sync.add(2) == 42
         assert [message["payload"] for message in messages] == [
-            {"kind": "ready", "text": "ä\""}]
+            {"kind": "ready", "text": "ä\N{LINE SEPARATOR}\""}]
         script.unload()
         session.detach()
     finally:
