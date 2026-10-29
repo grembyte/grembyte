@@ -291,6 +291,60 @@ def fixture_translations():
     return load_translations("de")
 
 
+# _TARGET_SOURCE with a thread that writes the gold through add_gold all the
+# time: hooks are removed while game threads are inside their trampolines.
+# Not in a tight loop: a thread inside the 5 bytes being patched crashes,
+# a limitation of every inline hook.
+_BUSY_TARGET_SOURCE = _TARGET_SOURCE.replace(
+    "#include <unistd.h>\n", "#include <unistd.h>\n#include <pthread.h>\n"
+).replace(
+    "int main(void) {\n",
+    "static void *busy(void *unused) {\n"
+    "    (void) unused;\n"
+    "    for (;;) {\n"
+    "        add_gold(&g_player, 0);\n"
+    "        usleep(50);\n"
+    "    }\n"
+    "    return NULL;\n"
+    "}\n\n"
+    "int main(void) {\n"
+    "    pthread_t thread;\n"
+    "    pthread_create(&thread, NULL, busy, NULL);\n",
+)
+
+
+@requires_target
+def test_stopping_hooks_while_a_thread_writes_through_them(tmp_path, qt_app):
+    from hermes.hooks.engine import HookWorker  # pylint: disable=import-outside-toplevel
+
+    source = tmp_path / "busy.c"
+    source.write_text(_BUSY_TARGET_SOURCE)
+    binary = tmp_path / "busy"
+    subprocess.run(["gcc", "-O2", "-pthread", str(source), "-o", str(binary)], check=True)
+    target = _Target(binary)
+    try:
+        # The busy thread writes through the same instruction as "add".
+        trap_pc = _trap_pcs(target)["add"]
+        for _round in range(5):
+            worker = HookWorker(target.pid)
+            installed = {}
+            worker.hook_installed.connect(lambda hook_id, info: installed.update({hook_id: info}))
+            worker.start()
+            # A script runs in JavaScript: the busy thread waits for the agent's lock.
+            hook_id = worker.add_hook(HookSpec(
+                target.address, "int32", ScriptTransform("ctx => ctx.new"),
+                trap_pc=trap_pc,
+            ))
+            _wait_for(qt_app, lambda: hook_id in installed)
+            time.sleep(0.2)
+            worker.requestInterruption()
+            assert worker.wait(10000)
+        assert target.process.poll() is None
+        assert target.send("add", 1)[0] >= 101
+    finally:
+        target.close()
+
+
 def _build_target(tmp_path, optimization="-O2", *flags):
     source = tmp_path / "target.c"
     source.write_text(_TARGET_SOURCE)

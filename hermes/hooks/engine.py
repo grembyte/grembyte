@@ -417,7 +417,11 @@ class HookWorker(QThread):
             settings.unsubscribe(self._on_settings_changed)
             if script is not None:
                 try:
-                    script.exports_sync.dispose()
+                    disposed = script.exports_sync.dispose()
+                    inside = disposed.get("threadsInside", 0) if isinstance(disposed, dict) else 0
+                    if inside:
+                        logs.log.warning("Unloading the hook agent with %d game thread(s) "
+                                         "still counted in a trampoline", inside)
                 except CLEANUP_ERRORS as error:
                     logs.cleanup_failed(error)
                 try:

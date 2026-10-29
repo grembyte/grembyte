@@ -7,6 +7,7 @@ low-level ptrace machinery lives in :mod:`hermes.core.ptrace_engine`; this
 module turns watchpoint traps into the hit records the UI shows.
 """
 
+import errno
 import time
 
 from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
@@ -19,6 +20,7 @@ from hermes.core.ptrace_engine import (
     PtraceWatchpointEngine,
     build_dr7,
     decode_access,
+    watch_alignment_error,
 )
 
 __all__ = ["PtraceWriteWatchWorker", "build_dr7", "decode_access"]
@@ -63,6 +65,9 @@ class PtraceWriteWatchWorker(PtraceWatchpointEngine):
             self.monitor_stopped.emit()
 
     def _monitor(self):
+        unaligned = watch_alignment_error(self.address, self.size)
+        if unaligned is not None:
+            raise OSError(errno.EINVAL, unaligned)
         self._load_mappings()
         warnings = self._attach_all()
         if not self._armed:

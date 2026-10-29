@@ -38,13 +38,19 @@ import frida
 from hermes.core import activity, wine_helper
 from hermes.platform import process_start_time
 from hermes.core.ptrace_engine import (
+    _WAIT_ANY,
+    _WALL,
     DR6,
     DR7,
     PTRACE_ATTACH,
     PTRACE_CONT,
     PTRACE_DETACH,
+    PTRACE_EVENT_CLONE,
+    PTRACE_O_TRACECLONE,
     PTRACE_POKEUSER,
+    PTRACE_SETOPTIONS,
     _ptrace,
+    tgkill,
 )
 
 _MACHINE_I386 = 0x14C
@@ -57,7 +63,6 @@ METHOD_PTRACE = "ptrace"
 
 PTRACE_GETREGS = 12
 PTRACE_SETREGS = 13
-_WALL = 0x40000000
 
 GADGET_PORT_BASE = 27100
 GADGET_PORT_COUNT = 64
@@ -361,48 +366,56 @@ class _Tracee:
     """A ptrace attachment to every thread of a Wine process.
 
     Only a convenience wrapper for the one-shot loader below: it attaches all
-    threads, lets the caller arm breakpoints and single out the thread that
-    hits one, and always detaches cleanly so the game keeps running.
+    threads (and those born meanwhile), lets the caller plant breakpoints and
+    single out the thread that hits one, and always detaches cleanly so the
+    game keeps running.
+
+    While the caller waits for that thread, the others run: stopping them
+    could stop one that holds a lock LoadLibraryW needs. Whatever they report
+    goes through ``service``: their own signals are delivered (Wine's suspend
+    requests and exceptions must not get lost), and one that hits an ``int3``
+    of ours is rewound to it and kept stopped until the ``int3`` is gone.
     """
 
     def __init__(self, pid):
         self.pid = pid
-        self._attached = []
-        self._breakpoints = {}
+        self._attached = set()
+        self._stopped = set()   # attached threads stopped right now
+        self._pending = {}      # tid -> signal to deliver when it goes on
+        self._breakpoints = {}  # address -> original byte, int3 there now
+        self._planted = set()   # every address an int3 of ours was at
+        self._parked = set()    # rewound at an int3 of ours, kept stopped
 
     def attach(self):
-        """Attach and stop every current thread."""
-        for tid in _list_threads(self.pid):
-            try:
-                _ptrace(PTRACE_ATTACH, tid, 0, 0)
-                os.waitpid(tid, _WALL)
-                self._attached.append(tid)
-            except (OSError, ChildProcessError):
-                pass
+        """Attach and stop every thread; new threads are traced from birth."""
+        for _ in range(2):  # a second pass catches threads born while attaching
+            for tid in _list_threads(self.pid):
+                if tid not in self._attached:
+                    self._attach_thread(tid)
         if not self._attached:
             raise GadgetError(
                 "Could not ptrace the game. Set "
                 "/proc/sys/kernel/yama/ptrace_scope to 0 and detach any other "
                 "debugger (including a running Frida session).")
 
-    def detach(self):
-        """Detach from every thread, clearing any stale debug registers.
-
-        The loader itself sets no debug registers, but a crashed earlier Frida
-        session may have left some armed; clearing them keeps a detach from
-        leaving a watchpoint behind that would trap into no tracer.
-        """
-        for tid in self._attached:
-            for offset in (DR7, DR6):
-                try:
-                    _ptrace(PTRACE_POKEUSER, tid, offset, 0)
-                except OSError:
-                    pass
-            try:
-                _ptrace(PTRACE_DETACH, tid, 0, 0)
-            except OSError:
-                pass
-        self._attached.clear()
+    def _attach_thread(self, tid):
+        try:
+            _ptrace(PTRACE_ATTACH, tid, 0, 0)
+            _waited, status = os.waitpid(tid, _WALL)
+        except (OSError, ChildProcessError):
+            return
+        if not os.WIFSTOPPED(status):
+            return
+        # The first stop may be the game's own signal: delivered when the
+        # thread goes on; the attach's SIGSTOP follows later.
+        if os.WSTOPSIG(status) != signal.SIGSTOP:
+            self._pending[tid] = os.WSTOPSIG(status)
+        try:
+            _ptrace(PTRACE_SETOPTIONS, tid, 0, PTRACE_O_TRACECLONE)
+        except OSError:
+            pass
+        self._attached.add(tid)
+        self._stopped.add(tid)
 
     def set_breakpoints(self, memory, addresses):
         """Plant software ``int3`` breakpoints at ``addresses``.
@@ -414,56 +427,157 @@ class _Tracee:
             if address in self._breakpoints:
                 continue
             self._breakpoints[address] = memory.read(address, 1)
+            self._planted.add(address)
             memory.write(address, b"\xCC")
 
-    def clear_breakpoints(self, memory):
-        """Restore the bytes the breakpoints overwrote."""
-        for address, original in self._breakpoints.items():
-            memory.write(address, original)
-        self._breakpoints.clear()
+    def clear_breakpoints(self, memory, addresses=None):
+        """Restore the bytes the breakpoints overwrote (all, or ``addresses``).
 
-    def resume_all(self, signal_number=0):
-        """Let every attached thread run."""
-        for tid in self._attached:
-            try:
-                _ptrace(PTRACE_CONT, tid, 0, signal_number)
-            except OSError:
-                pass
+        Threads kept stopped at one of them may go on then: they run the
+        original instruction.
+        """
+        for address in list(self._breakpoints if addresses is None else addresses):
+            original = self._breakpoints.pop(address, None)
+            if original is not None:
+                memory.write(address, original)
+        for tid in list(self._parked):
+            self._parked.discard(tid)
+            self.resume(tid)
+
+    def resume(self, tid, signal_number=None):
+        """Let a stopped thread go on, with its pending signal unless one is given.
+
+        A thread takes one signal per stop: a pending one stays for its next
+        stop (or the detach) when another is given.
+        """
+        if signal_number is None or (signal_number == 0 and tid in self._pending):
+            signal_number = self._pending.pop(tid, 0)
+        try:
+            _ptrace(PTRACE_CONT, tid, 0, signal_number)
+        except OSError:
+            pass
+        self._stopped.discard(tid)
+
+    def mark_borrowed(self, tid, stopped):
+        """Note whether the thread the caller runs itself is stopped now."""
+        if stopped:
+            self._stopped.add(tid)
+        else:
+            self._stopped.discard(tid)
+
+    def next_event(self):
+        """Return the next ``(tid, status)`` of a thread of ours, or None if none is due."""
+        try:
+            tid, status = os.waitpid(-1, _WAIT_ANY)
+        except ChildProcessError:
+            return None
+        return None if tid == 0 else (tid, status)
+
+    def service(self, tid, status):
+        """Deal with an event of a thread nobody waits for.
+
+        Returns the breakpoint address the thread was rewound to and is kept
+        stopped at, or None.
+        """
+        if os.WIFEXITED(status) or os.WIFSIGNALED(status):
+            for threads in (self._attached, self._stopped, self._parked):
+                threads.discard(tid)
+            self._pending.pop(tid, None)
+            return None
+        if not os.WIFSTOPPED(status):
+            return None
+        self._stopped.add(tid)
+        if status >> 16 == PTRACE_EVENT_CLONE:
+            self.resume(tid, 0)  # the new thread reports its own first stop
+            return None
+        stop_signal = os.WSTOPSIG(status)
+        if stop_signal == signal.SIGSTOP:
+            self._attached.add(tid)  # a late stop of ours, or a new thread
+            self.resume(tid, 0)
+            return None
+        if stop_signal == signal.SIGTRAP:
+            regs = _get_regs(tid)
+            address = regs.rip - 1  # int3 leaves rip one past the trap
+            if address in self._planted:
+                regs.rip = address
+                _set_regs(tid, regs)
+                if address in self._breakpoints:
+                    self._parked.add(tid)
+                    return address
+                self.resume(tid, 0)  # the int3 is gone: run the original byte
+                return None
+        self.resume(tid, stop_signal)  # the game's own signal
+        return None
 
     def catch_breakpoint(self, timeout):
         """Resume all threads and return a thread stopped at a breakpoint.
 
         Returns ``(tid, address)`` with the thread's instruction pointer rewound
         to the breakpoint, so it reads as a clean call into that function, or
-        ``(None, None)`` on timeout. Threads that trip a breakpoint other than
-        the first are rewound and parked so they can be released cleanly later.
+        ``(None, None)`` on timeout. Other threads that trip a breakpoint are
+        rewound and kept stopped until the breakpoints are cleared.
         """
-        self.resume_all()
+        for tid in list(self._stopped - self._parked):
+            self.resume(tid)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            try:
-                tid, status = os.waitpid(-1, os.WNOHANG | _WALL)
-            except ChildProcessError:
-                return None, None
-            if tid == 0:
+            event = self.next_event()
+            if event is None:
                 time.sleep(0.003)
                 continue
-            if not os.WIFSTOPPED(status):
-                continue
-            if os.WSTOPSIG(status) == signal.SIGTRAP:
-                regs = _get_regs(tid)
-                address = regs.rip - 1  # int3 leaves rip one past the trap
-                if address in self._breakpoints:
-                    regs.rip = address
-                    _set_regs(tid, regs)
-                    return tid, address
-                # A stray SIGTRAP (not one of ours): pass it through.
-                _ptrace(PTRACE_CONT, tid, 0, 0)
-            else:
-                stop_signal = os.WSTOPSIG(status)
-                _ptrace(PTRACE_CONT, tid, 0,
-                        0 if stop_signal == signal.SIGSTOP else stop_signal)
+            address = self.service(*event)
+            if address is not None:
+                self._parked.discard(event[0])  # the caller's now
+                return event[0], address
         return None, None
+
+    def detach(self):
+        """Detach from every thread, clearing any stale debug registers.
+
+        PTRACE_DETACH needs a stopped thread: running ones get a SIGSTOP, and
+        only that stop counts (one left pending would stop the whole game after
+        the detach). The loader sets no debug registers, but a crashed earlier
+        Frida session may have left some armed; clearing them keeps a detach
+        from leaving a watchpoint behind that would trap into no tracer.
+        """
+        waiting = self._attached - self._stopped
+        for tid in waiting:
+            try:
+                tgkill(self.pid, tid, signal.SIGSTOP)
+            except OSError:
+                pass
+        deadline = time.monotonic() + 3.0
+        while waiting and time.monotonic() < deadline:
+            event = self.next_event()
+            if event is None:
+                time.sleep(0.002)
+                continue
+            tid, status = event
+            if os.WIFSTOPPED(status) and status >> 16 != PTRACE_EVENT_CLONE \
+                    and os.WSTOPSIG(status) == signal.SIGSTOP:
+                self._attached.add(tid)
+                self._stopped.add(tid)
+                waiting.discard(tid)
+                continue
+            self.service(tid, status)
+            if not os.WIFSTOPPED(status):
+                waiting.discard(tid)
+        if waiting:
+            log.warning("Threads %s did not stop; they are released when this "
+                        "thread ends", sorted(waiting))
+        for tid in self._stopped & self._attached:
+            for offset in (DR7, DR6):
+                try:
+                    _ptrace(PTRACE_POKEUSER, tid, offset, 0)
+                except OSError:
+                    pass
+            try:
+                _ptrace(PTRACE_DETACH, tid, 0, self._pending.pop(tid, 0))
+            except OSError:
+                pass
+        self._attached.clear()
+        self._stopped.clear()
+        self._parked.clear()
 
 
 # -- orchestration ------------------------------------------------------------
@@ -616,26 +730,31 @@ def _load_with_ptrace(pid, memory, images, dll, timeout, hot_points):
             raise GadgetError(
                 "No thread reached a hot function in time. The game may be "
                 "idle; try again once it is interacting.")
-        _call_load_library(memory, tid, load_library, trap, wide, timeout)
+        _call_load_library(memory, tracee, tid, load_library, trap, wide, timeout)
     finally:
         tracee.clear_breakpoints(memory)
         tracee.detach()
 
 
-def _call_load_library(memory, tid, load_library, trap, wide, timeout):
+def _call_load_library(memory, tracee, tid, load_library, trap, wide, timeout):
     """Divert thread ``tid`` through ``LoadLibraryW(path)`` and restore it.
 
     The thread is stopped at a hot function entry, a clean Windows call boundary
     with a valid thread context. hermes saves its full register set, points it
     at ``LoadLibraryW`` with the gadget path and a return address of ``trap``
-    (an executable byte temporarily overwritten with ``int3``), and lets only
-    this thread run. The ``int3`` raises a SIGTRAP the tracer catches on return;
-    then the byte, the registers and the thread's original course are all
-    restored. Every other thread stays stopped throughout.
+    (an executable byte temporarily overwritten with ``int3``), and lets it run.
+    The ``int3`` raises a SIGTRAP the tracer catches on return; then the byte,
+    the registers and the thread's original course are all restored. The other
+    threads run meanwhile (see _Tracee); one that reaches ``trap`` itself is
+    kept stopped until the byte is back.
+
+    Should the call not return in time, the thread is left in it: its
+    registers cannot be restored while it runs, and rewinding it inside
+    LoadLibraryW would leave the loader lock held.
     """
     saved = _get_regs(tid)
-    original_byte = memory.read(trap, 1)
-    memory.write(trap, b"\xCC")
+    tracee.set_breakpoints(memory, [trap])
+    returned = False
     try:
         scratch = (saved.rsp - 0x2000) & ~0xF
         memory.write(scratch, wide)
@@ -650,34 +769,52 @@ def _call_load_library(memory, tid, load_library, trap, wide, timeout):
         regs.rip = load_library
         regs.rcx = scratch  # LoadLibraryW(LPCWSTR): first arg in rcx (Win64)
         _set_regs(tid, regs)
+        # A signal pending from the attach waits until the thread is restored.
         _ptrace(PTRACE_CONT, tid, 0, 0)
+        tracee.mark_borrowed(tid, stopped=False)
 
         deadline = time.monotonic() + timeout
         result = None
         while time.monotonic() < deadline:
-            waited, status = os.waitpid(tid, _WALL | os.WNOHANG)
-            if waited == 0:
+            event = tracee.next_event()
+            if event is None:
                 time.sleep(0.002)
                 continue
+            waited, status = event
+            if waited != tid:
+                tracee.service(waited, status)
+                continue
             if not os.WIFSTOPPED(status):
+                returned = True  # nothing left to restore
                 raise GadgetError("The borrowed thread exited during the call")
-            if os.WSTOPSIG(status) == signal.SIGTRAP:
+            if status >> 16 == PTRACE_EVENT_CLONE:
+                _ptrace(PTRACE_CONT, tid, 0, 0)
+                continue
+            stop_signal = os.WSTOPSIG(status)
+            if stop_signal == signal.SIGTRAP:
                 stopped = _get_regs(tid)
                 # int3 leaves rip one byte past the trap.
                 if stopped.rip in (trap, trap + 1):
+                    returned = True
                     result = stopped.rax  # HMODULE, 0 on failure
                     break
-                _ptrace(PTRACE_CONT, tid, 0, 0)
-            else:
-                _ptrace(PTRACE_CONT, tid, 0, signal.SIGCONT
-                        if os.WSTOPSIG(status) == signal.SIGCONT else 0)
+            # Its own signals reach it, e.g. a guard page fault Wine handles.
+            _ptrace(PTRACE_CONT, tid, 0, 0 if stop_signal == signal.SIGSTOP else stop_signal)
         if result is None:
-            raise GadgetError("LoadLibraryW did not return within the timeout")
+            raise GadgetError("LoadLibraryW did not return within the timeout; "
+                              "the borrowed thread is left in the call")
         if not result:
             raise GadgetError("LoadLibraryW returned NULL; the gadget did not load")
     finally:
-        memory.write(trap, original_byte)
-        _set_regs(tid, saved)
+        tracee.clear_breakpoints(memory, [trap])
+        if returned:
+            try:
+                _set_regs(tid, saved)
+            except OSError:
+                pass  # it exited
+        # The thread stays stopped for detach either way: returned at the
+        # trap, or left in its call (then detach stops it).
+        tracee.mark_borrowed(tid, stopped=returned)
 
 
 # -- sessions -----------------------------------------------------------------

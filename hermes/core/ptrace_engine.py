@@ -15,6 +15,7 @@ attached it, so a subclass runs its whole lifecycle inside a ``QThread``'s
 
 import ctypes
 import errno
+import logging
 import os
 import signal
 import sys
@@ -60,8 +61,14 @@ DR6 = DEBUGREG_BASE + 6 * 8
 DR7 = DEBUGREG_BASE + 7 * 8
 WATCHPOINT_SLOTS = 4
 
-# waitpid flag that lets a tracer reap thread (clone) children.
+# waitpid flags: __WALL also reaps thread (clone) children; __WNOTHREAD keeps
+# to the tracees of the calling thread, so children other threads of hermes
+# started (subprocesses) are left to them.
 _WALL = 0x40000000
+_WNOTHREAD = 0x20000000
+_WAIT_ANY = os.WNOHANG | _WALL | _WNOTHREAD
+# DR6 bits B0-B3: which watchpoint slot fired.
+_DR6_SLOTS = 0xF
 
 # x86 segment selector a thread runs under: 0x33 for 64-bit code, 0x23 for
 # 32-bit (compat) code such as a 32-bit Wine process under a 64-bit kernel.
@@ -73,6 +80,8 @@ MAX_INSTRUCTION_SIZE = 15
 SYNC_WINDOW = 48
 
 _LENGTH_BITS = {1: 0b00, 2: 0b01, 4: 0b11, 8: 0b10}
+
+log = logging.getLogger("hermes.ptrace")
 
 # ptrace is Linux's. Elsewhere this module still imports (wine_gadget needs
 # its constants), but every ptrace call fails.
@@ -98,6 +107,13 @@ def _ptrace(request, pid, addr, data):
     return result
 
 
+def tgkill(pid, tid, sig):
+    """Send ``sig`` to thread ``tid`` of process ``pid`` (tgkill(2))."""
+    if _libc is None:
+        raise OSError(errno.ENOSYS, f"ptrace is only available on Linux, not {sys.platform}")
+    _libc.syscall(SYS_TGKILL, pid, tid, int(sig))
+
+
 def _peek_user(pid, offset):
     """Read one word from the tracee's ``struct user`` as an unsigned value."""
     return _ptrace(PTRACE_PEEKUSER, pid, offset, 0) & 0xFFFFFFFFFFFFFFFF
@@ -119,6 +135,20 @@ def combined_dr7(slots):
         value |= 1 << (slot * 2)  # local enable for this slot
         value |= (condition | (length_bits << 2)) << (16 + slot * 4)
     return value
+
+
+def watch_alignment_error(address, size):
+    """Why a hardware watchpoint cannot cover ``size`` bytes at ``address``, or None.
+
+    The CPU watches 1, 2, 4 or 8 bytes at an address aligned to that length;
+    the kernel refuses anything else (EINVAL).
+    """
+    if size not in _LENGTH_BITS:
+        return f"A hardware watchpoint covers 1, 2, 4 or 8 bytes, not {size}."
+    if address % size:
+        return (f"{address:#x} is not aligned to {size} bytes, which a hardware "
+                "watchpoint needs.")
+    return None
 
 
 def build_dr7(size, reads):
@@ -256,10 +286,25 @@ class PtraceWatchpointEngine(QThread):
 
     def _attach_thread(self, tid):
         _ptrace(PTRACE_ATTACH, tid, 0, 0)
-        os.waitpid(tid, _WALL)  # consume the stop ATTACH raises
-        _ptrace(PTRACE_SETOPTIONS, tid, 0, PTRACE_O_TRACECLONE)
-        self._arm(tid)
-        _ptrace(PTRACE_CONT, tid, 0, 0)
+        deliver = 0
+        try:
+            _waited, status = os.waitpid(tid, _WALL)
+            if not os.WIFSTOPPED(status):
+                raise OSError(errno.ESRCH, "The thread ended while being attached.")
+            # The first stop may be the target's own signal: it is delivered
+            # when the thread goes on; the attach's SIGSTOP follows later.
+            if os.WSTOPSIG(status) != signal.SIGSTOP:
+                deliver = os.WSTOPSIG(status)
+            _ptrace(PTRACE_SETOPTIONS, tid, 0, PTRACE_O_TRACECLONE)
+            self._arm(tid)
+        except OSError:
+            # Let go of the thread rather than leave it stopped.
+            try:
+                _ptrace(PTRACE_DETACH, tid, 0, deliver)
+            except OSError:
+                pass
+            raise
+        _ptrace(PTRACE_CONT, tid, 0, deliver)
 
     def _arm(self, tid):
         """Write the current slot set into one stopped thread's registers."""
@@ -273,111 +318,156 @@ class PtraceWatchpointEngine(QThread):
     def _reprogram(self):
         """Re-arm every thread after the slot set changed.
 
-        POKEUSER needs a stopped thread, so each thread is halted with SIGSTOP,
-        its registers rewritten, and resumed. A watchpoint SIGTRAP that arrives
-        meanwhile is acknowledged (DR6 cleared) but not acted on; one missed
-        correction during a reprogram is harmless.
+        POKEUSER needs a stopped thread, so the threads are halted (see
+        _stop_threads), their registers rewritten, and resumed. A thread whose
+        registers cannot be written goes on with its old watchpoints.
         """
-        targets = list(self._armed)
-        for tid in targets:
+        stopped = self._stop_threads(self._armed)
+        for tid in stopped:
+            try:
+                self._arm(tid)
+            except OSError as error:
+                log.warning("Thread %d: watchpoints not changed: %s", tid, error)
+            self._resume(tid, 0)
+        missed = self._armed - stopped
+        if missed:
+            log.warning("Threads %s did not stop; their watchpoints stay as they were",
+                        sorted(missed))
+
+    def _stop_threads(self, tids, timeout=2.0):
+        """Halt the threads ``tids``; return those halted, which stay stopped.
+
+        Each gets a SIGSTOP, and only that stop counts as halted. Whatever else
+        a thread reports meanwhile is dealt with as the event loop would: a
+        watchpoint trap is acknowledged, the target's own signals are
+        delivered (a suspend request of Wine or a garbage collector must not
+        get lost), a thread that clones goes on. Threads born meanwhile are
+        halted from their first stop and returned as well.
+        """
+        waiting = set(tids)
+        for tid in waiting:
             self._tgkill(tid, signal.SIGSTOP)
         stopped = set()
-        deadline = time.monotonic() + 2.0
-        while set(targets) - stopped and time.monotonic() < deadline:
+        deadline = time.monotonic() + timeout
+        while waiting and time.monotonic() < deadline:
             try:
-                tid, status = os.waitpid(-1, os.WNOHANG | _WALL)
+                tid, status = os.waitpid(-1, _WAIT_ANY)
             except ChildProcessError:
                 break
             if tid == 0:
                 time.sleep(0.001)
                 continue
             if os.WIFEXITED(status) or os.WIFSIGNALED(status):
-                self._armed.discard(tid)
+                self._thread_gone(tid)
+                waiting.discard(tid)
                 stopped.discard(tid)
-                if tid in targets:
-                    targets.remove(tid)
                 continue
-            if os.WIFSTOPPED(status):
-                if os.WSTOPSIG(status) == signal.SIGTRAP:
-                    try:
-                        _ptrace(PTRACE_POKEUSER, tid, DR6, 0)
-                    except OSError:
-                        pass
+            if not os.WIFSTOPPED(status):
+                continue
+            if status >> 16 == PTRACE_EVENT_CLONE:
+                self._resume(tid, 0)  # its SIGSTOP is still to come
+                continue
+            stop_signal = os.WSTOPSIG(status)
+            if stop_signal == signal.SIGSTOP:
+                self._armed.add(tid)  # also a new thread, stopped at its birth
                 stopped.add(tid)
-        for tid in stopped:
-            try:
-                self._arm(tid)
-                _ptrace(PTRACE_CONT, tid, 0, 0)
-            except OSError:
-                self._armed.discard(tid)
+                waiting.discard(tid)
+                continue
+            if stop_signal == signal.SIGTRAP and self._acknowledge_trap(tid) is not None:
+                self._resume(tid, 0)  # a watchpoint hit: not acted on while halting
+                continue
+            self._resume(tid, stop_signal)
+        return stopped
+
+    def _resume(self, tid, deliver):
+        """Let a stopped thread go on, delivering signal ``deliver`` (0: none)."""
+        try:
+            _ptrace(PTRACE_CONT, tid, 0, deliver)
+        except OSError:
+            self._armed.discard(tid)
+
+    def _thread_gone(self, tid):
+        self._armed.discard(tid)
+        if tid == self.pid:
+            self._target_gone = True
+            self.requestInterruption()
 
     # -- event loop ---------------------------------------------------------
 
     def _pump(self):
         """Handle one ptrace event. Returns False when none was pending."""
         try:
-            tid, status = os.waitpid(-1, os.WNOHANG | _WALL)
+            tid, status = os.waitpid(-1, _WAIT_ANY)
         except ChildProcessError:
             self.requestInterruption()
             return False
         if tid == 0:
             return False
         if os.WIFEXITED(status) or os.WIFSIGNALED(status):
-            self._armed.discard(tid)
-            if tid == self.pid:
-                self._target_gone = True
-                self.requestInterruption()
+            self._thread_gone(tid)
             return True
         if not os.WIFSTOPPED(status):
             return True
 
         if status >> 16 == PTRACE_EVENT_CLONE:
-            self._on_clone(tid)
+            # The new thread reports its own first stop, before or after this
+            # event; it is taken in there.
+            self._resume(tid, 0)
             return True
 
         stop_signal = os.WSTOPSIG(status)
         deliver = 0
-        if stop_signal == signal.SIGTRAP:
-            deliver = self._dispatch_trap(tid) or 0
-        elif stop_signal != signal.SIGSTOP:
+        if stop_signal == signal.SIGSTOP:
+            if tid not in self._armed:
+                self._take_in(tid)
+            # else: a SIGSTOP of ours that came late
+        elif stop_signal == signal.SIGTRAP:
+            deliver = self._dispatch_trap(tid)
+        else:
             deliver = stop_signal  # pass the target's own signals through
-        try:
-            _ptrace(PTRACE_CONT, tid, 0, deliver)
-        except OSError:
-            self._armed.discard(tid)
+        self._resume(tid, deliver)
         return True
 
-    def _dispatch_trap(self, tid):
-        """Handle a SIGTRAP stop; return a signal to deliver, or None."""
+    def _take_in(self, tid):
+        """Arm a thread born traced (PTRACE_O_TRACECLONE), stopped at its birth."""
+        self._armed.add(tid)
+        try:
+            _ptrace(PTRACE_SETOPTIONS, tid, 0, PTRACE_O_TRACECLONE)
+            self._arm(tid)
+        except OSError as error:
+            log.warning("New thread %d: watchpoints not set: %s", tid, error)
+
+    def _acknowledge_trap(self, tid):
+        """Clear and return the watchpoint bits of a SIGTRAP stop, or None if not ours.
+
+        A SIGTRAP with no watchpoint bit is the target's own (an int3 or a
+        single step, which Wine uses for its exceptions) and must reach it.
+        """
         try:
             dr6 = _peek_user(tid, DR6)
         except OSError:
-            return
-        fired = [slot for slot in self._slots if dr6 & (1 << slot)]
-        if not fired:
-            return
+            return None
+        if not dr6 & _DR6_SLOTS:
+            return None
         try:
-            _ptrace(PTRACE_POKEUSER, tid, DR6, 0)  # acknowledge the hit
-            pc, bits = self._pc_bits(tid)
+            _ptrace(PTRACE_POKEUSER, tid, DR6, 0)
         except OSError:
-            return
-        for slot in fired:
-            self._handle_trap(tid, slot, pc, bits)
-
-    def _on_clone(self, tid):
-        try:
-            new_tid = _ptrace(PTRACE_GETEVENTMSG, tid, 0, 0)
-            os.waitpid(new_tid, _WALL)  # the new thread is stopped at birth
-            _ptrace(PTRACE_SETOPTIONS, new_tid, 0, PTRACE_O_TRACECLONE)
-            self._arm(new_tid)
-            _ptrace(PTRACE_CONT, new_tid, 0, 0)
-            self._armed.add(new_tid)
-        except (OSError, ChildProcessError):
             pass
+        return dr6 & _DR6_SLOTS
+
+    def _dispatch_trap(self, tid):
+        """Handle a SIGTRAP stop; return the signal to deliver (0: none)."""
+        bits = self._acknowledge_trap(tid)
+        if bits is None:
+            return signal.SIGTRAP
         try:
-            _ptrace(PTRACE_CONT, tid, 0, 0)
+            pc, mode = self._pc_bits(tid)
         except OSError:
-            self._armed.discard(tid)
+            return 0
+        for slot in self._slots:
+            if bits & (1 << slot):
+                self._handle_trap(tid, slot, pc, mode)
+        return 0
 
     def _handle_trap(self, tid, slot, pc, bits):
         """Act on a watchpoint hit; implemented by subclasses."""
@@ -391,34 +481,24 @@ class PtraceWatchpointEngine(QThread):
         PTRACE_DETACH only works on a stopped thread, and detaching without
         clearing DR7 would leave an armed watchpoint with no tracer, so the
         next access raises SIGTRAP and kills the target. So each thread is
-        halted with SIGSTOP first; detaching with signal 0 discards that stop
-        (and any pending watchpoint SIGTRAP) and resumes the thread normally.
+        halted first (_stop_threads, which waits for the very SIGSTOP it sent:
+        one left pending would stop the whole process after the detach).
         """
-        pending = set(self._armed)
-        for tid in pending:
-            self._tgkill(tid, signal.SIGSTOP)
-        deadline = time.monotonic() + 2.0
-        while pending and time.monotonic() < deadline:
-            try:
-                tid, status = os.waitpid(-1, os.WNOHANG | _WALL)
-            except ChildProcessError:
+        for timeout in (2.0, 3.0):
+            if not self._armed:
                 break
-            if tid == 0:
-                time.sleep(0.001)
-                continue
-            if os.WIFEXITED(status) or os.WIFSIGNALED(status):
-                pending.discard(tid)
-                continue
-            if os.WIFSTOPPED(status):
+            for tid in self._stop_threads(self._armed, timeout):
                 self._disarm_and_detach(tid)
-                pending.discard(tid)
-        for tid in pending:  # never reported a stop; best effort
-            self._disarm_and_detach(tid)
+                self._armed.discard(tid)
+        if self._armed:
+            # Still traced: they detach when this thread ends, armed.
+            log.warning("Threads %s did not stop and could not be detached cleanly",
+                        sorted(self._armed))
         self._armed.clear()
 
     def _tgkill(self, tid, sig):
-        """Send ``sig`` to one thread of the target (tgkill(tgid, tid, sig))."""
-        _libc.syscall(SYS_TGKILL, self.pid, tid, int(sig))
+        """Send ``sig`` to one thread of the target."""
+        tgkill(self.pid, tid, sig)
 
     @staticmethod
     def _disarm_and_detach(tid):

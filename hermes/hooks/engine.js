@@ -810,6 +810,18 @@ function applyTransform(hook, threadId, pending) {
 
 // rdtsc; shl rdx, 32; or rax, rdx: the time stamp counter in rax.
 const RDTSC_TO_RAX = [0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0];
+// lock inc / lock dec dword [rax]
+const LOCK_INC_PTR_RAX = [0xf0, 0xff, 0x00];
+const LOCK_DEC_PTR_RAX = [0xf0, 0xff, 0x08];
+// Game threads between the before and the after callback of a trampoline.
+// dispose waits for them: unloading frees the code they return to.
+const threadsInside = Memory.alloc(Process.pageSize);
+threadsInside.writeS32(0);
+// How long dispose waits for them (a write that faulted and unwound past its
+// after callback is never counted out), and for the few instructions of a
+// trampoline outside the count.
+const DISPOSE_WAIT_MS = 2000;
+const DISPOSE_GRACE_S = 0.02;
 // The time stamp counter, 0 where write hooks do not run (not x64).
 const readTsc = Process.arch !== 'x64' ? () => 0 : (() => {
   const code = Memory.alloc(Process.pageSize);
@@ -884,13 +896,18 @@ function profileEvents() {
   return events;
 }
 
-function emitCallback(w, callback, data = null) {
+function emitCallback(w, callback, data = null, count = 0) {
   // Preserve everything the game might have live: red zone, flags, all GPRs
   // and the SSE state (the JS callback is free to clobber xmm registers).
+  // ``count`` 1 enters the trampoline in threadsInside, -1 leaves it.
   w.putLeaRegRegOffset('rsp', 'rsp', -RED_ZONE);
   w.putPushfx();
   for (const reg of SAVED_REGS)
     w.putPushReg(reg);
+  if (count > 0) {
+    w.putMovRegAddress('rax', threadsInside);
+    w.putBytes(LOCK_INC_PTR_RAX);
+  }
   w.putMovRegReg('rbx', 'rsp');
   w.putAndRegU32('rsp', 0xfffffff0);
   w.putSubRegImm('rsp', FXSAVE_AREA);
@@ -898,6 +915,10 @@ function emitCallback(w, callback, data = null) {
   w.putBytes(RDTSC_TO_RAX);  // rax and rdx are saved in the block
   w.putCallAddressWithArguments(callback, data === null ? ['rbx', 'rax'] : ['rbx', 'rax', data]);
   w.putBytes(FXRSTOR64_RSP);
+  if (count < 0) {
+    w.putMovRegAddress('rax', threadsInside);
+    w.putBytes(LOCK_DEC_PTR_RAX);
+  }
   w.putMovRegReg('rsp', 'rbx');
   for (const reg of SAVED_REGS.slice().reverse())
     w.putPopReg(reg);
@@ -2100,7 +2121,7 @@ function buildTrampoline(site, needed) {
   const w = new X86Writer(code, { pc: code });
   const r = new X86Relocator(origin, w);
 
-  emitCallback(w, site.before, site.fast ?? null);
+  emitCallback(w, site.before, site.fast ?? null, 1);
   let patchSize = 0;
   let first = true;
   while (patchSize < needed) {
@@ -2110,7 +2131,7 @@ function buildTrampoline(site, needed) {
     patchSize = total;
     r.writeOne();
     if (first) {
-      emitCallback(w, site.after, site.fast ?? null);
+      emitCallback(w, site.after, site.fast ?? null, -1);
       first = false;
     }
     if (r.eoi)
@@ -3090,7 +3111,14 @@ rpc.exports = {
       Thread.sleep(0.1);  // let late traps reach the handler before unloading
     for (const id of Array.from(hooks.keys()))
       removeHook(id);
+    // No thread enters a trampoline any more. Those inside, also those
+    // waiting for this agent's lock in a callback, get to leave: Thread.sleep
+    // lets them have the lock.
+    const deadline = Date.now() + DISPOSE_WAIT_MS;
+    while (threadsInside.readS32() > 0 && Date.now() < deadline)
+      Thread.sleep(0.005);
+    Thread.sleep(DISPOSE_GRACE_S);
     flushStats();
-    return true;
+    return { threadsInside: threadsInside.readS32() };
   }
 };

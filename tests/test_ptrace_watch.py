@@ -158,3 +158,100 @@ def test_ptrace_watch_sees_writes_and_leaves_target_running(tmp_path):
     finally:
         target.kill()
         target.wait()
+
+
+# Threads come and go all the time, and the process counts the SIGUSR1s it
+# gets: neither may be lost or left stopped while the watch attaches, runs
+# and detaches.
+_BUSY_SOURCE = r"""
+#include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
+#include <unistd.h>
+volatile int gold = 100;
+volatile sig_atomic_t signals;
+static void on_signal(int sig) { (void) sig; signals++; }
+static void *short_lived(void *unused) { (void) unused; gold += 0; return NULL; }
+static void *spawner(void *unused) {
+  (void) unused;
+  for (;;) {
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, short_lived, NULL) == 0)
+      pthread_join(thread, NULL);
+    usleep(200);
+  }
+  return NULL;
+}
+int main(void) {
+  pthread_t thread;
+  signal(SIGUSR1, on_signal);
+  pthread_create(&thread, NULL, spawner, NULL);
+  printf("%d %p\n", (int)getpid(), (void*)&gold);
+  fflush(stdout);
+  char line[64];
+  while (fgets(line, sizeof line, stdin)) {
+    printf("%d\n", (int)signals);
+    fflush(stdout);
+  }
+  return 0;
+}
+"""
+
+
+def _state(pid):
+    stat = Path(f"/proc/{pid}/stat").read_text()
+    return stat[stat.rindex(")") + 2]
+
+
+@requires_ptrace_target
+def test_ptrace_watch_keeps_signals_and_new_threads_of_the_target(tmp_path):
+    # pylint: disable=import-outside-toplevel
+    import signal
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication
+
+    from hermes.core.ptrace_watch import PtraceWriteWatchWorker
+
+    source = tmp_path / "busy.c"
+    source.write_text(_BUSY_SOURCE)
+    binary = tmp_path / "busy"
+    subprocess.run(["gcc", "-O2", "-pthread", str(source), "-o", str(binary)], check=True)
+    app = QApplication.instance() or QApplication([])
+    target = subprocess.Popen(
+        [str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    sent = 0
+
+    def signal_for(seconds):
+        nonlocal sent
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            os.kill(target.pid, signal.SIGUSR1)
+            sent += 1
+            app.processEvents()
+            time.sleep(0.02)  # apart enough that the kernel does not merge them
+
+    try:
+        pid, address = target.stdout.readline().split()
+        for _round in range(3):
+            ready, failed = [], []
+            worker = PtraceWriteWatchWorker(int(pid), int(address, 16), 4)
+            worker.monitor_ready.connect(lambda count, _d: ready.append(count))
+            worker.monitor_failed.connect(failed.append)
+            worker.start()
+            signal_for(0.5)
+            assert ready and not failed, (ready, failed)
+            worker.requestInterruption()
+            signal_for(0.1)
+            assert worker.wait(10000)
+            signal_for(0.1)
+
+        time.sleep(0.2)
+        assert _state(target.pid) != "T"
+        target.stdin.write("count\n")
+        target.stdin.flush()
+        assert int(target.stdout.readline()) == sent
+    finally:
+        target.kill()
+        target.wait()

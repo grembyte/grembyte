@@ -39,11 +39,25 @@ def test_claim_address_uses_four_slots_then_refuses(qt_app):
     worker = PtraceHookWorker(os.getpid())
     worker._read_value = lambda *args: 0  # avoid touching real memory
 
-    slots = [worker._claim_address(0x1000 + i, "int32")["slot"] for i in range(WATCHPOINT_SLOTS)]
+    slots = [worker._claim_address(0x1000 + 4 * i, "int32")["slot"]
+             for i in range(WATCHPOINT_SLOTS)]
     assert sorted(slots) == list(range(WATCHPOINT_SLOTS))  # four distinct slots
     assert worker._claim_address(0x9000, "int32") is None  # no slot left
     # A second hook on an already-watched address reuses its slot.
     assert worker._claim_address(0x1000, "int32")["slot"] == slots[0]
+
+
+def test_unaligned_addresses_take_no_watchpoint(qt_app):
+    # pylint: disable=unused-argument,protected-access,import-outside-toplevel
+    from hermes.core.ptrace_engine import watch_alignment_error
+    from hermes.hooks.ptrace_hook import PtraceHookWorker
+
+    # The kernel refuses them; a thread whose registers failed stayed stopped.
+    assert watch_alignment_error(0x1002, 4) and watch_alignment_error(0x1004, 8)
+    assert watch_alignment_error(0x1004, 4) is None and watch_alignment_error(0x1003, 1) is None
+    worker = PtraceHookWorker(os.getpid())
+    worker._read_value = lambda *args: 0
+    assert worker._claim_address(0x1002, "int32") is None and not worker._slots
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +165,66 @@ def test_ptrace_hook_freezes_multiplies_and_removes(tmp_path, qt_app):
         # The target keeps running after the hook detaches.
         assert send(1) == base + 6
         assert not errors
+    finally:
+        target.kill()
+        target.wait()
+
+
+@requires_ptrace_target
+def test_ptrace_hooks_changing_keep_signals_and_new_threads(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    import signal
+
+    from hermes.hooks.engine import HookSpec
+    from hermes.hooks.ptrace_hook import PtraceHookWorker
+    from hermes.hooks.transforms import MultiplyTransform
+    from tests.test_ptrace_watch import _BUSY_SOURCE, _state
+
+    source = tmp_path / "busy.c"
+    source.write_text(_BUSY_SOURCE)
+    binary = tmp_path / "busy"
+    subprocess.run(["gcc", "-O2", "-pthread", str(source), "-o", str(binary)], check=True)
+    target = subprocess.Popen(
+        [str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    sent = 0
+
+    def signal_for(seconds):
+        nonlocal sent
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            os.kill(target.pid, signal.SIGUSR1)
+            sent += 1
+            qt_app.processEvents()
+            time.sleep(0.02)
+
+    try:
+        pid, address = target.stdout.readline().split()
+        pid, address = int(pid), int(address, 16)
+        installed, ready = {}, []
+        worker = PtraceHookWorker(pid)
+        worker.hook_installed.connect(lambda i, info: installed.update({i: info}))
+        worker.session_ready.connect(ready.append)
+        worker.start()
+        signal_for(0.5)
+        assert ready
+        # Each change halts and re-arms every thread (_reprogram).
+        for _round in range(4):
+            hook_id = worker.add_hook(
+                HookSpec(address, "int32", MultiplyTransform(2), trap_pc=address))
+            signal_for(0.2)
+            assert hook_id in installed
+            worker.remove_hook(hook_id)
+            signal_for(0.2)
+        worker.requestInterruption()
+        signal_for(0.1)
+        assert worker.wait(10000)
+
+        time.sleep(0.2)
+        assert _state(target.pid) != "T"
+        target.stdin.write("count\n")
+        target.stdin.flush()
+        assert int(target.stdout.readline()) == sent
     finally:
         target.kill()
         target.wait()

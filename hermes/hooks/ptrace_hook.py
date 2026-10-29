@@ -36,7 +36,11 @@ from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-m
 from hermes.core import sessions
 from hermes.core.memory import read_memory, write_process_bytes
 from hermes.core.pointer import resolve_chain
-from hermes.core.ptrace_engine import PtraceWatchpointEngine, WATCHPOINT_SLOTS
+from hermes.core.ptrace_engine import (
+    PtraceWatchpointEngine,
+    WATCHPOINT_SLOTS,
+    watch_alignment_error,
+)
 from hermes.core.value_types import VALUE_TYPES
 from hermes.hooks.engine import HookWorker
 from hermes.hooks.sandbox import TransformSandbox
@@ -187,6 +191,10 @@ class PtraceHookWorker(PtraceWatchpointEngine):
                 "needs a fixed address or a resolvable pointer.",
             )
             return
+        unaligned = watch_alignment_error(address, VALUE_TYPES[spec.value_type].size)
+        if unaligned is not None:
+            self.hook_failed.emit(hook_id, unaligned)
+            return
         slot_info = self._claim_address(address, spec.value_type)
         if slot_info is None:
             self.hook_failed.emit(
@@ -243,6 +251,8 @@ class PtraceHookWorker(PtraceWatchpointEngine):
         if free is None:
             return None
         size = VALUE_TYPES[value_type].size
+        if watch_alignment_error(address, size) is not None:
+            return None  # e.g. a pointer now leading to an unaligned address
         info = {"slot": free, "value_type": value_type, "size": size,
                 "last": self._read_value(address, value_type, size)}
         self._addresses[address] = info
