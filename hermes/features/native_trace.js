@@ -5,6 +5,8 @@ const SYMBOL_BUDGET_MS = SYMBOL_BUDGET_VALUE;
 const EVENT_SIZE = 32;
 const THREAD_SIZE = 8;
 const STOP_GC_TIMEOUT = 500;
+// How long begin waits for callouts of the previous phase (ms).
+const QUIESCE_TIMEOUT = 2000;
 const DISPOSE_GC_TIMEOUT = 3000;
 const PHASES = { baseline: 1, scenario: 2 };
 const WINDOWS = Process.platform === 'windows';
@@ -74,6 +76,13 @@ extern Event events[];
 
 gint64 now (void) {
   return g_get_monotonic_time ();
+}
+
+/* Only the agent writes the phase. A locked add rather than a plain store:
+   it is a full barrier, so the agent's following read of state[3] cannot
+   pass it (the callouts' locked add on state[3] is the other half). */
+void set_phase (gint phase) {
+  g_atomic_int_add (&state[0], phase - state[0]);
 }
 
 static gsize read_register (GumCpuContext * c, gint reg, const Site * s) {
@@ -264,7 +273,6 @@ void tally (guint64 * out) {
 `;
 
 let trace = null;
-let modules = null;
 // Traces stopped: a thread blocked in a call since may come back into code
 // with callouts into their CModule.
 const retired = [];
@@ -282,7 +290,7 @@ function isGameModule(module, gameFolder) {
 function inventory() {
   const main = Process.mainModule;
   const gameFolder = folder(main.path);
-  modules = Process.enumerateModules();
+  const modules = Process.enumerateModules();
   return {
     platform: Process.platform,
     threads: Process.enumerateThreads()
@@ -326,6 +334,7 @@ function compile(threadCount) {
   return {
     ...memory, cm,
     now: new NativeFunction(cm.now, 'int64', []),
+    setPhase: new NativeFunction(cm.set_phase, 'void', ['int']),
     tally() {
       tally(tallied);
       return [Number(tallied.readU64()), Number(tallied.add(8).readU64())];
@@ -338,17 +347,19 @@ function start(spec) {
   // spec: { threads: [ids], modules: [names to follow], ranges: [[base, size]] to run natively }
   if (trace !== null)
     throw new Error('a trace is running already');
-  if (modules === null)
-    inventory();
   const compiled = compile(spec.threads.length);
   const followed = new Set(spec.modules);
-  const included = [];
-  for (const module of modules) {
-    if (followed.has(module.name))
-      included.push(module);
-    else
-      Stalker.exclude(module);  // runs natively: only calls into it are seen
-  }
+  let included = 0;
+  // Called for the modules loaded now and for those loaded later, also during
+  // the trace: Stalker would otherwise recompile all of their code.
+  const moduleObserver = Process.attachModuleObserver({
+    onAdded(module) {
+      if (followed.has(module.name))
+        included++;
+      else
+        Stalker.exclude(module);  // runs natively: only calls into it are seen
+    }
+  });
   // Code Frida knows no module of (Wine's Unix side): runs natively as well.
   // A 32-bit game cannot reach the 64-bit libraries of the new WoW64.
   for (const [base, size] of spec.ranges || []) {
@@ -358,6 +369,7 @@ function start(spec) {
   }
   trace = {
     ...compiled,
+    moduleObserver,
     all: new ModuleMap(),
     slots: new Map(),       // slot of the C side -> function number
     index: new Map(),       // target address text -> function number
@@ -384,7 +396,7 @@ function start(spec) {
   const failed = WINDOWS
     ? enterOnReturn(trace, infos, new ModuleMap(module => followed.has(module.name)))
     : withRoomNearby(() => followAll(trace, infos), placed => { steered = placed; });
-  return { threads: ids.length - failed.length, failed: failed.length, modules: included.length,
+  return { threads: ids.length - failed.length, failed: failed.length, modules: included,
            waiting: trace.waiting.size, steered };
 }
 
@@ -618,11 +630,15 @@ async function begin(phase) {
   const t = requireTrace();
   if (PHASES[phase] === undefined)
     throw new Error(`unknown phase ${phase}`);
-  t.state.writeS32(0);  // calls from before belong to no phase
+  t.setPhase(0);  // calls from before belong to no phase
   t.phase = null;
   // Let callouts that observed the previous phase finish before clearing tables.
-  while (t.state.add(12).readS32() !== 0)
+  const deadline = Date.now() + QUIESCE_TIMEOUT;
+  while (t.state.add(12).readS32() !== 0) {
+    if (Date.now() > deadline)
+      throw new Error('a followed thread did not leave the trace\'s code; try again');
     await new Promise(resolve => setTimeout(resolve, 1));
+  }
   zero(t.counts, 4 * FUNCTION_CAPACITY);
   zero(t.first_claims, 4 * FIRST_CAPACITY);
   zero(t.first_functions, 4 * FIRST_CAPACITY);
@@ -638,7 +654,7 @@ async function begin(phase) {
   t.phase = phase;
   t.began = Date.now();
   t.beganMono = BigInt(t.now().toString());
-  t.state.writeS32(PHASES[phase]);
+  t.setPhase(PHASES[phase]);
   return true;
 }
 
@@ -719,7 +735,7 @@ function finish() {
   const phase = t.phase;
   if (phase === null)
     throw new Error('nothing is being recorded');
-  t.state.writeS32(0);
+  t.setPhase(0);
   t.phase = null;
   const duration = Date.now() - t.began;
   const slotCounts = new Uint32Array(t.counts.readByteArray(4 * FUNCTION_CAPACITY));
@@ -777,7 +793,8 @@ function stop() {
     return false;
   const t = trace;
   trace = null;
-  t.state.writeS32(0);
+  t.setPhase(0);
+  t.moduleObserver.detach();
   for (const group of t.entries.slice())
     detachEntry(t, group);  // threads not entered yet stay as they are
   t.waiting.clear();

@@ -18,6 +18,7 @@ detaches. Either way hermes then connects with
 """
 
 import ctypes
+import hashlib
 import json
 import logging
 import lzma
@@ -62,6 +63,10 @@ GADGET_PORT_BASE = 27100
 GADGET_PORT_COUNT = 64
 _GADGET_URL = ("https://github.com/frida/frida/releases/download/"
                "{version}/frida-gadget-{version}-windows-{arch}.dll.xz")
+# The release's assets with the SHA-256 GitHub computed for each (``digest``).
+_RELEASE_URL = "https://api.github.com/repos/frida/frida/releases/tags/{version}"
+# PE machine types of the gadget
+_PE_MACHINES = {"x86": 0x14C, "x86_64": 0x8664}
 
 # Functions a game reaches from a clean Windows call boundary, where a borrowed
 # thread has a valid context. A windowed game pumps messages every frame, so
@@ -250,12 +255,52 @@ def ensure_gadget(bits, version=None, download=True):
         raise GadgetError(f"Gadget not present: {target}")
     url = _GADGET_URL.format(version=version, arch=arch)
     try:
+        digest = _published_digest(version, url.rsplit("/", 1)[1])
         with urllib.request.urlopen(url, timeout=60) as response:
             compressed = response.read()
-        target.write_bytes(lzma.decompress(compressed))
-    except (OSError, lzma.LZMAError) as error:
+        if digest is not None and hashlib.sha256(compressed).hexdigest() != digest:
+            raise GadgetError(f"The gadget from {url} does not match its SHA-256 {digest}")
+        dll = lzma.decompress(compressed)
+        if not _is_pe(dll, arch):
+            raise GadgetError(f"The gadget from {url} is no {arch} DLL")
+        # Written in full or not at all: a cut-off file would be taken as the gadget.
+        partial = target.with_name(target.name + ".part")
+        partial.write_bytes(dll)
+        os.replace(partial, target)
+    except (OSError, ValueError, lzma.LZMAError) as error:
         raise GadgetError(f"Could not download the gadget from {url}: {error}") from error
     return target
+
+
+def _published_digest(version, name):
+    """The SHA-256 GitHub lists for asset ``name`` of the release, or None if none.
+
+    Raises OSError or ValueError when the release cannot be read: no gadget is
+    used that could not be checked.
+    """
+    request = urllib.request.Request(_RELEASE_URL.format(version=version),
+                                     headers={"Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        release = json.load(response)
+    for asset in release.get("assets", []):
+        if asset.get("name") == name:
+            digest = asset.get("digest") or ""
+            if digest.startswith("sha256:"):
+                return digest.removeprefix("sha256:").lower()
+            # Releases from before GitHub computed digests (2025) list none.
+            log.warning("GitHub lists no SHA-256 for %s", name)
+            return None
+    raise ValueError(f"release {version} has no asset {name}")
+
+
+def _is_pe(data, arch):
+    """Whether ``data`` starts like a PE image for ``arch``."""
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return False
+    offset = struct.unpack_from("<I", data, 0x3C)[0]
+    if offset + 6 > len(data) or data[offset:offset + 4] != b"PE\0\0":
+        return False
+    return struct.unpack_from("<H", data, offset + 4)[0] == _PE_MACHINES[arch]
 
 
 def _windows_path(unix_path):

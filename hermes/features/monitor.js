@@ -840,12 +840,39 @@ function shortClass(name) {
   return name.substring(name.lastIndexOf('.') + 1);
 }
 
-// What a script running before a call changed, for the hook's statistics.
-let changes = null;
+// What the scripts running before a call changed, for the hooks' statistics:
+// per thread a stack of lists, one per script. A script that calls game code
+// lets other threads, and hooks nested in that call, run meanwhile.
+const changeStacks = new Map();
+
+function beginChanges() {
+  const threadId = Process.getCurrentThreadId();
+  let stack = changeStacks.get(threadId);
+  if (stack === undefined) {
+    stack = [];
+    changeStacks.set(threadId, stack);
+  }
+  const changed = [];
+  stack.push(changed);
+  return changed;
+}
+
+function endChanges(changed) {
+  const threadId = Process.getCurrentThreadId();
+  const stack = changeStacks.get(threadId);
+  if (stack === undefined)
+    return;
+  const at = stack.lastIndexOf(changed);
+  if (at !== -1)
+    stack.splice(at, 1);
+  if (stack.length === 0)
+    changeStacks.delete(threadId);
+}
 
 function noteChange(what, value) {
-  if (changes !== null)
-    changes.push(`${what}=${displayText(value)}`);
+  const stack = changeStacks.get(Process.getCurrentThreadId());
+  if (stack !== undefined)
+    stack[stack.length - 1].push(`${what}=${displayText(value)}`);
 }
 
 function wrap(object) {
@@ -1189,7 +1216,7 @@ function hookBefore(hook, invocation) {
     log: logs === null ? () => {} : (...items) => { logs.push(formatLog(items)); }
   };
   let error = null;
-  changes = [];
+  const changed = beginChanges();
   try {
     hook.transform.fn(ctx);
     for (const [param, location, raw, original] of passed) {
@@ -1202,9 +1229,9 @@ function hookBefore(hook, invocation) {
     hook.errorReported = false;
   } catch (thrown) {
     error = thrown;
+  } finally {
+    endChanges(changed);
   }
-  const changed = changes;
-  changes = null;
   const text = changed.join(', ');
   const stats = hookStats.get(hook.id) || { count: 0 };
   stats.count++;
@@ -1389,7 +1416,6 @@ function attachHook(hook) {
         try {
           hookBefore(hook, this);
         } catch (error) {
-          changes = null;
           reportHookError(hook, error);
         }
       }

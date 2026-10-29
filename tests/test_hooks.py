@@ -658,6 +658,52 @@ def test_hook_reverted_by_the_game_is_reported_and_patched_again(tmp_path, qt_ap
         target.close()
 
 
+@requires_x64_attach
+def test_hook_edited_while_the_game_exits_is_only_saved(tmp_path, qt_app, translations,
+                                                        monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import types
+
+    from PyQt6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.ui.widgets import hooks
+
+    target, function = _start_ctypes_target(tmp_path)
+    panel = hooks.HookPanel(translations)
+    saved = []
+    monkeypatch.setattr(panel, "_store", lambda action, *args, **kwargs:
+                        saved.append(kwargs) if action == "update_hook" else [])
+
+    class DetachingDialog:  # pylint: disable=too-few-public-methods
+        """Accepts after the game has exited (the panel is detached meanwhile)."""
+
+        transform, label, breakpoint = MultiplyTransform(2), "Gold x2", True
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        @staticmethod
+        def exec():
+            panel.set_process(None)
+            return QDialog.DialogCode.Accepted
+
+    try:
+        panel.set_process(target.pid)
+        hook_id = panel.add_hook(HookSpec(target.address, "int32", MultiplyTransform(10),
+                                          write_pc=int(function, 16), label="Gold"), "write")
+        _wait_for(qt_app, lambda: panel.table.item(0, 4).text() == "Aktiv")
+        panel._hooks[hook_id]["saved_id"] = 7
+        panel._repository = types.SimpleNamespace(update_hook="update_hook",
+                                                  list_templates="list_templates")
+        panel.table.selectRow(0)
+        monkeypatch.setattr(hooks, "HookDialog", DetachingDialog)
+        panel._edit_selected()
+        assert saved and saved[0]["label"] == "Gold x2" and saved[0]["breakpoint"]
+    finally:
+        panel.shutdown(timeout_ms=None)
+        target.close()
+
+
 def _start_ctypes_target(tmp_path):
     """Start _CTYPES_TARGET; returns the _Target and its write function (hex)."""
     script = tmp_path / "target.py"

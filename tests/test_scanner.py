@@ -357,6 +357,7 @@ def test_value_refresh_worker_reads_requested_addresses(monkeypatch):
         123,
         [
             {"address": base_address, "type": "int32"},
+            {"address": base_address, "type": "float"},
             {"address": base_address + 4, "type": "double"},
         ],
     )
@@ -365,7 +366,10 @@ def test_value_refresh_worker_reads_requested_addresses(monkeypatch):
 
     worker.run()
 
-    assert emitted == [{base_address: 27, base_address + 4: 3.5}]
+    # One address shown as two types keeps both values.
+    as_float = struct.unpack("<f", struct.pack("<i", 27))[0]
+    assert emitted == [{(base_address, "int32"): 27, (base_address, "float"): as_float,
+                        (base_address + 4, "double"): 3.5}]
 
 def test_first_scan_finds_small_unsigned_values_at_any_offset(monkeypatch):
     contents = bytes([1, 200, 3, 200, 5])
@@ -596,6 +600,41 @@ def test_refine_reads_candidates_as_the_newly_chosen_type(monkeypatch):
     worker = ScanWorker(123, "int16", "exact", "9", previous_results=previous)
 
     assert worker._refine_scan() == [{"address": 0x1004, "type": "int16", "value": 9}]
+
+
+def test_a_newly_chosen_type_reads_previous_values_from_their_bytes(monkeypatch):
+    float_one = struct.unpack("<i", struct.pack("<f", 1.0))[0]
+    monkeypatch.setattr(scanner, "ProcessMemory", FakeRegions({
+        0x1000: struct.pack("<ii", 5, float_one) + struct.pack("<q", 7 + (3 << 32)),
+    }))
+    previous = [
+        # Found as int32 and as float at one address: compared once, as int32.
+        {"address": 0x1000, "type": "int32", "value": 5},
+        {"address": 0x1000, "type": "float", "value": 7.0e-45},
+        # A float of 1.0 is the int32 0x3F800000, the same bytes.
+        {"address": 0x1004, "type": "float", "value": 1.0},
+        # The low half of an int64.
+        {"address": 0x1008, "type": "int64", "value": 6 + (3 << 32)},
+    ]
+    worker = ScanWorker(123, "int32", "unchanged", previous_results=previous)
+
+    assert worker._refine_scan() == [
+        {"address": 0x1000, "type": "int32", "value": 5},
+        {"address": 0x1004, "type": "int32", "value": float_one},
+    ]
+
+
+def test_a_wider_type_keeps_candidates_only_without_a_previous_value(monkeypatch):
+    monkeypatch.setattr(scanner, "ProcessMemory", FakeRegions({
+        0x1000: struct.pack("<q", 9 + (1 << 32)),
+    }))
+    # Only the low 2 of the 8 bytes are known from before.
+    previous = [{"address": 0x1000, "type": "int16", "value": 9}]
+
+    changed = ScanWorker(123, "int64", "changed", previous_results=previous)
+    assert changed._refine_scan() == []
+    exact = ScanWorker(123, "int64", "exact", str(9 + (1 << 32)), previous_results=previous)
+    assert exact._refine_scan() == [{"address": 0x1000, "type": "int64", "value": 9 + (1 << 32)}]
 
 
 def test_auto_refine_keeps_each_type_and_orders_by_address(monkeypatch):

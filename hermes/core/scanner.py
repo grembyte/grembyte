@@ -542,18 +542,38 @@ class ScanWorker(QThread):
         """Return ``{value type: (addresses, previous values)}`` to compare now.
 
         A chosen data type reads every candidate as that type; "auto" keeps
-        the type each one was found as.
+        the type each one was found as. A previous value of another type is
+        read anew from its bytes: an int32 as float, the low half of an int64
+        as int32. Where the chosen type is wider, part of its bytes is not
+        known; such candidates are kept only for scans that need no previous
+        value. Each address is compared once, with a previous value of the
+        chosen type where there is one.
         """
         if self.value_type == "auto" or not previous.groups:
             return previous.groups
-        self._get_numpy_dtype_for(self.value_type)
-        groups = list(previous.groups.values())
-        if len(groups) == 1:
-            return {self.value_type: groups[0]}
-        addresses = np.concatenate([addresses for addresses, _values in groups])
-        values = np.concatenate([values for _addresses, values in groups])
-        order = np.argsort(addresses, kind="stable")
-        return {self.value_type: (addresses[order], values[order])}
+        dtype = np.dtype(self._get_numpy_dtype_for(self.value_type)).newbyteorder("<")
+        needs_previous = self.scan_mode in PREVIOUS_VALUE_MODES
+        parts = []
+        # The chosen type first: np.unique below keeps the first of an address.
+        for value_type in sorted(previous.groups, key=lambda name: name != self.value_type):
+            addresses, values = previous.groups[value_type]
+            values = np.ascontiguousarray(values, dtype=values.dtype.newbyteorder("<"))
+            if values.dtype == dtype:
+                converted = values
+            elif values.dtype.itemsize >= dtype.itemsize:
+                raw = values.view(np.uint8).reshape(-1, values.dtype.itemsize)
+                converted = np.ascontiguousarray(raw[:, :dtype.itemsize]).view(dtype).ravel()
+            elif needs_previous:
+                continue
+            else:
+                converted = np.zeros(len(addresses), dtype=dtype)  # compared with nothing
+            parts.append((addresses, converted))
+        if not parts:
+            return {}
+        addresses = np.concatenate([addresses for addresses, _values in parts])
+        values = np.concatenate([values for _addresses, values in parts])
+        _unique, first = np.unique(addresses, return_index=True)
+        return {self.value_type: (addresses[first], values[first])}
 
     def _read_candidates(self, memory, addresses, dtype):
         """Yield ``(begin, values)``: the current values from ``addresses[begin]`` on.
@@ -679,9 +699,10 @@ class ScanWorker(QThread):
 class ValueRefreshWorker(QThread):
     """Read current values for a small set of known process addresses.
 
-    An entry with a ``pointer`` (PointerChain) is resolved first; its
-    address is reported via ``addresses_resolved`` under the entry's ``key``
-    (None if the chain does not resolve right now).
+    ``values_ready`` maps ``(address, type)`` to the value: an address may be
+    shown as several types. An entry with a ``pointer`` (PointerChain) is
+    resolved first; its address is reported via ``addresses_resolved`` under
+    the entry's ``key`` (None if the chain does not resolve right now).
     """
 
     values_ready = pyqtSignal(dict)
@@ -714,7 +735,7 @@ class ValueRefreshWorker(QThread):
                         continue
                     block = memory.read(address, struct.calcsize(value_format))
                     if block is not None:
-                        values[address] = struct.unpack(value_format, block)[0]
+                        values[address, entry["type"]] = struct.unpack(value_format, block)[0]
             if resolved:
                 self.addresses_resolved.emit(resolved)
             self.values_ready.emit(values)

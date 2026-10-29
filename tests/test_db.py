@@ -345,3 +345,76 @@ def test_german_examples_and_their_hooks_become_english(repository):
         assert method.transform_name == "Method script"
         assert method.transform_parameters[0]["label"] == "Script"
         assert method.transform_params == {"code": "// mein Code"}
+
+
+def test_an_english_name_taken_by_the_user_keeps_the_german_example(repository):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.db.models import HookTemplate
+
+    examples = example_templates()
+    with repository._sessions() as session:
+        session.add_all([
+            HookTemplate(name="Multiplikator", source=examples["multiply"].source,
+                         parameters=examples["multiply"].parameters_json(),
+                         seed_key="multiply", description=""),
+            HookTemplate(name="Multiplier", source="ctx => ctx.new * 3", parameters=[]),
+        ])
+        session.commit()
+
+    repository.translate_examples()
+    repository.ensure_templates(examples)
+    names = {t.name: t for t in repository.list_templates()}
+    assert names["Multiplier"].source == "ctx => ctx.new * 3"
+    assert names["Multiplikator"].source == examples["multiply"].source
+    # The other examples are created all the same.
+    assert {"Fixed value", "Clamp"} <= set(names)
+
+
+def test_init_db_sets_aside_a_table_of_the_first_versions(tmp_path):
+    # pylint: disable=import-outside-toplevel
+    import sqlite3
+
+    from hermes.db.engine import init_db
+    from hermes.db.repository.addresses import AddressRepository
+
+    path = tmp_path / "first.db"
+    connection = sqlite3.connect(path)
+    connection.executescript("""
+        CREATE TABLE processes (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL);
+        INSERT INTO processes (name) VALUES ('game');
+        CREATE TABLE addresses (id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL,
+                                label VARCHAR, address VARCHAR NOT NULL,
+                                value_type VARCHAR, frozen INTEGER, last_value VARCHAR);
+        INSERT INTO addresses (game_id, label, address) VALUES (1, 'Gold', '0x5000');
+        CREATE TABLE pointer_scans (id INTEGER PRIMARY KEY,
+                                    address_id INTEGER NOT NULL UNIQUE
+                                        REFERENCES addresses (id) ON DELETE CASCADE,
+                                    max_depth INTEGER NOT NULL, max_offset INTEGER NOT NULL,
+                                    chains JSON NOT NULL, rounds INTEGER NOT NULL DEFAULT 0);
+    """)
+    connection.commit()
+    connection.close()
+
+    engine = create_engine(f"sqlite:///{path}")
+    init_db(engine)
+    init_db(engine)
+
+    connection = sqlite3.connect(path)
+    tables = {row[0]: row[1] for row in connection.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'table'")}
+    # The old rows are kept; the process keeps its id and gets a path.
+    assert connection.execute("SELECT label FROM addresses_old").fetchall() == [("Gold",)]
+    assert connection.execute("SELECT id, name, path FROM processes").fetchall() == [
+        (1, "game", "")]
+    assert "addresses_old" not in tables["pointer_scans"]
+    connection.close()
+
+    sessions = sessionmaker(bind=engine)
+    repository = AddressRepository(sessions)
+    gold = repository.add_address(1, label="Gold", value_type="int32", address=0x5000)
+    assert [(a.label, a.address) for a in repository.list_addresses(1)] == [("Gold", 0x5000)]
+    # Foreign keys are on: removing the process removes its addresses.
+    with engine.begin() as db:
+        db.exec_driver_sql("DELETE FROM processes WHERE id = 1")
+    assert repository.list_addresses(1) == [] and gold
+    engine.dispose()

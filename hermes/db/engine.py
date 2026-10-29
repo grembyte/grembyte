@@ -1,14 +1,19 @@
 """Create database"""
 
+import logging
 import os
 import shutil
+import sqlite3
 from pathlib import Path
 
 from PyQt6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
 from hermes.db.base import Base
+
+log = logging.getLogger("hermes.db")
 
 # Where the database lived before it moved to the user's data directory.
 LEGACY_DB_PATH = Path(__file__).parent.parent.parent / "data" / "hermes.db"
@@ -30,8 +35,18 @@ def default_db_path():
 
 DB_PATH = default_db_path()
 
+@event.listens_for(Engine, "connect")
+def _enable_foreign_keys(dbapi_connection, _connection_record):
+    """SQLite ignores foreign keys, and with them ``ondelete``, unless a connection asks."""
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
 engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 SESSION_LOCAL = sessionmaker(bind=engine)
+
 
 def init_db(db_engine=engine):
     """Create all tables defined in the ORM models (idempotent).
@@ -43,6 +58,7 @@ def init_db(db_engine=engine):
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         adopt_legacy_db(DB_PATH)
     from hermes.db import models  # pylint: disable=C0415, W0611
+    set_aside_incompatible_tables(db_engine)
     Base.metadata.create_all(db_engine)
     add_missing_columns(db_engine)
 
@@ -59,11 +75,103 @@ def adopt_legacy_db(path, legacy_path=LEGACY_DB_PATH):
     return True
 
 
-def add_missing_columns(db_engine=engine):
-    """Add nullable columns that models gained to existing tables.
+def _affinity(declared):
+    """SQLite's type affinity of a declared column type (rules of section 3.1)."""
+    declared = declared.upper()
+    if "INT" in declared:
+        return "INTEGER"
+    if any(word in declared for word in ("CHAR", "CLOB", "TEXT")):
+        return "TEXT"
+    if not declared or "BLOB" in declared:
+        return "BLOB"
+    if any(word in declared for word in ("REAL", "FLOA", "DOUB")):
+        return "REAL"
+    return "NUMERIC"
 
-    create_all() only creates missing tables. Nullable columns can be added
-    without touching existing rows; anything else needs a real migration.
+
+def _placeholder(column):
+    """SQL default for a required column added to a table with rows, or None.
+
+    The model's own default, else an empty text for a name or path. Without
+    either a placeholder would make the old rows look valid but unusable.
+    """
+    default = column.default
+    if default is not None and getattr(default, "is_scalar", False):
+        value = default.arg
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        if isinstance(value, (int, float)):
+            return repr(value)
+        if isinstance(value, str):
+            return "'" + value.replace("'", "''") + "'"
+        return None
+    return "''" if _affinity(str(column.type)) == "TEXT" else None
+
+
+def _incompatibility(table, existing):
+    """Why the existing columns of ``table`` cannot serve its model, or None."""
+    for column in table.columns:
+        if column.name not in existing:
+            if not column.nullable and _placeholder(column) is None:
+                return f"required column {column.name} is missing"
+            continue
+        # A number stored in a text column comes back as text, and vice versa.
+        kinds = {_affinity(str(column.type)), _affinity(str(existing[column.name]["type"]))}
+        if "TEXT" in kinds and kinds & {"INTEGER", "REAL"}:
+            return f"column {column.name} has another type"
+    for name, column in existing.items():
+        if name not in table.columns and not column["nullable"] and column.get("default") is None:
+            return f"column {name} is required but no longer used"
+    return None
+
+
+def set_aside_incompatible_tables(db_engine=engine):
+    """Rename tables of an older schema the models cannot use; returns {old: new name}.
+
+    add_missing_columns() adds what a table lacks where that keeps its rows
+    usable. A table with a column it cannot fill, a required column the
+    models no longer know or a column of another type (all of which happened
+    with databases of the first versions) would fail or garble every insert.
+    It is kept as ``<name>_old`` and create_all() makes the table anew.
+    """
+    inspector = inspect(db_engine)
+    names = set(inspector.get_table_names())
+    renamed = {}
+    for table in Base.metadata.sorted_tables:
+        if table.name not in names:
+            continue
+        existing = {column["name"]: column for column in inspector.get_columns(table.name)}
+        reason = _incompatibility(table, existing)
+        if reason is None:
+            continue
+        new_name, number = f"{table.name}_old", 2
+        while new_name in names:
+            new_name, number = f"{table.name}_old{number}", number + 1
+        names.add(new_name)
+        renamed[table.name] = new_name
+        log.warning("Table %s has an older schema (%s); kept as %s", table.name, reason, new_name)
+    if renamed:
+        # References from other tables keep naming the table, not its old copy:
+        # SQLite rewrites them unless both pragmas say otherwise. foreign_keys
+        # cannot change inside a transaction.
+        with db_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+            connection.execute(text("PRAGMA foreign_keys=OFF"))
+            connection.execute(text("PRAGMA legacy_alter_table=ON"))
+            try:
+                for old, new in renamed.items():
+                    connection.execute(text(f'ALTER TABLE "{old}" RENAME TO "{new}"'))
+            finally:
+                connection.execute(text("PRAGMA legacy_alter_table=OFF"))
+                connection.execute(text("PRAGMA foreign_keys=ON"))
+    return renamed
+
+
+def add_missing_columns(db_engine=engine):
+    """Add columns that models gained to existing tables.
+
+    create_all() only creates missing tables. Nullable columns are added
+    empty, required ones with a placeholder for the rows there are (see
+    _placeholder); set_aside_incompatible_tables() has dealt with the rest.
     """
     inspector = inspect(db_engine)
     with db_engine.begin() as connection:
@@ -72,11 +180,17 @@ def add_missing_columns(db_engine=engine):
                 continue
             existing = {column["name"] for column in inspector.get_columns(table.name)}
             for column in table.columns:
-                if column.name in existing or not column.nullable:
+                if column.name in existing:
                     continue
                 column_type = column.type.compile(dialect=db_engine.dialect)
+                required = ""
+                if not column.nullable:
+                    placeholder = _placeholder(column)
+                    if placeholder is None:
+                        continue
+                    required = f" NOT NULL DEFAULT {placeholder}"
                 connection.execute(text(
-                    f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column_type}'
+                    f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column_type}{required}'
                 ))
 
 

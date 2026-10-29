@@ -27,7 +27,7 @@ class FakeMemory:
         offset = address - self.base_address
         self.contents[offset:offset + len(data)] = data
 
-    def read_pointer(self, address):
+    def read_pointer(self, address, _size=8):
         return self.pointers.get(address)
 
     def read(self, address, size):

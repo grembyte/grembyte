@@ -27,7 +27,6 @@ instruction-anchored, which has consequences worth knowing:
 Only x86-64 targets are supported.
 """
 
-import itertools
 import queue
 import threading
 import time
@@ -39,6 +38,7 @@ from hermes.core.memory import read_memory, write_process_bytes
 from hermes.core.pointer import resolve_chain
 from hermes.core.ptrace_engine import PtraceWatchpointEngine, WATCHPOINT_SLOTS
 from hermes.core.value_types import VALUE_TYPES
+from hermes.hooks.engine import HookWorker
 from hermes.hooks.sandbox import TransformSandbox
 from hermes.platform import ProcessMemory
 
@@ -82,7 +82,6 @@ class PtraceHookWorker(PtraceWatchpointEngine):
         self.access_stub = None  # Frida-only; kept for interface parity
         self.fast_code = None
         self._commands = queue.Queue()
-        self._ids = itertools.count(1)
         self._hooks = {}          # hook id -> hook state
         self._addresses = {}      # address -> {"slot", "value_type", "size", "last"}
         self._sandbox = None
@@ -92,7 +91,8 @@ class PtraceHookWorker(PtraceWatchpointEngine):
 
     def add_hook(self, spec):
         """Queue a hook and return its id; expect hook_installed or hook_failed."""
-        hook_id = next(self._ids)
+        # Shared with the Frida workers: method hooks sit in the same panel.
+        hook_id = next(HookWorker._ids)  # pylint: disable=protected-access
         self._commands.put(("add", hook_id, spec))
         return hook_id
 

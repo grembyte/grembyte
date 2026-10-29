@@ -9,8 +9,9 @@ the same module + offset) and follows pointers to the target::
         address = read_pointer(address) + offset
 
 The scan reads all writable memory of the process once and keeps every
-aligned 8-byte value that points into writable memory (the pointer map,
-sorted by value). By default only values that are multiples of 8 count:
+aligned pointer-sized value (8 bytes, 4 in 32-bit programs) that points into
+writable memory (the pointer map, sorted by value). By default only values
+that are multiples of the pointer size count:
 real pointers to objects are, while numbers and bit masks that merely look
 like an address (e.g. ``0x8860004``) usually are not. Starting at the target it then searches backwards: which
 locations hold a pointer at most ``max_offset`` below the current address?
@@ -35,7 +36,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from hermes.platform import ProcessMemory, read_mappings
+from hermes.platform import (
+    ProcessMemory,
+    is_wine_process,
+    process_start_time,
+    program_bits,
+    read_mappings,
+)
 
 
 POINTER_SIZE = 8
@@ -100,14 +107,39 @@ def static_location(regions, address):
     return None
 
 
+# pid -> (start time, pointer size): finding the bits of a Wine program reads
+# its images, too slow for every refresh.
+_pointer_sizes = {}
+
+
+def pointer_size(pid):
+    """Size of a pointer in process ``pid``: 4 for 32-bit programs, else 8."""
+    if pid is None:
+        return POINTER_SIZE
+    started = process_start_time(pid)
+    known = _pointer_sizes.get(pid)
+    if known is not None and known[0] == started:
+        return known[1]
+    if is_wine_process(pid):
+        from hermes.core.wine_gadget import wine_bits  # pylint: disable=import-outside-toplevel
+        bits = wine_bits(pid)
+    else:
+        bits = program_bits(pid)
+    size = 4 if bits == 32 else POINTER_SIZE
+    if started is not None:
+        _pointer_sizes[pid] = (started, size)
+    return size
+
+
 def resolve_chain(memory, bases, chain):
     """Follow ``chain`` in a process; return the final address or None."""
     base = bases.get(chain.module)
     if base is None:
         return None
+    size = pointer_size(getattr(memory, "pid", None))
     address = base + chain.base_offset
     for offset in chain.offsets:
-        pointer = memory.read_pointer(address)
+        pointer = memory.read_pointer(address, size)
         if not pointer:
             return None
         address = pointer + offset
@@ -153,8 +185,10 @@ class PointerMap:
     def build(cls, pid, progress=None, cancelled=None, aligned_values=True):
         """Read the process memory; ``progress(percent)`` reports the reading.
 
-        With ``aligned_values`` only multiples of 8 count as pointers.
+        With ``aligned_values`` only multiples of the pointer size count.
         """
+        size_of_pointer = pointer_size(pid)
+        dtype = "<u8" if size_of_pointer == 8 else "<u4"
         mappings = read_mappings(pid)
         writable = sorted((m for m in mappings if m.writable), key=lambda m: m.start)
         starts = np.array([m.start for m in writable], dtype=np.uint64)
@@ -170,18 +204,19 @@ class PointerMap:
                         raise ScanCancelled()
                     size = min(_CHUNK_SIZE, mapping.end - position)
                     block = memory.read_available(position, size)
-                    count = len(block) // POINTER_SIZE
+                    count = len(block) // size_of_pointer
                     if count:
-                        words = np.frombuffer(block, dtype="<u8", count=count)
+                        words = np.frombuffer(block, dtype=dtype, count=count).astype(np.uint64)
                         index = np.searchsorted(starts, words, side="right") - 1
                         valid = (index >= 0) & (words < ends[np.maximum(index, 0)])
                         if aligned_values:
-                            valid &= words % np.uint64(POINTER_SIZE) == 0
+                            valid &= words % np.uint64(size_of_pointer) == 0
                         hits = np.flatnonzero(valid)
                         if hits.size:
                             values.append(words[hits])
                             locations.append(
-                                np.uint64(position) + hits.astype(np.uint64) * np.uint64(POINTER_SIZE)
+                                np.uint64(position)
+                                + hits.astype(np.uint64) * np.uint64(size_of_pointer)
                             )
                     position += size
                     done += size

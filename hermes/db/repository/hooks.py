@@ -237,6 +237,9 @@ class HookRepository:
         sources = {seed: definition.source for seed, definition in example_templates().items()}
         changed = 0
         with self._sessions() as session:
+            # Template names are unique: a name a template of the user has
+            # already is not taken, the German one stays.
+            taken = set(session.scalars(select(HookTemplate.name)))
             seeds = {}
             for template in session.scalars(
                     select(HookTemplate).where(HookTemplate.seed_key.is_not(None))):
@@ -245,6 +248,12 @@ class HookRepository:
                 seeds[template.id] = template.seed_key
                 texts = english_example(template.seed_key, template.name,
                                         template.description, template.parameters)
+                if texts[0] != template.name:
+                    if texts[0] in taken:
+                        texts = (template.name, *texts[1:])
+                    else:
+                        taken.discard(template.name)
+                        taken.add(texts[0])
                 if texts != (template.name, template.description, template.parameters):
                     template.name, template.description, template.parameters = texts
                     changed += 1

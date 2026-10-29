@@ -554,6 +554,14 @@ class HookPanel(QGroupBox):
         """The worker running a hook (None while there is none)."""
         return self._method_worker if state.get("kind") == "method" else self._worker
 
+    def _still_installed(self, hook_id, state):
+        """Whether a hook a dialog was opened for is still there.
+
+        The game may have exited, or another process been chosen, while the
+        dialog was open: then its edit is only saved.
+        """
+        return self._hooks.get(hook_id) is state and self._worker_of(state) is not None
+
     def _show_context_menu(self, position):
         """Offer to watch a value hook's target or to monitor a method hook's method."""
         row = self.table.rowAt(position.y())
@@ -812,15 +820,17 @@ class HookPanel(QGroupBox):
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        if state["saved_id"] is not None:
+            self._store(self._repository.update_method_hook, state["saved_id"],
+                        label=dialog.label, transform=dialog.transform, phase=dialog.phase)
+        if not self._still_installed(hook_id, state):
+            return
         state["spec"] = dataclasses.replace(
             spec, transform=dialog.transform, label=dialog.label, phase=dialog.phase)
         self._method_worker.set_transform(hook_id, dialog.transform)
         if dialog.phase != spec.phase:
             self._method_worker.set_phase(hook_id, dialog.phase)
             self._show_method_phase(hook_id, state["spec"])
-        if state["saved_id"] is not None:
-            self._store(self._repository.update_method_hook, state["saved_id"],
-                        label=dialog.label, transform=dialog.transform, phase=dialog.phase)
         self._set_cell(hook_id, 0, self._label_text(state["spec"], state.get("debug", False)))
         self._update_debug_hooks()
         self._set_cell(hook_id, 3, dialog.transform.describe())
@@ -1499,10 +1509,6 @@ class HookPanel(QGroupBox):
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        state["spec"] = dataclasses.replace(
-            spec, transform=dialog.transform, label=dialog.label,
-            breakpoint=dialog.breakpoint,
-        )
         if state["saved_id"] is not None:
             self._store(
                 self._repository.update_hook,
@@ -1511,6 +1517,12 @@ class HookPanel(QGroupBox):
                 transform=dialog.transform,
                 breakpoint=dialog.breakpoint,
             )
+        if not self._still_installed(hook_id, state):
+            return
+        state["spec"] = dataclasses.replace(
+            spec, transform=dialog.transform, label=dialog.label,
+            breakpoint=dialog.breakpoint,
+        )
         if dialog.breakpoint != spec.breakpoint:
             self._reinstall(hook_id)
             return

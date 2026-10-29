@@ -281,12 +281,54 @@ def test_pointer_map_ignores_unaligned_values_by_default(monkeypatch):
         return image
 
     monkeypatch.setattr(pointer_module, "read_mappings", lambda _pid: mappings)
+    monkeypatch.setattr(pointer_module, "pointer_size", lambda _pid: 8)
     monkeypatch.setattr(builtins, "open", fake_open)
     # The fake is /proc/<pid>/mem: use the Linux backend on every system.
     monkeypatch.setattr(pointer_module, "ProcessMemory", linux.ProcessMemory)
 
     assert PointerMap.build(123).values.tolist() == [0x1008]
     assert PointerMap.build(123, aligned_values=False).values.tolist() == [0x1004, 0x1008]
+
+
+def test_pointer_map_of_a_32_bit_program_reads_4_byte_pointers(monkeypatch):
+    mappings = [Mapping(0x1000, 0x1020, "rw-p", writable=True)]
+    memory = struct.pack("<8I", 0x1008, 0x1004, 0x2000, 0, 0x1010, 0, 0, 0)
+
+    def fake_open(path, mode="r", **_kwargs):
+        assert path == "/proc/123/mem" and mode == "rb"
+        return io.BytesIO(b"\0" * 0x1000 + memory)
+
+    monkeypatch.setattr(pointer_module, "read_mappings", lambda _pid: mappings)
+    monkeypatch.setattr(pointer_module, "pointer_size", lambda _pid: 4)
+    monkeypatch.setattr(builtins, "open", fake_open)
+    monkeypatch.setattr(pointer_module, "ProcessMemory", linux.ProcessMemory)
+
+    pointer_map = PointerMap.build(123)
+    assert pointer_map.values.tolist() == [0x1004, 0x1008, 0x1010]
+    assert sorted(pointer_map.locations.tolist()) == [0x1000, 0x1004, 0x1010]
+
+
+def test_pointer_size_follows_the_program_and_is_kept_per_start(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pointer_module, "_pointer_sizes", {})
+    monkeypatch.setattr(pointer_module, "process_start_time", lambda pid: 77)
+    monkeypatch.setattr(pointer_module, "is_wine_process", lambda pid: False)
+    monkeypatch.setattr(pointer_module, "program_bits", lambda pid: calls.append(pid) or 32)
+
+    assert pointer_module.pointer_size(5) == 4
+    assert pointer_module.pointer_size(5) == 4
+    assert calls == [5]
+    assert pointer_module.pointer_size(None) == 8
+
+    class Memory:  # pylint: disable=too-few-public-methods
+        pid = 5
+
+        @staticmethod
+        def read_pointer(address, size):
+            return {(0x100, 4): 0x2000}.get((address, size))
+
+    chain = PointerChain("game", 0x100, (0x8,))
+    assert resolve_chain(Memory(), {"game": 0}, chain) == 0x2008
 
 
 @requires_target

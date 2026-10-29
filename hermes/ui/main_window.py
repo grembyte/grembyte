@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy.exc import SQLAlchemyError
+from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QLabel,
@@ -2216,12 +2217,15 @@ class MainWindow(QMainWindow):
 
     def _ensure_example_templates(self):
         """Create the example hook templates that do not exist yet."""
+        # The status bar does not exist yet; the log keeps what went wrong.
         try:
             self._hook_repository.translate_examples()
+        except SQLAlchemyError:
+            logs.log.exception("Translating the example templates failed")
+        try:
             self._hook_repository.ensure_templates(example_templates())
         except SQLAlchemyError:
-            # The status bar does not exist yet; dialogs report DB errors later.
-            pass
+            logs.log.exception("Creating the example templates failed")
 
     def _open_template_dialog(self):
         """Show the dialog for maintaining hook templates."""
@@ -2469,7 +2473,7 @@ class MainWindow(QMainWindow):
             metadata = item.data(Qt.ItemDataRole.UserRole) if item else None
             if metadata:
                 address = metadata["address_value"]
-                entries[address] = {"address": address, "type": metadata["type"]}
+                entries[address, metadata["type"]] = {"address": address, "type": metadata["type"]}
 
         for row in range(self.addr_table.rowCount()):
             meta = self._address_meta(row)
@@ -2488,7 +2492,7 @@ class MainWindow(QMainWindow):
                 address = int(item1.text(), 0)
             except (AttributeError, ValueError):
                 continue
-            entries[address] = {"address": address, "type": item2.text()}
+            entries[address, item2.text()] = {"address": address, "type": item2.text()}
 
         if not entries:
             return
@@ -2511,25 +2515,25 @@ class MainWindow(QMainWindow):
         for row in self._visible_result_rows():
             item0 = self.result_table.item(row, 0)
             metadata = item0.data(Qt.ItemDataRole.UserRole) if item0 else None
-            if metadata and metadata["address_value"] in values:
+            key = None if not metadata else (metadata["address_value"], metadata["type"])
+            if key in values:
                 item2 = self.result_table.item(row, 2)
                 if item2:
-                    item2.setText(
-                        str(values[metadata["address_value"]])
-                    )
+                    item2.setText(str(values[key]))
 
         for row in range(self.addr_table.rowCount()):
             try:
                 item1 = self.addr_table.item(row, 1)
-                if item1 is None:
+                item2 = self.addr_table.item(row, 2)
+                if item1 is None or item2 is None:
                     continue
-                address = int(item1.text(), 0)
+                key = (int(item1.text(), 0), item2.text())
             except (AttributeError, ValueError):
                 continue
-            if address in values:
+            if key in values:
                 item3 = self.addr_table.item(row, 3)
                 if item3:
-                    item3.setText(str(values[address]))
+                    item3.setText(str(values[key]))
 
     def _on_refresh_failed(self, message):
         """Stop periodic refresh and display the worker error."""
@@ -2729,6 +2733,9 @@ class MainWindow(QMainWindow):
             address_item.text(), description_item.text(), self, self.translations
         )
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.new_description:
+            # The list may have been rebuilt meanwhile, e.g. when the game exited.
+            if sip.isdeleted(description_item):
+                return
             # Saved by _on_address_item_changed like an inline edit.
             description_item.setText(dlg.new_description)
 
