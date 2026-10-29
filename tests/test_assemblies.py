@@ -73,6 +73,9 @@ class FakeCatalogWorker(QObject):
     def requestInterruption(self):  # pylint: disable=invalid-name
         pass
 
+    def wait(self, _timeout_ms=None):
+        return True
+
 
 def test_without_selection_the_game_assemblies_are_chosen():
     assert chosen_assemblies(LOADED, frozenset(), MONO) == ["Assembly-CSharp", "Game.Data"]

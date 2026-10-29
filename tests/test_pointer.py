@@ -769,10 +769,76 @@ def test_pointer_dialog_survives_a_restart_of_the_program(binary, qt_app, sessio
         _delete_window(window)
 
 
+@requires_target
+def test_scan_of_the_previous_program_is_cleared_on_a_switch(binary, qt_app, sessions,
+                                                             monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+    from PyQt6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui import main_window
+
+    monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
+    monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
+
+    class InstantScan(QThread):
+        """Finds one address at once; its results are still queued on the switch."""
+
+        results_ready = pyqtSignal(object)
+        scan_failed = pyqtSignal(str)
+        scan_cancelled = pyqtSignal()
+        progress_changed = pyqtSignal(int)
+
+        def __init__(self, *_args, parent=None, **_kwargs):
+            super().__init__(parent)
+
+        def run(self):
+            self.results_ready.emit([{"address": 0x1000, "type": "int32", "value": 7}])
+
+    monkeypatch.setattr(main_window, "ScanWorker", InstantScan)
+
+    def select(pid, name):
+        class FakeSelection:  # pylint: disable=too-few-public-methods
+            selected_pid, selected_name, selected_path = pid, name, f"/opt/{name}"
+
+            def __init__(self, *_args):
+                pass
+
+            @staticmethod
+            def exec():
+                return QDialog.DialogCode.Accepted
+
+        monkeypatch.setattr(main_window, "ProcessSelectDialog", FakeSelection)
+        window._open_process_dialog()
+
+    window = main_window.MainWindow("de")
+    first, second = _Target(binary), _Target(binary)
+    try:
+        select(first.pid, "first")
+        window._refresh_timer.stop()
+        window._start_scan_worker(main_window.ScanRequest(first.pid, "int32", "exact", "7"))
+        _wait(qt_app, lambda: window._scan_worker is None)
+        assert window.result_table.rowCount() == 1 and window._scan_results
+
+        window._start_scan_worker(main_window.ScanRequest(first.pid, "int32", "exact", "7"))
+        window._scan_worker.wait()  # finished, its results not yet delivered
+        select(second.pid, "second")
+        _wait(qt_app, lambda: window._scan_worker is None)
+        assert window.result_table.rowCount() == 0 and not window._scan_results
+        assert window.btn_first_scan.isEnabled() and not window.btn_next_scan.isEnabled()
+    finally:
+        first.close()
+        second.close()
+        _delete_window(window)
+
+
 def test_worker_finishing_after_its_dialog_was_deleted_is_harmless(qt_app, monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access
     import threading
 
+    from hermes.ui import workers
     from hermes.ui.widgets import pointer_scan
 
     release = threading.Event()
@@ -808,5 +874,5 @@ def test_worker_finishing_after_its_dialog_was_deleted_is_harmless(qt_app, monke
     # The worker finishes now; its callbacks must not touch the deleted dialog.
     release.set()
     worker.wait(5000)
-    _wait(qt_app, lambda: not pointer_scan._RUNNING_WORKERS)
+    _wait(qt_app, lambda: worker not in workers.running_workers())
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

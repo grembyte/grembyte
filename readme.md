@@ -1,19 +1,33 @@
 # Hermes Hook
 
-Hermes Hook is a Linux desktop application built with Python and PyQt6 for inspecting and manipulating the memory of running processes such as games. The project is under development.
+Hermes Hook is a desktop application built with Python and PyQt6 for inspecting and manipulating the memory of running processes such as games. It runs on Linux, including Windows games under Wine/Proton, and on Windows. The project is under development.
 
 ## Features
 
 - **Process selection** showing the command line and working directory.
 - **Memory scan** for `int8`, `int16`, `int32`, `int64`, their unsigned variants `uint8` to `uint64`, and `float` and `double`: exact value, greater/less than, range, unknown initial value, and follow-up scans for changed, unchanged, increased or decreased, and for "increased/decreased/changed by X". Exact and by-X scans accept a tolerance (±); `float` and `double` values can be compared exactly, rounded or truncated to the decimal places entered (`12.3` rounded finds 12.25 to 12.35). "Guess automatically" tries `int32`, `int64`, `float` and `double`; smaller types match almost everywhere and have to be chosen explicitly.
 - **Tracked addresses** with live values; values can be written straight into the process or frozen.
-- **Write and read watch**: a hardware watchpoint shows which code writes an address or, with "Address watch (all accesses)", also reads it. The "Reads" and "Writes" columns show what a row's instruction does with the value; hooks can only be set on writing instructions.
+- **Write and read watch**: a hardware watchpoint shows which code writes an address or, with "Address watch (all accesses)", also reads it. The "Reads" and "Writes" columns show what a row's instruction does with the value; hooks can only be set on writing instructions. Watch and hooks run through Frida by default; **Settings → Backend (watch & hooks)** switches to ptrace, which needs no injection (at most 4 addresses, no training or caller learning). Hermes picks ptrace by itself for 32-bit Wine/Proton games.
 - **Pointer scan**: finds pointer chains through which tracked addresses and hooks find the value again after the program restarts.
 - **Hooks**: every write at a code location that was found is intercepted and the written value is manipulated, e.g. with a multiplier, a fixed value, bounds or a JavaScript function of your own. Hooks are stored per program and installed again the next time it starts.
 - **Hook templates**: manipulations are kept in the database as JavaScript functions with parameters and can be tested without a game process.
 - **Hook debug**: a debug window logs every call of a hook with its values, caller, output and errors.
-- **Settings** (menu **Settings → General …**, stored in `hermes.db`): activity log on/off, the trace's method limit under Wine/Proton (default 5000, also no limit), from how many methods the trace asks first, entries in the traces' call sequence, the refresh interval of tracked addresses, and the language.
-- **Activity log**: `activity.jsonl` in the log folder (`~/.local/state/hermes-hook`, on Windows `%LOCALAPPDATA%\hermes-hook\logs`) records the course of every run: the attached process with its details (32/64 bit, native or Wine/Proton with the Proton version, engine, how the gadget was loaded), sessions and agents in the order they started and ended, every RPC with its duration and outcome (frequent ones summed up), clicks, and why a Frida session ended, with Frida's crash report. Values from the game's memory are not in it. It can be read in the **Log** window under **Activity**; **Export bug report …** packs the activity, the log and `crash.log` into a ZIP file.
+- **Settings** (menu **Settings → General …**, stored in `hermes.db`): activity log on/off, the trace's method limit under Wine/Proton (default 5000, also no limit), from how many methods the trace asks first, entries in the traces' call sequence, the refresh interval of tracked addresses, the language, and three hook options: a short jump in tight spots (experimental, see [limitations](#how-a-hook-works)), patching hooks again that the game removed (for games that repair their code, e.g. Dark Souls III), and measuring the cost of hooks.
+- **Activity log**: `activity.jsonl` in the log folder (`$XDG_STATE_HOME/hermes-hook`, by default `~/.local/state/hermes-hook`; on Windows `%LOCALAPPDATA%\hermes-hook\logs`; `HERMES_LOG_DIR` sets another folder) records the course of every run: the attached process with its details (32/64 bit, native or Wine/Proton with the Proton version, engine, how the gadget was loaded), sessions and agents in the order they started and ended, every RPC with its duration and outcome (frequent ones summed up), clicks, and why a Frida session ended, with Frida's crash report. Values from the game's memory are not in it. It can be read in the **Log** window under **Activity**; **Export bug report …** packs the activity, the log and `crash.log` into a ZIP file.
+
+### More tools
+
+- **File menu**: export the saved addresses, hooks, method hooks and favorites of a game to a JSON file and import them again, delete saved entries or whole processes, and compact the database.
+- **Memory viewer** for the memory around an address, and the **Sessions** window, which lists the connections to processes (Frida, ptrace) and can cut one that does not respond.
+- **Native trace** (**View → Native trace…**, any engine): Frida's Stalker counts which functions the chosen threads call, first in a baseline, then in a scenario such as paying gold; the functions that are new or called more often in the scenario are the candidates. **Monitor native function …** logs the arguments, result and caller of a function and compares the memory behind pointer arguments before and after the call.
+- **Favorites** (**View → Favorites …**): methods and functions marked with ★ in the catalog or a trace, saved per program with a note.
+- **Unity games with Mono**:
+  - The **catalog** lists the classes and methods of the game's assemblies, also offline for games read before.
+  - **Assemblies …** limits the catalog and the trace to chosen assemblies.
+  - The **trace** finds the methods a scenario calls, with preselection filters.
+  - The **method monitor** logs calls with arguments and results; **method hooks** change arguments, fields or results with templates of their own.
+  - The **call graph** shows which methods a method calls and which call it, from the IL code.
+  - The **object inspector** shows the fields of C# objects, and **Call method** runs a static method on the game's main thread.
 
 ### Freeze or hook?
 
@@ -21,7 +35,7 @@ Hermes Hook is a Linux desktop application built with Python and PyQt6 for inspe
 
 ## Requirements
 
-- GNU/Linux on x86-64
+- GNU/Linux or Windows on x86-64; the instructions below are for Linux
 - Python 3.11 or newer
 - `venv` and `pip` for the chosen Python version
 - A graphical session with X11 or Wayland for the Qt interface
@@ -62,7 +76,7 @@ Alternatively the application can be started straight from the project directory
 ./.venv/bin/python main.py
 ```
 
-`scripts/hermes-hook.sh` activates the virtual environment and starts the application from any working directory. To start Hermes from the desktop menu (KDE, GNOME, …), install a menu entry for the current user; it appears under Development and Games:
+`scripts/hermes-hook.sh` activates the virtual environment (`.venv` in the project, or `$HERMES_VENV`) and starts the application from any working directory. To start Hermes from the desktop menu (KDE, GNOME, …), install a menu entry for the current user; it appears under Development and Games:
 
 ```bash
 ./scripts/install-desktop-entry.sh              # install or update the entry
@@ -85,7 +99,7 @@ HERMES_LANGUAGE=en hermes
 HERMES_LANGUAGE=de hermes
 ```
 
-At first start the SQLite database is created at `~/.local/share/hermes-hook/hermes.db` (or under `$XDG_DATA_HOME/hermes-hook/`), on Windows at `%LOCALAPPDATA%\hermes-hook\hermes.db`. `HERMES_DB=/path/to/file.db` uses another file. If there is no database there yet but one from earlier versions at `data/hermes.db` in the project directory, it is copied once; the original stays. The process list only shows processes whose information the current user may access. When the attached process exits, Hermes resets the window within a second: scans, watches, freezing and hooks stop; stored addresses and hooks are kept and loaded again the next time it attaches.
+At first start the SQLite database is created at `~/.local/share/hermes-hook/hermes.db` (or under `$XDG_DATA_HOME/hermes-hook/`), on Windows at `%LOCALAPPDATA%\hermes-hook\hermes.db`. `HERMES_DB=/path/to/file.db` uses another file. If there is no database there yet but one from earlier versions at `data/hermes.db` in the project directory, it is copied once; the original stays. Catalogs read from Mono games are cached beside it in `hermes-hook/cache` (or `$HERMES_CACHE_DIR`). The process list only shows processes whose information the current user may access. When the attached process exits, Hermes resets the window within a second: scans, watches, freezing and hooks stop; stored addresses and hooks are kept and loaded again the next time it attaches.
 
 ## Linux permissions for memory access
 
@@ -102,7 +116,7 @@ sudo sysctl kernel.yama.ptrace_scope=0
 
 ### Wine and Proton games
 
-`frida.attach` crashes Wine processes. Instead, hermes loads Frida's Windows gadget (`frida-gadget.dll`, downloaded once to `~/.local/share/hermes-hook/gadget/`) into the game. A small Windows program, `hermes-inject-x86_64.exe` or `hermes-inject-x86.exe` (source `hermes/core/inject/inject.c`), does that; hermes starts it with the game's Wine and prefix. If that fails, hermes uses ptrace as a fallback for 64-bit games. The executables are not in the repository: `hermes/core/inject/build.sh` builds them into `build/inject/` (needs `mingw64-gcc` and `mingw32-gcc`, or `pip install ziglang`). Hermes runs it by itself the first time a Wine game needs the helper; `HERMES_INJECT_DIR` points to executables elsewhere.
+`frida.attach` crashes Wine processes. Instead, hermes loads Frida's Windows gadget into the game: `frida-gadget-<Frida version>-windows-<x86|x86_64>.dll`, downloaded once per Frida version to `~/.local/share/hermes-hook/gadget/` (or under `$XDG_DATA_HOME`). A small Windows program, `hermes-inject-x86_64.exe` or `hermes-inject-x86.exe` (source `hermes/core/inject/inject.c`), does that; hermes starts it with the game's Wine and prefix. If that fails, hermes uses ptrace as a fallback for 64-bit games. The executables are not in the repository: `hermes/core/inject/build.sh` builds them into `build/inject/` (needs `mingw64-gcc` and `mingw32-gcc`, or `pip install ziglang`). Hermes runs it by itself the first time a Wine game needs the helper; `HERMES_INJECT_DIR` points to executables elsewhere.
 
 ```bash
 sh hermes/core/inject/build.sh
@@ -141,13 +155,13 @@ The game shows mana (`float`) with one decimal place and experience (`double`) w
 
 Hooks are stored per program, as module + offset of the write instruction. When the program is selected again after a restart, Hermes installs the stored hooks automatically. If the bytes at that location changed, e.g. after an update of the program, the hook is not installed. If the write instruction lies in no module, e.g. in Mono/Unity JIT code, which is generated anew and elsewhere at every start, it depends on the target:
 
-- **With a pointer chain** the hook is stored with the bytes of the write instruction and the surrounding code. After a restart it is in **Training**: Hermes watches the chain's target with a hardware watchpoint of its own and installs the hook at the first write from matching code. It takes effect from the next write on. The tooltip of the status column shows how many writes from other code were discarded. At most three hooks can train at a time.
+- **With a pointer chain** the hook is stored with the bytes of the write instruction and the surrounding code. In Mono games it also remembers the C# method of the write: after a restart Mono compiles that method and the hook is installed in it right away. Otherwise, or if that fails, it is in **Training**: Hermes watches the chain's target with a hardware watchpoint of its own and installs the hook at the first write from matching code. It takes effect from the next write on. The tooltip of the status column shows how many writes from other code were discarded. At most three hooks can train at a time; hooks installed as a hardware breakpoint take one of these three slots each.
 - **Without a pointer chain** the hook cannot be stored, because its target is unknown after a restart.
 
 After a restart the original target address is no longer valid. How the hook recognises the right writes depends on how it was created:
 
 - **With a pointer chain** (see below): the hook resolves the chain at every write and only acts on the address it leads to at that moment. This is the most reliable variant.
-- **Without a pointer chain**: while running, the hook learns the callers, i.e. the return addresses on the stack, that write the target address. After a restart it only acts on writes from these callers. How many return addresses identify a caller is set by **Caller levels** in the hook dialog (default `1`; `off` learns no callers). More levels help when the player and other objects are changed through the same helper function. If a learned caller also writes other addresses, Hermes points it out.
+- **Without a pointer chain**: while running, the hook learns the callers, i.e. the return addresses on the stack, that write the target address. After a restart it only acts on writes from these callers. How many return addresses identify a caller is set by **Caller levels** in the hook dialog (default `1`, at most `4`; `off` learns no callers). More levels help when the player and other objects are changed through the same helper function. If a learned caller also writes other addresses, Hermes points it out.
 
 ### Finding the gold again after a restart (pointer scan)
 
@@ -174,12 +188,14 @@ jmp back
 
 Since Hermes only works with the old and the new value, it does not matter whether the game uses `add [mem], reg`, `mov [mem], reg` or `sub`. If the same instruction is also used for other objects (e.g. the enemies' gold), the hook only acts on its target: the watched address, the address of its pointer chain or, after a restart without a chain, the learned callers. Several hooks can share a write instruction; they run in the order they were created.
 
-`before` and `after` are C functions (a Frida CModule): they check the target address and the learned callers and run the built-in manipulations (multiply, fixed value, clamp, also as copies in templates) themselves, so a hooked write costs a fraction of a microsecond. Only scripts of your own, the debug mode, caller learning and pointer chains run in JavaScript. The agent's JavaScript runs one thread at a time: a game thread that has to wait there can drop frames.
+`before` and `after` are C functions (a Frida CModule): they check the target address and, on Windows and under Wine, the learned callers, and run the built-in manipulations (multiply, fixed value, clamp, also as copies in templates) themselves, so a hooked write costs a fraction of a microsecond. On Linux the callers are checked in JavaScript. Only scripts of your own, the debug mode, caller learning and pointer chains run in JavaScript. The agent's JavaScript runs one thread at a time: a game thread that has to wait there can drop frames.
 
 Limitations:
 
 - x86-64 processes only.
 - The write instruction and the bytes up to the length of a jump (5 bytes) are overwritten. If other code jumps into the middle of this range, the target crashes; Frida hooks and Cheat Engine's code injection carry the same risk.
+- If the write sits in a tiny function with less than 5 bytes before the next one, the setting "Hooks: short jump in tight spots" overwrites only 2 bytes with a short jump to int3 padding nearby. The padding is found by a heuristic; if it guesses wrong, the target crashes.
+- **Hardware breakpoint (code unchanged)** in the hook dialog leaves the code as it is and uses one of the three debug registers instead. Some anti-tamper protections detect debug registers (Dark Souls III crashed); Hermes points it out when a game ends shortly after debug registers were used.
 - If the connection to Hermes breaks off unexpectedly while a hook is active, the target may crash.
 - `int64` and `uint64` values are exact in manipulations only up to 2^53.
 
@@ -197,9 +213,9 @@ A manipulation is a JavaScript function that runs in the target process after ev
 
 ### Maintaining templates
 
-Manipulations are stored in the database as **hook templates** and managed under **View → Hook templates…**. At first start Hermes creates the examples **Multiplier**, **Fixed value** and **Clamp** in the language of the interface; they can be changed or deleted like templates of your own.
+Manipulations are stored in the database as **hook templates** and managed under **View → Hook templates…**. At first start Hermes creates the examples **Multiplier**, **Fixed value** and **Clamp**; they can be changed or deleted like templates of your own. Their texts are English whatever the language of the interface, since templates are data that exports share.
 
-A template consists of a name, an optional description, the JavaScript function and parameters. Each parameter has a name (`ctx.params.<name>` in the script), a label, a type (**Number** or **Choice**), a default and whether it is optional; choice values are given as `value=Label; value=Label`. The hook dialog builds its input form from the parameters. Example of a template with the number parameter `threshold`:
+A template consists of a name, an optional description, the JavaScript function and parameters. Each parameter has a name (`ctx.params.<name>` in the script), a label, a type (**Number**, **Choice** or **Code** for multi-line text), a default and whether it is optional; choice values are given as `value=Label; value=Label`. The hook dialog builds its input form from the parameters. Example of a template with the number parameter `threshold`:
 
 ```js
 ctx => ctx.delta >= ctx.params.threshold ? ctx.new : ctx.old
@@ -215,12 +231,15 @@ A hook stores a **copy** of the template it was created from. Later changes to t
 
 ### Example templates in the code
 
-The example templates come from subclasses of `ValueTransform` in `hermes/hooks/transforms.py` whose `kind` is in `EXAMPLE_TEMPLATE_KINDS`. If an example is missing at start (same seed key or name), Hermes creates it. Name, description and parameter labels come from `hermes/ui/localization/*.json` under `transform.<kind>`, `transform.<kind>.description`, `transform.<kind>.<parameter>` and `transform.choice.<value>`; where they are missing, `title`, the parameter name or the choice value is used. Manipulations of your own do not need this: they are created as templates directly in the interface.
+The example templates come from subclasses of `ValueTransform` in `hermes/hooks/transforms.py` whose `kind` is in `EXAMPLE_TEMPLATE_KINDS`. If an example is missing at start (same seed key or name), Hermes creates it. Name, description and parameter labels come from `EXAMPLE_TEXTS` in the same file, under `<kind>`, `<kind>.description`, `<kind>.<parameter>` and `choice.<value>`; where they are missing, `title`, the parameter name or the choice value is used. Examples created by earlier versions with German names are renamed through `GERMAN_EXAMPLE_TEXTS`. Manipulations of your own do not need this: they are created as templates directly in the interface.
 
 ## Tests
 
+pytest comes with the `test` extra:
+
 ```bash
+./.venv/bin/python -m pip install -e ".[test]"
 ./.venv/bin/python -m pytest
 ```
 
-The hook tests compile a small C program and attach to it with Frida. They are skipped if `gcc` is missing or `kernel.yama.ptrace_scope` is not `0`.
+Many tests compile a small C program and attach to it with Frida (hooks, watch, native trace and monitor, the Mono features against a stand-in Mono runtime). They are skipped if `gcc` is missing, `kernel.yama.ptrace_scope` is not `0` or the machine is not x86-64. Tests of the Windows helper need MinGW, some need Linux.

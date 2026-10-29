@@ -37,6 +37,7 @@ from hermes.features.native_monitor import (
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.method_monitor import call_time
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
+from hermes.ui.workers import keep_until_finished
 
 
 # Calls kept in the log; older ones are dropped.
@@ -651,18 +652,5 @@ class NativeMonitorDialog(QDialog):
         worker = self._worker
         worker.requestInterruption()
         if worker.isRunning():
-            _closing_workers.add(worker)
-            worker.finished.connect(lambda: _closing_workers.discard(worker))
+            keep_until_finished(worker)
         super().closeEvent(event)
-
-
-# Workers of closed windows, kept until they have removed their interceptors.
-_closing_workers = set()
-
-
-def wait_for_closing_workers(timeout_ms):
-    """Wait for the workers of closed windows; True if all have finished.
-
-    A QThread still running when the application exits aborts it.
-    """
-    return all(worker.wait(timeout_ms) for worker in list(_closing_workers))

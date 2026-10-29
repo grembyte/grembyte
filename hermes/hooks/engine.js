@@ -2323,6 +2323,8 @@ function repatchSite(site) {
     }
   }
   patchSite(site);
+  // A new cave changes the short jump's offset at the write as well.
+  site.patchedHex = readHex(site.writeIns.address, site.patchSize);
   site.cavePatchedHex = site.cave === null ? null : readHex(site.cave, JMP_SIZE);
 }
 

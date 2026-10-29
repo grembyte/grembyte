@@ -38,6 +38,7 @@ from hermes.ui.widgets.trace import (
     TraceSequenceModel,
     trace_table,
 )
+from hermes.ui.workers import keep_until_finished
 
 
 # States of the window
@@ -465,18 +466,5 @@ class NativeTraceDialog(QDialog):
         worker = self._worker
         worker.requestInterruption()
         if worker.isRunning():
-            _closing_workers.add(worker)
-            worker.finished.connect(lambda: _closing_workers.discard(worker))
+            keep_until_finished(worker)
         super().closeEvent(event)
-
-
-# Workers of closed windows, kept until they have let go of the threads.
-_closing_workers = set()
-
-
-def wait_for_closing_workers(timeout_ms):
-    """Wait for the workers of closed windows; True if all have finished.
-
-    A QThread still running when the application exits aborts it.
-    """
-    return all(worker.wait(timeout_ms) for worker in list(_closing_workers))

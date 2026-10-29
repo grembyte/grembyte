@@ -48,7 +48,8 @@ void on_enter (GumInvocationContext * ic) {
 `;
 
 let trace = null;
-// CModules of stopped traces: a game thread may still be in their code.
+// Stopped traces: a game thread may still be in their code, writing to their
+// memory.
 const retired = [];
 // The agent's own thread (RPCs run there); hooks run on game threads.
 const AGENT_THREAD = Process.getCurrentThreadId();
@@ -208,6 +209,8 @@ function begin(phase) {
   const n = t.methods.length;
   zero(t.counts, 4 * n);
   t.state.add(4).writeS32(0);
+  if (phase === 'scenario')
+    zero(t.events, EVENT_SIZE * EVENT_CAPACITY);  // no seq of an earlier scenario
   const quiet = new Uint8Array(Math.max(n, 1));
   if (phase === 'scenario' && t.baseline !== null)
     t.baseline.forEach((count, i) => { quiet[i] = count > 0 ? 1 : 0; });
@@ -320,7 +323,7 @@ function stop() {
   } finally {
     resumeAfterHooking(paused);
   }
-  retired.push(t.cm);
+  retired.push(t);
   updateUnmapWatch();
   return true;
 }

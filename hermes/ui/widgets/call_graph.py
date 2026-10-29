@@ -21,13 +21,11 @@ from hermes.engines.registry import resolve_engine
 from hermes.features.call_graph import CallGraphWorker, async_owner
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
+from hermes.ui.workers import keep_until_finished
 
 _KIND, _METHOD, _ASSEMBLY = range(3)
 # Item data: the CatalogMethod of a row
 _METHOD_ROLE = Qt.ItemDataRole.UserRole
-
-# Workers still running when their window closed; kept until they finish.
-_running_workers = set()
 
 
 def method_title(method):
@@ -80,9 +78,7 @@ class CallGraphDialog(QDialog):
         self._worker.request_failed.connect(self._on_failed)
         self._worker.progress.connect(self._on_progress)
         self._worker.worker_failed.connect(self._on_worker_failed)
-        worker = self._worker
-        self._worker.finished.connect(lambda: _running_workers.discard(worker))
-        _running_workers.add(self._worker)
+        keep_until_finished(self._worker)
         self._worker.start()
         if game is not None:
             self.monitor_button.setEnabled(False)

@@ -25,10 +25,8 @@ from hermes.engines.registry import resolve_engine
 from hermes.features.assemblies import missing_assemblies
 from hermes.features.catalog import CatalogWorker
 from hermes.ui.widgets.table import copy_menu, resizable_columns
+from hermes.ui.workers import keep_until_finished
 
-
-# Workers still listing when their dialog closed; kept until they finish.
-_running_workers = set()
 
 
 class AssemblySelectionStore(QObject):
@@ -182,7 +180,7 @@ class AssemblyDialog(QDialog):
         worker.catalog_failed.connect(self._on_failed)
         worker.finished.connect(lambda: self._on_worker_finished(worker))
         self._worker = worker
-        _running_workers.add(worker)
+        keep_until_finished(worker)
         self.reload_button.setEnabled(False)
         self.status_label.setText(self.translations["assemblies.loading"])
         worker.start()
@@ -198,7 +196,6 @@ class AssemblyDialog(QDialog):
             message=message))
 
     def _on_worker_finished(self, worker):
-        _running_workers.discard(worker)
         if worker is self._worker:
             self._worker = None
             self.reload_button.setEnabled(True)

@@ -33,6 +33,7 @@ from hermes.platform import ProcessMemory, main_module, read_mappings
 from hermes.db.repository.addresses import SavedPointerScan
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
+from hermes.ui.workers import keep_until_finished
 
 
 # Rows shown in the result table; all candidates are kept and filtered.
@@ -43,10 +44,6 @@ ADOPT_LIMIT = 500
 
 # How long closing the dialog waits for a cancelled scan.
 STOP_TIMEOUT_MS = 5000
-
-# Workers that are still running, possibly after their dialog was deleted;
-# a QThread must not be destroyed while it runs.
-_RUNNING_WORKERS = set()
 
 
 class PointerScanWorker(QThread):
@@ -456,8 +453,8 @@ class PointerScanDialog(QDialog):
         worker.chains_ready.connect(self._if_alive(on_done))
         worker.failed.connect(self._if_alive(self._on_failed))
         worker.finished.connect(self._if_alive(lambda: self._on_finished(worker)))
-        _RUNNING_WORKERS.add(worker)
-        worker.finished.connect(lambda: _RUNNING_WORKERS.discard(worker))
+        # The dialog may be deleted before a cancelled worker has finished.
+        keep_until_finished(worker)
         worker.finished.connect(worker.deleteLater)
         self.progress.setValue(0)
         worker.start()

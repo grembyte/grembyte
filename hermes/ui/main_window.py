@@ -79,12 +79,7 @@ from hermes.ui.widgets.memory_view import MemoryViewerDialog
 from hermes.ui.widgets.settings_dialog import SettingsDialog
 from hermes.core import activity, logs, sessions
 from hermes.core import settings as app_settings
-from hermes.ui.widgets import (
-    method_monitor,
-    native_monitor,
-    native_trace,
-    trace as trace_dialog,
-)
+from hermes.ui import workers
 from hermes.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
 from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog
 from hermes.ui.widgets.method_call import MethodCallDialog
@@ -126,6 +121,15 @@ def _platform_text():
     if machine.lower() in ("x86_64", "amd64"):
         machine = "x86-64"
     return f"{system} {machine}"
+
+
+def _disconnect(*signals):
+    """Disconnect every slot of ``signals``; those without any are left as they are."""
+    for signal in signals:
+        try:
+            signal.disconnect()
+        except TypeError:
+            pass  # disconnected before
 
 
 @dataclass(frozen=True)
@@ -618,8 +622,9 @@ class MainWindow(QMainWindow):
     def _auto_select_backend(self, pid):
         """Pick Frida, except for 32-bit Wine/Proton games: ptrace.
 
-        Frida reaches 64-bit Wine games through its Windows gadget
-        (wine_gadget.py), which cannot be loaded into 32-bit ones yet.
+        Frida reaches Wine games through its Windows gadget (wine_gadget.py),
+        32-bit ones too, but its hook engine only handles x64 code. The Mono
+        features use the gadget whichever backend watch and hooks use.
         """
         wine_32bit = is_wine_process(pid) and wine_bits(pid) == 32
         backend = BACKEND_PTRACE if wine_32bit else BACKEND_FRIDA
@@ -2093,6 +2098,7 @@ class MainWindow(QMainWindow):
                             **activity.describe_process(dlg.selected_pid))
             process_id = self._known_process_id(dlg) if changed else self._process_id
             if changed:
+                self._stop_scan_and_refresh()
                 self._stop_write_monitor()
                 self._stop_freeze_worker()
                 self._close_catalog()
@@ -2163,18 +2169,7 @@ class MainWindow(QMainWindow):
         """Stop all work on the attached process and reset the window."""
         activity.record("process_detached", pid=self._current_pid, name=self._current_name)
         self._process_timer.stop()
-        self._refresh_timer.stop()
-        scan_worker = self._scan_worker
-        if scan_worker is not None and scan_worker.isRunning():
-            # Results of the old process must not show up afterwards.
-            scan_worker.results_ready.disconnect()
-            scan_worker.scan_failed.disconnect()
-            scan_worker.requestInterruption()
-            scan_worker.wait()
-        refresh_worker = self._refresh_worker
-        if refresh_worker is not None and refresh_worker.isRunning():
-            refresh_worker.requestInterruption()
-            refresh_worker.wait()
+        self._stop_scan_and_refresh()
         self._stop_write_monitor()
         self._stop_freeze_worker()
         self._switch_pointer_dialogs(None, None)
@@ -2193,12 +2188,31 @@ class MainWindow(QMainWindow):
         self._process_start_time = None
         self._process_id = None
         self._process_name = None
-        self._reset_scan()
         if self.addr_table is not None:
             self.addr_table.setRowCount(0)
         self._current_proc = self.translations["app.no_process"]
         self.lbl_proc_info.setText(f"  {self._current_proc}")
         self._update_backend_label()
+
+    def _stop_scan_and_refresh(self):
+        """Stop the scan and the value refresh, and clear the scan results.
+
+        Results of the old process must not show up afterwards, also those a
+        worker that has just finished still has queued.
+        """
+        self._refresh_timer.stop()
+        scan_worker = self._scan_worker
+        if scan_worker is not None:
+            _disconnect(scan_worker.results_ready, scan_worker.scan_failed)
+            scan_worker.requestInterruption()
+            scan_worker.wait()
+        refresh_worker = self._refresh_worker
+        if refresh_worker is not None:
+            _disconnect(refresh_worker.addresses_resolved, refresh_worker.values_ready,
+                        refresh_worker.refresh_failed)
+            refresh_worker.requestInterruption()
+            refresh_worker.wait()
+        self._reset_scan()
 
     def _ensure_example_templates(self):
         """Create the example hook templates that do not exist yet."""
@@ -2567,8 +2581,7 @@ class MainWindow(QMainWindow):
         # so the waits here are bounded and the rest happens in a dialog.
         self._sessions_timer.stop()
         self._close_catalog()
-        for module in (trace_dialog, native_trace, method_monitor, native_monitor):
-            module.wait_for_closing_workers(CLOSING_WORKER_TIMEOUT_MS)
+        workers.stop_workers(CLOSING_WORKER_TIMEOUT_MS)
         self._stop_write_monitor()
         self._stop_freeze_worker()
         if self.hook_panel is not None:

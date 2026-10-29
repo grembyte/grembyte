@@ -29,6 +29,7 @@ from hermes.ui.widgets.favorites import (
     set_up_favorite_column,
 )
 from hermes.ui.widgets.table import copy_menu, resizable_columns
+from hermes.ui.workers import keep_until_finished
 
 
 _FAVORITE, _CLASS, _METHOD, _RETURN, _STATIC, _ASSEMBLY = range(6)
@@ -42,9 +43,6 @@ _COLUMNS = (
 )
 # Typing pauses this long before the catalog is filtered.
 FILTER_DELAY_MS = 200
-
-# Workers still reading when their dialog closed; kept until they finish.
-_running_workers = set()
 
 
 def matches(words, method):
@@ -370,7 +368,7 @@ class CatalogDialog(QDialog):
         worker.catalog_failed.connect(self._on_failed)
         worker.finished.connect(lambda: self._on_worker_finished(worker))
         self._worker = worker
-        _running_workers.add(worker)
+        keep_until_finished(worker)
         self.reload_button.setEnabled(False)
         self.status_label.setText(
             self.translations["catalog.starting"].format(engine=self.engine.display_name))
@@ -402,7 +400,6 @@ class CatalogDialog(QDialog):
         self.status_label.setText(self.translations["catalog.failed"].format(message=message))
 
     def _on_worker_finished(self, worker):
-        _running_workers.discard(worker)
         if worker is not self._worker:
             return
         self._worker = None

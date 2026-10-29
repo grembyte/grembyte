@@ -26,6 +26,7 @@ from hermes.features.monitor import MethodMonitorWorker
 from hermes.ui.widgets.object_inspector import ObjectInspectorDialog, link_label, link_width
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from hermes.ui.widgets.text_viewer import TextViewerDialog
+from hermes.ui.workers import keep_until_finished
 
 
 # Calls kept in the log; older ones are dropped.
@@ -644,21 +645,8 @@ class MethodMonitorDialog(QDialog):
         super().closeEvent(event)
 
 
-# Workers of closed windows, kept until they have removed their interceptors.
-_closing_workers = set()
-
-
 def stop_worker(worker):
     """Stop the MethodMonitorWorker of a window that closes, without waiting for it."""
     worker.requestInterruption()
     if worker.isRunning():
-        _closing_workers.add(worker)
-        worker.finished.connect(lambda: _closing_workers.discard(worker))
-
-
-def wait_for_closing_workers(timeout_ms):
-    """Wait for the workers of closed windows; True if all have finished.
-
-    A QThread still running when the application exits aborts it.
-    """
-    return all(worker.wait(timeout_ms) for worker in list(_closing_workers))
+        keep_until_finished(worker)

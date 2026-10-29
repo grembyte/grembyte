@@ -13,7 +13,7 @@ Available independent of any engine:
 - Pointer scan for stable pointer chains
 - Write watch: which instruction writes an address, optionally also which reads it
 - Hooks on write instructions, with caller learning
-- Memory view, disassembler, freezing
+- Memory view, freezing
 
 For Unity games with Mono there are also the catalog, the trace (with preselection
 filters), the method monitor and method hooks, through the engine adapter layer
@@ -46,7 +46,7 @@ damage.
 - Open: check how Stalker behaves under Wine with the Windows gadget
 
 **Status (prototype, 2026-10-19):** View → "Native trace…", independent of any engine.
-`hermes/features/native_trace.py` (agent + `NativeTraceWorker`),
+`hermes/features/native_trace.py` (`NativeTraceWorker`) and `native_trace.js` (agent),
 `hermes/ui/widgets/native_trace.py` (window). Session logic shared with the Mono trace in
 `AgentWorker` (`hermes/features/trace.py`); `analyze` and the verdicts are the same.
 
@@ -112,8 +112,9 @@ Next steps:
   32-bit games (Mono trace in Shadowrun Returns).
 - Callers: the sequence shows the call site of the first call per thread. A list of all
   callers per function (a count per call site and target) is still missing
-- Connection to existing tools: disassembler view of the function, a hook on the function,
-  later a byte signature (point 5)
+- Connection to existing tools: a function can be shown in the memory viewer and handed to
+  the native function monitor. Still missing: a disassembler view of the function, a hook on
+  the function, later a byte signature (point 5)
 - **Done (2026-10-19):** results sortable and filterable (name, call count, `%3`). Native
   function monitor (`hermes/features/native_monitor.py`): an Interceptor on a function from
   the trace or by address/module+offset/symbol; logs arguments, result and caller, and
@@ -137,7 +138,8 @@ Once an address is known, the surrounding object is of interest: max HP, mana, g
 usually lie next to it.
 
 - **Structure view:** interpret memory from the start of the object as fields (pointers,
-  floats, ints, strings) with a guessed type
+  floats, ints, strings) with a guessed type. For Mono objects the object inspector already
+  shows the fields with their types and offsets; native memory has nothing like it yet.
 - **Instance comparison:** player against enemy, or two points in time side by side, with
   the differences highlighted
 - **Reverse search:** who points to this object? Leads to the base pointer and to stable
@@ -150,7 +152,8 @@ usually lie next to it.
 - **C++ RTTI:** type names (MSVC `.?AV…@@`, Itanium `typeinfo`) lead to vtables, i.e. to
   class names for objects in memory. An address then becomes "`CPlayerStats`+0x48".
 - **Symbols:** native Linux games are often not fully stripped. Exported or debug symbols
-  provide function names.
+  provide function names. The native trace and monitor already use them (`DebugSymbol`, see
+  point 1); the scanner, watch and hooks still show `module+0x…`.
 
 ### 5. Update-proof hooks through byte signatures
 
@@ -188,6 +191,8 @@ to the transform. Some values are better changed elsewhere, before they are writ
   setter (`mov [rcx+0x74], eax; ret` at `DarkSoulsIII.exe+0x465f13`), too short for the 5-byte
   jump. The short jump needs int3 padding nearby, which Arxan overwrites at run time, and Arxan
   restores the setter's code anyway (see "Write hooks under anti-tamper protection" below).
+  The short jump exists as the setting `hook_short_jump` (experimental), for games without
+  such protection.
 - **The value is computed before it is stored:** the native function monitor showed at the
   return address `+0x5a5436` in the caller: `rax` = new souls, `rbx` = souls gained,
   `rsi` = old souls. A hook there could set `rax = rsi + rbx * factor` before the setter runs.
@@ -230,8 +235,8 @@ Found with Dark Souls III (Arxan/GuardIT):
 - **Performance:** a hooked write cost ~18 µs in a test process, mostly JavaScript work: all
   16 registers read into an object (~7 µs) and the address computed with BigInt (~3.5 µs).
   Now registers are read on demand, the address with NativePointer arithmetic from a plan made
-  once per site, and caller signatures take the stack slots of the last scan first
-  (`siteSignature`): ~8 µs, caller check +1.5 µs instead of +3.5 µs. The rest is the transform
+  once per site, and caller signatures took the stack slots of the last scan first
+  (`siteSignature`, since replaced by the C scan below): ~8 µs, caller check +1.5 µs instead of +3.5 µs. The rest is the transform
   and its context (~3 µs), the two calls into JS with the saved state (~1.5 µs) and reading
   the old value.
 - **Frame drops came from the agent's lock, not the average cost:** measured in Dark Souls III
@@ -288,7 +293,8 @@ switched off in the settings.
 under Settings → General …: activity log, the trace's method limit under Wine/Proton
 (`wine_trace_limit`, formerly the constant `WINE_TRACE_LIMIT`), from how many methods the trace
 asks first, entries in the traces' call sequence, the refresh interval of tracked addresses,
-the language. The watch backend stays in the menu and in `QSettings`, since it is chosen
+the language, and since 2026-10-26/27 the hook options `hook_short_jump`, `hook_repatch` and
+`hook_profiling` (see above). The watch backend stays in the menu and in `QSettings`, since it is chosen
 automatically on attach.
 
 ## Open points from the Wine/Proton work
@@ -311,8 +317,9 @@ automatically on attach.
   Returns crashed in the COM interop check), `MEMORY_BASIC_INFORMATION` in `watchUnmaps`, and
   `CONTEXT` in `pauseThreads`. That is fixed and checked in a 32-bit process. The automatic
   backend choice still takes ptrace for 32-bit games. That only concerns the watch and hooks,
-  though; Mono features always go through the gadget. Further 64-bit assumptions (monitor
-  arguments by the Win64 convention, the hook engine) are possible.
+  though; Mono features always go through the gadget. The reason is the hook engine, which
+  only handles x64 code (`installSite`); the method monitor follows the x86 convention there
+  (see above).
 - **Gadget through the Windows helper (implemented):** `hermes/core/inject/inject.c`, built
   with `build.sh` (MinGW or zig) as `hermes-inject-x86_64.exe` or `-x86.exe` into
   `build/inject/` (not in git; `helper_path` runs `build.sh` once if they are missing), loads the gadget
@@ -322,6 +329,8 @@ automatically on attach.
   creation time. Beforehand it checks that the prefix's wineserver socket exists in `/tmp`, so
   that no second server starts. `load_gadget` tries the helper first and falls back to the
   ptrace loader for 64 bit.
+  - The gadget drops messages from Hermes larger than 128 KiB; larger agents are sent in
+    parts and put together in the game (`frida_attach.py`, 2026-10-27).
   - Checked in a prefix of its own with Proton's Wine (64- and 32-bit `ping.exe`, several
     processes of the same name).
   - Open: a real Steam game in the Steam Linux Runtime container (Kathy Rain 2). The helper
@@ -329,6 +338,9 @@ automatically on attach.
     `nsenter` into the game's namespaces would be the next step.
 - **Gadget loader (ptrace, fallback):** catches a thread with a software breakpoint at a
   frequently called Windows function (message pump, timing). Games that call none of these
-  functions need `hot_points` of their own.
-- **Test suite:** one run once aborted with a core dump; further runs were clean. Cause not
-  investigated, possibly flaky.
+  functions need `hot_points` of their own; `load_gadget` takes them, but neither the UI nor
+  the settings can set them yet.
+- **Test suite:** runs aborted now and then with a core dump. Cause (found 2026-10-29): the
+  windows released a finished worker in a slot of its `finished` signal, which Qt emits before
+  the thread has ended; destroying a QThread that still runs aborts the process. Workers are
+  now kept until their thread has ended (`hermes/ui/workers.py`).

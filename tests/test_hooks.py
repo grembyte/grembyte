@@ -487,6 +487,94 @@ def test_short_jump_hooks_a_write_without_room_for_the_jmp(tmp_path, qt_app, sho
         target.close()
 
 
+# Like _CRAMPED_ASM, with a second run of int3 padding further on: a cave to
+# move to when the game overwrites the first one.
+_TWO_CAVES_ASM = r"""
+    .text
+    .p2align 4
+    .globl setter
+setter:
+    movl %esi, (%rdi)
+    ret
+    .globl next_fn
+next_fn:
+    leal 1(%rdi), %eax
+    ret
+    .p2align 4, 0xcc
+    .globl third_fn
+third_fn:
+    movl %edi, %eax
+    ret
+    .p2align 4, 0xcc
+    .globl fourth_fn
+fourth_fn:
+    ret
+    .section .note.GNU-stack,"",@progbits
+"""
+
+
+@requires_target
+def test_repatch_into_a_new_cave_is_restored_on_removal(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel,too-many-locals
+    import frida
+
+    from hermes.core import settings
+    from hermes.hooks.engine import HookWorker
+
+    (tmp_path / "target.c").write_text(_CRAMPED_SOURCE)
+    (tmp_path / "caves.S").write_text(_TWO_CAVES_ASM)
+    binary = tmp_path / "target"
+    subprocess.run(["gcc", "-O1", str(tmp_path / "target.c"), str(tmp_path / "caves.S"),
+                    "-o", str(binary)], check=True)
+    process = subprocess.Popen(
+        [str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    pid, address, setter = process.stdout.readline().split()
+    target = _Target.__new__(_Target)
+    target.process, target.pid, target.address = process, int(pid), int(address, 16)
+    original = _read_code(target.pid, setter, 3)
+
+    settings.apply({"hook_short_jump": True, "hook_repatch": True})
+    worker = HookWorker(target.pid)
+    installed, states = {}, []
+    worker.hook_installed.connect(lambda hook_id, info: installed.update({hook_id: info}))
+    worker.site_state.connect(lambda _ids, state, _reverts, _error: states.append(state))
+    try:
+        worker.start()
+        hook_id = worker.add_hook(HookSpec(
+            target.address, "int32", MultiplyTransform(10), write_pc=int(setter, 16)
+        ))
+        _wait_for(qt_app, lambda: hook_id in installed)
+        cave = installed[hook_id]["cave"]
+        assert target.send("add", 1) == (110, 2)
+
+        # What anti-tamper code does: restore the write and use the padding of
+        # the cave for code of its own.
+        session = frida.attach(target.pid)
+        script = session.create_script(
+            f"Memory.patchCode(ptr('{setter}'), 2, c => c.writeByteArray({original[:2]}));"
+            f"Memory.patchCode(ptr('{cave}'), 5, c => c.writeByteArray({[0x90] * 5}));")
+        script.load()
+        script.unload()
+        session.detach()
+        _wait_for(qt_app, lambda: "repatched" in states)
+        assert target.send("add", 1) == (120, 2)
+        # The moved short jump is the hook's own: not reported as changed code.
+        time.sleep(2.5)
+        qt_app.processEvents()
+        assert states[states.index("repatched"):] == ["repatched"]
+
+        worker.requestInterruption()
+        assert worker.wait(5000)
+        assert _read_code(target.pid, setter, 3) == original
+        assert target.send("add", 1) == (121, 2)
+    finally:
+        settings.reset()
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
 # A write function made by the interpreter itself: needs no compiler.
 _CTYPES_TARGET = r"""
 import ctypes, os, sys
