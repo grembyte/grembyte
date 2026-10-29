@@ -534,7 +534,7 @@
   "native_trace.button_tooltip": "Follow the game's machine code and find out which functions a scenario calls – no metadata needed, so it also works for C++ games, Unreal, Godot or custom engines",
   "native_trace.title": "Native trace",
   "native_trace.hint": "1. Choose threads and modules (preselected: the threads active right now and the modules in the game's folder). 2. Start following: Frida (Stalker) recompiles the code of these threads and counts every function call; system libraries run unchanged, only calls into them are counted. 3. Record the baseline while nothing happens in the game. 4. Record the scenario while triggering the action. The game runs noticeably slower while it is followed.",
-  "native_trace.wine_warning": "⚠ The native trace is untested under Wine/Proton (Stalker through Frida's Windows gadget). Save first.",
+  "native_trace.wine_warning": "⚠ The native trace is experimental under Wine/Proton (Stalker through Frida's Windows gadget) and will probably make the game freeze or crash. Save first.",
   "native_trace.threads": "Threads (the busiest right now first):",
   "native_trace.threads_tooltip": "Only checked threads are followed. Game logic usually runs on the main thread; unchecking render, audio and worker threads makes the trace faster. Threads started later are not followed. Preselected are the threads using CPU time right now: a followed thread that waits for long delays the end of the trace.",
   "native_trace.modules": "Modules whose code is followed:",

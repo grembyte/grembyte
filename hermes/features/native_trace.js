@@ -48,7 +48,7 @@ typedef struct {
 
 typedef struct {
   guint32 id;
-  guint32 reserved;
+  volatile gint left;  /* Windows: it called leave() */
 } Thread;
 
 typedef struct {
@@ -61,10 +61,14 @@ typedef struct {
   gint index;
   gint scale;
   gint64 disp;
+  Thread * info;
 } Site;
 
-/* phase (0 off, 1 baseline, 2 scenario), events, lost calls, active callouts */
-extern volatile gint state[4];
+/* phase (0 off, 1 baseline, 2 scenario), events, lost calls, active
+   callouts, threads to leave (Windows) */
+extern volatile gint state[8];
+/* Windows: Stalker.unfollow() of the calling thread */
+extern void leave (void);
 extern volatile gsize keys[];     /* function address per slot, 0: free */
 extern volatile gint claims[];
 extern volatile gint counts[];
@@ -183,6 +187,10 @@ static void on_call (GumCpuContext * c, gpointer data) {
   gint slot, at;
   Event * event;
   g_atomic_int_add (&state[3], 1);
+  /* Windows: the thread stops following itself, once. Stalker lets it go
+     at the next block; taken over from outside, threads froze under Wine. */
+  if (state[4] != 0 && s->info->left == 0 && g_atomic_int_add (&s->info->left, 1) == 0)
+    leave ();
   phase = state[0];
   if (phase == 0)
     goto done;
@@ -225,6 +233,7 @@ static Site * describe (const cs_insn * insn, Thread * thread) {
   s->site = insn->address;
   s->next = next;
   s->thread = thread->id;
+  s->info = thread;
   if (op->type == X86_OP_IMM) {
     s->kind = TARGET_KNOWN;
     s->target = (gsize) op->imm;
@@ -366,12 +375,50 @@ function zero(pointer, length) {
     pointer.writeByteArray(new ArrayBuffer(length));
 }
 
+// Windows: what the followed threads call to stop following themselves.
+let leaveFunction = null;
+
+function leaveCallback() {
+  if (leaveFunction === null)
+    leaveFunction = new NativeCallback(() => { Stalker.unfollow(); }, 'void', []);
+  return leaveFunction;
+}
+
+// Windows: one Stalker serves every trace of this agent (two in one process
+// froze a game on the second stop). What it excluded stays excluded, so a
+// trace that follows such a module needs a fresh agent.
+const FRESH_AGENT = 'needs a fresh agent';
+const excludedModules = new Set();
+
+function threadsLeft(t) {
+  // Followed threads of trace ``t`` that left it, and the ids still in it.
+  let left = 0;
+  const staying = [];
+  for (const [id, info] of t.threads) {
+    if (info.add(4).readS32() !== 0)
+      left++;
+    else
+      staying.push(id);
+  }
+  return { left, staying };
+}
+
+function stillFollowed() {
+  // Windows: threads an earlier trace of this agent still follows.
+  const ids = new Set();
+  for (const t of retired) {
+    if (t.leaving)
+      threadsLeft(t).staying.forEach(id => ids.add(id));
+  }
+  return ids;
+}
+
 function compile(threadCount) {
   // The CModule and its memory, all of it zeroed.
   if (Process.arch !== 'x64' && Process.arch !== 'ia32')
     throw new Error(`the native trace needs an x86 processor, not ${Process.arch}`);
   const memory = {
-    state: Memory.alloc(16),
+    state: Memory.alloc(32),
     keys: Memory.alloc(Process.pointerSize * FUNCTION_CAPACITY),
     claims: Memory.alloc(4 * FUNCTION_CAPACITY),
     counts: Memory.alloc(4 * FUNCTION_CAPACITY),
@@ -381,12 +428,12 @@ function compile(threadCount) {
     first_threads: Memory.alloc(4 * FIRST_CAPACITY),
     events: Memory.alloc(EVENT_SIZE * EVENT_CAPACITY)
   };
-  zero(memory.state, 16);
+  zero(memory.state, 32);
   zero(memory.keys, Process.pointerSize * FUNCTION_CAPACITY);
   zero(memory.claims, 4 * FUNCTION_CAPACITY);
   zero(memory.counts, 4 * FUNCTION_CAPACITY);
   zero(memory.quiet, FUNCTION_CAPACITY);
-  const cm = new CModule(C_SOURCE, memory);
+  const cm = new CModule(C_SOURCE, { ...memory, leave: leaveCallback() });
   const tallied = Memory.alloc(16);
   const tally = new NativeFunction(cm.tally, 'void', ['pointer']);
   return {
@@ -405,19 +452,31 @@ function start(spec) {
   // spec: { threads: [ids], modules: [names to follow], ranges: [[base, size]] to run natively }
   if (trace !== null)
     throw new Error('a trace is running already');
-  const compiled = compile(spec.threads.length);
   const followed = new Set(spec.modules);
+  if (WINDOWS) {
+    const excluded = spec.modules.filter(name => excludedModules.has(name));
+    if (excluded.length > 0)
+      throw new Error(`${FRESH_AGENT}: ${excluded.join(', ')} excluded by an earlier trace`);
+  }
+  // Threads an earlier trace still follows are left alone.
+  const busy = WINDOWS ? stillFollowed() : new Set();
+  const requested = spec.threads.filter(id => id !== AGENT_THREAD);
+  const threadIds = requested.filter(id => !busy.has(id));
+  const compiled = compile(threadIds.length);
   let included = 0;
-  // Called for the modules loaded now and for those loaded later, also during
-  // the trace: Stalker would otherwise recompile all of their code.
-  const moduleObserver = Process.attachModuleObserver({
-    onAdded(module) {
-      if (followed.has(module.name))
-        included++;
-      else
-        Stalker.exclude(module);  // runs natively: only calls into it are seen
+  // The modules loaded now, also those loaded since the inventory. Only before
+  // following: Stalker's exclusions must not change while threads compile
+  // code (a module observer excluding modules loaded during the trace made
+  // Baldur's Gate and Dark Souls III crash under Proton). Modules loaded
+  // later are recompiled like the game's code.
+  for (const module of Process.enumerateModules()) {
+    if (followed.has(module.name)) {
+      included++;
+    } else {
+      Stalker.exclude(module);  // runs natively: only calls into it are seen
+      excludedModules.add(module.name);
     }
-  });
+  }
   // Code Frida knows no module of (Wine's Unix side): runs natively as well.
   // A 32-bit game cannot reach the 64-bit libraries of the new WoW64.
   for (const [base, size] of spec.ranges || []) {
@@ -427,7 +486,6 @@ function start(spec) {
   }
   trace = {
     ...compiled,
-    moduleObserver,
     all: new ModuleMap(),
     slots: new Map(),       // slot of the C side -> function number
     index: new Map(),       // target address text -> function number
@@ -443,7 +501,7 @@ function start(spec) {
     entries: [],            // Windows: hooks threads enter Stalker through
     waiting: new Map()      // Windows: id -> Thread of the C side, not entered yet
   };
-  const ids = spec.threads.filter(id => id !== AGENT_THREAD);
+  const ids = threadIds;
   const infos = new Map(ids.map((id, i) => {
     const info = trace.threadInfo.add(THREAD_SIZE * i);
     info.writeU32(id);
@@ -454,7 +512,8 @@ function start(spec) {
   const failed = WINDOWS
     ? enterOnReturn(trace, infos, new ModuleMap(module => followed.has(module.name)))
     : withRoomNearby(() => followAll(trace, infos), placed => { steered = placed; });
-  return { threads: ids.length - failed.length, failed: failed.length, modules: included,
+  return { threads: ids.length - failed.length,
+           failed: failed.length + requested.length - ids.length, modules: included,
            waiting: trace.waiting.size, steered };
 }
 
@@ -846,26 +905,46 @@ function live() {
 }
 
 function stop() {
-  // Exclusions stay with the Stalker: Python loads a fresh agent for the next trace.
+  // Exclusions stay with the Stalker (see FRESH_AGENT).
   if (trace === null)
-    return false;
+    return null;
   const t = trace;
   trace = null;
   t.setPhase(0);
-  t.moduleObserver.detach();
   for (const group of t.entries.slice())
     detachEntry(t, group);  // threads not entered yet stay as they are
   t.waiting.clear();
-  const ids = t.threads.map(([id]) => id);
-  for (const id of ids) {
-    try {
-      Stalker.unfollow(id);
-    } catch (_error) {
-      // ended meanwhile
+  if (WINDOWS) {
+    // Each thread leaves at its next call (on_call): taking a thread over
+    // from outside froze Baldur's Gate under Proton, looping in
+    // NtSetContextThread.
+    t.leaving = true;
+    t.state.add(16).writeS32(1);
+  } else {
+    for (const [id] of t.threads) {
+      try {
+        Stalker.unfollow(id);
+      } catch (_error) {
+        // ended meanwhile
+      }
     }
   }
   retired.push(t);
-  return true;
+  return t;
+}
+
+async function waitForLeaving(t, timeout) {
+  // Windows: until the threads of ``t`` left, or ``timeout`` ms; returns the
+  // number still followed. A thread blocked in a call leaves once it returns.
+  if (t === null || !t.leaving)
+    return 0;
+  const deadline = Date.now() + timeout;
+  let staying = threadsLeft(t).staying;
+  while (staying.length > 0 && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    staying = threadsLeft(t).staying;
+  }
+  return staying.length;
 }
 
 async function collect(timeout) {
@@ -887,13 +966,14 @@ rpc.exports = {
   finish,
   async stop() {
     const stopped = stop();
+    const staying = await waitForLeaving(stopped, STOP_GC_TIMEOUT);
     await collect(STOP_GC_TIMEOUT);
-    return stopped;
+    return { stopped: stopped !== null, staying };
   },
   async dispose() {
     clearInterval(liveTimer);
-    stop();
+    await waitForLeaving(stop(), DISPOSE_GC_TIMEOUT);
     await collect(DISPOSE_GC_TIMEOUT);
-    return true;
+    return { staying: stillFollowed().size };
   }
 };

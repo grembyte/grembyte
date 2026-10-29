@@ -534,7 +534,7 @@
   "native_trace.button_tooltip": "Den Maschinencode des Spiels verfolgen und herausfinden, welche Funktionen ein Szenario aufruft – ohne Metadaten, also auch für C++-Spiele, Unreal, Godot oder eigene Engines",
   "native_trace.title": "Nativer Trace",
   "native_trace.hint": "1. Threads und Module wählen (vorausgewählt: die gerade aktiven Threads und die Module aus dem Ordner des Spiels). 2. Verfolgung starten: Frida (Stalker) übersetzt den Code dieser Threads neu und zählt jeden Funktionsaufruf; Systembibliotheken laufen unverändert, nur Aufrufe in sie werden gezählt. 3. Grundrauschen aufnehmen, während im Spiel nichts passiert. 4. Szenario aufnehmen und dabei die Aktion auslösen. Das Spiel läuft während der Verfolgung spürbar langsamer.",
-  "native_trace.wine_warning": "⚠ Unter Wine/Proton ist der native Trace noch ungetestet (Stalker über Fridas Windows-Gadget). Vorher speichern.",
+  "native_trace.wine_warning": "⚠ Unter Wine/Proton ist der native Trace derzeit experimentell (Stalker über Fridas Windows-Gadget) und bringt das Spiel voraussichtlich zum Einfrieren oder Absturz. Vorher speichern.",
   "native_trace.threads": "Threads (die gerade aktivsten oben):",
   "native_trace.threads_tooltip": "Nur angehakte Threads werden verfolgt. Die Spiellogik läuft meist im Haupt-Thread; Render-, Audio- und Worker-Threads abzuwählen macht den Trace schneller. Threads, die erst später entstehen, werden nicht verfolgt. Vorausgewählt sind die Threads, die gerade Rechenzeit brauchen: Ein verfolgter Thread, der lange wartet, verzögert das Ende des Trace.",
   "native_trace.modules": "Module, deren Code verfolgt wird:",

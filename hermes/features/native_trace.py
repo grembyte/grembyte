@@ -33,6 +33,8 @@ from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-m
 import sys
 import threading
 
+import frida
+
 from hermes.core import activity, sessions, settings
 from hermes.platform import is_wine_process, read_mappings
 from hermes.features.trace import AgentWorker
@@ -47,6 +49,8 @@ FIRST_CAPACITY = 1 << 19
 # First calls written into the sequence by default (setting trace_sequence);
 # later ones are only counted.
 EVENT_CAPACITY = 100_000
+# The agent's answer when a trace needs a fresh agent (FRESH_AGENT in the agent).
+FRESH_AGENT = "needs a fresh agent"
 # How long ``finish`` may look up function names.
 SYMBOL_BUDGET_MS = 3000
 # How long the agent measures the threads' load under Wine (seconds), as
@@ -234,6 +238,8 @@ class NativeTraceWorker(AgentWorker):
         # unloading one waits for threads still blocked in its code.
         self._retired = []
         self._traced = False
+        # The agent runs on Windows (natively or under Wine), from the inventory.
+        self._windows = False
 
     def agent_source(self):
         return build_agent_source(settings.get("trace_sequence"))
@@ -270,14 +276,15 @@ class NativeTraceWorker(AgentWorker):
                                    module["size"], module["game"])
                        for module in answer["modules"]]
             self._modules = modules
+            self._windows = answer["platform"] == "windows"
             self.inventory_found.emit(threads, modules, answer["platform"])
         elif action == "start":
-            if self._traced:
-                # Stalker keeps what it excluded: a new trace needs a fresh agent.
-                self._retired.append(self._script)
-                self._script = None
-                self._load_script(self._session)
-                api = self._script.exports_sync
+            # Stalker keeps what it excluded: on Linux a new trace gets a fresh
+            # agent. Under Windows one agent, and so one Stalker, serves every
+            # trace (two froze a game); it asks for a fresh one only when a
+            # module to follow was excluded before.
+            if self._traced and not self._windows:
+                api = self._fresh_agent()
             self._traced = True
             if self._wine:
                 followed = [module for module in self._modules
@@ -287,7 +294,12 @@ class NativeTraceWorker(AgentWorker):
             activity.record("native_trace_start", pid=self.pid, threads=argument["threads"],
                             modules=argument["modules"],
                             native_ranges=len(argument.get("ranges", [])))
-            answer = api.start(argument)
+            try:
+                answer = api.start(argument)
+            except frida.RPCException as error:
+                if FRESH_AGENT not in str(error):
+                    raise
+                answer = self._fresh_agent().start(argument)
             activity.record("native_trace_started", pid=self.pid, **answer)
             # Where the threads are once Stalker has taken them over (or not)
             timer = threading.Timer(1.0, activity.record_threads, (self.pid, "1 s after start"))
@@ -295,10 +307,22 @@ class NativeTraceWorker(AgentWorker):
             timer.start()
             self.started.emit(answer)
         elif action == "stop":
-            super()._run_command(api, action, argument)
+            answer = api.stop()
+            staying = answer.get("staying", 0) if isinstance(answer, dict) else 0
+            if staying:
+                # Windows: blocked in a call since; they leave once it returns.
+                activity.record("native_trace_staying", pid=self.pid, threads=staying)
+            self.stopped.emit()
             activity.record_threads(self.pid, "trace stopped")
         else:
             super()._run_command(api, action, argument)
+
+    def _fresh_agent(self):
+        """Keep the agent loaded (its Stalker may still hold threads) and load another."""
+        self._retired.append(self._script)
+        self._script = None
+        self._load_script(self._session)
+        return self._script.exports_sync
 
     def _unload_script(self):
         super()._unload_script()

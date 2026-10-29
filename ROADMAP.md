@@ -106,6 +106,19 @@ damage.
   `script.unload()` then waits up to ~25 s (the game survives). So idle threads are not
   preselected, and "Stop following" does not unload the agent at once. A new trace gets a
   fresh agent, because Stalker cannot take exclusions back.
+- Learned (2026-10-29): Baldur's Gate under Proton froze on the second "Stop following"
+  (two agents, so two Stalkers in the process): the followed main thread looped in Frida's
+  own code, calling `NtSetContextThread` with a broken context (a write to `0x2d9`), and
+  Proton's log grew by about 40 MB/s with the access violations. Under Windows the threads
+  now stop following themselves, as they start: `stop` sets a flag, and the C callout
+  calls `leave()` (`Stalker.unfollow()` of its own thread) at the thread's next call;
+  threads that do not run meanwhile stay followed and are reported (`staying`), never
+  taken over from outside. One agent serves every trace; a fresh one is loaded only when
+  a module to follow was excluded before. Checked with a Windows test game under Proton
+  (stop, second trace, dispose); the freeze itself did not occur there with the old code
+  either, so the cause is not proven. Setting the trace's flag needs no exclusions to
+  change: Stalker's exclusions must not change while threads are followed (a module
+  observer doing so crashed Baldur's Gate and Dark Souls III).
 
 Next steps:
 
