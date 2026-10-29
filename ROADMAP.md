@@ -57,7 +57,12 @@ damage.
   order of the first calls is exact and knows the call site. x86/x64 only; a `call` through
   `fs:`/`gs:` is not counted. Modules not chosen run natively through `Stalker.exclude` (only
   calls *into* them count). Preselection: the modules in the game's folder, the threads
-  running right now (CPU time or context switches in `/proc`).
+  running right now (CPU time or context switches in `/proc`). Under Wine (2026-10-29) the
+  game's folder comes from `GetModuleHandleW(NULL)`: Frida's `Process.mainModule` is just
+  the first module listed there (`netapi32.dll` in Dark Souls III), which preselected the
+  system DLLs and not the game. The agent measures the threads itself with
+  `GetThreadTimes`, since /proc does not know Windows thread ids; before, every thread was
+  preselected. Dark Souls III: 5 game modules, 20 of 86 threads.
 - Function names: exports, on Linux also symbols (`DebugSymbol`), otherwise `module+0x…`.
 - Verified: test game (C) and a Python interpreter with `libpython` (~6 million calls/2 s,
   the scenario found the JSON encoder), and Baldur's Gate under Proton (see below).

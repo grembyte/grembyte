@@ -435,3 +435,31 @@ def test_rows_sort_by_column_and_filter_by_name_and_calls(qt_app, translations):
     assert shown() == [0, 1]
     bar.name_input.setText("roll game")
     assert shown() == [0]
+
+
+def test_under_wine_the_agent_measures_the_threads(qt_app, monkeypatch):
+    # pylint: disable=unused-argument,protected-access,import-outside-toplevel
+    from hermes.features import native_trace
+
+    monkeypatch.setattr(native_trace, "is_wine_process", lambda _pid: True)
+    worker = native_trace.NativeTraceWorker(123)
+    found = []
+    worker.inventory_found.connect(lambda threads, modules, _platform:
+                                   found.append((threads, modules)))
+    asked = []
+
+    class Api:  # pylint: disable=too-few-public-methods
+        @staticmethod
+        def inventory(*seconds):
+            asked.append(seconds)
+            return {"platform": "windows", "modules": [], "threads": [
+                {"id": 336, "name": "", "state": "running", "load": 0.54},
+                {"id": 400, "name": "idle", "state": "running", "load": 0.0},
+                {"id": 404, "name": "", "state": "running", "load": None},
+            ]}
+
+    worker._run_command(Api(), "inventory", None)
+    assert asked == [(native_trace.WINE_LOAD_SECONDS,)]
+    threads = found[0][0]
+    assert [(t.id, t.load, t.active) for t in threads] == [
+        (336, 0.54, True), (400, 0.0, False), (404, None, None)]

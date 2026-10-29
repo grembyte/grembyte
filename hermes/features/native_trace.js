@@ -287,15 +287,73 @@ function isGameModule(module, gameFolder) {
   return module.path.toLowerCase().startsWith(gameFolder);
 }
 
-function inventory() {
-  const main = Process.mainModule;
+function programModule() {
+  // The game's executable. Under Wine Frida's Process.mainModule is just the
+  // first module it lists (e.g. netapi32.dll); Windows itself knows better.
+  if (WINDOWS) {
+    const getModuleHandle = new NativeFunction(
+      Process.getModuleByName('kernel32.dll').getExportByName('GetModuleHandleW'),
+      'pointer', ['pointer']);
+    const module = Process.findModuleByAddress(getModuleHandle(NULL));
+    if (module !== null)
+      return module;
+  }
+  return Process.mainModule;
+}
+
+function threadLoads(ids, seconds) {
+  // Windows: {id: share of a CPU} over ``seconds``, from GetThreadTimes (in
+  // steps of the scheduler's tick, about 10 ms); null where unknown. Under
+  // Wine the agent sees Windows thread ids, which /proc does not know.
+  const kernel32 = Process.getModuleByName('kernel32.dll');
+  const openThread = new NativeFunction(kernel32.getExportByName('OpenThread'),
+                                        'pointer', ['uint32', 'int', 'uint32']);
+  const closeHandle = new NativeFunction(kernel32.getExportByName('CloseHandle'),
+                                         'int', ['pointer']);
+  const getThreadTimes = new NativeFunction(kernel32.getExportByName('GetThreadTimes'), 'int',
+                                            ['pointer', 'pointer', 'pointer', 'pointer', 'pointer']);
+  const times = Memory.alloc(32);
+  const THREAD_QUERY_LIMITED_INFORMATION = 0x0800;
+
+  function cpuTime(id) {
+    // Kernel plus user time in 100 ns units, or null.
+    const handle = openThread(THREAD_QUERY_LIMITED_INFORMATION, 0, id);
+    if (handle.isNull())
+      return null;
+    try {
+      if (!getThreadTimes(handle, times, times.add(8), times.add(16), times.add(24)))
+        return null;
+      return times.add(16).readU64().add(times.add(24).readU64());
+    } finally {
+      closeHandle(handle);
+    }
+  }
+
+  const before = new Map(ids.map(id => [id, cpuTime(id)]));
+  Thread.sleep(seconds);
+  const loads = {};
+  for (const id of ids) {
+    const start = before.get(id);
+    const end = cpuTime(id);
+    loads[id] = start === null || end === null
+      ? null : Number(end.sub(start)) / (seconds * 1e7);
+  }
+  return loads;
+}
+
+function inventory(measureSeconds = 0) {
+  // ``measureSeconds``: measure the threads' load here (Windows only).
+  const main = programModule();
   const gameFolder = folder(main.path);
   const modules = Process.enumerateModules();
+  const threads = Process.enumerateThreads().filter(thread => thread.id !== AGENT_THREAD);
+  const loads = WINDOWS && measureSeconds > 0
+    ? threadLoads(threads.map(thread => thread.id), measureSeconds) : {};
   return {
     platform: Process.platform,
-    threads: Process.enumerateThreads()
-      .filter(thread => thread.id !== AGENT_THREAD)
-      .map(thread => ({ id: thread.id, name: thread.name || '', state: thread.state })),
+    threads: threads.map(thread => ({
+      id: thread.id, name: thread.name || '', state: thread.state, load: loads[thread.id] ?? null
+    })),
     modules: modules.map(module => ({
       name: module.name, path: module.path, base: module.base.toString(), size: module.size,
       game: module.name === main.name || isGameModule(module, gameFolder)

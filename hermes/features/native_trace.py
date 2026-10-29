@@ -49,6 +49,9 @@ FIRST_CAPACITY = 1 << 19
 EVENT_CAPACITY = 100_000
 # How long ``finish`` may look up function names.
 SYMBOL_BUDGET_MS = 3000
+# How long the agent measures the threads' load under Wine (seconds), as
+# thread_activity does on Linux.
+WINE_LOAD_SECONDS = 0.5
 
 _AGENT_TEMPLATE = (
     load_agent_source(__file__)
@@ -222,9 +225,9 @@ class NativeTraceWorker(AgentWorker):
 
     def __init__(self, pid, parent=None):
         super().__init__(pid, parent)
-        # Under Wine the agent sees Windows thread ids, which /proc does not know.
+        # Under Wine the agent sees Windows thread ids, which /proc does not
+        # know: it measures their load itself.
         self._wine = is_wine_process(pid)
-        self._measure_load = not self._wine
         # TraceModules of the last inventory
         self._modules = []
         # Agents of earlier traces: their Stalker keeps its exclusions, and
@@ -249,9 +252,16 @@ class NativeTraceWorker(AgentWorker):
 
     def _run_command(self, api, action, argument):
         if action == "inventory":
-            answer = api.inventory()
-            ids = [thread["id"] for thread in answer["threads"]]
-            loads = thread_activity(self.pid, ids) if self._measure_load else {}
+            if self._wine:
+                # The agent measures with GetThreadTimes; whether a thread only
+                # woke up briefly (less than a tick) cannot be told there.
+                answer = api.inventory(WINE_LOAD_SECONDS)
+                loads = {thread["id"]: (thread["load"], thread["load"] > 0)
+                         for thread in answer["threads"] if thread.get("load") is not None}
+            else:
+                answer = api.inventory()
+                ids = [thread["id"] for thread in answer["threads"]]
+                loads = thread_activity(self.pid, ids)
             threads = [TraceThread(thread["id"], thread["name"],
                                    *loads.get(thread["id"], (None, None)))
                        for thread in answer["threads"]]
