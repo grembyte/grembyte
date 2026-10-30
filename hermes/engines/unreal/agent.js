@@ -982,8 +982,44 @@ const unreal = (() => {
     LOCAL_VARIABLE: 0x00, INSTANCE_VARIABLE: 0x01, SELF: 0x17, INT_CONST: 0x1d,
     FLOAT_CONST: 0x1e, OBJECT_CONST: 0x20, NAME_CONST: 0x21, BYTE_CONST: 0x24, INT_ZERO: 0x25,
     INT_ONE: 0x26, TRUE: 0x27, FALSE: 0x28, NO_OBJECT: 0x2a, INT_CONST_BYTE: 0x2c,
-    INT64_CONST: 0x35, UINT64_CONST: 0x36, DOUBLE_CONST: 0x37
+    INT64_CONST: 0x35, UINT64_CONST: 0x36, DOUBLE_CONST: 0x37, STRUCT_MEMBER_CONTEXT: 0x42,
+    LOCAL_OUT_VARIABLE: 0x48
   };
+
+  // FFrame::OutParms (FOutParmRec: Property, PropAddr, NextOutParm) follows
+  // FlowStack and PreviousFrame, where depends on the engine version: it is
+  // looked for between these offsets, the first time a call needs it.
+  const OUT_PARMS_FIRST = 0x40, OUT_PARMS_LAST = 0xc0, MAX_OUT_PARMS = 64;
+  let outParmsOffset = null;
+
+  function outParmAddress(records, property) {
+    // PropAddr of ``property`` in a FOutParmRec list, or null.
+    let record = records;
+    for (let i = 0; i < MAX_OUT_PARMS && !record.isNull(); i++) {
+      if (record.readPointer().equals(property))
+        return record.add(Process.pointerSize).readPointer();
+      record = record.add(2 * Process.pointerSize).readPointer();
+    }
+    return null;
+  }
+
+  function outVariable(frame, property) {
+    // Where the out/ref parameter ``property`` of the frame's function is, or null.
+    if (outParmsOffset !== null)
+      return outParmAddress(frame.add(outParmsOffset).readPointer(), property);
+    for (let offset = OUT_PARMS_FIRST; offset <= OUT_PARMS_LAST; offset += Process.pointerSize) {
+      try {
+        const address = outParmAddress(frame.add(offset).readPointer(), property);
+        if (address !== null) {
+          outParmsOffset = offset;
+          return address;
+        }
+      } catch (_error) {
+        // not the list
+      }
+    }
+    return null;
+  }
 
   function prepare(identity) {
     // The code to hook and the signature of a UFunction: { start, size,
@@ -1041,6 +1077,19 @@ const unreal = (() => {
         const base = frame.add(token === EX.LOCAL_VARIABLE ? FRAME_LOCALS : FRAME_OBJECT)
           .readPointer();
         return [{ address: base.add(property.add(L.offset).readS32()) }, after.add(8)];
+      }
+      case EX.LOCAL_OUT_VARIABLE: {
+        const property = after.readPointer();
+        const address = isProperty(property) ? outVariable(frame, property) : null;
+        return address === null ? null : [{ address }, after.add(8)];
+      }
+      case EX.STRUCT_MEMBER_CONTEXT: {
+        // A member of the struct the next expression gives
+        const property = after.readPointer();
+        const struct = isProperty(property) ? expression(after.add(8), frame) : null;
+        if (struct === null || struct[0].address === undefined)
+          return null;
+        return [{ address: struct[0].address.add(property.add(L.offset).readS32()) }, struct[1]];
       }
       case EX.SELF: return [{ value: { object: frame.add(FRAME_OBJECT).readPointer() } }, after];
       case EX.NO_OBJECT: return [{ value: { object: NULL } }, after];

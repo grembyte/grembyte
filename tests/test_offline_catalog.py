@@ -136,3 +136,16 @@ def test_known_games_dialog(monkeypatch, qt_app, translations):
         assert dialog.game.name == "WH40KDH.exe"
     finally:
         dialog.close()
+
+
+def test_catalog_search_accepts_wildcards():
+    from hermes.ui.widgets.catalog import matches  # pylint: disable=import-outside-toplevel
+
+    method = catalog_methods("Assembly-CSharp", [["Game.PlayerCombat", [
+        ["ApplyDamage", "(int)", "System.Void", False, 0x06000004,
+         "Game.PlayerCombat:ApplyDamage (int)", 0, 0]]]])[0]
+    assert matches(["player*damage"], method)
+    assert matches(["game.player?ombat", "apply"], method)
+    assert matches(["*"], method) and matches(["player"], method)
+    assert not matches(["damage*player"], method)
+    assert not matches(["player.damage"], method)  # "." is literal, not "any character"

@@ -1,6 +1,8 @@
 """Searchable catalog of the C# methods of a Mono game (e.g. a Unity game)."""
 
+import re
 from datetime import datetime
+from functools import lru_cache
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
@@ -46,10 +48,24 @@ _COLUMNS = (
 FILTER_DELAY_MS = 200
 
 
+@lru_cache(maxsize=256)
+def _wildcard_pattern(word):
+    """A search word with ``*`` (any text) or ``?`` (one character) as a regex."""
+    return re.compile("".join(
+        ".*" if char == "*" else "." if char == "?" else re.escape(char) for char in word))
+
+
+def word_occurs(word, text):
+    """Whether one search word occurs in ``text``; ``player*damage`` allows anything between."""
+    if "*" in word or "?" in word:
+        return _wildcard_pattern(word).search(text) is not None
+    return word in text
+
+
 def matches(words, method):
     """Whether every search word occurs in the method's class, name or assembly."""
     text = f"{method.class_name}:{method.name} {method.assembly}".lower()
-    return all(word in text for word in words)
+    return all(word_occurs(word, text) for word in words)
 
 
 class CatalogModel(FavoriteColumn, QAbstractTableModel):
