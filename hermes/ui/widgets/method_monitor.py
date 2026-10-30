@@ -3,8 +3,7 @@
 import json
 from datetime import datetime
 
-from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, QPoint, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
@@ -25,9 +24,9 @@ from hermes.engines import base as engine_base
 from hermes.engines.registry import engine_by_id
 from hermes.features.catalog import short_name
 from hermes.features.monitor import MethodMonitorWorker
-from hermes.ui.widgets.object_inspector import ObjectInspectorDialog, link_label, link_width
+from hermes.ui.widgets.inspection import Inspections
+from hermes.ui.widgets.object_inspector import link_label, link_width
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
-from hermes.ui.widgets.text_viewer import TextViewerDialog
 from hermes.ui.workers import keep_until_finished
 
 
@@ -172,11 +171,6 @@ class MethodMonitorDialog(QDialog):
         # monitor id -> {"method", "returns", "row", "calls", "dropped"}
         self._monitors = {}
         self._paused = False
-        # open object inspectors; inspection request id -> waiting inspector
-        self.inspectors = []
-        self._inspections = {}
-        # request id -> TextViewerDialog waiting for a long string's whole text
-        self._text_requests = {}
         self._detail_time = ""
         self.setWindowTitle(translations["monitor.title"])
         self.resize(1100, 700)
@@ -187,12 +181,9 @@ class MethodMonitorDialog(QDialog):
         self._worker.monitor_ended.connect(self._on_ended)
         self._worker.calls.connect(self._on_calls)
         self._worker.worker_failed.connect(self._on_worker_failed)
-        self._worker.inspected.connect(self._on_inspected)
-        self._worker.inspect_failed.connect(self._on_inspect_failed)
-        self._worker.evaluated.connect(self._on_evaluated)
-        self._worker.evaluate_failed.connect(self._on_evaluate_failed)
-        self._worker.text_fetched.connect(self._on_text_fetched)
-        self._worker.text_failed.connect(self._on_text_failed)
+        self.inspections = Inspections(translations, self._worker, self,
+                                       time=lambda: self._detail_time)
+        self.inspections.address_requested.connect(self.address_requested.emit)
         self._worker.start()
 
     # --- UI ------------------------------------------------------------------
@@ -533,47 +524,6 @@ class MethodMonitorDialog(QDialog):
                     length=length))
                 self.details.setCellWidget(row, 2, link)
 
-    # --- Long texts ------------------------------------------------------------
-    def _show_text(self, value, name, time=None):
-        """Open a string value whole in a window of its own; a long one comes
-        from the agent. ``time``: when the value was read (else the call's)."""
-        title = self.translations["monitor.full_text_title"].format(
-            name=name, time=time or self._detail_time)
-        if value.get("fullText"):
-            viewer = TextViewerDialog(self.translations, title, parent=self)
-            self._text_requests[self._worker.full_text(value["fullText"])] = (viewer, value)
-            viewer.destroyed.connect(self._forget_texts)
-        else:
-            # Short: the text is all there, as a JSON string literal.
-            viewer = TextViewerDialog(self.translations, title, json.loads(value["text"]),
-                                      parent=self)
-        viewer.show()
-        viewer.activateWindow()
-
-    # Slots for ``destroyed`` are bound methods, not lambdas: PyQt does not
-    # call a bound method of a dialog the garbage collector is taking apart,
-    # while a lambda's ``self`` may already be cleared then (a fatal error in
-    # the slot). The destroyed object is not the wrapper we keep, but that
-    # one is marked as deleted already.
-    def _forget_texts(self, _object=None):
-        for request_id, (waiting, _value) in list(self._text_requests.items()):
-            if sip.isdeleted(waiting):
-                del self._text_requests[request_id]
-
-    def _on_text_fetched(self, request_id, text):
-        viewer, value = self._text_requests.pop(request_id, (None, None))
-        if viewer is None:
-            return
-        if text is None:
-            viewer.show_missing()
-        else:
-            viewer.set_text(text, value.get("length"))
-
-    def _on_text_failed(self, request_id, message):
-        viewer, _value = self._text_requests.pop(request_id, (None, None))
-        if viewer is not None:
-            viewer.show_error(message)
-
     # --- Object inspector ------------------------------------------------------
     def _inspect_detail(self, row, _column):
         """Show the fields of the object in details ``row``: as recorded at the
@@ -589,67 +539,22 @@ class MethodMonitorDialog(QDialog):
         if not value or not value.get("target"):
             return
         if "snapshot" in value:
-            self._show_inspector(ObjectInspectorDialog(
-                self.translations, self.inspect, target=value["target"],
-                contents=value["snapshot"], captured=self._detail_time,
-                evaluate=self._request_evaluation, name=name, parent=self,
-                show_text=self._show_text))
+            self.inspections.inspect_snapshot(value["target"], value["snapshot"],
+                                              self._detail_time, name)
         else:
             self.inspect(value["target"], name=name)
 
+    @property
+    def inspectors(self):
+        """The object inspectors open now."""
+        return self.inspections.inspectors
+
     def inspect(self, target, origin=None, name=""):
-        """Show the current fields of ``target`` in a dialog of its own.
+        """Show the current fields of ``target`` in a dialog of its own."""
+        self.inspections.inspect(target, origin, name)
 
-        ``origin`` is the dialog it was opened from (one level less deep).
-        """
-        self._show_inspector(ObjectInspectorDialog(
-            self.translations, self.inspect, target=target, request=self._request_inspection,
-            evaluate=self._request_evaluation, name=name,
-            depth=1 if origin is None else origin.depth + 1, parent=self,
-            show_text=self._show_text), origin)
-
-    def _show_inspector(self, inspector, origin=None):
-        self.inspectors.append(inspector)
-        inspector.address_requested.connect(self.address_requested.emit)
-        inspector.destroyed.connect(self._forget_inspectors)
-        if origin is not None:
-            # Opened from another dialog: a little offset, so both stay visible.
-            inspector.move(origin.pos() + QPoint(32, 32))
-        inspector.show()
-        inspector.activateWindow()
-
-    def _forget_inspectors(self, _object=None):
-        self.inspectors = [inspector for inspector in self.inspectors
-                           if not sip.isdeleted(inspector)]
-        for request_id, waiting in list(self._inspections.items()):
-            if sip.isdeleted(waiting):
-                del self._inspections[request_id]
-
-    def _request_inspection(self, target, inspector):
-        self._inspections[self._worker.inspect(target)] = inspector
-
-    def _request_evaluation(self, target, names, inspector):
-        self._inspections[self._worker.evaluate(target, names)] = inspector
-
-    def _on_evaluated(self, request_id, results):
-        inspector = self._inspections.pop(request_id, None)
-        if inspector is not None:
-            inspector.show_properties(results)
-
-    def _on_evaluate_failed(self, request_id, message):
-        inspector = self._inspections.pop(request_id, None)
-        if inspector is not None:
-            inspector.show_property_error(message)
-
-    def _on_inspected(self, request_id, contents):
-        inspector = self._inspections.pop(request_id, None)
-        if inspector is not None:
-            inspector.show_contents(contents)
-
-    def _on_inspect_failed(self, request_id, message):
-        inspector = self._inspections.pop(request_id, None)
-        if inspector is not None:
-            inspector.show_error(message)
+    def _show_text(self, value, name, time=None):
+        self.inspections.show_text(value, name, time)
 
     def closeEvent(self, event):  # pylint: disable=invalid-name
         # Removing the interceptors can wait for calls in progress; do not

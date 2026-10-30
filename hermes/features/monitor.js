@@ -1187,12 +1187,16 @@ function callMethod(method, self, args) {
 }
 
 function staticCall(qualifiedName, ...args) {
-  // ctx.call("Namespace.Class.Method", ...)
-  const dot = qualifiedName.lastIndexOf('.');
-  if (dot < 0)
-    throw new Error(`"${qualifiedName}" is no Class.Method`);
-  const klass = engine.findClass(qualifiedName.substring(0, dot));
-  const method = engine.findMethod(klass, qualifiedName.substring(dot + 1), args.length, true);
+  // ctx.call("Namespace.Class.Method", ...), or as the catalog and the monitor
+  // name it, "Namespace.Class:Method" (a parameter list after it is ignored:
+  // the method is the one taking as many arguments as given)
+  const name = qualifiedName.replace(/\s*\(.*\)\s*$/, '');
+  const colon = name.lastIndexOf(':');
+  const split = colon >= 0 ? colon : name.lastIndexOf('.');
+  if (split <= 0 || split === name.length - 1)
+    throw new Error(`"${qualifiedName}" is no Class.Method or Class:Method`);
+  const klass = engine.findClass(name.substring(0, split));
+  const method = engine.findMethod(klass, name.substring(split + 1), args.length, true);
   return callMethod(method, null, args);
 }
 

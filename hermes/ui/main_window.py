@@ -365,6 +365,8 @@ class MainWindow(QMainWindow):
         self._log_dialog = None
         # The engine adapter of the attached game, once its runtime is found.
         self._engine = None
+        # The process whose native-tool risk the user accepted (see _confirm_native_tools)
+        self._native_risk_accepted = None
         # Database id of the program the open pointer dialogs belong to.
         self._pointer_program = None
         self._ensure_example_templates()
@@ -1437,25 +1439,43 @@ class MainWindow(QMainWindow):
                        and self._engine.supports(capability))
             action.setEnabled(enabled)
             action.setToolTip(self.translations[tooltip] if enabled else unsupported)
-        # Needs no engine: it follows the machine code. Some engines do not bear it.
-        native = self._native_tools_allowed()
+        # Needs no engine: it follows the machine code. Some engines may not bear
+        # it (native_tools): there it asks first (see _confirm_native_tools).
         for action, tooltip in ((self.act_native_trace, "native_trace.button_tooltip"),
                                 (self.act_native_monitor, "native_monitor.button_tooltip")):
-            action.setEnabled(native)
-            action.setToolTip(self.translations[tooltip] if native or self._engine is None
-                              else self._native_blocked_text())
+            action.setEnabled(self._current_pid is not None)
+            text = self.translations[tooltip]
+            if self._native_tools_risky():
+                text += "\n\n" + self._native_risk_text()
+            action.setToolTip(text)
         self.act_favorites.setEnabled(self._favorite_store.process_id is not None)
         if self._favorites_dialog is not None:
             self._favorites_dialog.set_attached(self._current_pid is not None)
 
-    def _native_tools_allowed(self):
-        """Whether the native trace and monitor may run in the attached game."""
-        return self._current_pid is not None and (
-            self._engine is None or self._engine.native_tools)
+    def _native_tools_risky(self):
+        """Whether the native trace and monitor may crash the attached game's engine."""
+        return self._engine is not None and not self._engine.native_tools
 
-    def _native_blocked_text(self):
-        return self.translations["native.blocked_engine"].format(
+    def _native_risk_text(self):
+        return self.translations["native.risky_engine"].format(
             engine=self._engine.display_name)
+
+    def _confirm_native_tools(self, title):
+        """Whether the native trace or monitor may start: in a game whose engine
+        may not bear them, once the user agreed (asked once per process)."""
+        if not self._native_tools_risky() or self._native_risk_accepted == self._current_pid:
+            return True
+        answer = QMessageBox.warning(
+            self, title,
+            self._native_risk_text() + "\n\n" + self.translations["native.risky_question"],
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        self._native_risk_accepted = self._current_pid
+        activity.record("native_tools_risk_accepted", pid=self._current_pid,
+                        engine=self._engine.id)
+        return True
 
     def _show_attached(self):
         """Show the attached program with its bitness and engine in the status bar."""
@@ -1599,9 +1619,7 @@ class MainWindow(QMainWindow):
         """Show the trace of the native functions a scenario in the game runs."""
         if self._current_pid is None:
             return
-        if not self._native_tools_allowed():
-            QMessageBox.information(self, self.translations["menu.native_trace"],
-                                    self._native_blocked_text())
+        if not self._confirm_native_tools(self.translations["menu.native_trace"]):
             return
         trace = self._native_trace_dialog
         if trace is None:
@@ -1656,9 +1674,7 @@ class MainWindow(QMainWindow):
         """
         if self._current_pid is None:
             return None
-        if not self._native_tools_allowed():
-            QMessageBox.information(self, self.translations["menu.native_monitor"],
-                                    self._native_blocked_text())
+        if not self._confirm_native_tools(self.translations["menu.native_monitor"]):
             return None
         monitor = self._native_monitor
         if monitor is None:
@@ -1721,6 +1737,7 @@ class MainWindow(QMainWindow):
         dialog = self._method_call
         if dialog is None:
             dialog = MethodCallDialog(self.translations, self._current_pid, parent=self)
+            dialog.address_requested.connect(self._add_inspected_address)
             dialog.finished.connect(lambda _result: setattr(self, "_method_call", None))
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._method_call = dialog

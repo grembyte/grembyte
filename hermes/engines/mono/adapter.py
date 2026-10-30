@@ -20,10 +20,11 @@ class MonoAdapter(base.EngineAdapter):
     capabilities = frozenset({base.NAMING, base.CATALOG, base.TRACE, base.MONITOR,
                               base.METHOD_HOOKS, base.CALL_GRAPH, base.CALL})
     agent_source = MONO_AGENT_SOURCE
-    # The native trace ended Shadowrun Returns within seconds. Likely cause:
+    # The native trace ended Shadowrun Returns within seconds (Linux). Likely cause:
     # Stalker recompiles the JIT code too (it lies in no module to exclude),
     # and Mono, finding no method for a faulting address there, takes the
-    # fault for a crash instead of throwing a NullReferenceException.
+    # fault for a crash instead of throwing a NullReferenceException. The
+    # native tools ask before they start (see MainWindow._confirm_native_tools).
     native_tools = False
     framework_prefixes = (
         "mscorlib", "netstandard", "System", "Microsoft.", "Mono.", "UnityEngine", "Unity.",

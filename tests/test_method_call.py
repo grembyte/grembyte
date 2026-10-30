@@ -103,9 +103,17 @@ class _FakeWorker:
             called = pyqtSignal(int, dict)
             call_failed = pyqtSignal(int, str)
             worker_failed = pyqtSignal(str)
+            inspected = pyqtSignal(int, dict)
+            inspect_failed = pyqtSignal(int, str)
+            evaluated = pyqtSignal(int, list)
+            evaluate_failed = pyqtSignal(int, str)
+            text_fetched = pyqtSignal(int, object)
+            text_failed = pyqtSignal(int, str)
 
         self.signals = Signals()
-        for name in ("call_described", "called", "call_failed", "worker_failed"):
+        for name in ("call_described", "called", "call_failed", "worker_failed", "inspected",
+                     "inspect_failed", "evaluated", "evaluate_failed", "text_fetched",
+                     "text_failed"):
             setattr(self, name, getattr(self.signals, name))
         self.requests = []
 
@@ -118,6 +126,10 @@ class _FakeWorker:
 
     def call(self, identity, arguments):
         self.requests.append(("call", identity, arguments))
+        return len(self.requests)
+
+    def inspect(self, target):
+        self.requests.append(("inspect", target))
         return len(self.requests)
 
     def requestInterruption(self):  # pylint: disable=invalid-name
@@ -213,3 +225,48 @@ def test_only_static_methods_can_be_called(qt_app, translations, tmp_path):
     assert not dialog.call_button.isEnabled()
     dialog.close()
     engine.dispose()
+
+
+def test_an_object_a_call_returns_opens_in_the_inspector(qt_app, translations, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from PyQt6.QtCore import QUrl  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.ui.widgets import method_call
+
+    monkeypatch.setattr(method_call, "MethodMonitorWorker", _FakeWorker)
+    monkeypatch.setattr(method_call, "_last_arguments", {})
+    dialog = method_call.MethodCallDialog(translations, 1234)
+    worker = dialog._worker
+    player = CatalogMethod("Assembly-CSharp", "GameState", "get_PlayerCharacter", "()",
+                           "Player", True, 0x06001db7,
+                           "GameState:get_PlayerCharacter ()")
+    try:
+        dialog.set_method(player)
+        worker.call_described.emit(1, {"params": [], "returns": _type(0x12, "Player")})
+        dialog.call_button.click()
+        target = {"address": "0x7f4a1e16e930", "klass": "0x55aa"}
+        worker.called.emit(2, {"result": {
+            "text": 'Player "Player_New_Game(Clone)_1"@0x7f4a1e16e930', "target": target}})
+        assert "Inspizieren" in dialog.log.toPlainText()
+        [inspector] = dialog.inspections.inspectors
+        assert inspector.target == target and worker.requests[-1] == ("inspect", target)
+        worker.inspected.emit(3, {"name": "Player", "fields": [
+            {"name": "Health", "type": "int", "offset": 16, "static": False,
+             "value": {"text": "100"}}]})
+
+        # The log's link opens it again, also after the first inspector closed.
+        inspector.close()
+        dialog.log.anchorClicked.emit(QUrl("inspect:0"))
+        assert worker.requests[-1] == ("inspect", target)
+        assert len([shown for shown in dialog.inspections.inspectors if shown.isVisible()]) == 1
+
+        # No object, no inspector.
+        opened = len(dialog.inspections.inspectors)
+        dialog.call_button.click()
+        worker.called.emit(5, {"result": {"text": "42"}})
+        assert len(dialog.inspections.inspectors) == opened
+        assert dialog.log.toPlainText().splitlines()[-1].endswith("→ 42")
+    finally:
+        for shown in list(dialog.inspections.inspectors):
+            shown.close()
+        dialog.close()

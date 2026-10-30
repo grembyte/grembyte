@@ -107,3 +107,52 @@ def test_the_address_search_folds_away_and_stays_so(qt_app, tmp_path, monkeypatc
             "scan_area_visible", type=bool) is True
     finally:
         engine.dispose()
+
+
+def test_native_tools_ask_first_in_mono_games(qt_app, tmp_path, monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access,unused-argument
+    from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
+    from PyQt6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
+    from hermes.db.base import Base
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.db.repository.scripts import ScriptRepository
+    from hermes.engines.registry import engine_by_id
+    from hermes.ui import main_window
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+    monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
+    monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
+    monkeypatch.setattr(main_window, "ScriptRepository", lambda: ScriptRepository(sessions))
+    answers, asked = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes], []
+
+    def warning(*args):
+        asked.append(args[1])
+        return answers.pop(0)
+
+    monkeypatch.setattr(main_window.QMessageBox, "warning", warning)
+    window = main_window.MainWindow("de")
+    window._refresh_timer.stop()
+    try:
+        window._current_pid = 4242
+        window._engine = engine_by_id("unreal")
+        assert window._confirm_native_tools("Trace") and not asked
+
+        window._engine = engine_by_id("mono")
+        window._update_catalog_button()
+        assert window.act_native_trace.isEnabled()
+        assert "Shadowrun Returns" in window.act_native_trace.toolTip()
+        assert not window._confirm_native_tools("Trace")  # "No"
+        assert window._confirm_native_tools("Trace")      # "Yes"
+        assert window._confirm_native_tools("Monitor")    # not asked again
+        assert asked == ["Trace", "Trace"]
+    finally:
+        window.close()
+        sip.delete(window)
+        engine.dispose()

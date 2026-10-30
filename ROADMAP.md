@@ -127,7 +127,7 @@ Next steps:
 - **Done (2026-10-22):** freezing under Wine/Proton fixed, see above. Confirmed with Baldur's
   Gate under Proton Experimental (1 thread, `Baldur.exe`: 3.2 million calls in the baseline,
   nothing lost, ended cleanly). The 32-bit path of the native trace under Wine is untested
-  (Shadowrun Returns is Mono, where native tools are blocked); the gadget itself runs in
+  (Shadowrun Returns is Mono, where native tools ask first: they crashed it); the gadget itself runs in
   32-bit games (Mono trace in Shadowrun Returns).
 - Callers: the sequence shows the call site of the first call per thread. A list of all
   callers per function (a count per call site and target) is still missing

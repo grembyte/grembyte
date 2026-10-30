@@ -532,7 +532,6 @@
   "trace.scenario_done": "Szenario: {methods} Methoden in {seconds:.1f} s, davon {notable} auffällig; {calls} Aufrufe in der Reihenfolge.",
   "trace.dropped": "{count} weitere Aufrufe nur gezählt (Puffer voll)",
   "engine.unsupported": "Für {engine}-Spiele noch nicht verfügbar.",
-  "native.blocked_engine": "Nicht für {engine}-Spiele: Der native Trace hat Shadowrun Returns (Mono) nach wenigen Sekunden abstürzen lassen. Für {engine}-Spiele Katalog, Trace und Methoden-Überwachung verwenden.",
   "native_trace.button_tooltip": "Den Maschinencode des Spiels verfolgen und herausfinden, welche Funktionen ein Szenario aufruft – ohne Metadaten, also auch für C++-Spiele, Unreal, Godot oder eigene Engines",
   "native_trace.title": "Nativer Trace",
   "native_trace.hint": "1. Threads und Module wählen (vorausgewählt: die gerade aktiven Threads und die Module aus dem Ordner des Spiels). 2. Verfolgung starten: Frida (Stalker) übersetzt den Code dieser Threads neu und zählt jeden Funktionsaufruf; Systembibliotheken laufen unverändert, nur Aufrufe in sie werden gezählt. 3. Grundrauschen aufnehmen, während im Spiel nichts passiert. 4. Szenario aufnehmen und dabei die Aktion auslösen. Das Spiel läuft während der Verfolgung spürbar langsamer.",
@@ -712,7 +711,7 @@
   "templates.hook_kind_value": "Wert-Hook",
   "templates.hook_kind_method": "Methoden-Hook",
   "templates.hook_kind_tooltip": "Wert-Hooks ändern einen geschriebenen Wert (ctx.old, ctx.new), Methoden-Hooks das Ergebnis einer C#-Methode (ctx.result, ctx.args, ctx.call …).",
-  "hooks.method_script_hint": "Die Funktion bekommt ctx: ctx.phase (\"before\"/\"after\", siehe Zeitpunkt), ctx.args.<Name>, ctx.this, ctx.result und ctx.refs.<Name> (nach dem Aufruf), ctx.params, ctx.state, ctx.call(\"Namespace.Klasse.Methode\", …), ctx.log(…). ctx.caller ist der innerste gehookte Aufruf (aktiv, „nach dem Aufruf“), in dem dieser läuft, mit .method, .this, .args und .caller, sonst null. Objekte haben .name, .className, .field(\"x\"), .get(\"Eigenschaft\"), .call(\"Methode\", …), .component(\"Typ\"); Felder und Eigenschaften gehen auch direkt, z. B. roller.IsPartyMember. Nach dem Aufruf ersetzt ein zurückgegebener Wert das Ergebnis; vor dem Aufruf ändern Zuweisungen (ctx.args.x = …, obj.Feld = …) was die Methode bekommt.",
+  "hooks.method_script_hint": "Die Funktion bekommt ctx: ctx.phase (\"before\"/\"after\", siehe Zeitpunkt), ctx.args.<Name>, ctx.this, ctx.result und ctx.refs.<Name> (nach dem Aufruf), ctx.params, ctx.state, ctx.call(\"Namespace.Klasse.Methode\" oder \"Namespace.Klasse:Methode\", …), ctx.log(…). ctx.caller ist der innerste gehookte Aufruf (aktiv, „nach dem Aufruf“), in dem dieser läuft, mit .method, .this, .args und .caller, sonst null. Objekte haben .name, .className, .field(\"x\"), .get(\"Eigenschaft\"), .call(\"Methode\", …), .component(\"Typ\"); Felder und Eigenschaften gehen auch direkt, z. B. roller.IsPartyMember. Nach dem Aufruf ersetzt ein zurückgegebener Wert das Ergebnis; vor dem Aufruf ändern Zuweisungen (ctx.args.x = …, obj.Feld = …) was die Methode bekommt.",
   "templates.test_method_result": "Ergebnis der Methode",
   "templates.test_method_hint": "Ohne Spiel gibt es keine Argumente und Objekte: ctx.args und ctx.refs sind leer, ctx.this und ctx.caller sind null und ctx.call() wirft.",
   "templates.test_method_kept": "Ergebnis bleibt: {value}",
@@ -1053,7 +1052,7 @@
   "scripts.label_placeholder": "z. B. Jede Minute heilen",
   "scripts.when": "Wann",
   "scripts.code": "Code",
-  "scripts.code_help": "JavaScript, das auf dem Game-Thread läuft. ctx.find(\"Klassenname\") liefert ein lebendes Objekt dieser Klasse (Unreal), .call(\"Funktion\", ...args) ruft darauf Spielcode auf; ctx.call(\"Klasse.Methode\", ...) ruft eine statische Methode auf. ctx.log(...) schreibt ins Log darunter, ctx.state behält Werte zwischen den Läufen, ctx.runs zählt sie. Ein zurückgegebener Wert wird als Ergebnis angezeigt.",
+  "scripts.code_help": "JavaScript, das auf dem Game-Thread läuft. ctx.find(\"Klassenname\") liefert ein lebendes Objekt dieser Klasse (Unreal), .call(\"Funktion\", ...args) ruft darauf Spielcode auf; ctx.call(\"Klasse.Methode\", ...) oder ctx.call(\"Klasse:Methode\", ...) ruft eine statische Methode auf. ctx.log(...) schreibt ins Log darunter, ctx.state behält Werte zwischen den Läufen, ctx.runs zählt sie. Ein zurückgegebener Wert wird als Ergebnis angezeigt.",
   "scripts.unnamed": "(ohne Beschreibung)",
   "scripts.error_empty": "Das Skript enthält keinen Code.",
   "scripts.error_interval": "Ein wiederholtes Skript wartet mindestens {seconds} s.",
@@ -1067,5 +1066,8 @@
   "menu.scan_area": "Adresssuche",
   "scan_area.hide": "▲ Adresssuche ausblenden",
   "scan_area.show": "▼ Adresssuche einblenden",
-  "scan_area.tooltip": "Scan-Ergebnisse und Wertsuche einklappen, damit Adressen, Hooks und Skripte das ganze Fenster bekommen (Strg+Umschalt+F). Die Wahl bleibt erhalten."
+  "scan_area.tooltip": "Scan-Ergebnisse und Wertsuche einklappen, damit Adressen, Hooks und Skripte das ganze Fenster bekommen (Strg+Umschalt+F). Die Wahl bleibt erhalten.",
+  "native.risky_engine": "Riskant in {engine}-Spielen: Der native Trace hat Shadowrun Returns (Mono, Linux) nach wenigen Sekunden abstürzen lassen, vermutlich weil Stalker auch den JIT-Code umschreibt und Mono einen Fehler dort für einen Absturz hält. Katalog, Trace und Methoden-Überwachung sind sicher.",
+  "native.risky_question": "Trotzdem starten? Das Spiel kann abstürzen – vorher speichern.",
+  "call.inspect": "Inspizieren"
 }

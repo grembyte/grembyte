@@ -15,6 +15,7 @@ from hermes.db.repository.settings import SettingsRepository
 from hermes.ui.main_window import ICON_PATH, MainWindow
 from hermes.ui.activity_recorder import UiRecorder
 from hermes.ui.window_buttons import add_window_buttons
+from hermes.ui.window_state import keep_window_state
 
 DESKTOP_FILE_NAME = "hermes-hook"
 WINDOWS_APP_ID = "hermes-hook.win"
@@ -71,6 +72,7 @@ def main() -> int:
     _set_windows_app_id()
     app = QApplication(sys.argv)
     add_window_buttons(app)
+    keep_window_state(app)
     app.setStyle("Fusion")
     app.setWindowIcon(QIcon(str(ICON_PATH)))
     # Wayland shows the icon of the app's .desktop file. Only name it when it

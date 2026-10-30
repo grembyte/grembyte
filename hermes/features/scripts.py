@@ -17,6 +17,7 @@ The body gets one ``ctx`` object:
                             searched for once (tens of ms on the game
                             thread), then only checked while it lives
     ctx.call("Namespace.Class.Method", ...args)   call a static game method
+                     (also "Namespace.Class:Method", as the catalog names it)
     ctx.log(...)     output shown in the script log
     ctx.state        per-script object that persists between runs
     ctx.runs         how often it ran before

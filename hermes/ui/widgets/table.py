@@ -12,8 +12,12 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QTableWidget,
 )
 
+from hermes.ui import window_state
+
 # Leaves room for the inline editors (line edits, combo boxes) of editable cells.
 TABLE_ROW_HEIGHT = 36
+# A column width is saved this long after the user stopped dragging it
+SAVE_DELAY_MS = 300
 
 
 def set_row_height(table):
@@ -90,6 +94,9 @@ def resizable_columns(view):
     ``Interactive`` and keep behaving as before until the user resizes them:
     stretch columns share the free width, content columns fit their contents.
     ``Fixed`` columns (stars, buttons, combo boxes) stay fixed.
+
+    The widths the user gives columns are kept between runs (see
+    hermes.ui.window_state) and set again when the table is first shown.
     """
     return _ColumnSizer(view)
 
@@ -100,6 +107,12 @@ class _ColumnSizer(QObject):
     def __init__(self, view):
         header = view.horizontalHeader()
         super().__init__(header)
+        # The header keeps the Qt object, but PyQt ties the Python object to the
+        # header's wrapper, which horizontalHeader() makes anew and Python
+        # collects: the view (kept by its window) keeps it instead. Not a
+        # handler of ``destroyed``: run while the garbage collector deletes a
+        # window, such handlers can crash the interpreter.
+        view.hermes_column_sizer = self
         self._view = view
         self._header = header
         self._fill = []
@@ -107,6 +120,12 @@ class _ColumnSizer(QObject):
         # Columns the user sized: they keep their width.
         self._sized = set()
         self._adjusting = False
+        # Where their widths are kept; known once the table is shown in its window
+        self._key = None
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(SAVE_DELAY_MS)
+        self._save_timer.timeout.connect(self._save)
         for column in range(header.count()):
             mode = header.sectionResizeMode(column)
             if mode == QHeaderView.ResizeMode.Stretch:
@@ -132,12 +151,34 @@ class _ColumnSizer(QObject):
         """Share the free width again when the table changes its width."""
         if event.type() == QEvent.Type.Resize:
             self._schedule()
+        elif event.type() == QEvent.Type.Show and self._key is None:
+            self._restore()
         return super().eventFilter(watched, event)
+
+    def _restore(self):
+        self._key = window_state.view_key(self._view)
+        widths = window_state.load_columns(self._key, self._header.count())
+        self._adjusting = True
+        try:
+            for column, width in widths.items():
+                if self._header.sectionResizeMode(column) != QHeaderView.ResizeMode.Fixed:
+                    self._sized.add(column)
+                    self._header.resizeSection(column, width)
+        finally:
+            self._adjusting = False
+        self._schedule()
+
+    def _save(self):
+        if self._key is not None:
+            window_state.save_columns(self._key, self._header.count(), {
+                column: self._header.sectionSize(column) for column in sorted(self._sized)
+                if column < self._header.count()})
 
     def _on_section_resized(self, column, _old, _new):
         if not self._adjusting:
             self._sized.add(column)
             self._schedule()
+            self._save_timer.start()
 
     def _schedule(self, *_args):
         if not self._timer.isActive():

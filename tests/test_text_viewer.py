@@ -92,7 +92,7 @@ def test_monitor_details_link_every_string(qt_app, translations, monkeypatch):
         assert viewer.text == "statistic"
         links[3].linkActivated.emit("#")
         assert fetched == [9]
-        dialog._on_text_fetched(1, _SAVE)
+        dialog.inspections._on_text_fetched(1, _SAVE)
         assert dialog.findChildren(TextViewerDialog)[-1].data["m_PlayerIndex"] == 1
     finally:
         for viewer in dialog.findChildren(TextViewerDialog):

@@ -1,7 +1,10 @@
 """Call a static C# method of the running game with arguments typed in."""
 
+import html
 from datetime import datetime
 
+from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtGui import QFontDatabase  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QCheckBox,
     QDialog,
@@ -9,8 +12,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPlainTextEdit,
     QPushButton,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -30,6 +33,7 @@ from hermes.features.method_call import (
     supported,
 )
 from hermes.features.monitor import MethodMonitorWorker
+from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.method_monitor import stop_worker
 
@@ -65,11 +69,15 @@ class MethodCallDialog(QDialog):
 
     Not modal. The call runs on the game's main thread, like the property
     getters of the object inspector (see hermes.features.monitor); its result
-    or exception goes to the log below. One method at a time: ``set_method``
-    shows another one.
+    or exception goes to the log below. An object it returns opens in the
+    object inspector, and its log line links to it. One method at a time:
+    ``set_method`` shows another one.
     """
 
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
+
+    # a field of an inspected object to put on the address list (see ObjectInspectorDialog)
+    address_requested = pyqtSignal(object)
 
     def __init__(self, translations, pid, parent=None):
         super().__init__(parent)
@@ -79,8 +87,10 @@ class MethodCallDialog(QDialog):
         self._params = None
         self._editors = []
         self._describe_request = None
-        # call request id -> the log line's start
+        # call request id -> (the log line's start, the method's name)
         self._calls = {}
+        # objects the calls returned, by their number in the log's links
+        self._results = []
         self._failed = False
         self.setWindowTitle(translations["call.title"])
         self.resize(640, 480)
@@ -90,6 +100,9 @@ class MethodCallDialog(QDialog):
         self._worker.called.connect(self._on_called)
         self._worker.call_failed.connect(self._on_call_failed)
         self._worker.worker_failed.connect(self._on_worker_failed)
+        self.inspections = Inspections(translations, self._worker, self,
+                                       time=lambda: datetime.now().strftime("%H:%M:%S"))
+        self.inspections.address_requested.connect(self.address_requested.emit)
         self._worker.start()
 
     def _build_ui(self):
@@ -119,8 +132,10 @@ class MethodCallDialog(QDialog):
         actions.addWidget(self.call_button)
         layout.addLayout(actions)
 
-        self.log = QPlainTextEdit()
-        self.log.setReadOnly(True)
+        self.log = QTextBrowser()
+        self.log.setOpenLinks(False)
+        self.log.anchorClicked.connect(self._on_link)
+        self.log.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.log.setPlaceholderText(t["call.log_placeholder"])
         layout.addWidget(self.log, 1)
 
@@ -203,12 +218,12 @@ class MethodCallDialog(QDialog):
         name = self.method.signature.split(" (")[0]
         line = (f"{datetime.now().strftime('%H:%M:%S')}  {name}("
                 f"{', '.join(argument_text(value) for value in arguments)})")
-        self._calls[self._worker.call(self.method.identity(), arguments)] = line
+        self._calls[self._worker.call(self.method.identity(), arguments)] = (line, name)
         self.call_button.setEnabled(False)
         self.status_label.setText(self.translations["call.calling"])
 
     def _on_called(self, request_id, answer):
-        line = self._calls.pop(request_id, None)
+        line, name = self._calls.pop(request_id, (None, None))
         if line is None:
             return
         t = self.translations
@@ -217,8 +232,12 @@ class MethodCallDialog(QDialog):
             self.status_label.setText(t["call.threw"])
         else:
             result = answer.get("result")
-            self._log(f"{line}  → {result.get('text', '') if result else t['call.void']}")
+            target = result.get("target") if result else None
+            self._log(f"{line}  → {result.get('text', '') if result else t['call.void']}",
+                      target, f"{name}()")
             self.status_label.setText(t["call.done"])
+            if target:
+                self.inspections.inspect(target, name=f"{name}()")
         self.call_button.setEnabled(self._params is not None)
 
     def _on_call_failed(self, request_id, message):
@@ -227,7 +246,7 @@ class MethodCallDialog(QDialog):
             self.status_label.setText(self.translations["call.describe_failed"].format(
                 message=message))
             return
-        line = self._calls.pop(request_id, None)
+        line, _name = self._calls.pop(request_id, (None, None))
         if line is not None:
             self._log(f"{line}  ✗ {message}")
             self.status_label.setText(self.translations["call.failed"].format(message=message))
@@ -238,8 +257,20 @@ class MethodCallDialog(QDialog):
         self.call_button.setEnabled(False)
         self.status_label.setText(self.translations["call.failed"].format(message=message))
 
-    def _log(self, text):
-        self.log.appendPlainText(text)
+    def _log(self, text, target=None, name=""):
+        """Add a line to the log; with ``target`` (an object) a link that inspects it."""
+        line = f'<span style="white-space: pre-wrap">{html.escape(text)}</span>'
+        if target:
+            self._results.append((target, name))
+            line += (f'  <a href="inspect:{len(self._results) - 1}">'
+                     f'{html.escape(self.translations["call.inspect"])}</a>')
+        self.log.append(line)
+
+    def _on_link(self, url):
+        kind, _, number = url.toString().partition(":")
+        if kind == "inspect" and number.isdigit() and int(number) < len(self._results):
+            target, name = self._results[int(number)]
+            self.inspections.inspect(target, name=name)
 
     def closeEvent(self, event):  # pylint: disable=invalid-name
         stop_worker(self._worker)

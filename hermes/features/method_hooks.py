@@ -23,6 +23,7 @@ The function gets one ``ctx`` object:
     ctx.params       the hook's parameters
     ctx.state        per-hook object that persists between calls
     ctx.call("Namespace.Class.Method", ...args)   call a static game method
+                     (also "Namespace.Class:Method", as the catalog names it)
     ctx.find("ClassName")   a live object of that class or a subclass (Unreal),
                      e.g. ctx.find("AlabamaCheatManager").call("GiveHealth", 50)
     ctx.log(...)     output shown in the hook debug window

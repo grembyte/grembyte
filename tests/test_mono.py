@@ -1687,6 +1687,14 @@ def test_method_hook_replaces_the_result(tmp_path, qt_app):
         _wait_for(qt_app, lambda: hook_id in errors)
         assert "Game.Nowhere not found" in errors[hook_id]
 
+        # Named as the catalog names methods, too: Class:Method, also with
+        # its parameters; 3 times Count (7).
+        worker.set_transform(hook_id, _method_transform(
+            'function (ctx) { return ctx.call("Game.Combat:get_Count") '
+            '+ ctx.call("Game.Combat:get_Count ()") + ctx.call("Game.Combat.get_Count"); }'))
+        time.sleep(0.2)
+        assert target.send("roll", 5) == (21, 42)
+
         removed = []
         worker.hook_removed.connect(removed.append)
         worker.remove_hook(hook_id)
