@@ -12,7 +12,7 @@ from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QLabel,
-    QPushButton, QLineEdit, QComboBox, QGroupBox,
+    QPushButton, QLineEdit, QComboBox, QGroupBox, QToolButton,
     QHeaderView, QStatusBar, QToolBar, QDialog,
     QAbstractItemView, QFormLayout,
     QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox, QTabWidget, QSizePolicy,
@@ -512,6 +512,12 @@ class MainWindow(QMainWindow):
 
         view_menu.addSeparator()
 
+        # Shown or hidden by _set_scan_area_visible once the layout exists
+        self.act_scan_area = view_menu.addAction(self.translations["menu.scan_area"])
+        self.act_scan_area.setCheckable(True)
+        self.act_scan_area.setToolTip(self.translations["scan_area.tooltip"])
+        self.act_scan_area.setShortcut("Ctrl+Shift+F")
+
         self.act_favorites = view_menu.addAction(
             glyph_icon("★"), self.translations["menu.favorites"])
         self.act_favorites.setToolTip(self.translations["favorites.button_tooltip"])
@@ -738,6 +744,17 @@ class MainWindow(QMainWindow):
         main_splitter.addWidget(top_splitter)
         main_splitter.addWidget(self._build_bottom_tabs())
         main_splitter.setSizes([420, 220])
+        self._scan_area = top_splitter
+
+        # The scan area can be folded away; the last choice is kept.
+        self.btn_scan_area = QToolButton()
+        self.btn_scan_area.setAutoRaise(True)
+        self.btn_scan_area.clicked.connect(
+            lambda: self._set_scan_area_visible(self._scan_area.isHidden()))
+        self.bottom_tabs.setCornerWidget(self.btn_scan_area, Qt.Corner.TopRightCorner)
+        self.act_scan_area.toggled.connect(self._set_scan_area_visible)
+        self._set_scan_area_visible(
+            self._settings.value("scan_area_visible", True, type=bool))
 
     def _build_bottom_tabs(self):
         """Put tracked addresses and hooks into tabs below the scan area."""
@@ -783,6 +800,17 @@ class MainWindow(QMainWindow):
             self.bottom_tabs.indexOf(self.script_panel),
             f"{title} ({count})" if count else title,
         )
+
+    def _set_scan_area_visible(self, visible):
+        """Show or fold away the scan results and value search; remembered."""
+        self._scan_area.setVisible(visible)
+        self.act_scan_area.blockSignals(True)
+        self.act_scan_area.setChecked(visible)
+        self.act_scan_area.blockSignals(False)
+        self.btn_scan_area.setText(
+            self.translations["scan_area.hide" if visible else "scan_area.show"])
+        self.btn_scan_area.setToolTip(self.translations["scan_area.tooltip"])
+        self._settings.setValue("scan_area_visible", visible)
 
     def _on_hook_count_changed(self, count):
         """Show the number of hooks in the tab title."""

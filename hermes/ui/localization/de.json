@@ -1063,5 +1063,9 @@
   "scripts.worker_failed": "Skripte gestoppt: {message}",
   "scripts.restored": "{count} gespeicherte Skripte werden gestartet.",
   "scripts.restore_failed": "Gespeichertes Skript „{label}“ ist ungültig: {message}",
-  "scripts.db_failed": "Datenbankfehler: {message}"
+  "scripts.db_failed": "Datenbankfehler: {message}",
+  "menu.scan_area": "Adresssuche",
+  "scan_area.hide": "▲ Adresssuche ausblenden",
+  "scan_area.show": "▼ Adresssuche einblenden",
+  "scan_area.tooltip": "Scan-Ergebnisse und Wertsuche einklappen, damit Adressen, Hooks und Skripte das ganze Fenster bekommen (Strg+Umschalt+F). Die Wahl bleibt erhalten."
 }

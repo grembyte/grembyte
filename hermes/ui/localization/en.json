@@ -1063,5 +1063,9 @@
   "scripts.worker_failed": "Scripts stopped: {message}",
   "scripts.restored": "Starting {count} saved scripts.",
   "scripts.restore_failed": "Saved script “{label}” is invalid: {message}",
-  "scripts.db_failed": "Database error: {message}"
+  "scripts.db_failed": "Database error: {message}",
+  "menu.scan_area": "Address search",
+  "scan_area.hide": "▲ Hide address search",
+  "scan_area.show": "▼ Show address search",
+  "scan_area.tooltip": "Fold the scan results and the value search away, so that addresses, hooks and scripts get the whole window (Ctrl+Shift+F). The choice is kept."
 }
