@@ -12,9 +12,11 @@ from hermes.ui.widgets.text_viewer import TextViewerDialog
 class Inspections(QObject):
     """Open object inspectors and string viewers for ``window``.
 
-    Their requests go to ``worker`` (a MethodMonitorWorker: ``inspect``,
-    ``evaluate``, ``full_text``), the answers back to the dialog that asked.
-    ``time()`` names when shown values were read, for the viewers' titles.
+    Their requests go to ``worker`` (a MethodMonitorWorker or ScriptWorker:
+    ``inspect``, ``evaluate``, ``list_methods``, ``full_text``), the answers
+    back to the dialog that asked. An inspector calls an object's methods
+    through a MethodCallDialog on the same worker. ``time()`` names when
+    shown values were read, for the viewers' titles.
     """
 
     # a field of an inspected object to put on the address list (see ObjectInspectorDialog)
@@ -35,6 +37,8 @@ class Inspections(QObject):
         worker.inspect_failed.connect(self._on_inspect_failed)
         worker.evaluated.connect(self._on_evaluated)
         worker.evaluate_failed.connect(self._on_evaluate_failed)
+        worker.methods_listed.connect(self._on_methods_listed)
+        worker.methods_failed.connect(self._on_methods_failed)
         worker.text_fetched.connect(self._on_text_fetched)
         worker.text_failed.connect(self._on_text_failed)
 
@@ -48,14 +52,16 @@ class Inspections(QObject):
             self.translations, self.inspect, target=target, request=self._request_inspection,
             evaluate=self._request_evaluation, name=name,
             depth=1 if origin is None else origin.depth + 1, parent=self._window,
-            show_text=self.show_text), origin)
+            show_text=self.show_text, list_methods=self._request_methods,
+            call_method=self.call_method), origin)
 
     def inspect_snapshot(self, target, snapshot, captured, name=""):
         """Show the fields of ``target`` as recorded at a call (``snapshot``)."""
         self.show_inspector(ObjectInspectorDialog(
             self.translations, self.inspect, target=target, contents=snapshot,
             captured=captured, evaluate=self._request_evaluation, name=name,
-            parent=self._window, show_text=self.show_text))
+            parent=self._window, show_text=self.show_text,
+            list_methods=self._request_methods, call_method=self.call_method))
 
     def show_inspector(self, inspector, origin=None):
         self.inspectors.append(inspector)
@@ -94,6 +100,36 @@ class Inspections(QObject):
         inspector = self._inspections.pop(request_id, None)
         if inspector is not None:
             inspector.show_property_error(message)
+
+    def _request_methods(self, target, inspector):
+        self._inspections[self._worker.list_methods(target)] = inspector
+
+    def _on_methods_listed(self, request_id, methods):
+        inspector = self._inspections.pop(request_id, None)
+        if inspector is not None:
+            inspector.show_methods(methods)
+
+    def _on_methods_failed(self, request_id, message):
+        inspector = self._inspections.pop(request_id, None)
+        if inspector is not None:
+            inspector.show_methods_error(message)
+
+    def call_method(self, target, entry, inspector, object_text):
+        """Offer to call the instance method ``entry`` (see ``list_methods``)
+        on ``target`` in the method call dialog of ``inspector``."""
+        # pylint: disable=import-outside-toplevel
+        # method_call opens object inspectors through this module itself.
+        from hermes.ui.widgets.method_call import MethodCallDialog
+        dialog = inspector.findChild(MethodCallDialog)
+        if dialog is None:
+            dialog = MethodCallDialog(self.translations, parent=inspector, worker=self._worker)
+            dialog.address_requested.connect(self.address_requested.emit)
+            dialog.call_done.connect(inspector.on_call_done)
+        dialog.set_instance_method(target, entry, object_text)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return dialog
 
     def _on_inspected(self, request_id, contents):
         inspector = self._inspections.pop(request_id, None)

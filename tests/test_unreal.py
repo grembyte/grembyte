@@ -702,6 +702,21 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         assert [(field["name"], field["value"]["text"]) for field in inspected[0]["fields"]
                 if field["name"] == "Health"] == [("Health", "75")]
 
+        # The inspector lists the object's UFunctions (not the static ones)
+        # and calls one on it, through ProcessEvent on the game thread.
+        listed, called = [], []
+        worker.methods_listed.connect(lambda _request, methods: listed.append(methods))
+        worker.called.connect(lambda _request, answer: called.append(answer))
+        worker.list_methods(run["target"])
+        _wait_for(qt_app, lambda: listed)
+        names = [method["name"] for method in listed[0]]
+        assert names[0] == "Loot" and "Rename" in names and "AddGold" not in names
+        rename = next(method for method in listed[0] if method["name"] == "Rename")
+        worker.call_on(run["target"], rename["method"], ["Ann", True])
+        _wait_for(qt_app, lambda: target.send("tick", 0) and called)
+        assert called[0] == {"result": None}
+        assert target.send("renamed", 0) == (4, 1)  # "Ann" and its terminating 0
+
         # A name picks one of several objects of a class; found again from
         # the cache in the second run.
         named = worker.add_script(ScriptSpec(

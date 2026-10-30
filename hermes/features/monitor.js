@@ -391,7 +391,8 @@ function contents(target) {
     return result;
   }
   result.properties = engine.properties(klass).map(property => ({
-    name: property.name, type: property.type.name, static: property.static
+    name: property.name, type: property.type.name, static: property.static,
+    setter: property.setter || null
   }));
   for (const field of layout.fields)
     result.fields.push({
@@ -485,28 +486,90 @@ function callStatic(identity, args) {
   // dialog read (see hermes/features/method_call.py; an object or IntPtr as
   // { address }, a struct such as a Guid as { struct: its bytes in hex }):
   // { result } with the value it returned, or { exception }.
+  return engine.onMainThread(() => callResult(staticMethod(identity), null, args));
+}
+
+function callResult(method, self, args) {
+  // Call ``method`` with the dialog's arguments (see callStatic): { result } or { exception }.
+  const values = args.map(arg => {
+    if (arg === null || typeof arg !== 'object')
+      return arg;
+    if (arg.struct === undefined)
+      return ptr(arg.address);
+    const bytes = arg.struct.match(/../g).map(pair => parseInt(pair, 16));
+    const data = Memory.alloc(bytes.length);
+    data.writeByteArray(bytes);
+    return new ManagedObject(data, null, true);
+  });
+  const { result, exception } = invokeMethod(method, self, values);
+  if (!exception.isNull())
+    return { exception: exceptionText(exception) };
+  const signature = engine.signatureOf(method);
+  const returns = signature.returns;
+  if (returns.kind === T.VOID && !returns.byref)
+    return { result: null };
+  if (signature.parms)  // Unreal: written into the parameter block
+    return { result: safely(() => readValue(returns, result.add(signature.returnOffset), true)) };
+  return { result: resultValue(returns, result) };
+}
+
+// --- Calling methods of an object (the object inspector) ---------------------------
+
+function targetClass(target) {
+  // The class of an inspected object or struct (see contents).
+  const address = ptr(target.address);
+  const klass = target.klass ? ptr(target.klass) : engine.classOf(address);
+  if (klass === null)
+    throw new Error(`no object at ${address} (any more)`);
+  return klass;
+}
+
+function listMethods(target) {
+  // The instance methods of an object, its class's own first:
+  // [{ name, method, owner, params, returns }], params as text ("int amount, …").
+  return engine.onRuntimeThread(() => engine.methods(targetClass(target))
+    .filter(entry => !entry.static)
+    .map(entry => {
+      let params = '?';
+      let returns = '?';
+      try {
+        const signature = engine.signatureOf(entry.method);
+        params = signature.params.map(param => `${param.type.name} ${param.name}`).join(', ');
+        returns = signature.returns.name;
+      } catch (_error) {
+        // shown as ?; calling it reports the problem
+      }
+      return { name: entry.name, method: entry.method.toString(), owner: entry.owner,
+               params, returns };
+    }));
+}
+
+function instanceMethod(method) {
+  const fn = ptr(method);
+  if (!engine.signatureOf(fn).instance)
+    throw new Error(`${method} is no instance method`);
+  return fn;
+}
+
+function describeMethod(method) {
+  // The parameters and result type of an instance method: { params, returns }.
+  return engine.onRuntimeThread(() => {
+    const { params, returns } = engine.signatureOf(instanceMethod(method));
+    return { params, returns };
+  });
+}
+
+function callOn(target, method, args) {
+  // Call an instance method on an inspected object, on the game's main
+  // thread, with the dialog's arguments (see callStatic); an override of the
+  // object's class runs in its place.
   return engine.onMainThread(() => {
-    const method = staticMethod(identity);
-    const values = args.map(arg => {
-      if (arg === null || typeof arg !== 'object')
-        return arg;
-      if (arg.struct === undefined)
-        return ptr(arg.address);
-      const bytes = arg.struct.match(/../g).map(pair => parseInt(pair, 16));
-      const data = Memory.alloc(bytes.length);
-      data.writeByteArray(bytes);
-      return new ManagedObject(data, null, true);
-    });
-    const { result, exception } = invokeMethod(method, null, values);
-    if (!exception.isNull())
-      return { exception: exceptionText(exception) };
-    const signature = engine.signatureOf(method);
-    const returns = signature.returns;
-    if (returns.kind === T.VOID && !returns.byref)
-      return { result: null };
-    if (signature.parms)  // Unreal: written into the parameter block
-      return { result: safely(() => readValue(returns, result.add(signature.returnOffset), true)) };
-    return { result: resultValue(returns, result) };
+    const address = ptr(target.address);
+    targetClass(target);  // still an object?
+    let fn = instanceMethod(method);
+    if (!target.klass)
+      fn = engine.virtualMethod(address, fn);
+    return callResult(fn, address, args);
   });
 }
 
@@ -1868,6 +1931,9 @@ rpc.exports = {
   evaluate,
   describeCall,
   callStatic,
+  listMethods,
+  describeMethod,
+  callOn,
   addMethodHook,
   removeMethodHook,
   setMethodHookEnabled(id, enabled) {

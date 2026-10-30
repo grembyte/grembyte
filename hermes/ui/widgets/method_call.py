@@ -66,25 +66,33 @@ def placeholder_key(param_type):
 
 
 class MethodCallDialog(QDialog):
-    """Call a static method of the game, e.g. ``Scripts:GivePlayerMoney (int)``.
+    """Call a static method of the game, e.g. ``Scripts:GivePlayerMoney (int)``,
+    or an instance method on an object of the object inspector.
 
     Not modal. The call runs on the game's main thread, like the property
     getters of the object inspector (see hermes.features.monitor); its result
     or exception goes to the log below. An object it returns opens in the
     object inspector, and its log line links to it. One method at a time:
-    ``set_method`` shows another one.
+    ``set_method`` (static) or ``set_instance_method`` shows another one.
+
+    The dialog runs a MethodMonitorWorker of its own for ``pid``, or uses
+    ``worker`` (one of an object inspector's window, which keeps it running).
+    ``call_done`` tells when a call returned without an exception.
     """
 
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
     # a field of an inspected object to put on the address list (see ObjectInspectorDialog)
     address_requested = pyqtSignal(object)
+    call_done = pyqtSignal()
 
-    def __init__(self, translations, pid, parent=None):
+    def __init__(self, translations, pid=None, parent=None, worker=None):
         super().__init__(parent)
         self.setModal(False)
         self.translations = translations
         self.method = None
+        # what is called: {key, name, describe(), call(arguments)}
+        self._spec = None
         self._params = None
         self._editors = []
         self._describe_request = None
@@ -96,7 +104,8 @@ class MethodCallDialog(QDialog):
         self.setWindowTitle(translations["call.title"])
         self.resize(640, 480)
         self._build_ui()
-        self._worker = MethodMonitorWorker(pid)
+        self._owns_worker = worker is None
+        self._worker = MethodMonitorWorker(pid) if worker is None else worker
         self._worker.call_described.connect(self._on_described)
         self._worker.called.connect(self._on_called)
         self._worker.call_failed.connect(self._on_call_failed)
@@ -104,15 +113,16 @@ class MethodCallDialog(QDialog):
         self.inspections = Inspections(translations, self._worker, self,
                                        time=lambda: datetime.now().strftime("%H:%M:%S"))
         self.inspections.address_requested.connect(self.address_requested.emit)
-        self._worker.start()
+        if self._owns_worker:
+            self._worker.start()
 
     def _build_ui(self):
         t = self.translations
         layout = QVBoxLayout(self)
-        hint = QLabel(t["call.hint"])
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #8b949e;")
-        layout.addWidget(hint)
+        self.hint_label = QLabel(t["call.hint"])
+        self.hint_label.setWordWrap(True)
+        self.hint_label.setStyleSheet("color: #8b949e;")
+        layout.addWidget(self.hint_label)
         self.signature_label = SelectableText()
         layout.addWidget(self.signature_label)
 
@@ -145,14 +155,40 @@ class MethodCallDialog(QDialog):
     def set_method(self, method):
         """Show ``method`` (a static CatalogMethod) and read its parameters."""
         self.method = method
+        self.hint_label.setText(self.translations["call.hint"])
+        self._show({
+            "key": method.signature, "text": method.signature,
+            "name": method.signature.split(" (")[0],
+            "describe": lambda: self._worker.describe_call(method.identity()),
+            "call": lambda arguments: self._worker.call(method.identity(), arguments),
+        })
+
+    def set_instance_method(self, target, entry, object_text):
+        """Show an instance method (an entry of ``list_methods``: name, method,
+        owner, params, returns) to call on the object ``target``, shown as
+        ``object_text``."""
+        self.method = None
+        self.hint_label.setText(self.translations["call.hint_instance"].format(
+            object=object_text))
+        signature = f"{entry['owner']}:{entry['name']} ({entry['params']})"
+        self._show({
+            "key": signature, "text": f"{signature} → {entry['returns']}",
+            "name": entry["name"],
+            "describe": lambda: self._worker.describe_method(entry["method"]),
+            "call": lambda arguments: self._worker.call_on(target, entry["method"], arguments),
+        })
+
+    def _show(self, spec):
+        """Show the method ``spec`` describes and read its parameters."""
+        self._spec = spec
         self._params = None
         self._clear_form()
-        self.signature_label.setText(method.signature)
+        self.signature_label.setText(spec["text"])
         self.call_button.setEnabled(False)
         if self._failed:
             return
         self.status_label.setText(self.translations["call.reading"])
-        self._describe_request = self._worker.describe_call(method.identity())
+        self._describe_request = spec["describe"]()
 
     def _clear_form(self):
         while self.form.rowCount():
@@ -164,7 +200,7 @@ class MethodCallDialog(QDialog):
             return  # another method was chosen since
         self._describe_request = None
         self._params = info.get("params", [])
-        last = _last_arguments.get(self.method.signature, [])
+        last = _last_arguments.get(self._spec["key"], [])
         for i, param in enumerate(self._params):
             self.form.addRow(self._param_label(param), self._editor(
                 param["type"], last[i] if i < len(last) else None))
@@ -216,11 +252,11 @@ class MethodCallDialog(QDialog):
                     name=param["name"],
                     message=self.translations[error.key].format(**error.values)))
                 return
-        _last_arguments[self.method.signature] = texts
-        name = self.method.signature.split(" (")[0]
+        _last_arguments[self._spec["key"]] = texts
+        name = self._spec["name"]
         line = (f"{datetime.now().strftime('%H:%M:%S')}  {name}("
                 f"{', '.join(argument_text(value) for value in arguments)})")
-        self._calls[self._worker.call(self.method.identity(), arguments)] = (line, name)
+        self._calls[self._spec["call"](arguments)] = (line, name)
         self.call_button.setEnabled(False)
         self.status_label.setText(self.translations["call.calling"])
 
@@ -240,6 +276,7 @@ class MethodCallDialog(QDialog):
             self.status_label.setText(t["call.done"])
             if target:
                 self.inspections.inspect(target, name=f"{name}()")
+            self.call_done.emit()
         self.call_button.setEnabled(self._params is not None)
 
     def _on_call_failed(self, request_id, message):
@@ -275,5 +312,6 @@ class MethodCallDialog(QDialog):
             self.inspections.inspect(target, name=name)
 
     def closeEvent(self, event):  # pylint: disable=invalid-name
-        stop_worker(self._worker)
+        if self._owns_worker:
+            stop_worker(self._worker)
         super().closeEvent(event)

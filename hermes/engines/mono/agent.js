@@ -1299,8 +1299,9 @@ gpointer run_batch (gpointer data) {
   }
 
   function properties(klass) {
-    // [{ name, method, static, type }] of the getters of ``klass`` and its
-    // base classes (overridden ones once); a GameObject also lists its
+    // [{ name, method, static, type, setter }] of the getters of ``klass``
+    // and its base classes (overridden ones once); ``setter`` is the
+    // property's set_ method or null. A GameObject also lists its
     // components (``special: 'components'``). Cached.
     const key = klass.toString();
     let result = propertyLists.get(key);
@@ -1318,6 +1319,7 @@ gpointer run_batch (gpointer data) {
     if (chain.some(current => layout(current).name === 'UnityEngine.GameObject'))
       result.push({ name: 'GetComponents()', special: 'components', static: false,
                     type: { kind: 0x1d, byref: false, name: 'UnityEngine.Component[]' } });
+    const setters = new Map();
     for (const current of chain) {
       iterator.writePointer(NULL);
       for (;;) {
@@ -1325,6 +1327,12 @@ gpointer run_batch (gpointer data) {
         if (method.isNull())
           break;
         const name = api.invoke.methodName(method).readUtf8String();
+        if (name.startsWith('set_')) {
+          const signature = t.methodSignature(method);
+          if (!setters.has(name) && !signature.isNull() && t.paramCount(signature) === 1)
+            setters.set(name, method.toString());
+          continue;
+        }
         if (!name.startsWith('get_') || seen.has(name))
           continue;
         const signature = t.methodSignature(method);
@@ -1339,7 +1347,56 @@ gpointer run_batch (gpointer data) {
         });
       }
     }
+    for (const property of result)
+      if (property.special === undefined)
+        property.setter = setters.get(`set_${property.name}`) || null;
     propertyLists.set(key, result);
+    return result;
+  }
+
+  // --- Methods: what the object inspector offers to call ------------------------
+
+  const methodLists = new Map();
+
+  function methods(klass) {
+    // [{ name, method, static, owner }] of the methods of ``klass`` and its
+    // base classes, the most derived first (an override once); no
+    // constructors and no property accessors (see properties). Cached.
+    const key = klass.toString();
+    let result = methodLists.get(key);
+    if (result !== undefined)
+      return result;
+    result = [];
+    if (api.invoke === null) {
+      methodLists.set(key, result);
+      return result;
+    }
+    const t = typesApi();
+    const seen = new Set();
+    const iterator = Memory.alloc(Process.pointerSize);
+    for (const current of classChain(klass)) {
+      const owner = layout(current).name;
+      iterator.writePointer(NULL);
+      for (let method = api.invoke.classMethods(current, iterator); !method.isNull();
+           method = api.invoke.classMethods(current, iterator)) {
+        const name = api.invoke.methodName(method).readUtf8String();
+        const signature = t.methodSignature(method);
+        if (signature.isNull() || name === '.ctor' || name === '.cctor')
+          continue;
+        const count = t.paramCount(signature);
+        if ((name.startsWith('get_') && count === 0) || (name.startsWith('set_') && count === 1))
+          continue;
+        // Overloads differ in their parameters: "Name (int,string)"
+        const full = signatureName(method) || name;
+        const id = `${name}${full.substring(Math.max(0, full.indexOf(' (')))}`;
+        if (seen.has(id))
+          continue;
+        seen.add(id);
+        result.push({ name, method, owner,
+                      static: (api.invoke.methodFlags(method, NULL) & METHOD_STATIC) !== 0 });
+      }
+    }
+    methodLists.set(key, result);
     return result;
   }
 
@@ -1710,8 +1767,8 @@ gpointer run_batch (gpointer data) {
     // compileAll changes nothing in the game that would need undoing
     releaseCode() {},
     objectClassName, classOf, layout, onRuntimeThread: onMonoThread, unityName,
-    onMainThread, drainMain, properties, getProperty, signatureOf, findClass, findMethod,
-    findObject, newString, invoke, classChain, writeReference, resolve: resolveMethod,
+    onMainThread, drainMain, properties, getProperty, methods, signatureOf, findClass,
+    findMethod, findObject, newString, invoke, classChain, writeReference, resolve: resolveMethod,
     virtualMethod: (object, method) => api.invoke.virtualMethod(object, method)
   };
 })();

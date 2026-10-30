@@ -106,6 +106,11 @@ class ScriptWorker(QThread):
     inspect_failed = pyqtSignal(int, str)
     evaluated = pyqtSignal(int, list)
     evaluate_failed = pyqtSignal(int, str)
+    methods_listed = pyqtSignal(int, list)
+    methods_failed = pyqtSignal(int, str)
+    call_described = pyqtSignal(int, dict)
+    called = pyqtSignal(int, dict)
+    call_failed = pyqtSignal(int, str)
     text_fetched = pyqtSignal(int, object)
     text_failed = pyqtSignal(int, str)
     agent_log = pyqtSignal(str, str)
@@ -147,6 +152,24 @@ class ScriptWorker(QThread):
         """Call the named getters of an object on the game's main thread."""
         request_id = next(self._requests)
         self._commands.put(("evaluate", request_id, (target, list(names))))
+        return request_id
+
+    def list_methods(self, target):
+        """List the instance methods of an object (see MethodMonitorWorker)."""
+        request_id = next(self._requests)
+        self._commands.put(("methods", request_id, target))
+        return request_id
+
+    def describe_method(self, method):
+        """Read the parameters of an instance method (see MethodMonitorWorker)."""
+        request_id = next(self._requests)
+        self._commands.put(("describe_method", request_id, method))
+        return request_id
+
+    def call_on(self, target, method, arguments):
+        """Call an instance method on an object (see MethodMonitorWorker)."""
+        request_id = next(self._requests)
+        self._commands.put(("call_on", request_id, (target, method, list(arguments))))
         return request_id
 
     def full_text(self, text_id):
@@ -222,12 +245,16 @@ class ScriptWorker(QThread):
     _REQUESTS = {
         "inspect": ("inspect", "inspected", "inspect_failed"),
         "evaluate": ("evaluate", "evaluated", "evaluate_failed"),
+        "methods": ("list_methods", "methods_listed", "methods_failed"),
+        "describe_method": ("describe_method", "call_described", "call_failed"),
+        "call_on": ("call_on", "called", "call_failed"),
         "text": ("full_text", "text_fetched", "text_failed"),
     }
 
     def _answer(self, api, action, request_id, argument):
         call, answered, failed = self._REQUESTS[action]
-        arguments = argument if action == "evaluate" else (argument,)
+        # Requests with several arguments queue them as a tuple
+        arguments = argument if isinstance(argument, tuple) else (argument,)
         try:
             getattr(self, answered).emit(request_id, getattr(api, call)(*arguments))
         except frida.RPCException as error:

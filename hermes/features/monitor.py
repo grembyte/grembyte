@@ -107,13 +107,16 @@ class MethodMonitorWorker(QThread):
     # monitor id: the game freed the method's code (e.g. while exiting)
     monitor_ended = pyqtSignal(int)
     # request id, {name, address, fields: [{name, type, offset, static, value}],
-    # properties: [{name, type, static}], length?}
+    # properties: [{name, type, static, setter}], length?}
     inspected = pyqtSignal(int, dict)
     inspect_failed = pyqtSignal(int, str)
     # request id, [{name, value}] of evaluated properties
     evaluated = pyqtSignal(int, list)
     evaluate_failed = pyqtSignal(int, str)
-    # request id, {params: [{name, type}], returns} of a static method
+    # request id, [{name, method, owner, params, returns}] of an object's instance methods
+    methods_listed = pyqtSignal(int, list)
+    methods_failed = pyqtSignal(int, str)
+    # request id, {params: [{name, type}], returns} of a static or instance method
     call_described = pyqtSignal(int, dict)
     # request id, {result: value or None (void)} or {exception: text}
     called = pyqtSignal(int, dict)
@@ -181,6 +184,26 @@ class MethodMonitorWorker(QThread):
         """
         request_id = next(self._requests)
         self._commands.put(("call", request_id, (identity, list(arguments))))
+        return request_id
+
+    def list_methods(self, target):
+        """List the instance methods of an object; expect methods_listed or methods_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("methods", request_id, target))
+        return request_id
+
+    def describe_method(self, method):
+        """Read the parameters of an instance method (a ``list_methods`` entry's
+        ``method``); expect call_described or call_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("describe_method", request_id, method))
+        return request_id
+
+    def call_on(self, target, method, arguments):
+        """Call an instance method on an object, on the game's main thread;
+        expect called or call_failed. As ``call``: game code."""
+        request_id = next(self._requests)
+        self._commands.put(("call_on", request_id, (target, method, list(arguments))))
         return request_id
 
     def full_text(self, text_id):
@@ -265,6 +288,21 @@ class MethodMonitorWorker(QThread):
             elif action == "call":
                 try:
                     self.called.emit(monitor_id, api.call_static(*argument))
+                except frida.RPCException as error:
+                    self.call_failed.emit(monitor_id, str(error))
+            elif action == "methods":
+                try:
+                    self.methods_listed.emit(monitor_id, api.list_methods(argument))
+                except frida.RPCException as error:
+                    self.methods_failed.emit(monitor_id, str(error))
+            elif action == "describe_method":
+                try:
+                    self.call_described.emit(monitor_id, api.describe_method(argument))
+                except frida.RPCException as error:
+                    self.call_failed.emit(monitor_id, str(error))
+            elif action == "call_on":
+                try:
+                    self.called.emit(monitor_id, api.call_on(*argument))
                 except frida.RPCException as error:
                     self.call_failed.emit(monitor_id, str(error))
             elif action == "text":

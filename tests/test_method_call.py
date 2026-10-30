@@ -107,13 +107,15 @@ class _FakeWorker:
             inspect_failed = pyqtSignal(int, str)
             evaluated = pyqtSignal(int, list)
             evaluate_failed = pyqtSignal(int, str)
+            methods_listed = pyqtSignal(int, list)
+            methods_failed = pyqtSignal(int, str)
             text_fetched = pyqtSignal(int, object)
             text_failed = pyqtSignal(int, str)
 
         self.signals = Signals()
         for name in ("call_described", "called", "call_failed", "worker_failed", "inspected",
-                     "inspect_failed", "evaluated", "evaluate_failed", "text_fetched",
-                     "text_failed"):
+                     "inspect_failed", "evaluated", "evaluate_failed", "methods_listed",
+                     "methods_failed", "text_fetched", "text_failed"):
             setattr(self, name, getattr(self.signals, name))
         self.requests = []
 
@@ -130,6 +132,22 @@ class _FakeWorker:
 
     def inspect(self, target):
         self.requests.append(("inspect", target))
+        return len(self.requests)
+
+    def evaluate(self, target, names):
+        self.requests.append(("evaluate", target, names))
+        return len(self.requests)
+
+    def list_methods(self, target):
+        self.requests.append(("methods", target))
+        return len(self.requests)
+
+    def describe_method(self, method):
+        self.requests.append(("describe_method", method))
+        return len(self.requests)
+
+    def call_on(self, target, method, arguments):
+        self.requests.append(("call_on", target, method, arguments))
         return len(self.requests)
 
     def requestInterruption(self):  # pylint: disable=invalid-name
@@ -270,3 +288,87 @@ def test_an_object_a_call_returns_opens_in_the_inspector(qt_app, translations, m
         for shown in list(dialog.inspections.inspectors):
             shown.close()
         dialog.close()
+
+
+def test_the_inspector_sets_properties_and_calls_methods(qt_app, translations, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from PyQt6.QtWidgets import QWidget  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.ui import window_state
+    from hermes.ui.widgets import method_call
+    from hermes.ui.widgets.inspection import Inspections
+
+    monkeypatch.setattr(method_call, "_last_arguments", {})
+    window = QWidget()
+    worker = _FakeWorker(1234)
+    inspections = Inspections(translations, worker, window)
+    target = {"address": "0x7f4a1e16e930"}
+    contents = {"name": "Game.Player", "address": target["address"], "fields": [], "properties": [
+        {"name": "Health", "type": "System.Int32", "static": False, "setter": "0x5001"},
+        {"name": "IsDead", "type": "System.Boolean", "static": False, "setter": None}]}
+    inspections.inspect(target, name="player")
+    [inspector] = inspections.inspectors
+    try:
+        assert worker.requests == [("inspect", target)]
+        worker.inspected.emit(1, contents)
+        # Only a property with a setter can be set.
+        assert inspector.properties_table.cellWidget(0, 4) is not None
+        assert inspector.properties_table.cellWidget(1, 4) is None
+
+        # The getters fold away, and stay so; the methods are folded until
+        # opened, then listed once.
+        assert inspector.properties_section.is_open and not inspector.methods_section.is_open
+        inspector.properties_section.fold_button.click()
+        assert inspector.properties_table.isHidden()
+        assert window_state.settings().value("inspector/getters_open", type=bool) is False
+        inspector.methods_section.fold_button.click()
+        assert worker.requests[-1] == ("methods", target)
+        worker.methods_listed.emit(2, [
+            {"name": "Heal", "method": "0x6001", "owner": "Game.Player",
+             "params": "System.Int32 amount", "returns": "System.Void"},
+            {"name": "HealAll", "method": "0x6003", "owner": "Game.Player",
+             "params": "", "returns": "System.Void"},
+            {"name": "Destroy", "method": "0x6002", "owner": "UnityEngine.Object",
+             "params": "", "returns": "System.Void"}])
+
+        def shown():
+            return [inspector.methods_table.item(row, 0).text()
+                    for row in range(inspector.methods_table.rowCount())
+                    if not inspector.methods_table.isRowHidden(row)]
+
+        # The own class's methods, base classes on request; a search narrows them.
+        assert shown() == ["Heal", "HealAll"]
+        inspector.base_classes_check.setChecked(True)
+        assert shown() == ["Heal", "HealAll", "Destroy"]
+        inspector.method_filter.setText("all")
+        assert shown() == ["HealAll"]
+
+        # A method is called on the object, through the same worker; then
+        # the fields are read again.
+        inspector.methods_table.cellWidget(0, 4).linkActivated.emit("#")
+        dialog = inspector.findChild(method_call.MethodCallDialog)
+        assert worker.requests[-1] == ("describe_method", "0x6001")
+        assert "Game.Player:Heal (System.Int32 amount)" in dialog.signature_label.text()
+        worker.call_described.emit(3, {"params": [
+            {"name": "amount", "type": _type(I4, "System.Int32")}], "returns": _type(0x01)})
+        dialog._editors[0].setText("25")
+        dialog.call_button.click()
+        assert worker.requests[-1] == ("call_on", target, "0x6001", [25])
+        worker.called.emit(4, {"result": None})
+        assert worker.requests[-1] == ("inspect", target)
+        worker.inspected.emit(5, contents)
+
+        # Setting a property calls its setter, then shows the new value.
+        inspector.properties_table.cellWidget(0, 4).linkActivated.emit("#")
+        assert inspector.findChild(method_call.MethodCallDialog) is dialog
+        assert worker.requests[-1] == ("describe_method", "0x5001")
+        worker.call_described.emit(6, {"params": [
+            {"name": "value", "type": _type(I4, "System.Int32")}], "returns": _type(0x01)})
+        dialog._editors[0].setText("80")
+        dialog.call_button.click()
+        assert worker.requests[-1] == ("call_on", target, "0x5001", [80])
+        worker.called.emit(7, {"result": None})
+        assert worker.requests[-2:] == [("inspect", target), ("evaluate", target, ["Health"])]
+    finally:
+        inspector.close()
+        window.deleteLater()

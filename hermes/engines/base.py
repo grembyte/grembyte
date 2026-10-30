@@ -76,6 +76,9 @@ true`` (Unreal) takes the arguments in one block at the parameters' offsets
 block)``, and ``writeParameter(type, address, value)`` stores those of types
 with ``engine`` set. ``findObject(className, name)`` gives scripts a live
 object of a class, with ``name`` (or null) the one of that name (``ctx.find``).
+The object inspector lists what it can call with ``methods(klass)``: ``[{name,
+method, static, owner}]``, the class's own methods first; a ``properties``
+entry's ``setter`` (Mono) is the property's set_ method or null.
 
 The platform helpers an adapter may use (``spawnThread``, ``watchUnmaps``,
 ``pauseThreads``) are in platform.js.

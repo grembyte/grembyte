@@ -1560,6 +1560,65 @@ def test_static_methods_are_called_on_the_main_thread(tmp_path, qt_app):
 
 
 @requires_target
+def test_instance_methods_are_listed_and_called_on_an_object(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.monitor import MethodMonitorWorker
+
+    target = _MonoTarget(_build(tmp_path))
+    worker = MethodMonitorWorker(target.pid)
+    added, calls, answers, failures = {}, [], {}, {}
+    worker.monitor_added.connect(added.__setitem__)
+    worker.calls.connect(lambda events, _dropped, _counts: calls.extend(events))
+    for signal in (worker.evaluated, worker.methods_listed, worker.call_described, worker.called):
+        signal.connect(answers.__setitem__)
+    for signal in (worker.evaluate_failed, worker.methods_failed, worker.call_failed):
+        signal.connect(failures.__setitem__)
+
+    def answer(request, then=None):
+        if then is not None:
+            time.sleep(0.2)  # the agent waits for the main thread now
+            target.send(then, 0)
+        _wait_for(qt_app, lambda: request in answers or request in failures, timeout=6)
+        return answers.get(request, failures.get(request))
+
+    try:
+        worker.start()
+        monitor_id = worker.add_monitor(_CALC_DAMAGE)
+        _wait_for(qt_app, lambda: monitor_id in added)
+        target.send("calc", 0)
+        _wait_for(qt_app, lambda: calls)
+        miranda = calls[0]["self"]["target"]
+
+        # A Combat's own methods first, then System.Object's; no getters,
+        # no static methods.
+        methods = answer(worker.list_methods(miranda))
+        assert [(method["name"], method["owner"]) for method in methods] == [
+            ("RollDamage", "Game.Combat"), ("CalcDamage", "Game.Combat"),
+            ("ToString", "System.Object")]
+        assert methods[1]["params"] == "Game.Combat other, Game.DamageInfo& info"
+        assert methods[1]["returns"] == "System.Void"
+
+        # Its GameObject's GetComponents(Type) runs on the object, on the main thread.
+        values = answer(worker.evaluate(miranda, ["gameObject"]), then="tick")
+        game_object = values[0]["value"]["target"]
+        [get_components] = [method for method in answer(worker.list_methods(game_object))
+                            if method["name"] == "GetComponents"]
+        described = answer(worker.describe_method(get_components["method"]))
+        assert [param["name"] for param in described["params"]] == ["type"]
+        assert described["returns"]["name"] == "System.Void"  # so the fake declares it
+        called = answer(worker.call_on(game_object, get_components["method"], [None]),
+                        then="tick")
+        assert called == {"result": None}
+        # Off the main thread the call waits, then gives up.
+        assert "main thread" in answer(
+            worker.call_on(game_object, get_components["method"], [None]))
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
 def test_inspector_evaluates_properties(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
     from hermes.features.catalog import CatalogMethod

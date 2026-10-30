@@ -1621,6 +1621,31 @@ const unreal = (() => {
                     `${name} with ${argumentCount} argument(s)`);
   }
 
+  function methods(klass) {
+    // [{ name, method, static, owner }] of the UFunctions of ``klass`` and its
+    // base classes, the most derived first (an override once), for the
+    // object inspector.
+    reflection();
+    const seen = new Set();
+    const result = [];
+    for (const current of classChain(klass)) {
+      const owner = layout(current).name;
+      for (const fn of functionsOf(current)) {
+        if (seen.has(fn.name))
+          continue;
+        seen.add(fn.name);
+        let instance = true;
+        try {
+          instance = signatureOf(fn.address).instance;
+        } catch (_error) {
+          // listed anyway; calling it reports the problem
+        }
+        result.push({ name: fn.name, method: fn.address, owner, static: !instance });
+      }
+    }
+    return result;
+  }
+
   function virtualMethod(object, fn) {
     // What ProcessEvent should run for ``fn`` on ``object``: the override of
     // its class (a Blueprint's event graph, a subclass's implementation).
@@ -1760,6 +1785,7 @@ const unreal = (() => {
     classChain,
     objectClassName: object => layout(classOf(object)).name,
     virtualMethod,
+    methods,
     invoke,
     writeParameter,
     newString: () => {

@@ -195,13 +195,16 @@ class _FakeScriptWorker:
             inspect_failed = pyqtSignal(int, str)
             evaluated = pyqtSignal(int, list)
             evaluate_failed = pyqtSignal(int, str)
+            methods_listed = pyqtSignal(int, list)
+            methods_failed = pyqtSignal(int, str)
             text_fetched = pyqtSignal(int, object)
             text_failed = pyqtSignal(int, str)
 
         self.signals = Signals()
         for name in ("script_added", "script_updated", "script_removed", "script_failed",
                      "script_ran", "worker_failed", "inspected", "inspect_failed",
-                     "evaluated", "evaluate_failed", "text_fetched", "text_failed"):
+                     "evaluated", "evaluate_failed", "methods_listed", "methods_failed",
+                     "text_fetched", "text_failed"):
             setattr(self, name, getattr(self.signals, name))
         self.requests = []
 
