@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtCore import Qt, QSize, QTimer, QSettings  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor, QActionGroup, QIcon  # pylint: disable=import-error,no-name-in-module
 
+from hermes import __version__
 from hermes.ui.localization import load_translations
 from hermes.ui.styles.styles import STYLE
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
@@ -325,7 +326,7 @@ class MainWindow(QMainWindow):
         """Initialize the main window and construct its interface."""
         super().__init__()
         self.translations = load_translations(language)
-        self.setWindowTitle(self.translations["app.window_title"])
+        self.setWindowTitle(self.translations["app.window_title"].format(version=__version__))
         self.setMinimumSize(1100, 700)
         self.resize(1280, 800)
         self.setStyleSheet(STYLE)
@@ -2186,7 +2187,8 @@ class MainWindow(QMainWindow):
         self._error_reporter = ErrorReporter(self.translations, self._open_log, self)
         self._update_log_button()
         sb.addPermanentWidget(QLabel(
-            self.translations["app.version_status"].format(platform=_platform_text())))
+            self.translations["app.version_status"].format(
+                version=__version__, platform=_platform_text())))
         sb.setSizeGripEnabled(False)
 
     # ------------------------------------------------------------------

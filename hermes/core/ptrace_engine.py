@@ -66,7 +66,9 @@ WATCHPOINT_SLOTS = 4
 # started (subprocesses) are left to them.
 _WALL = 0x40000000
 _WNOTHREAD = 0x20000000
-_WAIT_ANY = os.WNOHANG | _WALL | _WNOTHREAD
+# os.WNOHANG is POSIX-only; fall back to Linux's value so the module still
+# imports on Windows.
+_WAIT_ANY = getattr(os, "WNOHANG", 1) | _WALL | _WNOTHREAD
 # DR6 bits B0-B3: which watchpoint slot fired.
 _DR6_SLOTS = 0xF
 

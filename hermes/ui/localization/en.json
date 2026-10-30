@@ -1,5 +1,5 @@
 {
-  "app.window_title": "hermes-hook  //  v0.1.0",
+  "app.window_title": "hermes-hook  //  v{version}",
   "app.brand": "hermes-hook",
   "app.no_process": "No process",
   "app.process_display": "{name}  (PID {pid})",
@@ -8,7 +8,7 @@
   "app.process_exited": "Process exited: {process}. Please select a process.",
   "app.process_exited_debug_registers": "Shortly before, Hermes used hardware breakpoints/watchpoints in the game. Some games detect them and quit (see tooltip).",
   "app.debug_registers_hint": "Write watches, hooks in training and hooks installed as \"hardware breakpoint\" set CPU debug registers. Anti-tamper protection such as Arxan (e.g. Dark Souls III) checks them every few seconds and then crashes the game on purpose. In such games: keep write watches running for a few seconds only and install hooks as \"jump in the code\".",
-  "app.version_status": "hermes-hook v0.1.0  |  {platform}",
+  "app.version_status": "hermes-hook v{version}  |  {platform}",
   "menu.file": "File",
   "menu.export": "Export game data …",
   "menu.export_tooltip": "Writes the saved addresses, hooks, method hooks and favorites of a game to a JSON file",
