@@ -31,6 +31,7 @@ from hermes.core.pointer import (
 )
 from hermes.platform import ProcessMemory, main_module, read_mappings
 from hermes.db.repository.addresses import SavedPointerScan
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from hermes.ui.workers import keep_until_finished
@@ -175,6 +176,7 @@ class PointerScanDialog(QDialog):
         self.static_label = WrappedLabel("")
         self.static_label.setStyleSheet("color: #3fb950;")
         self.btn_static = QPushButton(self.translations["pointer.static_use"])
+        set_button_icon(self.btn_static, "push_pin")
         self.btn_static.clicked.connect(self._use_static)
         self.static_notice.addWidget(self.static_label, 1)
         self.static_notice.addWidget(self.btn_static)
@@ -186,6 +188,7 @@ class PointerScanDialog(QDialog):
         address_row = QHBoxLayout()
         address_row.addWidget(self.address_input, 1)
         self.btn_from_scan = QPushButton(self.translations["pointer.from_scan"])
+        set_button_icon(self.btn_from_scan, "input")
         self.btn_from_scan.setToolTip(self.translations["pointer.from_scan_tooltip"])
         self.btn_from_scan.clicked.connect(self.take_scan_address)
         self.btn_from_scan.setVisible(self.address_source is not None)
@@ -220,11 +223,14 @@ class PointerScanDialog(QDialog):
 
         actions = QHBoxLayout()
         self.btn_scan = QPushButton(self.translations["pointer.scan"])
+        set_button_icon(self.btn_scan, "search")
         self.btn_scan.clicked.connect(self.start_scan)
         self.btn_filter = QPushButton(self.translations["pointer.filter"])
+        set_button_icon(self.btn_filter, "filter_alt")
         self.btn_filter.setToolTip(self.translations["pointer.filter_tooltip"])
         self.btn_filter.clicked.connect(self.start_filter)
         self.btn_cancel = QPushButton(self.translations["pointer.cancel"])
+        set_button_icon(self.btn_cancel, "close")
         self.btn_cancel.clicked.connect(self._cancel)
         self.btn_cancel.setVisible(False)
         actions.addWidget(self.btn_scan)
@@ -263,14 +269,17 @@ class PointerScanDialog(QDialog):
 
         bottom = QHBoxLayout()
         self.btn_adopt = QPushButton(self.translations["pointer.adopt_all"])
+        set_button_icon(self.btn_adopt, "playlist_add")
         self.btn_adopt.setToolTip(self.translations["pointer.adopt_all_tooltip"])
         self.btn_adopt.clicked.connect(self.adopt_candidates)
         bottom.addWidget(self.btn_adopt)
         bottom.addStretch()
         close = QPushButton(self.translations["templates.close"])
+        set_button_icon(close, "close")
         close.clicked.connect(self.reject)
         self.btn_use = QPushButton(self.translations["pointer.use"])
         self.btn_use.setObjectName("btn_primary")
+        set_button_icon(self.btn_use, "check")
         self.btn_use.clicked.connect(self._accept)
         bottom.addWidget(close)
         bottom.addWidget(self.btn_use)

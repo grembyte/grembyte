@@ -34,6 +34,7 @@ from hermes.features.native_monitor import (
     parse_location,
     signed,
 )
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.method_monitor import call_time
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
@@ -280,6 +281,7 @@ class NativeMonitorDialog(QDialog):
         add_bar.addWidget(self.dump_spin)
         self.add_button = QPushButton(t["native_monitor.add"])
         self.add_button.setObjectName("btn_primary")
+        set_button_icon(self.add_button, "add")
         self.add_button.clicked.connect(self._add_typed)
         add_bar.addWidget(self.add_button)
         layout.addLayout(add_bar)
@@ -296,10 +298,12 @@ class NativeMonitorDialog(QDialog):
         top_layout.addWidget(self.functions_table)
         buttons = QHBoxLayout()
         self.remove_button = QPushButton(t["monitor.remove"])
+        set_button_icon(self.remove_button, "delete")
         self.remove_button.setEnabled(False)
         self.remove_button.clicked.connect(self._remove_selected)
         buttons.addWidget(self.remove_button)
         self.function_button = QPushButton(t["native_monitor.whole_function"])
+        set_button_icon(self.function_button, "functions")
         self.function_button.setToolTip(t["native_monitor.whole_function_tooltip"])
         self.function_button.setEnabled(False)
         self.function_button.clicked.connect(self._add_enclosing)
@@ -319,11 +323,15 @@ class NativeMonitorDialog(QDialog):
         self.changes_check.toggled.connect(lambda _checked: self._show_calls())
         log_bar.addWidget(self.changes_check)
         self.pause_button = QPushButton(t["monitor.pause"])
+        set_button_icon(self.pause_button, "pause")
         self.pause_button.setCheckable(True)
         self.pause_button.toggled.connect(lambda paused: self.pause_button.setText(
             t["monitor.resume" if paused else "monitor.pause"]))
+        self.pause_button.toggled.connect(lambda paused: set_button_icon(
+            self.pause_button, "play_arrow" if paused else "pause"))
         log_bar.addWidget(self.pause_button)
         clear_button = QPushButton(t["monitor.clear"])
+        set_button_icon(clear_button, "clear_all")
         clear_button.clicked.connect(self._clear)
         log_bar.addWidget(clear_button)
         middle_layout.addLayout(log_bar)
@@ -383,6 +391,7 @@ class NativeMonitorDialog(QDialog):
         self.selection_label = SelectableText()
         actions.addWidget(self.selection_label, 1)
         self.memory_button = QPushButton(t["native_trace.show_memory"])
+        set_button_icon(self.memory_button, "grid_on")
         self.memory_button.setToolTip(t["native_monitor.show_memory_tooltip"])
         self.memory_button.setEnabled(False)
         self.memory_button.clicked.connect(self._request_memory)

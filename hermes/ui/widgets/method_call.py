@@ -33,6 +33,7 @@ from hermes.features.method_call import (
     supported,
 )
 from hermes.features.monitor import MethodMonitorWorker
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.method_monitor import stop_worker
@@ -126,6 +127,7 @@ class MethodCallDialog(QDialog):
         actions.addWidget(self.status_label, 1)
         self.call_button = QPushButton(t["call.call"])
         self.call_button.setObjectName("btn_primary")
+        set_button_icon(self.call_button, "call_made")
         self.call_button.setToolTip(t["call.call_tooltip"])
         self.call_button.setEnabled(False)
         self.call_button.clicked.connect(self.call)

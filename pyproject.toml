@@ -29,7 +29,7 @@ version = {attr = "hermes.__version__"}
 include = ["hermes*"]
 
 [tool.setuptools.package-data]
-"hermes.ui" = ["localization/*.json", "resources/*.svg"]
+"hermes.ui" = ["localization/*.json", "resources/*.svg", "resources/icons/*"]
 "hermes.core" = ["*.js", "inject/inject.c", "inject/build.sh"]
 "hermes.engines" = ["*.js"]
 "hermes.engines.mono" = ["*.js"]

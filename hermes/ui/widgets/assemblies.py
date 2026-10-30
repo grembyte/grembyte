@@ -24,6 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from hermes.engines.registry import resolve_engine
 from hermes.features.assemblies import missing_assemblies
 from hermes.features.catalog import CatalogWorker
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.table import copy_menu, resizable_columns
 from hermes.ui.workers import keep_until_finished
 
@@ -118,14 +119,17 @@ class AssemblyDialog(QDialog):
         self.search_input.textChanged.connect(lambda _text: self._fill())
         bar.addWidget(self.search_input, 1)
         self.select_all_button = QPushButton(t["assemblies.select_all"])
+        set_button_icon(self.select_all_button, "select_all")
         self.select_all_button.setToolTip(t["assemblies.select_all_tooltip"])
         self.select_all_button.clicked.connect(lambda: self._check_shown(True))
         bar.addWidget(self.select_all_button)
         self.clear_button = QPushButton(t["assemblies.clear"])
+        set_button_icon(self.clear_button, "deselect")
         self.clear_button.setToolTip(t["assemblies.clear_tooltip"])
         self.clear_button.clicked.connect(lambda: self._check_shown(False))
         bar.addWidget(self.clear_button)
         self.reload_button = QPushButton(t["assemblies.reload"])
+        set_button_icon(self.reload_button, "refresh")
         self.reload_button.setToolTip(t["assemblies.reload_tooltip"])
         self.reload_button.clicked.connect(self.reload)
         bar.addWidget(self.reload_button)
@@ -158,11 +162,13 @@ class AssemblyDialog(QDialog):
         actions = QHBoxLayout()
         actions.addStretch()
         self.close_button = QPushButton(t["assemblies.close"])
+        set_button_icon(self.close_button, "close")
         self.close_button.setAutoDefault(False)
         self.close_button.clicked.connect(self.close)
         actions.addWidget(self.close_button)
         self.save_button = QPushButton(t["assemblies.save"])
         self.save_button.setObjectName("btn_primary")
+        set_button_icon(self.save_button, "save")
         self.save_button.setToolTip(t["assemblies.save_tooltip"])
         self.save_button.setDefault(True)
         self.save_button.clicked.connect(self.save)

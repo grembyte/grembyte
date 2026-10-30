@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 
 from hermes.core import activity, logs
+from hermes.ui.widgets.icons import set_button_icon
 
 
 # Lines of the log the window shows at most (the newest).
@@ -96,17 +97,21 @@ class LogDialog(QDialog):
         buttons.addWidget(self.problems_check)
         buttons.addStretch()
         refresh = QPushButton(translations["log.refresh"])
+        set_button_icon(refresh, "refresh")
         refresh.clicked.connect(self.refresh)
         buttons.addWidget(refresh)
         copy = QPushButton(translations["log.copy"])
+        set_button_icon(copy, "content_copy")
         copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.text.toPlainText()))
         buttons.addWidget(copy)
         folder = QPushButton(translations["log.open_folder"])
+        set_button_icon(folder, "folder_open")
         folder.setToolTip(translations["log.open_folder_tooltip"])
         folder.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.path.parent))))
         buttons.addWidget(folder)
         export = QPushButton(translations["log.export"])
+        set_button_icon(export, "upload_file")
         export.setToolTip(translations["log.export_tooltip"])
         export.clicked.connect(self._export)
         buttons.addWidget(export)

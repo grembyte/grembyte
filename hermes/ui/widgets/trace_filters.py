@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 
 from hermes.features.trace_filters import BUILTIN_FILTERS, TraceFilter, select_methods
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.widgets.icons import set_button_icon
 
 # Methods the editor shows as examples of what a filter matches
 _PREVIEW = 8
@@ -88,12 +89,16 @@ class TraceFilterPanel(QWidget):
 
         right = QVBoxLayout()
         self.new_button = QPushButton(self.translations["trace.filter_new"])
+        set_button_icon(self.new_button, "add")
         self.new_button.clicked.connect(self._new)
         self.edit_button = QPushButton(self.translations["trace.filter_edit"])
+        set_button_icon(self.edit_button, "edit")
         self.edit_button.clicked.connect(self._edit)
         self.delete_button = QPushButton(self.translations["trace.filter_delete"])
+        set_button_icon(self.delete_button, "delete")
         self.delete_button.clicked.connect(self._delete)
         self.check_all_button = QPushButton(self.translations["trace.filter_check_all"])
+        set_button_icon(self.check_all_button, "check_box")
         self.check_all_button.clicked.connect(self._toggle_all)
         for button in (self.new_button, self.edit_button, self.delete_button,
                        self.check_all_button):
@@ -146,8 +151,11 @@ class TraceFilterPanel(QWidget):
         current = self._current()
         self.edit_button.setEnabled(current is not None)
         self.delete_button.setEnabled(current is not None and not current.builtin)
-        key = "trace.filter_uncheck_all" if self._all_checked() else "trace.filter_check_all"
+        all_checked = self._all_checked()
+        key = "trace.filter_uncheck_all" if all_checked else "trace.filter_check_all"
         self.check_all_button.setText(self.translations[key])
+        set_button_icon(self.check_all_button,
+                        "check_box_outline_blank" if all_checked else "check_box")
 
     def _all_checked(self):
         return self.list.count() > 0 and len(self.checked_filters()) == self.list.count()

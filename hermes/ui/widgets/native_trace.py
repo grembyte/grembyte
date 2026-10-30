@@ -21,8 +21,10 @@ from hermes.features.favorites import NATIVE_TRACE
 from hermes.features.native_trace import NativeTraceWorker, apply_names
 from hermes.features.trace import analyze, recording_calls
 from hermes.ui.widgets.favorites import FAVORITE_COLUMN
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.trace import (
+    RECORDING_ICONS,
     _R_BASELINE,
     _R_CALLS,
     _R_METHOD,
@@ -150,14 +152,17 @@ class NativeTraceDialog(QDialog):
         steps = QHBoxLayout()
         self.trace_button = QPushButton(t["native_trace.start"])
         self.trace_button.setObjectName("btn_primary")
+        set_button_icon(self.trace_button, "play_arrow")
         self.trace_button.clicked.connect(self._toggle_trace)
         steps.addWidget(self.trace_button)
         self.baseline_button = QPushButton(t["trace.baseline"])
+        set_button_icon(self.baseline_button, RECORDING_ICONS["baseline"])
         self.baseline_button.setToolTip(t["trace.baseline_tooltip"])
         self.baseline_button.setCheckable(True)
         self.baseline_button.clicked.connect(lambda: self._toggle_recording("baseline"))
         steps.addWidget(self.baseline_button)
         self.scenario_button = QPushButton(t["trace.scenario"])
+        set_button_icon(self.scenario_button, RECORDING_ICONS["scenario"])
         self.scenario_button.setToolTip(t["trace.scenario_tooltip"])
         self.scenario_button.setCheckable(True)
         self.scenario_button.clicked.connect(lambda: self._toggle_recording("scenario"))
@@ -220,14 +225,17 @@ class NativeTraceDialog(QDialog):
         actions.addWidget(self.selection_label, 1)
         self.monitor_button = QPushButton(t["native_trace.monitor"])
         self.monitor_button.setObjectName("btn_primary")
+        set_button_icon(self.monitor_button, "visibility")
         self.monitor_button.setToolTip(t["native_trace.monitor_tooltip"])
         self.monitor_button.clicked.connect(self._request_monitor)
         actions.addWidget(self.monitor_button)
         self.memory_button = QPushButton(t["native_trace.show_memory"])
+        set_button_icon(self.memory_button, "grid_on")
         self.memory_button.setToolTip(t["native_trace.show_memory_tooltip"])
         self.memory_button.clicked.connect(self._request_memory)
         actions.addWidget(self.memory_button)
         self.copy_button = QPushButton(t["native_trace.copy_address"])
+        set_button_icon(self.copy_button, "content_copy")
         self.copy_button.clicked.connect(self._copy_address)
         actions.addWidget(self.copy_button)
         layout.addLayout(actions)
@@ -252,12 +260,14 @@ class NativeTraceDialog(QDialog):
         self.trace_button.setEnabled(state in (_IDLE, _READY))
         self.trace_button.setText(self.translations[
             "native_trace.stop" if tracing else "native_trace.start"])
+        set_button_icon(self.trace_button, "stop" if tracing else "play_arrow")
         for phase, button in (("baseline", self.baseline_button),
                               ("scenario", self.scenario_button)):
             active = state == _RECORDING and self._recording == phase
             button.setEnabled(state == _READY or active)
             button.setChecked(active)
             button.setText(self.translations[f"trace.{phase}_stop" if active else f"trace.{phase}"])
+            set_button_icon(button, "stop" if active else RECORDING_ICONS[phase])
         if state != _RECORDING:
             self.recording_label.setText("")
 

@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from hermes.core.memory import describe_address, parse_address, read_memory
 from hermes.platform import read_mappings
 from hermes.core.value_types import VALUE_TYPES
+from hermes.ui.widgets.icons import set_button_icon
 
 BYTES_PER_ROW = 16
 REFRESH_MS = 500
@@ -209,6 +210,7 @@ class MemoryViewerDialog(QDialog):
         self.address_input.returnPressed.connect(self._go_to_input)
         bar.addWidget(self.address_input, 1)
         go = QPushButton(self.translations["memview.go"])
+        set_button_icon(go, "arrow_forward")
         go.clicked.connect(self._go_to_input)
         bar.addWidget(go)
         self.live = QCheckBox(self.translations["memview.live"])

@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import settings
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.widgets.icons import set_button_icon
 
 
 class SettingsDialog(QDialog):
@@ -50,6 +51,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.restart_label)
         defaults = QHBoxLayout()
         reset = QPushButton(translations["settings.defaults"])
+        set_button_icon(reset, "restart_alt")
         reset.setToolTip(translations["settings.defaults_tooltip"])
         reset.clicked.connect(self.show_defaults)
         defaults.addWidget(reset)

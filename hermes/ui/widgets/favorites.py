@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy.exc import SQLAlchemyError
 
 from hermes.features.favorites import METHOD, favorite_key, favorite_of
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.table import copy_menu, resizable_columns
 
@@ -251,17 +252,21 @@ class FavoritesDialog(QDialog):
         actions.addWidget(self.selection_label, 1)
         self.monitor_button = QPushButton(t["favorites.monitor"])
         self.monitor_button.setObjectName("btn_primary")
+        set_button_icon(self.monitor_button, "visibility")
         self.monitor_button.setToolTip(t["favorites.monitor_tooltip"])
         self.monitor_button.clicked.connect(self._request_monitor)
         actions.addWidget(self.monitor_button)
         self.call_button = QPushButton(t["favorites.call"])
+        set_button_icon(self.call_button, "call_made")
         self.call_button.clicked.connect(self._request_call)
         actions.addWidget(self.call_button)
         self.copy_button = QPushButton(t["favorites.copy"])
+        set_button_icon(self.copy_button, "content_copy")
         self.copy_button.setToolTip(t["favorites.copy_tooltip"])
         self.copy_button.clicked.connect(self._copy)
         actions.addWidget(self.copy_button)
         self.remove_button = QPushButton(t["favorites.remove"])
+        set_button_icon(self.remove_button, "delete")
         self.remove_button.clicked.connect(self._remove)
         actions.addWidget(self.remove_button)
         layout.addLayout(actions)

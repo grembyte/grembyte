@@ -39,6 +39,7 @@ from hermes.db.repository.game_export import (
     read_export,
 )
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.table import resizable_columns, set_row_height
 
 # Columns after the game's name and platform: the counts of its entries
@@ -91,6 +92,7 @@ class GameExportDialog(QDialog):
         self.folder = QLineEdit(str(Path.home()))
         folder_row.addWidget(self.folder)
         browse = QPushButton(translations["export.browse"])
+        set_button_icon(browse, "folder_open")
         browse.clicked.connect(self._browse)
         folder_row.addWidget(browse)
         form.addRow(translations["export.folder"], folder_row)
@@ -214,6 +216,7 @@ class GameImportDialog(QDialog):
         self.path.setReadOnly(True)
         file_row.addWidget(self.path)
         browse = QPushButton(translations["import.browse"])
+        set_button_icon(browse, "folder_open")
         browse.clicked.connect(self._browse)
         file_row.addWidget(browse)
         layout.addLayout(file_row)

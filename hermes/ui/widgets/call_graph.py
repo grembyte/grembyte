@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 
 from hermes.engines.registry import resolve_engine
 from hermes.features.call_graph import CallGraphWorker, async_owner
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from hermes.ui.workers import keep_until_finished
@@ -89,8 +90,10 @@ class CallGraphDialog(QDialog):
         layout = QVBoxLayout(self)
         bar = QHBoxLayout()
         self.back_button = QPushButton(self.translations["calls.back"])
+        set_button_icon(self.back_button, "arrow_back")
         self.back_button.clicked.connect(self.go_back)
         self.forward_button = QPushButton(self.translations["calls.forward"])
+        set_button_icon(self.forward_button, "arrow_forward")
         self.forward_button.clicked.connect(self.go_forward)
         bar.addWidget(self.back_button)
         bar.addWidget(self.forward_button)
@@ -118,6 +121,7 @@ class CallGraphDialog(QDialog):
         callers_bar.addWidget(callers_label)
         callers_bar.addStretch()
         self.callers_button = QPushButton(self.translations["calls.search_callers"])
+        set_button_icon(self.callers_button, "manage_search")
         self.callers_button.setToolTip(self.translations["calls.search_callers_tooltip"])
         self.callers_button.clicked.connect(self.search_callers)
         callers_bar.addWidget(self.callers_button)
@@ -136,11 +140,13 @@ class CallGraphDialog(QDialog):
         self.status_label.setWordWrap(True)
         actions.addWidget(self.status_label, 1)
         self.copy_button = QPushButton(self.translations["catalog.copy"])
+        set_button_icon(self.copy_button, "content_copy")
         self.copy_button.setToolTip(self.translations["calls.copy_tooltip"])
         self.copy_button.clicked.connect(self._copy_signature)
         actions.addWidget(self.copy_button)
         self.monitor_button = QPushButton(self.translations["catalog.monitor"])
         self.monitor_button.setObjectName("btn_primary")
+        set_button_icon(self.monitor_button, "visibility")
         self.monitor_button.setToolTip(self.translations["calls.monitor_tooltip"])
         self.monitor_button.clicked.connect(self._request_monitor)
         actions.addWidget(self.monitor_button)

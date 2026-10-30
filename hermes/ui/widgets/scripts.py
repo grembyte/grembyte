@@ -29,6 +29,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from hermes.features.scripts import MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker
 from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.syntax_hint import SyntaxHint
@@ -181,16 +182,21 @@ class ScriptPanel(QGroupBox):
 
         controls = QHBoxLayout()
         self.btn_new = QPushButton(self.translations["scripts.new"])
+        set_button_icon(self.btn_new, "add")
         self.btn_new.clicked.connect(self._new_script)
         self.btn_edit = QPushButton(self.translations["scripts.edit"])
+        set_button_icon(self.btn_edit, "edit")
         self.btn_edit.clicked.connect(self._edit_selected)
         self.btn_run = QPushButton(self.translations["scripts.run"])
+        set_button_icon(self.btn_run, "play_circle")
         self.btn_run.setToolTip(self.translations["scripts.run_tooltip"])
         self.btn_run.clicked.connect(self._run_selected)
         self.btn_toggle = QPushButton(self.translations["scripts.pause"])
+        set_button_icon(self.btn_toggle, "pause")
         self.btn_toggle.clicked.connect(self._toggle_selected)
         self.btn_remove = QPushButton(self.translations["scripts.remove"])
         self.btn_remove.setObjectName("btn_danger")
+        set_button_icon(self.btn_remove, "delete")
         self.btn_remove.clicked.connect(self._remove_selected)
         for button in (self.btn_new, self.btn_edit, self.btn_run, self.btn_toggle):
             controls.addWidget(button)
@@ -288,8 +294,10 @@ class ScriptPanel(QGroupBox):
             button.setEnabled(state is not None)
         if state is not None:
             self.btn_run.setEnabled(state["status"] not in {"failed", "starting"})
+            paused = not state["spec"].enabled
             self.btn_toggle.setText(self.translations[
-                "scripts.resume" if not state["spec"].enabled else "scripts.pause"])
+                "scripts.resume" if paused else "scripts.pause"])
+            set_button_icon(self.btn_toggle, "play_arrow" if paused else "pause")
 
     def _log(self, text, target=None, name=""):
         """Add a line to the log; with ``target`` (an object) a link that inspects it."""

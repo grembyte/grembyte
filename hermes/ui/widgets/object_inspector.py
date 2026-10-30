@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.table import add_copy_actions, copy_menu, resizable_columns, set_row_height
 
@@ -129,8 +130,10 @@ class ObjectInspectorDialog(QDialog):
         self.live_check.setToolTip(self.translations["inspector.live_tooltip"])
         self.live_check.toggled.connect(self._toggle_live)
         self.refresh_button = QPushButton(self.translations["inspector.refresh"])
+        set_button_icon(self.refresh_button, "refresh")
         self.refresh_button.clicked.connect(self.refresh)
         self.add_address_button = QPushButton(self.translations["inspector.add_address"])
+        set_button_icon(self.add_address_button, "bookmark_add")
         self.add_address_button.setToolTip(self.translations["inspector.add_address_tooltip"])
         self.add_address_button.setEnabled(False)
         self.add_address_button.clicked.connect(lambda: self.add_address(self.table.currentRow()))
@@ -190,6 +193,7 @@ class ObjectInspectorDialog(QDialog):
         properties_bar.addWidget(properties_label)
         properties_bar.addStretch()
         self.evaluate_button = QPushButton(self.translations["inspector.evaluate_all"])
+        set_button_icon(self.evaluate_button, "calculate")
         self.evaluate_button.setToolTip(self.translations["inspector.properties_tooltip"])
         self.evaluate_button.clicked.connect(lambda: self.evaluate_properties(None))
         self.evaluate_button.setEnabled(False)

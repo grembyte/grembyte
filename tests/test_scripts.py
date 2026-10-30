@@ -93,7 +93,8 @@ def test_the_address_search_folds_away_and_stays_so(qt_app, tmp_path, monkeypatc
         assert not window._scan_area.isHidden() and window.act_scan_area.isChecked()
         window.btn_scan_area.click()
         assert window._scan_area.isHidden() and not window.act_scan_area.isChecked()
-        assert window.btn_scan_area.text() == "▼ Adresssuche einblenden"
+        assert window.btn_scan_area.text() == "Adresssuche einblenden"
+        assert not window.btn_scan_area.icon().isNull()
 
         # The tab of tracked addresses counts them, like those of hooks and scripts.
         tab = window.bottom_tabs.indexOf(window._address_box)
@@ -119,7 +120,7 @@ def test_the_address_search_folds_away_and_stays_so(qt_app, tmp_path, monkeypatc
         assert window._scan_area.isHidden() and not window.act_scan_area.isChecked()
         window.act_scan_area.trigger()
         assert not window._scan_area.isHidden()
-        assert window.btn_scan_area.text() == "▲ Adresssuche ausblenden"
+        assert window.btn_scan_area.text() == "Adresssuche ausblenden"
         close(window)
         assert QSettings(settings_file, QSettings.Format.IniFormat).value(
             "scan_area_visible", type=bool) is True

@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QVBoxLayout,
 )
 
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.table import add_copy_actions, resizable_columns, set_row_height
 
 
@@ -91,10 +92,12 @@ class HookDebugWindow(QDialog):
 
         controls = QHBoxLayout()
         self.btn_pause = QPushButton(self.translations["debug.pause"])
+        set_button_icon(self.btn_pause, "pause")
         self.btn_pause.setCheckable(True)
         self.btn_pause.toggled.connect(self._on_pause_toggled)
         controls.addWidget(self.btn_pause)
         clear = QPushButton(self.translations["debug.clear"])
+        set_button_icon(clear, "clear_all")
         clear.clicked.connect(self.clear)
         controls.addWidget(clear)
         controls.addWidget(QLabel(self.translations["debug.filter"]))
@@ -208,6 +211,7 @@ class HookDebugWindow(QDialog):
         self.btn_pause.setText(
             self.translations["debug.resume" if paused else "debug.pause"]
         )
+        set_button_icon(self.btn_pause, "play_arrow" if paused else "pause")
 
     def _matches(self, entry):
         selected = self.filter_combo.currentData()

@@ -22,6 +22,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QVBoxLayout,
 )
 
+from hermes.ui.widgets.icons import set_button_icon
+
 # Characters of a value the tree shows in one line
 _VALUE_PREVIEW = 200
 # Item data: the JSON value of a tree item
@@ -101,11 +103,14 @@ class TextViewerDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.addStretch()
         self.copy_button = QPushButton(self.translations["text_viewer.copy"])
+        set_button_icon(self.copy_button, "content_copy")
         self.copy_button.setToolTip(self.translations["text_viewer.copy_tooltip"])
         self.copy_button.clicked.connect(self._copy)
         self.save_button = QPushButton(self.translations["text_viewer.save"])
+        set_button_icon(self.save_button, "save")
         self.save_button.clicked.connect(self._save)
         close_button = QPushButton(self.translations["text_viewer.close"])
+        set_button_icon(close_button, "close")
         close_button.clicked.connect(self.close)
         for button in (self.copy_button, self.save_button, close_button):
             buttons.addWidget(button)

@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 
 from hermes.core.sessions import SESSIONS, SessionSignals, frida_agents, frida_gadgets
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 
 
@@ -105,16 +106,19 @@ class SessionsDialog(QDialog):
 
         buttons = QHBoxLayout()
         self.stop_button = QPushButton(self.translations["sessions.stop"])
+        set_button_icon(self.stop_button, "stop")
         self.stop_button.setToolTip(self.translations["sessions.stop_tooltip"])
         self.stop_button.clicked.connect(self._stop_selected)
         buttons.addWidget(self.stop_button)
         self.disconnect_button = QPushButton(self.translations["sessions.disconnect"])
         self.disconnect_button.setObjectName("btn_danger")
+        set_button_icon(self.disconnect_button, "link_off")
         self.disconnect_button.setToolTip(self.translations["sessions.disconnect_tooltip"])
         self.disconnect_button.clicked.connect(self._disconnect_selected)
         buttons.addWidget(self.disconnect_button)
         buttons.addStretch()
         self.stop_all_button = QPushButton(self.translations["sessions.stop_all"])
+        set_button_icon(self.stop_all_button, "stop_circle")
         self.stop_all_button.clicked.connect(SESSIONS.stop_all)
         buttons.addWidget(self.stop_all_button)
         layout.addLayout(buttons)
@@ -217,6 +221,7 @@ class ShutdownDialog(QDialog):
         buttons.addStretch()
         self.now_button = QPushButton(translations["shutdown.now"])
         self.now_button.setObjectName("btn_danger")
+        set_button_icon(self.now_button, "power_settings_new")
         self.now_button.setToolTip(translations["shutdown.now_tooltip"])
         self.now_button.clicked.connect(self._cut_now)
         buttons.addWidget(self.now_button)

@@ -30,6 +30,7 @@ from hermes.hooks.transforms import PARAMETER_NAME, TransformDefinition, Transfo
 from hermes.hooks.sandbox import TransformSandbox
 from hermes.hooks.syntax import BODY, FUNCTION
 from hermes.ui.widgets.hooks import TransformForm, format_number, parse_number
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.syntax_hint import SyntaxHint, syntax_problem
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
@@ -109,9 +110,11 @@ class TemplateDialog(QDialog):
         left_layout.addWidget(self.template_list)
         buttons = QHBoxLayout()
         self.btn_new = QPushButton(self.translations["templates.new"])
+        set_button_icon(self.btn_new, "add")
         self.btn_new.clicked.connect(self._new_template)
         self.btn_delete = QPushButton(self.translations["templates.delete"])
         self.btn_delete.setObjectName("btn_danger")
+        set_button_icon(self.btn_delete, "delete")
         self.btn_delete.clicked.connect(self._delete_template)
         buttons.addWidget(self.btn_new)
         buttons.addWidget(self.btn_delete)
@@ -126,6 +129,7 @@ class TemplateDialog(QDialog):
         self.status_label.setWordWrap(True)
         bottom.addWidget(self.status_label, 1)
         close_button = QPushButton(self.translations["templates.close"])
+        set_button_icon(close_button, "close")
         close_button.clicked.connect(self.reject)
         bottom.addWidget(close_button)
         layout.addLayout(bottom)
@@ -181,8 +185,10 @@ class TemplateDialog(QDialog):
         layout.addWidget(self.param_table)
         param_buttons = QHBoxLayout()
         add_param = QPushButton(self.translations["templates.param_add"])
+        set_button_icon(add_param, "add")
         add_param.clicked.connect(lambda: self._add_parameter_row(None))
         remove_param = QPushButton(self.translations["templates.param_remove"])
+        set_button_icon(remove_param, "remove")
         remove_param.clicked.connect(self._remove_parameter_row)
         param_buttons.addWidget(add_param)
         param_buttons.addWidget(remove_param)
@@ -208,11 +214,13 @@ class TemplateDialog(QDialog):
         save_row = QHBoxLayout()
         save_row.addStretch()
         self.btn_test = QPushButton(self.translations["templates.test"])
+        set_button_icon(self.btn_test, "play_arrow")
         self.btn_test.setToolTip(self.translations["templates.test_tooltip"])
         self.btn_test.clicked.connect(self._test_template)
         save_row.addWidget(self.btn_test)
         self.btn_save = QPushButton(self.translations["templates.save"])
         self.btn_save.setObjectName("btn_primary")
+        set_button_icon(self.btn_save, "save")
         self.btn_save.clicked.connect(self.save)
         save_row.addWidget(self.btn_save)
         layout.addLayout(save_row)
@@ -576,12 +584,14 @@ class TemplateTestDialog(QDialog):
 
         buttons = QHBoxLayout()
         reset = QPushButton(self.translations["templates.test_reset"])
+        set_button_icon(reset, "restart_alt")
         reset.setToolTip(self.translations["templates.test_reset_tooltip"])
         reset.clicked.connect(self.reset_state)
         buttons.addWidget(reset)
         buttons.addStretch()
         self.btn_run = QPushButton(self.translations["templates.test_run"])
         self.btn_run.setObjectName("btn_primary")
+        set_button_icon(self.btn_run, "play_arrow")
         self.btn_run.clicked.connect(self.run)
         buttons.addWidget(self.btn_run)
         layout.addLayout(buttons)
@@ -596,6 +606,7 @@ class TemplateTestDialog(QDialog):
         close_row = QHBoxLayout()
         close_row.addStretch()
         close_button = QPushButton(self.translations["templates.close"])
+        set_button_icon(close_button, "close")
         close_button.clicked.connect(self.accept)
         close_row.addWidget(close_button)
         layout.addLayout(close_row)

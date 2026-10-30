@@ -38,11 +38,14 @@ from hermes.ui.widgets.favorites import (
     FavoriteColumn,
     set_up_favorite_column,
 )
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.trace_filters import TraceFilterPanel
 from hermes.ui.widgets.table import copy_menu, resizable_columns
 from hermes.ui.workers import keep_until_finished
 
+# The recording steps in their order: first the baseline, then the scenario.
+RECORDING_ICONS = {"baseline": "looks_one", "scenario": "looks_two"}
 
 # The limits come from the settings (hermes.core.settings):
 # large_trace: above this many methods the trace asks first, Mono compiles them all.
@@ -361,6 +364,7 @@ class TraceDialog(QDialog):
         scope.addWidget(self.filter_input, 1)
         self.trace_button = QPushButton(self.translations["trace.start"])
         self.trace_button.setObjectName("btn_primary")
+        set_button_icon(self.trace_button, "play_arrow")
         self.trace_button.clicked.connect(self._toggle_trace)
         scope.addWidget(self.trace_button)
         layout.addLayout(scope)
@@ -385,11 +389,13 @@ class TraceDialog(QDialog):
 
         steps = QHBoxLayout()
         self.baseline_button = QPushButton(self.translations["trace.baseline"])
+        set_button_icon(self.baseline_button, RECORDING_ICONS["baseline"])
         self.baseline_button.setToolTip(self.translations["trace.baseline_tooltip"])
         self.baseline_button.setCheckable(True)
         self.baseline_button.clicked.connect(lambda: self._toggle_recording("baseline"))
         steps.addWidget(self.baseline_button)
         self.scenario_button = QPushButton(self.translations["trace.scenario"])
+        set_button_icon(self.scenario_button, RECORDING_ICONS["scenario"])
         self.scenario_button.setToolTip(self.translations["trace.scenario_tooltip"])
         self.scenario_button.setCheckable(True)
         self.scenario_button.clicked.connect(lambda: self._toggle_recording("scenario"))
@@ -446,10 +452,12 @@ class TraceDialog(QDialog):
         self.selection_label = SelectableText()
         actions.addWidget(self.selection_label, 1)
         self.monitor_button = QPushButton(self.translations["trace.monitor"])
+        set_button_icon(self.monitor_button, "visibility")
         self.monitor_button.setToolTip(self.translations["trace.monitor_tooltip"])
         self.monitor_button.clicked.connect(self._request_monitor)
         actions.addWidget(self.monitor_button)
         self.hook_button = QPushButton(self.translations["monitor.create_hook"])
+        set_button_icon(self.hook_button, "webhook")
         self.hook_button.setToolTip(self.translations["monitor.create_hook_tooltip"])
         self.hook_button.clicked.connect(self._request_hook)
         actions.addWidget(self.hook_button)
@@ -484,12 +492,15 @@ class TraceDialog(QDialog):
         self.trace_button.setEnabled(state in (_IDLE, _PREPARING, _READY))
         self.trace_button.setText(self.translations[
             "trace.cancel" if state == _PREPARING else "trace.stop" if tracing else "trace.start"])
+        set_button_icon(self.trace_button,
+                        "close" if state == _PREPARING else "stop" if tracing else "play_arrow")
         for phase, button in (("baseline", self.baseline_button),
                               ("scenario", self.scenario_button)):
             active = state == _RECORDING and self._recording == phase
             button.setEnabled(state == _READY or active)
             button.setChecked(active)
             button.setText(self.translations[f"trace.{phase}_stop" if active else f"trace.{phase}"])
+            set_button_icon(button, "stop" if active else RECORDING_ICONS[phase])
         if state != _RECORDING:
             self.recording_label.setText("")
 

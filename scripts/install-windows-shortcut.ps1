@@ -35,7 +35,7 @@ from PyQt6.QtGui import QGuiApplication, QIcon
 app = QGuiApplication(sys.argv)
 image = QIcon(sys.argv[1]).pixmap(256, 256).toImage()
 sys.exit(0 if image.save(sys.argv[2], 'ICO') else 1)
-"@ (Join-Path $ProjectDir "hermes\ui\resources\icon.svg") $IconFile
+"@ (Join-Path $ProjectDir "hermes\ui\resources\favicon.svg") $IconFile
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "Cannot create $IconFile, the shortcut uses the Python icon."
     $IconFile = $Pythonw

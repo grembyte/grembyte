@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHeaderView,
 )
 
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 
 
@@ -102,20 +103,24 @@ class WriteWatchDialog(QDialog):
         buttons = QHBoxLayout()
         self.hook_button = QPushButton(self.translations["watch.create_hook"])
         self.hook_button.setObjectName("btn_primary")
+        set_button_icon(self.hook_button, "webhook")
         self.hook_button.setToolTip(self.translations["watch.create_hook_tooltip"])
         self.hook_button.setEnabled(False)
         self.hook_button.clicked.connect(self._request_hook)
         buttons.addWidget(self.hook_button)
         self.monitor_button = QPushButton(self.translations["watch.monitor"])
+        set_button_icon(self.monitor_button, "visibility")
         self.monitor_button.setToolTip(self.translations["watch.monitor_tooltip"])
         self.monitor_button.setEnabled(False)
         self.monitor_button.clicked.connect(self._request_monitor)
         buttons.addWidget(self.monitor_button)
         buttons.addStretch()
         self.stop_button = QPushButton(self.translations["watch.stop"])
+        set_button_icon(self.stop_button, "stop")
         self.stop_button.clicked.connect(self._request_stop)
         buttons.addWidget(self.stop_button)
         close_button = QPushButton(self.translations["watch.close"])
+        set_button_icon(close_button, "close")
         close_button.clicked.connect(self.close)
         buttons.addWidget(close_button)
         layout.addLayout(buttons)

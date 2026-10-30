@@ -31,6 +31,7 @@ from hermes.ui.widgets.favorites import (
     FavoriteColumn,
     set_up_favorite_column,
 )
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.table import copy_menu, resizable_columns
 from hermes.ui.workers import keep_until_finished
 
@@ -275,6 +276,7 @@ class CatalogDialog(QDialog):
         self.framework_check.toggled.connect(self._toggle_framework)
         bar.addWidget(self.framework_check)
         self.reload_button = QPushButton(self.translations["catalog.reload"])
+        set_button_icon(self.reload_button, "refresh")
         self.reload_button.setToolTip(self.translations["catalog.reload_tooltip"])
         self.reload_button.clicked.connect(lambda: self.reload(fresh=True))
         bar.addWidget(self.reload_button)
@@ -315,16 +317,19 @@ class CatalogDialog(QDialog):
         self.details_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         details.addWidget(self.details_label, 1)
         self.copy_button = QPushButton(self.translations["catalog.copy"])
+        set_button_icon(self.copy_button, "content_copy")
         self.copy_button.setToolTip(self.translations["catalog.copy_tooltip"])
         self.copy_button.setEnabled(False)
         self.copy_button.clicked.connect(self._copy_signature)
         details.addWidget(self.copy_button)
         self.calls_button = QPushButton(self.translations["catalog.calls"])
+        set_button_icon(self.calls_button, "account_tree")
         self.calls_button.setToolTip(self.translations["catalog.calls_tooltip"])
         self.calls_button.setEnabled(False)
         self.calls_button.clicked.connect(self._show_calls)
         details.addWidget(self.calls_button)
         self.call_button = QPushButton(self.translations["catalog.call"])
+        set_button_icon(self.call_button, "call_made")
         self.call_button.setToolTip(self.translations[
             "catalog.offline_no_call" if self.game is not None else "catalog.call_tooltip"])
         self.call_button.setEnabled(False)
@@ -332,6 +337,7 @@ class CatalogDialog(QDialog):
         details.addWidget(self.call_button)
         self.monitor_button = QPushButton(self.translations["catalog.monitor"])
         self.monitor_button.setObjectName("btn_primary")
+        set_button_icon(self.monitor_button, "visibility")
         self.monitor_button.setToolTip(self.translations[
             "catalog.offline_no_monitor" if self.game is not None else "catalog.monitor_tooltip"])
         self.monitor_button.setEnabled(False)

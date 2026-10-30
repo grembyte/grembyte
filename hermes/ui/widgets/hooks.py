@@ -41,6 +41,7 @@ from hermes.hooks.transforms import (
 from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.hook_debug import HookDebugWindow
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.syntax_hint import SyntaxHint
 from hermes.ui.widgets.table import add_copy_actions, resizable_columns, set_row_height
 
@@ -289,6 +290,7 @@ class HookDialog(QDialog):
         self.template_notice_label.setWordWrap(True)
         self.template_notice_label.setStyleSheet("color: #d29922;")
         self.btn_adopt_template = QPushButton(self.translations["hooks.template_adopt"])
+        set_button_icon(self.btn_adopt_template, "sync")
         self.btn_adopt_template.clicked.connect(self._adopt_template)
         notice_layout.addWidget(self.template_notice_label, 1)
         notice_layout.addWidget(self.btn_adopt_template)
@@ -508,15 +510,19 @@ class HookPanel(QGroupBox):
 
         controls = QHBoxLayout()
         self.btn_edit = QPushButton(self.translations["hooks.edit"])
+        set_button_icon(self.btn_edit, "edit")
         self.btn_edit.clicked.connect(self._edit_selected)
         self.btn_toggle = QPushButton(self.translations["hooks.pause"])
+        set_button_icon(self.btn_toggle, "pause")
         self.btn_toggle.clicked.connect(self._toggle_selected)
         self.btn_debug = QPushButton(self.translations["hooks.debug"])
+        set_button_icon(self.btn_debug, "bug_report")
         self.btn_debug.setCheckable(True)
         self.btn_debug.setToolTip(self.translations["hooks.debug_tooltip"])
         self.btn_debug.clicked.connect(self._toggle_debug_selected)
         self.btn_remove = QPushButton(self.translations["hooks.remove"])
         self.btn_remove.setObjectName("btn_danger")
+        set_button_icon(self.btn_remove, "delete")
         self.btn_remove.clicked.connect(self._remove_selected)
         controls.addWidget(self.btn_edit)
         controls.addWidget(self.btn_toggle)
@@ -704,9 +710,9 @@ class HookPanel(QGroupBox):
         self.btn_debug.setEnabled(live)
         self.btn_debug.setChecked(bool(states) and all(state.get("debug") for state in states))
         self.btn_remove.setEnabled(bool(states))
-        self.btn_toggle.setText(self.translations[
-            "hooks.resume" if states and all(state["status"] == "paused" for state in states)
-            else "hooks.pause"])
+        paused = bool(states) and all(state["status"] == "paused" for state in states)
+        self.btn_toggle.setText(self.translations["hooks.resume" if paused else "hooks.pause"])
+        set_button_icon(self.btn_toggle, "play_arrow" if paused else "pause")
 
     # ------------------------------------------------------------------
     # Public API

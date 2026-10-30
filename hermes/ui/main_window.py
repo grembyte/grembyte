@@ -25,7 +25,8 @@ from hermes import __version__
 from hermes.ui.localization import load_translations
 from hermes.ui.styles.styles import STYLE
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
-from hermes.ui.widgets.glyph_icon import glyph_icon
+from hermes.ui.widgets.icons import material_icon, set_button_icon
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.ui.widgets.table import add_copy_actions, resizable_columns, set_row_height
 from hermes.core.pointer import chain_for_static_address, module_bases, resolve_chain
@@ -113,7 +114,7 @@ WRITE_WATCH_STOP_TIMEOUT_MS = 3000
 RESULT_DISPLAY_LIMIT = 1000
 
 # The app icon (window and taskbar, see hermes.main; toolbar)
-ICON_PATH = Path(__file__).parent / "resources" / "icon.svg"
+ICON_PATH = Path(__file__).parent / "resources" / "favicon.svg"
 # Its size next to the name in the toolbar
 BRAND_ICON_SIZE = 22
 
@@ -435,27 +436,27 @@ class MainWindow(QMainWindow):
         file_menu = menu_bar.addMenu(self.translations["menu.file"])
         file_menu.setToolTipsVisible(True)
         self.act_export = file_menu.addAction(
-            glyph_icon("⇪"), self.translations["menu.export"])
+            material_icon("upload"), self.translations["menu.export"])
         self.act_export.setToolTip(self.translations["menu.export_tooltip"])
         self.act_export.triggered.connect(self._open_export)
         self.act_import = file_menu.addAction(
-            glyph_icon("⇩"), self.translations["menu.import"])
+            material_icon("download"), self.translations["menu.import"])
         self.act_import.setToolTip(self.translations["menu.import_tooltip"])
         self.act_import.triggered.connect(self._open_import)
         file_menu.addSeparator()
         self.act_delete_entries = file_menu.addAction(
-            glyph_icon("✕"), self.translations["menu.delete_entries"])
+            material_icon("delete_sweep"), self.translations["menu.delete_entries"])
         self.act_delete_entries.setToolTip(self.translations["menu.delete_entries_tooltip"])
         self.act_delete_entries.triggered.connect(self._open_delete_entries)
         self.act_vacuum = file_menu.addAction(
-            glyph_icon("⇲"), self.translations["menu.vacuum"])
+            material_icon("compress"), self.translations["menu.vacuum"])
         self.act_vacuum.setToolTip(self.translations["menu.vacuum_tooltip"])
         self.act_vacuum.triggered.connect(self._vacuum_database)
 
         settings_menu = menu_bar.addMenu(self.translations["menu.settings"])
         settings_menu.setToolTipsVisible(True)
         self.act_settings = settings_menu.addAction(
-            glyph_icon("⚙"), self.translations["menu.general_settings"])
+            material_icon("settings"), self.translations["menu.general_settings"])
         self.act_settings.setToolTip(self.translations["menu.general_settings_tooltip"])
         self.act_settings.triggered.connect(self._open_settings)
         settings_menu.addSeparator()
@@ -486,35 +487,35 @@ class MainWindow(QMainWindow):
         view_menu.setToolTipsVisible(True)
 
         self.act_templates = view_menu.addAction(
-            glyph_icon("⧉"), self.translations["menu.templates"])
+            material_icon("library_books"), self.translations["menu.templates"])
         self.act_templates.setToolTip(self.translations["templates.button_tooltip"])
         self.act_templates.triggered.connect(self._open_template_dialog)
 
         view_menu.addSeparator()
 
         self.act_assemblies = view_menu.addAction(
-            glyph_icon("▤"), self.translations["menu.assemblies"])
+            material_icon("inventory_2"), self.translations["menu.assemblies"])
         self.act_assemblies.triggered.connect(self._open_assemblies)
 
         self.act_catalog = view_menu.addAction(
-            glyph_icon("{ }"), self.translations["menu.catalog"])
+            material_icon("data_object"), self.translations["menu.catalog"])
         self.act_catalog.triggered.connect(self._open_catalog)
 
         self.act_offline_catalog = view_menu.addAction(
-            glyph_icon("{ }"), self.translations["menu.offline_catalog"])
+            material_icon("data_object"), self.translations["menu.offline_catalog"])
         self.act_offline_catalog.setToolTip(self.translations["games.menu_tooltip"])
         self.act_offline_catalog.triggered.connect(self._open_offline_catalog)
 
         self.act_trace = view_menu.addAction(
-            glyph_icon("◉"), self.translations["menu.trace"])
+            material_icon("track_changes"), self.translations["menu.trace"])
         self.act_trace.triggered.connect(self._open_trace)
 
         self.act_native_trace = view_menu.addAction(
-            glyph_icon("◎"), self.translations["menu.native_trace"])
+            material_icon("radar"), self.translations["menu.native_trace"])
         self.act_native_trace.triggered.connect(self._open_native_trace)
 
         self.act_native_monitor = view_menu.addAction(
-            glyph_icon("◇"), self.translations["menu.native_monitor"])
+            material_icon("monitor_heart"), self.translations["menu.native_monitor"])
         self.act_native_monitor.triggered.connect(lambda: self._monitor_native_function())
 
         view_menu.addSeparator()
@@ -526,7 +527,7 @@ class MainWindow(QMainWindow):
         self.act_scan_area.setShortcut("Ctrl+Shift+F")
 
         self.act_favorites = view_menu.addAction(
-            glyph_icon("★"), self.translations["menu.favorites"])
+            material_icon("star_border"), self.translations["menu.favorites"])
         self.act_favorites.setToolTip(self.translations["favorites.button_tooltip"])
         self.act_favorites.triggered.connect(self._open_favorites)
         self._update_catalog_button()
@@ -694,6 +695,7 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
 
         self.btn_process = QPushButton(self.translations["process.select"])
+        set_button_icon(self.btn_process, "memory")
         self.btn_process.clicked.connect(self._open_process_dialog)
         tb.addWidget(self.btn_process)
 
@@ -722,6 +724,7 @@ class MainWindow(QMainWindow):
         self._update_sessions_button()
 
         self.btn_memory = QPushButton(self.translations["memview.button"])
+        set_button_icon(self.btn_memory, "grid_on")
         self.btn_memory.setToolTip(self.translations["memview.button_tooltip"])
         self.btn_memory.clicked.connect(lambda: self._open_memory_viewer())
         tb.addWidget(self.btn_memory)
@@ -756,6 +759,7 @@ class MainWindow(QMainWindow):
         # The scan area can be folded away; the last choice is kept.
         self.btn_scan_area = QToolButton()
         self.btn_scan_area.setAutoRaise(True)
+        self.btn_scan_area.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.btn_scan_area.clicked.connect(
             lambda: self._set_scan_area_visible(self._scan_area.isHidden()))
         self.bottom_tabs.setCornerWidget(self.btn_scan_area, Qt.Corner.TopRightCorner)
@@ -823,6 +827,7 @@ class MainWindow(QMainWindow):
         self.act_scan_area.blockSignals(False)
         self.btn_scan_area.setText(
             self.translations["scan_area.hide" if visible else "scan_area.show"])
+        set_button_icon(self.btn_scan_area, "expand_less" if visible else "expand_more")
         self.btn_scan_area.setToolTip(self.translations["scan_area.tooltip"])
         self._settings.setValue("scan_area_visible", visible)
 
@@ -866,6 +871,7 @@ class MainWindow(QMainWindow):
         ctrl.addStretch()
 
         btn_add = QPushButton(self.translations["results.add"])
+        set_button_icon(btn_add, "bookmark_add")
         btn_add.setToolTip(self.translations["results.add_tooltip"])
         btn_add.clicked.connect(self._add_selected_to_table)
         ctrl.addWidget(btn_add)
@@ -1023,16 +1029,19 @@ class MainWindow(QMainWindow):
         """Add the scan buttons side by side."""
         row = QHBoxLayout()
         self.btn_first_scan = QPushButton(self.translations["search.first_scan"])
+        set_button_icon(self.btn_first_scan, "search")
         self.btn_first_scan.clicked.connect(self._first_scan)
         row.addWidget(self.btn_first_scan)
 
         self.btn_next_scan = QPushButton(self.translations["search.next_scan"])
+        set_button_icon(self.btn_next_scan, "filter_alt")
         self.btn_next_scan.setEnabled(False)
         self.btn_next_scan.clicked.connect(self._next_scan)
         row.addWidget(self.btn_next_scan)
 
         self.btn_reset = QPushButton(self.translations["search.reset"])
         self.btn_reset.setObjectName("btn_danger")
+        set_button_icon(self.btn_reset, "restart_alt")
         self.btn_reset.setEnabled(False)
         self.btn_reset.clicked.connect(self._reset_scan)
         row.addWidget(self.btn_reset)
@@ -1112,16 +1121,20 @@ class MainWindow(QMainWindow):
         # Table toolbar
         ctrl = QHBoxLayout()
         btn_add = QPushButton(self.translations["address_table.add"])
+        set_button_icon(btn_add, "add")
         btn_add.setToolTip(self.translations["address_table.add_tooltip"])
         btn_add.clicked.connect(self._add_address_by_hand)
         ctrl.addWidget(btn_add)
         self.btn_write_value = QPushButton(self.translations["address_table.write"])
+        set_button_icon(self.btn_write_value, "edit")
         self.btn_write_value.clicked.connect(self._write_value)
         self.btn_freeze = QPushButton(self.translations["address_table.freeze"])
+        set_button_icon(self.btn_freeze, "ac_unit")
         self.btn_freeze.setToolTip(self.translations["address_table.freeze_tooltip"])
         self.btn_freeze.clicked.connect(self._toggle_freeze)
         self.btn_remove_address = QPushButton(self.translations["address_table.remove"])
         self.btn_remove_address.setObjectName("btn_danger")
+        set_button_icon(self.btn_remove_address, "delete")
         self.btn_remove_address.clicked.connect(self._remove_address)
         ctrl.addWidget(self.btn_write_value)
         ctrl.addWidget(self.btn_freeze)
@@ -1586,6 +1599,7 @@ class MainWindow(QMainWindow):
             self.btn_sessions.setObjectName(name)
             self.btn_sessions.style().unpolish(self.btn_sessions)
             self.btn_sessions.style().polish(self.btn_sessions)
+        set_button_icon(self.btn_sessions, "sync_alt")
 
     def _update_log_button(self):
         """Name the errors logged since the start, if any."""
@@ -1600,6 +1614,7 @@ class MainWindow(QMainWindow):
             self.btn_log.setFlat(not count)
             self.btn_log.style().unpolish(self.btn_log)
             self.btn_log.style().polish(self.btn_log)
+        set_button_icon(self.btn_log, "warning_amber" if count else "article")
 
     def _open_log(self):
         """Show the application log."""

@@ -24,6 +24,7 @@ from hermes.engines import base as engine_base
 from hermes.engines.registry import engine_by_id
 from hermes.features.catalog import short_name
 from hermes.features.monitor import MethodMonitorWorker
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.object_inspector import link_label, link_width
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
@@ -226,11 +227,13 @@ class MethodMonitorDialog(QDialog):
         top_layout.addWidget(self.methods_table)
         buttons = QHBoxLayout()
         self.remove_button = QPushButton(self.translations["monitor.remove"])
+        set_button_icon(self.remove_button, "delete")
         self.remove_button.setEnabled(False)
         self.remove_button.clicked.connect(self._remove_selected)
         buttons.addWidget(self.remove_button)
         self.hook_button = QPushButton(self.translations["monitor.create_hook"])
         self.hook_button.setObjectName("btn_primary")
+        set_button_icon(self.hook_button, "webhook")
         self.hook_button.setToolTip(self.translations["monitor.create_hook_tooltip"])
         self.hook_button.setEnabled(False)
         self.hook_button.clicked.connect(self._request_hook)
@@ -246,10 +249,12 @@ class MethodMonitorDialog(QDialog):
         log_bar.addWidget(QLabel(self.translations["monitor.calls"]))
         log_bar.addStretch()
         self.pause_button = QPushButton(self.translations["monitor.pause"])
+        set_button_icon(self.pause_button, "pause")
         self.pause_button.setCheckable(True)
         self.pause_button.toggled.connect(self._toggle_pause)
         log_bar.addWidget(self.pause_button)
         clear_button = QPushButton(self.translations["monitor.clear"])
+        set_button_icon(clear_button, "clear_all")
         clear_button.clicked.connect(self.log.clear)
         log_bar.addWidget(clear_button)
         bottom_layout.addLayout(log_bar)
@@ -495,6 +500,7 @@ class MethodMonitorDialog(QDialog):
         self._paused = paused
         self.pause_button.setText(
             self.translations["monitor.resume" if paused else "monitor.pause"])
+        set_button_icon(self.pause_button, "play_arrow" if paused else "pause")
 
     def _show_call(self, current, _previous=None):
         call = self.log.calls[current.row()] if current.isValid() else None
