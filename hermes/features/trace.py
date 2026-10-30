@@ -60,6 +60,10 @@ MIN_EXTRA_CALLS = 3
 
 NEW, MORE, SAME = "new", "more", "same"
 
+# Tokens per message choosing the methods: a message to Frida's gadget under
+# Wine must stay below 128 KiB.
+CHOOSE_PART = 4000
+
 # ECMA-335 method flags, as the catalog has them
 METHOD_ABSTRACT = 0x0400
 METHOD_PINVOKE = 0x2000
@@ -82,6 +86,23 @@ def trace_methods(rows, engine="mono"):
                       signature, engine)
         for assembly, class_name, name, parameters, return_type, static, token, signature in rows
     ]
+
+
+def selection_parts(chosen):
+    """``[[assembly, [token, ...]], ...]`` parts of ``[[assembly, token], ...]``.
+
+    Each part holds at most CHOOSE_PART tokens; the agent's ``choose`` takes them.
+    """
+    parts, part, size = [], {}, 0
+    for assembly, token in chosen:
+        if size == CHOOSE_PART:
+            parts.append([[name, tokens] for name, tokens in part.items()])
+            part, size = {}, 0
+        part.setdefault(assembly, []).append(token)
+        size += 1
+    if part:
+        parts.append([[name, tokens] for name, tokens in part.items()])
+    return parts
 
 
 def untraceable(class_name, name, signature, flags, impl_flags):
@@ -513,7 +534,9 @@ class TraceWorker(AgentWorker):
             _names, methods, skipped = self._select(api, words)
             chosen = (argument["methods"] if isinstance(argument, dict)
                       else [[method.assembly, method.token] for method in methods])
-            answer = api.start({"methods": chosen, "skipped": skipped})
+            for part in selection_parts(chosen):
+                api.choose(part)
+            answer = api.start({"skipped": skipped})
             self.started.emit(trace_methods(answer.pop("methods"), self.engine.id), answer)
         else:
             super()._run_command(api, action, argument)

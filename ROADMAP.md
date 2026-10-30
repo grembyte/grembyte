@@ -17,7 +17,7 @@ Available independent of any engine:
 
 For Unity games with Mono there are also the catalog, the trace (with preselection
 filters), the method monitor and method hooks, through the engine adapter layer
-(`hermes/engines/`).
+(`hermes/engines/`). For Unreal Engine games there are the catalog and the trace.
 
 Methods and functions found in the catalog, the trace or the native trace can be marked
 with ★ (first table column). Favorites are saved per program at once, so they survive a
@@ -187,11 +187,52 @@ subpackage with an `EngineAdapter` subclass and an agent part that registers its
 
 | Engine | Approach | Result |
 |---|---|---|
-| **Unreal** | Reflection through GNames/GObjects | all classes, properties with offsets, UFunctions; about as powerful as Mono |
+| **Unreal** | Reflection through GNames/GObjects | **catalog and trace done (2026-10-30)**, see below |
 | **IL2CPP** (Unity without Mono) | `global-metadata.dat` + the `il2cpp_*` API | like Mono, but compiled ahead of time; shares the .NET model of the JS contract |
 | **Godot** | ClassDB / object properties | scene tree and variables |
 | **Lua engines** | hook the `lua_*` API | tables and variables of the script state |
 | **RPG Maker MV/MZ, Ren'Py** | JavaScript or Python runtime | game variables directly in the script state |
+
+**Unreal adapter (2026-10-30):** `hermes/engines/unreal/` (`UnrealAdapter`, agent in
+`agent.js`). Recognised by the executable's name (`<Project>-Win64-Shipping.exe`, also Linux
+and modular builds). The agent finds `FNamePool` and `GUObjectArray` in the module's
+writable data by their shape (pool: `CurrentBlock`, `Blocks[]`, first entries `None` and
+`ByteProperty`; objects: `MaxElements`/`NumElements` matching `MaxChunks`/`NumChunks`), then
+measures the offsets of UStruct, FField/FProperty and UFunction on objects every game has
+(CoreUObject's `Class`, `Object`, `Vector`, `Transform`, `Object:ExecuteUbergraph`).
+
+- Verified in **Avowed** (UE5, Proton Experimental): found in 0.8 s, 260 000 objects read in
+  0.4 s. Catalog: 168 package groups, `/Script/Alabama` with 1573 classes and 4831 UFunctions.
+  Trace over `/Script/Alabama` + `/Game/Blueprints`: 4935 hooks in 0.65 s, baseline and
+  scenario recorded, Blueprint functions restored on stop, game stayed up.
+- Learned: Avowed's `FUObjectItem` is 0x14 bytes (packed), not 0x18; FField's owner is a
+  tagged 8-byte pointer (Next at 0x18, name at 0x20), older UE5 has 16 bytes there. Hence
+  item size and offsets are measured, not assumed.
+- Learned: on Linux most of `.bss` is an anonymous mapping right after the module, which
+  Frida's `Module.enumerateRanges` leaves out; the agent adds the ranges that follow the
+  module's own.
+- Learned: the trace's selection (`[[assembly, token], ...]`) passed 128 KiB for 5000
+  methods and cut the gadget's connection under Wine; it now goes to the agent in parts
+  (`choose`) before `start`. That affected large Mono traces under Wine as well.
+- Catalog tokens are a hash of package, class and function name (object indexes change
+  between runs); the catalog cache's build id is a hash of the declared functions.
+- Trace: native UFunctions are hooked at their exec thunk (`Func`); every Blueprint function
+  shares the interpreter (`ProcessInternal`) as `Func`, so each gets a stub of its own
+  (16 nops, `jmp [rip]`, allocated with `allocateCode`, never freed) as `Func`, which
+  `releaseCode` undoes after the trace. Calls the trace cannot see: C++ calling C++, and
+  Blueprint code calling a Blueprint function directly (`CallFunction` runs the script
+  without `Func`).
+
+Next steps:
+
+- Callers in the trace are the interpreter's call site (`exe+0x…`); the calling Blueprint
+  function is in the `FFrame` (`Stack.Node`) and could name it
+- Method monitor for UFunctions: arguments from the parameter buffer (`ProcessEvent`) or
+  the `FFrame`, with the FProperty offsets the catalog already reads
+- Object inspector: fields of a UObject from its class's FProperty chain (offsets known)
+- Call graph from Blueprint bytecode (`UStruct::Script`)
+- UE4 before 4.23 (`TNameEntryArray` instead of `FNamePool`) and 32-bit games are not
+  supported
 
 ### 7. Smaller additions to the search
 
@@ -231,8 +272,9 @@ runs; optionally memory through `ctx.read`/`ctx.write`.
 ### Recommendation
 
 **1 (Stalker diff trace)** and **2 (accesses of an instruction)** bring the most
-independent of any engine and use much of what exists. Among the adapters, **Unreal** would
-be the next big step, **IL2CPP** the most obvious one for Unity games without Mono.
+independent of any engine and use much of what exists. Among the adapters, **Unreal** has
+catalog and trace now; its method monitor is the next step there. **IL2CPP** is the most
+obvious one for Unity games without Mono.
 
 ## Write hooks under anti-tamper protection (2026-10-27)
 

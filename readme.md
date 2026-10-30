@@ -28,6 +28,10 @@ Hermes Hook is a desktop application built with Python and PyQt6 for inspecting 
   - The **method monitor** logs calls with arguments and results; **method hooks** change arguments, fields or results with templates of their own.
   - The **call graph** shows which methods a method calls and which call it, from the IL code.
   - The **object inspector** shows the fields of C# objects, and **Call method** runs a static method on the game's main thread.
+- **Unreal Engine games** (4.23 and later, 64-bit; e.g. Avowed under Proton): Hermes finds the engine's reflection data (`FNamePool`, `GUObjectArray`) in memory, without signatures or a mod loader.
+  - The **catalog** lists the classes and UFunctions with C++ parameter types, grouped by package: `/Script/<Module>` for C++ classes, the first folder for Blueprints (`/Game/Blueprints`).
+  - **Assemblies …** (here: packages) and the **trace** work as for Mono. The trace hooks the exec thunks of native UFunctions and gives every Blueprint function a hookable stub of its own; it sees calls from Blueprints and through `ProcessEvent` (events, delegates), not C++ calling C++ directly (the native trace sees those).
+  - Not yet: method monitor, method hooks, call graph, object inspector.
 
 ### Freeze or hook?
 
@@ -99,7 +103,7 @@ HERMES_LANGUAGE=en hermes
 HERMES_LANGUAGE=de hermes
 ```
 
-At first start the SQLite database is created at `~/.local/share/hermes-hook/hermes.db` (or under `$XDG_DATA_HOME/hermes-hook/`), on Windows at `%LOCALAPPDATA%\hermes-hook\hermes.db`. `HERMES_DB=/path/to/file.db` uses another file. If there is no database there yet but one from earlier versions at `data/hermes.db` in the project directory, it is copied once; the original stays. Catalogs read from Mono games are cached beside it in `hermes-hook/cache` (or `$HERMES_CACHE_DIR`). The process list only shows processes whose information the current user may access. When the attached process exits, Hermes resets the window within a second: scans, watches, freezing and hooks stop; stored addresses and hooks are kept and loaded again the next time it attaches.
+At first start the SQLite database is created at `~/.local/share/hermes-hook/hermes.db` (or under `$XDG_DATA_HOME/hermes-hook/`), on Windows at `%LOCALAPPDATA%\hermes-hook\hermes.db`. `HERMES_DB=/path/to/file.db` uses another file. If there is no database there yet but one from earlier versions at `data/hermes.db` in the project directory, it is copied once; the original stays. Catalogs read from Mono and Unreal games are cached beside it in `hermes-hook/cache` (or `$HERMES_CACHE_DIR`). The process list only shows processes whose information the current user may access. When the attached process exits, Hermes resets the window within a second: scans, watches, freezing and hooks stop; stored addresses and hooks are kept and loaded again the next time it attaches.
 
 ## Linux permissions for memory access
 
@@ -242,4 +246,4 @@ pytest comes with the `test` extra:
 ./.venv/bin/python -m pytest
 ```
 
-Many tests compile a small C program and attach to it with Frida (hooks, watch, native trace and monitor, the Mono features against a stand-in Mono runtime). They are skipped if `gcc` is missing, `kernel.yama.ptrace_scope` is not `0` or the machine is not x86-64. Tests of the Windows helper need MinGW, some need Linux.
+Many tests compile a small C program and attach to it with Frida (hooks, watch, native trace and monitor, the Mono features against a stand-in Mono runtime, the Unreal features against a stand-in Unreal game). They are skipped if `gcc` is missing, `kernel.yama.ptrace_scope` is not `0` or the machine is not x86-64. Tests of the Windows helper need MinGW, some need Linux.

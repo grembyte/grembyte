@@ -1621,9 +1621,20 @@ class MainWindow(QMainWindow):
         monitor.activateWindow()
         return monitor
 
+    def _engine_runs_methods(self, method, title):
+        """Whether the engine of ``method`` can monitor and call methods; says so if not."""
+        engine = engine_by_id(method.engine)
+        if engine is not None and engine.supports(engine_base.MONITOR):
+            return True
+        QMessageBox.information(self, title, self.translations["engine.unsupported"].format(
+            engine=engine.display_name if engine is not None else method.engine))
+        return False
+
     def _monitor_method(self, method):
         """Log the calls of a C# method chosen in the catalog."""
         if self._current_pid is None:
+            return
+        if not self._engine_runs_methods(method, self.translations["catalog.monitor"]):
             return
         parameters = generic_parameters(method)
         if parameters:
@@ -1646,6 +1657,8 @@ class MainWindow(QMainWindow):
     def _call_method(self, method):
         """Call a static C# method chosen in the catalog or the favorites."""
         if self._current_pid is None:
+            return
+        if not self._engine_runs_methods(method, self.translations["catalog.call"]):
             return
         parameters = generic_parameters(method)
         if parameters:

@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import settings
 from hermes.platform import is_wine_process
+from hermes.engines import base as engine_base
 from hermes.engines.registry import resolve_engine
 from hermes.features.trace import (
     MORE,
@@ -343,7 +344,10 @@ class TraceDialog(QDialog):
     # --- UI ------------------------------------------------------------------
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        hint = QLabel(self.translations["trace.hint"])
+        # An engine whose trace sees other calls than Mono's says which.
+        hint_key = f"trace.hint_{self.engine.id}"
+        hint = QLabel(self.translations[hint_key if hint_key in self.translations
+                                        else "trace.hint"])
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #8b949e;")
         layout.addWidget(hint)
@@ -449,6 +453,12 @@ class TraceDialog(QDialog):
         self.hook_button.setToolTip(self.translations["monitor.create_hook_tooltip"])
         self.hook_button.clicked.connect(self._request_hook)
         actions.addWidget(self.hook_button)
+        unsupported = self.translations["engine.unsupported"].format(
+            engine=self.engine.display_name)
+        for button, capability in ((self.monitor_button, engine_base.MONITOR),
+                                   (self.hook_button, engine_base.METHOD_HOOKS)):
+            if not self.engine.supports(capability):
+                button.setToolTip(unsupported)
         layout.addLayout(actions)
 
         self.status_label = QLabel("")
@@ -715,18 +725,20 @@ class TraceDialog(QDialog):
 
     def _show_selection(self):
         method = self.selected_method()
-        self.monitor_button.setEnabled(method is not None)
-        self.hook_button.setEnabled(method is not None)
+        self.monitor_button.setEnabled(method is not None
+                                       and self.engine.supports(engine_base.MONITOR))
+        self.hook_button.setEnabled(method is not None
+                                    and self.engine.supports(engine_base.METHOD_HOOKS))
         self.selection_label.setText(method.signature if method is not None else "")
 
     def _request_monitor(self):
         method = self.selected_method()
-        if method is not None:
+        if method is not None and self.engine.supports(engine_base.MONITOR):
             self.monitor_requested.emit(method)
 
     def _request_hook(self):
         method = self.selected_method()
-        if method is not None:
+        if method is not None and self.engine.supports(engine_base.METHOD_HOOKS):
             self.hook_requested.emit(method)
 
     def closeEvent(self, event):  # pylint: disable=invalid-name

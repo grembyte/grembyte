@@ -4,8 +4,8 @@ game engine's runtime.
 hermes' managed-code features (catalog, trace, method monitor, method hooks,
 and naming of code addresses in write watches and hooks) do not talk to Mono
 directly. They use the ``engine`` object of the Frida agent, which forwards to
-the adapter whose runtime the game has loaded. Mono is the first adapter
-(hermes/engines/mono); IL2CPP or Unreal would be further ones.
+the adapter whose runtime the game has loaded: Mono (hermes/engines/mono) and
+Unreal Engine (hermes/engines/unreal); IL2CPP would be a further one.
 
 Python side: a subclass of :class:`EngineAdapter` says how to recognize the
 engine from outside (``detect``), what it can do (``capabilities``) and which
@@ -16,7 +16,10 @@ Agent side: ``agent_source`` defines the adapter object and passes it to
 ``registerEngine``. The features call ``engine.<name>``; the contract below is
 what they use. Its vocabulary follows the ECMA-335 model of .NET (assemblies,
 classes, methods with metadata tokens and flags, element types), which Mono
-and IL2CPP share; another kind of engine maps its own units onto it.
+and IL2CPP share; another kind of engine maps its own units onto it (Unreal:
+packages as assemblies, UFunctions as methods, see hermes/engines/unreal).
+An adapter only needs what its ``capabilities`` promise; the facade answers
+any other name with an error naming the adapter.
 
 Every adapter object has:
 
@@ -38,14 +41,16 @@ Naming (``NAMING``), safe in exception handlers on game threads:
 
 Catalog (``CATALOG``): ``assemblies()`` (with the MVID the catalog cache
 keys them by), ``classes(assembly)`` (with the methods' ECMA-335 flags). For the
-call graph: ``methodBodies(assembly, tokens)`` (their IL code, see
+call graph (``CALL_GRAPH``): ``methodBodies(assembly, tokens)`` (their IL code, see
 hermes.features.call_graph) and ``resolveTokens(assembly, tokens)`` (the
 methods tokens in that code name).
 
 Trace (``TRACE``): ``methodsByToken(assembly, tokens)`` with ECMA-335 flags,
 ``checkAll(methods, progress)`` (which cannot be prepared safely),
 ``compileAll(methods, progress)``, ``describeAll(addresses)``,
-``cancelBatches()``, ``batchesRunning()``.
+``cancelBatches()``, ``batchesRunning()``, and ``releaseCode()``, which undoes
+what ``compileAll`` changed in the game to make code hookable (once the trace
+has removed its hooks).
 
 Method monitor and method hooks (``MONITOR``): ``prepare(identity)`` (code
 and signature), the object model (``TYPE`` element types, ``classOf``,
@@ -83,6 +88,7 @@ CATALOG = "catalog"
 TRACE = "trace"
 MONITOR = "monitor"
 METHOD_HOOKS = "method_hooks"
+CALL_GRAPH = "call_graph"
 
 
 class EngineAdapter:

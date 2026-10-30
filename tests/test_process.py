@@ -75,3 +75,20 @@ def test_reads_the_bitness_of_the_program(tmp_path):
     assert program_bits(3, tmp_path) is None
     assert program_bits(4, tmp_path) is None
     assert program_bits(os.getpid()) == 64
+
+
+def test_process_list_names_wine_processes_by_their_windows_program():
+    # pylint: disable=import-outside-toplevel
+    from hermes.ui.widgets.process_list import _resolve_display
+
+    preloader = "/steam/Proton - Experimental/files/lib/wine/i386-unix/wine64-preloader"
+    # Unreal renames the main thread, whose name the kernel reports.
+    game = r"S:\steamapps\common\Avowed\Alabama\Binaries\Win64\Avowed-Win64-Shipping.exe"
+    assert _resolve_display("GameThread", preloader, [game, "Alabama"], "/") == (
+        "Avowed-Win64-Shipping.exe", game)
+    assert _resolve_display("Avowed.exe", preloader, [r"S:\Avowed\Avowed.exe  ", ""], "/") == (
+        "Avowed.exe", r"S:\Avowed\Avowed.exe")
+    # A Wine helper without a Windows program keeps its name.
+    assert _resolve_display("wineserver", "/usr/bin/wine64", ["/usr/bin/wine64"], "/") == (
+        "wineserver", "/usr/bin/wine64")
+    assert _resolve_display("bash", "/usr/bin/bash", ["bash"], "/") == ("bash", "/usr/bin/bash")

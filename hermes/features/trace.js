@@ -66,18 +66,27 @@ function resumeAfterHooking(paused) {
   resumeThreads(paused);
 }
 
-async function select(spec) {
-  // The methods of spec.methods ([[assembly, token], ...]): Hermes chose
-  // them by the catalog (see trace.py), counting in spec.skipped those that
-  // cannot be traced.
-  const tokens = new Map();
-  for (const [assembly, token] of spec.methods) {
+// assembly -> tokens of the methods to trace next, sent in parts (choose):
+// one message to Frida's gadget under Wine must stay below 128 KiB.
+let tokens = new Map();
+
+function choose(part) {
+  // Add [[assembly, [token, ...]], ...] to the methods start() traces.
+  for (const [assembly, wanted] of part) {
     if (!tokens.has(assembly))
       tokens.set(assembly, []);
-    tokens.get(assembly).push(token);
+    tokens.get(assembly).push(...wanted);
   }
+  return true;
+}
+
+async function select(spec) {
+  // The chosen methods: Hermes chose them by the catalog (see trace.py),
+  // counting in spec.skipped those that cannot be traced.
+  const chosenTokens = tokens;
+  tokens = new Map();
   const chosen = [];
-  for (const [assembly, wanted] of tokens) {
+  for (const [assembly, wanted] of chosenTokens) {
     for (const found of await engine.methodsByToken(assembly, wanted))
       chosen.push({ assembly, ...found });
   }
@@ -323,6 +332,7 @@ function stop() {
   } finally {
     resumeAfterHooking(paused);
   }
+  engine.releaseCode();
   retired.push(t);
   updateUnmapWatch();
   return true;
@@ -385,6 +395,7 @@ rpc.exports = {
   classes(assembly) {
     return engine.classes(assembly);
   },
+  choose,
   start,
   begin,
   finish,

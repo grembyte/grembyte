@@ -24,6 +24,9 @@ API themselves.
     ``pauseThreads`` returns null and does nothing. Under Wine, game threads
     entering freshly hooked code while Frida still hooks more could deadlock
     on a lock inside Frida's Windows gadget; Linux has no such problem.
+``allocateCode(size)``
+    Executable memory that is never freed, not even when the agent unloads
+    (``VirtualAlloc``, or ``mmap``): for code game threads may still run.
 """
 
 from hermes.core.agent_source import load_agent_source

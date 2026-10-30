@@ -1668,6 +1668,8 @@ gpointer run_batch (gpointer data) {
     refresh, locate, name, describe, identify, compile, assemblies, classes, methodsByToken,
     methodBodies, resolveTokens,
     checkAll, compileAll, describeAll, cancelBatches, batchesRunning, prepare,
+    // compileAll changes nothing in the game that would need undoing
+    releaseCode() {},
     objectClassName, classOf, layout, onRuntimeThread: onMonoThread, unityName,
     onMainThread, drainMain, properties, getProperty, signatureOf, findClass, findMethod,
     newString, invoke, classChain, writeReference, resolve: resolveMethod,

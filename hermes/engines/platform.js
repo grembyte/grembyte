@@ -173,3 +173,32 @@ function resumeThreads(paused) {
     threadPauser.close(handle);
   }
 }
+
+let codeAllocator = null;
+
+function allocateCode(size) {
+  // Executable memory that stays when the agent unloads: game threads may
+  // still run code there (VirtualAlloc, or mmap).
+  if (codeAllocator === null) {
+    if (Process.platform === 'windows') {
+      const virtualAlloc = new NativeFunction(
+        Process.getModuleByName('kernel32.dll').getExportByName('VirtualAlloc'),
+        'pointer', ['pointer', 'size_t', 'uint32', 'uint32']);
+      const MEM_COMMIT_RESERVE = 0x3000, PAGE_EXECUTE_READWRITE = 0x40;
+      codeAllocator = length => virtualAlloc(NULL, length, MEM_COMMIT_RESERVE,
+                                             PAGE_EXECUTE_READWRITE);
+    } else {
+      const mmap = new NativeFunction(Module.getGlobalExportByName('mmap'), 'pointer',
+                                      ['pointer', 'size_t', 'int', 'int', 'int', 'long']);
+      const PROT_RWX = 7, MAP_PRIVATE_ANONYMOUS = 0x22;
+      codeAllocator = length => {
+        const memory = mmap(NULL, length, PROT_RWX, MAP_PRIVATE_ANONYMOUS, -1, 0);
+        return memory.equals(ptr(-1)) ? NULL : memory;
+      };
+    }
+  }
+  const memory = codeAllocator(size);
+  if (memory.isNull())
+    throw new Error(`cannot allocate ${size} bytes of code`);
+  return memory;
+}

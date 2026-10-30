@@ -1,5 +1,6 @@
 """Process selection dialog widget."""
 
+import ntpath
 import os
 import re
 
@@ -18,16 +19,26 @@ from hermes.ui.localization import load_translations
 
 
 _PYTHON_NAME = re.compile(r"^python[\d.]*w?$")
+# The Linux programs that run Windows programs under Wine/Proton
+_WINE_LOADER = re.compile(r"^wine(64)?(-preloader)?$")
 # Python options that consume the following argument.
 _PYTHON_OPTS_WITH_ARG = {"-c", "-m", "-W", "-X", "--check-hash-based-pycs"}
 
 
 def _resolve_display(name, exe, cmdline, cwd):
-    """Return (name, path) to display, showing the script for Python processes.
+    """Return (name, path) to display: the script of a Python process, the
+    Windows program of a Wine process.
 
     For interpreters, the kernel only knows the interpreter binary; the
     script is merely an argument in the command line.
     """
+    if cmdline and _WINE_LOADER.match(os.path.basename(exe)):
+        # The kernel's name of a Wine process is that of its main thread,
+        # which games rename (Unreal: "GameThread"); its program is the
+        # Windows path in the command line.
+        program = cmdline[0].strip()
+        if program.lower().endswith(".exe"):
+            return ntpath.basename(program), program
     if not cmdline or not _PYTHON_NAME.match(os.path.basename(cmdline[0]) or name):
         return name, exe
     args = iter(cmdline[1:])

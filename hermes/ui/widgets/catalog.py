@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QVBoxLayout,
 )
 
+from hermes.engines import base as engine_base
 from hermes.engines.registry import resolve_engine
 from hermes.features.assemblies import missing_assemblies
 from hermes.features.catalog import CachedCatalogWorker, CatalogWorker
@@ -288,8 +289,7 @@ class CatalogDialog(QDialog):
         copy_menu(self.view, self.translations)
         self.view.selectionModel().currentRowChanged.connect(self._show_details)
         self.view.doubleClicked.connect(
-            lambda index: index.column() != FAVORITE_COLUMN and self.game is None
-            and self._request_monitor())
+            lambda index: index.column() != FAVORITE_COLUMN and self._request_monitor())
         self.model.modelReset.connect(lambda: self._show_details(QModelIndex()))
         layout.addWidget(self.view, 1)
 
@@ -322,6 +322,14 @@ class CatalogDialog(QDialog):
         self.monitor_button.clicked.connect(self._request_monitor)
         details.addWidget(self.monitor_button)
         layout.addLayout(details)
+        # What the engine's adapter cannot do yet says so instead.
+        unsupported = self.translations["engine.unsupported"].format(
+            engine=self.engine.display_name)
+        for button, capability in ((self.calls_button, engine_base.CALL_GRAPH),
+                                   (self.call_button, engine_base.MONITOR),
+                                   (self.monitor_button, engine_base.MONITOR)):
+            if not self.engine.supports(capability):
+                button.setToolTip(unsupported)
 
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
@@ -465,9 +473,11 @@ class CatalogDialog(QDialog):
     def _show_details(self, current, _previous=None):
         method = self.model.method_at(current.row()) if current.isValid() else None
         self.copy_button.setEnabled(method is not None)
-        self.calls_button.setEnabled(method is not None)
-        self.monitor_button.setEnabled(method is not None and self.game is None)
-        self.call_button.setEnabled(method is not None and method.static and self.game is None)
+        self.calls_button.setEnabled(method is not None
+                                     and self.engine.supports(engine_base.CALL_GRAPH))
+        self.monitor_button.setEnabled(method is not None and self._can_run(method))
+        self.call_button.setEnabled(method is not None and method.static
+                                    and self._can_run(method))
         if method is None:
             self.details_label.setText("")
             return
@@ -479,14 +489,19 @@ class CatalogDialog(QDialog):
             assembly=method.assembly,
         ))
 
+    def _can_run(self, _method):
+        """Whether a method can be monitored or called: in a running game whose
+        engine adapter can."""
+        return self.game is None and self.engine.supports(engine_base.MONITOR)
+
     def _request_monitor(self):
         method = self.selected_method()
-        if method is not None and self.game is None:
+        if method is not None and self._can_run(method):
             self.monitor_requested.emit(method)
 
     def _request_call(self):
         method = self.selected_method()
-        if method is not None and method.static and self.game is None:
+        if method is not None and method.static and self._can_run(method):
             self.call_requested.emit(method)
 
     def _show_calls(self):
