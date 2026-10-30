@@ -327,7 +327,7 @@ class MainWindow(QMainWindow):
         """Initialize the main window and construct its interface."""
         super().__init__()
         self.translations = load_translations(language)
-        self.setWindowTitle(self.translations["app.window_title"].format(version=__version__))
+        self.setWindowTitle(self.translations["app.window_title"])
         self.setMinimumSize(1100, 700)
         self.resize(1280, 800)
         self.setStyleSheet(STYLE)
