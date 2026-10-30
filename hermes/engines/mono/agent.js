@@ -1361,26 +1361,32 @@ gpointer run_batch (gpointer data) {
     return invoke(method, property.static ? NULL : object, NULL);
   }
 
+  function methodTakingType(klass, name) {
+    // The method ``name`` of ``klass`` itself taking one System.Type, or null.
+    const iterator = Memory.alloc(Process.pointerSize);
+    const paramIterator = Memory.alloc(Process.pointerSize);
+    iterator.writePointer(NULL);
+    let found = null;
+    for (let method = api.invoke.classMethods(klass, iterator); !method.isNull();
+         method = api.invoke.classMethods(klass, iterator)) {
+      if (api.invoke.methodName(method).readUtf8String() !== name)
+        continue;
+      const signature = api.types.methodSignature(method);
+      paramIterator.writePointer(NULL);
+      if (!signature.isNull() && api.types.paramCount(signature) === 1
+          && cString(api.types.typeName(api.types.params(signature, paramIterator)))
+             === 'System.Type')
+        found = method;
+    }
+    return found;
+  }
+
   function components(gameObject) {
     // GameObject.GetComponents(typeof(Component))
     const klass = classOf(gameObject);
     let getComponents = null;
-    const iterator = Memory.alloc(Process.pointerSize);
-    for (const current of classChain(klass)) {
-      iterator.writePointer(NULL);
-      for (let method = api.invoke.classMethods(current, iterator); !method.isNull();
-           method = api.invoke.classMethods(current, iterator)) {
-        if (api.invoke.methodName(method).readUtf8String() !== 'GetComponents')
-          continue;
-        const signature = api.types.methodSignature(method);
-        const paramIterator = Memory.alloc(Process.pointerSize);
-        paramIterator.writePointer(NULL);
-        if (!signature.isNull() && api.types.paramCount(signature) === 1
-            && cString(api.types.typeName(api.types.params(signature, paramIterator)))
-               === 'System.Type')
-          getComponents = method;
-      }
-    }
+    for (const current of classChain(klass))
+      getComponents = methodTakingType(current, 'GetComponents') || getComponents;
     if (getComponents === null)
       throw new Error('GameObject.GetComponents(Type) not found');
     const image = api.classImage(klass);
@@ -1439,6 +1445,39 @@ gpointer run_batch (gpointer data) {
     }
     throw new Error(`${layout(klass).name} has no ${wantStatic ? 'static ' : ''}method ` +
                     `${name} with ${argumentCount} argument(s)`);
+  }
+
+  function findObject(className, named = null) {
+    // A live Unity object (GameObject, component, ScriptableObject ...) of the
+    // class ``className`` or a subclass, e.g. findObject("Game.PlayerController");
+    // with ``named`` the one of that name, e.g. findObject(
+    // "UnityEngine.GameObject", "Player(Clone)"). null if none. Asks
+    // UnityEngine.Object.FindObjectsOfType(Type), so only on Unity's main
+    // thread, and objects of inactive GameObjects are not found.
+    const klass = findClass(className);
+    const unityObject = classChain(klass).find(
+      current => layout(current).name === 'UnityEngine.Object');
+    if (unityObject === undefined)
+      throw new Error(`${className} is no UnityEngine.Object; only Unity objects can be found`);
+    const findObjects = methodTakingType(unityObject, 'FindObjectsOfType');
+    if (findObjects === null)
+      throw new Error('UnityEngine.Object.FindObjectsOfType(Type) not found');
+    const params = Memory.alloc(Process.pointerSize);
+    params.writePointer(api.invoke.typeObject(api.currentDomain(), api.types.classType(klass)));
+    const { result, exception } = invoke(findObjects, NULL, params);
+    if (!exception.isNull())
+      throw new Error('FindObjectsOfType failed (only possible on Unity\'s main thread)');
+    if (result.isNull())
+      return null;
+    // A managed array: header, bounds, length, then the elements
+    const length = result.add(3 * Process.pointerSize).readU32();
+    const data = result.add(4 * Process.pointerSize);
+    for (let i = 0; i < length; i++) {
+      const object = data.add(i * Process.pointerSize).readPointer();
+      if (!object.isNull() && (named === null || unityName(object) === named))
+        return object;
+    }
+    return null;
   }
 
   function writeReference(object, field, value) {
@@ -1672,7 +1711,7 @@ gpointer run_batch (gpointer data) {
     releaseCode() {},
     objectClassName, classOf, layout, onRuntimeThread: onMonoThread, unityName,
     onMainThread, drainMain, properties, getProperty, signatureOf, findClass, findMethod,
-    newString, invoke, classChain, writeReference, resolve: resolveMethod,
+    findObject, newString, invoke, classChain, writeReference, resolve: resolveMethod,
     virtualMethod: (object, method) => api.invoke.virtualMethod(object, method)
   };
 })();

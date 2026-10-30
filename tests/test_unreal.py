@@ -392,6 +392,9 @@ int main(void) {
     Object *level = object(package_class, "/Game/Maps/Start", NULL);
     Object *player = object(bp_hero, "BP_Hero_C_0", level);
     *(int32_t *)((char *)player + 0x70) = 75;
+    /* A second hero: scripts find it by its name */
+    Object *rival = object(bp_hero, "BP_Hero_C_1", level);
+    *(int32_t *)((char *)rival + 0x70) = 30;
     for (int i = 0; i < FILLERS; i++)
         object(object_class, "Filler", game);
 
@@ -698,6 +701,17 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         _wait_for(qt_app, lambda: inspected)
         assert [(field["name"], field["value"]["text"]) for field in inspected[0]["fields"]
                 if field["name"] == "Health"] == [("Health", "75")]
+
+        # A name picks one of several objects of a class; found again from
+        # the cache in the second run.
+        named = worker.add_script(ScriptSpec(
+            'return ctx.find("BP_Hero_C", "BP_Hero_C_1").Health'
+            ' + (ctx.find("BP_Hero_C", "Nobody") === null ? 1000 : 0);'))
+        _wait_for(qt_app, lambda: named in added)
+        for _ in range(2):
+            run = run_on_game_thread(named)
+            assert run["error"] is None, run["error"]
+            assert run["result"] == "1030"
 
         # Unknown functions and classes are reported as the script's error.
         typo = worker.add_script(ScriptSpec('ctx.find("BP_Hero_C").call("Jump");'))

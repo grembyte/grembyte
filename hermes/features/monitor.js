@@ -1205,9 +1205,13 @@ function staticCall(qualifiedName, ...args) {
   return callMethod(method, null, args);
 }
 
-function findObject(className) {
-  // ctx.find("AlabamaCheatManager"): a live object of that class (Unreal), or null
-  const object = engine.findObject(className);
+function findObject(className, objectName = null) {
+  // ctx.find("AlabamaCheatManager"): a live object of that class (Unreal,
+  // Unity), or null; ctx.find("UnityEngine.GameObject", "Player(Clone)"): the
+  // one of that name
+  if (objectName !== null && typeof objectName !== 'string')
+    throw new Error('ctx.find: the object name must be a string');
+  const object = engine.findObject(className, objectName);
   return object === null ? null : objectJs(object);
 }
 

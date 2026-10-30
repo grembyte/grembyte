@@ -74,8 +74,8 @@ hook, need ``objectClassName``, ``classChain``, ``newString``,
 true`` (Unreal) takes the arguments in one block at the parameters' offsets
 (``parmsSize``, the result at ``returnOffset``): ``invoke(method, object,
 block)``, and ``writeParameter(type, address, value)`` stores those of types
-with ``engine`` set. ``findObject(className)`` (Unreal) gives scripts a live
-object of a class (``ctx.find``).
+with ``engine`` set. ``findObject(className, name)`` gives scripts a live
+object of a class, with ``name`` (or null) the one of that name (``ctx.find``).
 
 The platform helpers an adapter may use (``spawnThread``, ``watchUnmaps``,
 ``pauseThreads``) are in platform.js.

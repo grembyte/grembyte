@@ -1658,27 +1658,35 @@ const unreal = (() => {
     return ptr(s.address[i]);
   }
 
-  // className -> the object findObject found last: checked, not searched for
-  // again (a search reads every object, tens of milliseconds on the game thread)
+  // className|name -> the object findObject found last: checked, not
+  // searched for again (a search reads every object, tens of milliseconds on
+  // the game thread)
   const foundObjects = new Map();
 
-  function stillFound(object, klass) {
-    // Whether a cached object is still alive and of the class (or a subclass).
-    if (!isObject(object) || fieldName(object.add(OBJECT_NAME)).startsWith('Default__'))
+  function stillFound(object, klass, named) {
+    // Whether a cached object is still alive, of the class (or a subclass)
+    // and, if given, named ``named``.
+    if (!isObject(object))
+      return false;
+    const name = fieldName(object.add(OBJECT_NAME));
+    if (name.startsWith('Default__') || (named !== null && name !== named))
       return false;
     return classChain(object.add(OBJECT_CLASS).readPointer())
       .some(current => Number(current.toString()) === klass);
   }
 
-  function findObject(className) {
+  function findObject(className, named = null) {
     // A live object (not a class default object) of the class ``className``
-    // or a subclass, e.g. findObject("AlabamaCheatManager"); null if none.
+    // or a subclass, e.g. findObject("AlabamaCheatManager"); with ``named``
+    // the one of that name, e.g. findObject("BP_Hero_C", "BP_Hero_C_1").
+    // null if none.
     reflection();
     const klass = Number(findClass(className).toString());
-    const cached = foundObjects.get(className);
-    if (cached !== undefined && stillFound(cached, klass))
+    const key = `${className}|${named}`;
+    const cached = foundObjects.get(key);
+    if (cached !== undefined && stillFound(cached, klass, named))
       return cached;
-    foundObjects.delete(className);
+    foundObjects.delete(key);
     for (let fresh = 0; fresh < 2; fresh++) {
       const s = objects();
       const kinds = new Map();
@@ -1697,11 +1705,14 @@ const unreal = (() => {
         return result;
       };
       for (let i = 0; i < s.address.length; i++) {
-        if (!derives(s.klass[i]) || objectName(s, i).startsWith('Default__'))
+        if (!derives(s.klass[i]))
+          continue;
+        const name = objectName(s, i);
+        if (name.startsWith('Default__') || (named !== null && name !== named))
           continue;
         const object = ptr(s.address[i]);
         if (isObject(object)) {
-          foundObjects.set(className, object);
+          foundObjects.set(key, object);
           return object;
         }
       }

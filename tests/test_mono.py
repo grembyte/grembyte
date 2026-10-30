@@ -153,7 +153,13 @@ typedef struct { Object header; void *cached_ptr; const char *name; int32_t heal
 struct GameObject { Object header; void *cached_ptr; const char *name; Combat *component; };
 typedef struct { Object header; void *bounds; uintptr_t length; void *data[1]; } ComponentArray;
 typedef struct { Object header; void *message; } Exception;
-static int type_object_component, type_object_other;
+static int type_object_component, type_object_combat, type_object_game_object,
+    type_object_other;
+/* Every Combat and GameObject the game made, for FindObjectsOfType */
+static Combat *live_combats[64];
+static GameObject *live_game_objects[64];
+static int live_count;
+typedef struct { Object header; void *bounds; uintptr_t length; void *data[64]; } ObjectArray;
 typedef struct { Object header; float damage; int32_t type; void *name; Combat *owner;
                  void *rolls; } DamageInfo;
 typedef struct { Object header; void *bounds; uintptr_t length; int32_t data[3]; } IntArray;
@@ -187,6 +193,19 @@ static void *game_object_get_components(GameObject *self, void **params, void **
     if (params[0] == &type_object_component) {
         array->length = 1;
         array->data[0] = self->component;
+    }
+    return array;
+}
+/* static Object[] UnityEngine.Object.FindObjectsOfType(Type type) */
+static void *object_find_objects_of_type(void *self, void **params, void **exception) {
+    (void)self; (void)exception;
+    ObjectArray *array = calloc(1, sizeof *array);
+    array->header.vtable = &vt_components;
+    for (int i = 0; i < live_count; i++) {
+        if (params[0] == &type_object_combat)
+            array->data[array->length++] = live_combats[i];
+        else if (params[0] == &type_object_game_object)
+            array->data[array->length++] = live_game_objects[i];
     }
     return array;
 }
@@ -302,6 +321,10 @@ static Method methods[] = {
     { "R3.ReactiveProperty`1<int>:set_Value", "R3.ReactiveProperty`1<int>:set_Value (int)",
       SET_VALUE, &classes[16], "set_Value", 0, &t_void, 1, { &t_int }, { "value" },
       (void *)reactive_set_value },
+    { "UnityEngine.Object:FindObjectsOfType",
+      "UnityEngine.Object:FindObjectsOfType (System.Type)", 0x0600000fu, &classes[8],
+      "FindObjectsOfType", STATIC, &t_void, 1, { &t_type }, { "type" },
+      (void *)object_find_objects_of_type },
 };
 #define COUNT(array) (sizeof array / sizeof *array)
 static int root_domain, script_domain, thread;
@@ -393,6 +416,10 @@ void *mono_runtime_invoke(Method *m, void *object, void **params, void **excepti
 void *mono_object_get_virtual_method(void *object, Method *m) { (void)object; return m; }
 void *mono_type_get_object(void *domain, Type *type) {
     (void)domain;
+    if (type == &classes[3].type)
+        return &type_object_combat;
+    if (type == &classes[10].type)
+        return &type_object_game_object;
     return type == &classes[9].type ? (void *)&type_object_component : &type_object_other;
 }
 void *mono_class_from_name(Image *img, const char *ns, const char *name) {
@@ -568,6 +595,10 @@ void *fake_combat(const char *name) {
     game_object->header.vtable = &vt_game_object;
     game_object->name = name;
     game_object->component = combat;
+    if (live_count < 64) {
+        live_combats[live_count] = combat;
+        live_game_objects[live_count++] = game_object;
+    }
     return combat;
 }
 void *fake_string(const char *ascii) {
@@ -1694,6 +1725,15 @@ def test_method_hook_replaces_the_result(tmp_path, qt_app):
             '+ ctx.call("Game.Combat:get_Count ()") + ctx.call("Game.Combat.get_Count"); }'))
         time.sleep(0.2)
         assert target.send("roll", 5) == (21, 42)
+
+        # Unity objects by class and by their name: Health 100, plus 10 for
+        # the GameObject, plus 1 for nothing found under another name.
+        worker.set_transform(hook_id, _method_transform(
+            'function (ctx) { return ctx.find("Game.Combat", "Hero").Health'
+            ' + (ctx.find("UnityEngine.GameObject", "Hero").name === "Hero" ? 10 : 0)'
+            ' + (ctx.find("Game.Combat", "Nobody") === null ? 1 : 0); }'))
+        time.sleep(0.2)
+        assert target.send("roll", 5) == (111, 42)
 
         removed = []
         worker.hook_removed.connect(removed.append)

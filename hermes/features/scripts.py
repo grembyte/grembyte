@@ -13,9 +13,12 @@ runs is its ``mode``:
 The body gets one ``ctx`` object:
 
     ctx.find("ClassName")   a live object of that class or a subclass
-                            (Unreal), e.g. ctx.find("AlabamaCheatManager");
-                            searched for once (tens of ms on the game
-                            thread), then only checked while it lives
+                            (Unreal, Unity), e.g. ctx.find("AlabamaCheatManager");
+                            Unreal: searched for once (tens of ms on the
+                            game thread), then only checked while it lives
+    ctx.find("ClassName", "ObjectName")   the one of that name, e.g.
+                            ctx.find("UnityEngine.GameObject", "Player(Clone)")
+                            or ctx.find("BP_Hero_C", "BP_Hero_C_1")
     ctx.call("Namespace.Class.Method", ...args)   call a static game method
                      (also "Namespace.Class:Method", as the catalog names it)
     ctx.log(...)     output shown in the script log
