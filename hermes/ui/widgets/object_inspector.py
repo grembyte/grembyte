@@ -173,6 +173,14 @@ class ObjectInspectorDialog(QDialog):
             lambda row, *_args: self.add_address_button.setEnabled(
                 self.address_entry(row) is not None))
 
+        fields = QWidget()
+        fields_layout = QVBoxLayout(fields)
+        fields_layout.setContentsMargins(0, 0, 0, 0)
+        fields_label = QLabel(self.translations["inspector.fields"])
+        fields_label.setToolTip(self.translations["inspector.fields_tooltip"])
+        fields_layout.addWidget(fields_label)
+        fields_layout.addWidget(self.table, 1)
+
         properties = QWidget()
         properties_layout = QVBoxLayout(properties)
         properties_layout.setContentsMargins(0, 0, 0, 0)
@@ -212,7 +220,7 @@ class ObjectInspectorDialog(QDialog):
         properties_layout.addWidget(self.properties_table, 1)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(self.table)
+        splitter.addWidget(fields)
         splitter.addWidget(properties)
         splitter.setSizes([250, 350])
         layout.addWidget(splitter, 1)

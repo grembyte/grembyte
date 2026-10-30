@@ -55,7 +55,7 @@ def test_windows_get_their_size_splitters_and_column_widths_back(qt_app, keeper)
         return window, panel
 
     window, panel = open_window()
-    window.resize(700, 480)
+    window.resize(760, 480)  # wider than the panel's buttons, within the 800 px offscreen screen
     splitter = panel.log_view.parentWidget()
     splitter.setSizes([100, 300])
     header = panel.table.horizontalHeader()
@@ -67,7 +67,7 @@ def test_windows_get_their_size_splitters_and_column_widths_back(qt_app, keeper)
 
     window, panel = open_window()
     header = panel.table.horizontalHeader()
-    assert (window.width(), window.height()) == (700, 480)
+    assert (window.width(), window.height()) == (760, 480)
     assert panel.log_view.parentWidget().sizes() == sizes
     assert header.sectionSize(1) == 211
     window.close()

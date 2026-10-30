@@ -98,11 +98,18 @@ def test_the_address_search_folds_away_and_stays_so(qt_app, tmp_path, monkeypatc
         # The tab of tracked addresses counts them, like those of hooks and scripts.
         tab = window.bottom_tabs.indexOf(window._address_box)
         assert window.bottom_tabs.tabText(tab) == "Gemerkte Adressen"
+        address_buttons = (window.btn_write_value, window.btn_freeze, window.btn_remove_address)
+        assert not any(button.isEnabled() for button in address_buttons)
         window.addr_table.insertRow(0)
         window.addr_table.insertRow(0)
         assert window.bottom_tabs.tabText(tab) == "Gemerkte Adressen (2)"
+        # The address actions need a selected address.
+        assert not any(button.isEnabled() for button in address_buttons)
+        window.addr_table.selectRow(0)
+        assert all(button.isEnabled() for button in address_buttons)
         window.addr_table.removeRow(0)
         assert window.bottom_tabs.tabText(tab) == "Gemerkte Adressen (1)"
+        assert not any(button.isEnabled() for button in address_buttons)
         window.addr_table.setRowCount(0)
         assert window.bottom_tabs.tabText(tab) == "Gemerkte Adressen"
         close(window)

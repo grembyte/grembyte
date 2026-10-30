@@ -412,6 +412,9 @@ class MainWindow(QMainWindow):
         self.lbl_scan_status = None
         self.progress_scan = None
         self.addr_table = None
+        self.btn_write_value = None
+        self.btn_freeze = None
+        self.btn_remove_address = None
         self.hook_panel = None
         self.script_panel = None
         self.bottom_tabs = None
@@ -1112,18 +1115,18 @@ class MainWindow(QMainWindow):
         btn_add.setToolTip(self.translations["address_table.add_tooltip"])
         btn_add.clicked.connect(self._add_address_by_hand)
         ctrl.addWidget(btn_add)
-        btn_write = QPushButton(self.translations["address_table.write"])
-        btn_write.clicked.connect(self._write_value)
-        btn_freeze = QPushButton(self.translations["address_table.freeze"])
-        btn_freeze.setToolTip(self.translations["address_table.freeze_tooltip"])
-        btn_freeze.clicked.connect(self._toggle_freeze)
-        btn_remove = QPushButton(self.translations["address_table.remove"])
-        btn_remove.setObjectName("btn_danger")
-        btn_remove.clicked.connect(self._remove_address)
-        ctrl.addWidget(btn_write)
-        ctrl.addWidget(btn_freeze)
+        self.btn_write_value = QPushButton(self.translations["address_table.write"])
+        self.btn_write_value.clicked.connect(self._write_value)
+        self.btn_freeze = QPushButton(self.translations["address_table.freeze"])
+        self.btn_freeze.setToolTip(self.translations["address_table.freeze_tooltip"])
+        self.btn_freeze.clicked.connect(self._toggle_freeze)
+        self.btn_remove_address = QPushButton(self.translations["address_table.remove"])
+        self.btn_remove_address.setObjectName("btn_danger")
+        self.btn_remove_address.clicked.connect(self._remove_address)
+        ctrl.addWidget(self.btn_write_value)
+        ctrl.addWidget(self.btn_freeze)
         ctrl.addStretch()
-        ctrl.addWidget(btn_remove)
+        ctrl.addWidget(self.btn_remove_address)
         layout.addLayout(ctrl)
 
         # Table
@@ -1164,9 +1167,19 @@ class MainWindow(QMainWindow):
 
         self.addr_table.doubleClicked.connect(self._write_value)
         self.addr_table.itemChanged.connect(self._on_address_item_changed)
+        # Removing rows changes the selection, too
+        self.addr_table.itemSelectionChanged.connect(self._update_address_buttons)
         layout.addWidget(self.addr_table)
+        self._update_address_buttons()
 
         return box
+
+    def _update_address_buttons(self):
+        """Enable the address actions only while an address is selected."""
+        selected = self.addr_table is not None and self.addr_table.selectionModel().hasSelection()
+        for button in (self.btn_write_value, self.btn_freeze, self.btn_remove_address):
+            if button is not None:
+                button.setEnabled(selected)
 
     def _add_address_row(self, desc, addr, vtype, value, frozen_value=None,
                          saved_id=None, pointer=None):
