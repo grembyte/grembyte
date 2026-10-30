@@ -39,10 +39,10 @@ def test_unreal_ignores_launchers_and_other_engines(name):
 
 def test_unreal_adapter_capabilities_and_framework_filter():
     unreal = engine_by_id("unreal")
-    for capability in (base.CATALOG, base.TRACE, base.MONITOR):
+    for capability in (base.CATALOG, base.TRACE, base.MONITOR, base.METHOD_HOOKS):
         assert unreal.supports(capability)
-    # Not yet: method hooks, the call graph, calling methods
-    for capability in (base.METHOD_HOOKS, base.CALL_GRAPH, base.CALL):
+    # Not yet: the call graph, calling methods
+    for capability in (base.CALL_GRAPH, base.CALL):
         assert not unreal.supports(capability)
     for package in ("/Script/CoreUObject", "/Script/Engine", "/Script/UMG",
                     "/Script/GameplayAbilities", "/Engine/EngineMaterials"):

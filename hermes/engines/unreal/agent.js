@@ -386,6 +386,13 @@ const unreal = (() => {
     return Number(field.add(offset).readPointer().toString());
   }
 
+  function arrayInner(field) {
+    // FArrayProperty's Inner; UE5 put ArrayFlags before it.
+    const at = field.add(ue.layout.extra);
+    const first = at.readPointer();
+    return !first.isNull() && isProperty(first) ? first : at.add(Process.pointerSize).readPointer();
+  }
+
   function propertyType(field) {
     // The C++ type of an FProperty, e.g. TArray<FVector> or AActor*.
     const L = ue.layout;
@@ -421,7 +428,10 @@ const unreal = (() => {
       case 'SoftObjectProperty': return `TSoftObjectPtr<${cppName(extra(0))}>`;
       case 'SoftClassProperty': return `TSoftClassPtr<${cppName(extra(8))}>`;
       case 'InterfaceProperty': return `TScriptInterface<I${nameOfAddress(extra(0))}>`;
-      case 'ArrayProperty': return `TArray<${inner(0)}>`;
+      case 'ArrayProperty': {
+        const element = arrayInner(field);
+        return `TArray<${element.isNull() ? '?' : propertyType(element)}>`;
+      }
       case 'SetProperty': return `TSet<${inner(0)}>`;
       case 'MapProperty': return `TMap<${inner(0)}, ${inner(8)}>`;
       case 'DelegateProperty':
@@ -779,9 +789,10 @@ const unreal = (() => {
       type.kind = underlying.isNull() ? KIND.U1 : valueType(underlying).kind;
       type.enumName = type.name;
     } else if (kind === 'BoolProperty') {
-      // A bitfield (FieldMask) in the byte at ByteOffset
+      // A bitfield (FieldMask) in the byte at ByteOffset; true sets ByteMask
       type.engine = 'bool';
       type.byteOffset = extra(1).readU8();
+      type.byteMask = extra(2).readU8();
       type.mask = extra(3).readU8();
     } else if (OBJECT_KINDS.has(kind)) {
       type.kind = KIND.CLASS;
@@ -799,7 +810,7 @@ const unreal = (() => {
       type.engine = 'name';
     } else if (kind === 'ArrayProperty') {
       type.engine = 'array';
-      const inner = extra(0).readPointer();
+      const inner = arrayInner(field);
       type.element = inner.isNull() ? null : valueType(inner);
       type.elementSize = inner.isNull() ? 0 : inner.add(L.elementSize).readS32();
     } else {
@@ -899,6 +910,46 @@ const unreal = (() => {
       default:
         return { text: type.name };
     }
+  }
+
+  function valueJs(type, address) {
+    // A value of a type with ``engine`` for the scripts of method hooks:
+    // { value }, { object } or { elements, element } (a TArray: the
+    // addresses of its elements and their type).
+    switch (type.engine) {
+      case 'bool':
+        return { value: (address.add(type.byteOffset).readU8() & type.mask) !== 0 };
+      case 'string': {
+        const data = address.readPointer();
+        const length = Math.max(0, address.add(Process.pointerSize).readS32() - 1);
+        return { value: data.isNull() || length === 0 ? '' : data.readUtf16String(length) };
+      }
+      case 'name':
+        return { value: fieldName(address) };
+      case 'weak':
+      case 'interface':
+        return readValue(type, address);
+      case 'array': {
+        if (type.element === null)
+          throw new Error(`the elements of ${type.name} are unknown`);
+        const data = address.readPointer();
+        const count = data.isNull() ? 0 : Math.max(0, address.add(Process.pointerSize).readS32());
+        const elements = [];
+        for (let i = 0; i < count; i++)
+          elements.push(data.add(i * type.elementSize));
+        return { elements, element: type.element };
+      }
+      default:
+        throw new Error(`a ${type.name} cannot be read in scripts`);
+    }
+  }
+
+  function writeValue(type, address, value) {
+    // Store a script's value as a type with ``engine``: only bools can be.
+    if (type.engine !== 'bool')
+      throw new Error(`a ${type.name} cannot be changed in scripts`);
+    const at = address.add(type.byteOffset);
+    at.writeU8((at.readU8() & ~type.mask & 0xff) | (value ? type.byteMask : 0));
   }
 
   function elementText(type, address) {
@@ -1234,16 +1285,17 @@ const unreal = (() => {
 
   function callFrame(info, context) {
     // Where the arguments of a call are, on entering Func: { self, args:
-    // [{ address } or { value } or null], result, caller } (result: where the
-    // return value will be written, or null; caller: the Blueprint function
-    // and bytecode offset the call came from, or null).
+    // [{ address } or { value } or null], result, caller, own } (result: where
+    // the return value will be written, or null; caller: the Blueprint
+    // function and bytecode offset the call came from, or null; own: the
+    // arguments are in the function's own frame, else the caller's variables).
     const self = context[REGISTERS[0]];
     const frame = context[REGISTERS[1]];
     const result = context[REGISTERS[2]];
     const own = frame.add(FRAME_NODE).readPointer().equals(info.function);
     const call = { self: info.instance ? self : null, args: info.params.map(() => null),
                    result: result.isNull() ? null : result,
-                   caller: callerOf(frame, own, context.sp) };
+                   caller: callerOf(frame, own, context.sp), own };
     if (own) {
       // Its own frame knows the object; Context may point into it instead
       // (the part of an interface the object implements).
@@ -1299,6 +1351,10 @@ const unreal = (() => {
     classOf,
     layout,
     readValue,
+    valueJs,
+    writeValue,
+    // UObjects need no write barrier
+    writeReference: (_owner, address, pointer) => address.writePointer(pointer),
     // Unreal has no getters to evaluate, nor a main thread to wait for.
     properties: () => [],
     drainMain: () => {},

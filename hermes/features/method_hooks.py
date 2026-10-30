@@ -27,13 +27,23 @@ The function gets one ``ctx`` object:
     ctx.method, ctx.hookId, ctx.threadId
 
 Values are JavaScript numbers, booleans and strings; objects (and structs)
-are wrappers with ``.name`` (Unity name of a GameObject or component),
+are wrappers with ``.name`` (Unity name of a GameObject or component; Unreal:
+the UObject's name), ``.className`` (Unreal: e.g. ``AAlabama_PlayerController_C``),
 ``.className``, ``.address``, ``.field(name)``, ``.get(property)``,
 ``.call(method, ...args)`` and ``.component(typeName)``. Fields and
 properties can also be read and assigned directly (``roller.IsPartyMember``,
 ``damage.m_damageMult = 0.5``; assigning a property calls its setter) unless
 the wrapper has a member of that name. Calling game code
 is only allowed on Unity's main thread, where most game logic runs.
+
+Unreal: the hook sees a UFunction where the monitor does (Blueprint code,
+ProcessEvent) and gets its arguments from the call frame. Called from
+Blueprint bytecode, arguments that are no simple variable or constant are
+missing from ``ctx.args``, and only ref arguments can be changed (the others
+are the caller's own variables). Weak object pointers read as objects, TArrays
+as arrays, FString and FName as strings; only numbers, bools and object
+fields can be assigned. Calling game code (``ctx.call``, ``.call()``) is not
+available yet.
 
 Hooks live in the method monitor's agent (``hermes.features.monitor``)
 and are found again after a restart by their method (``HookSpec.managed``).

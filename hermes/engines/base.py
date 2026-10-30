@@ -63,8 +63,12 @@ types with ``engine`` set are read by ``readValue(type, address)`` (Unreal).
 ``layout`` may give ``headerSize``, where struct field offsets start
 (Mono: after an object header).
 
-Method hooks (``METHOD_HOOKS``) and calling methods (``CALL``) also need
-``objectClassName``, ``classChain``, ``newString``, ``writeReference``,
+Method hooks (``METHOD_HOOKS``) also need ``writeReference``; with
+``frame: true`` also ``valueJs(type, address)`` and ``writeValue(type, address,
+value)`` for the types with ``engine`` set, and ``callFrame`` answers ``own``
+(whether the arguments lie in the function's own frame or in the caller's
+variables). Calling methods (``CALL``), and ``ctx.call`` or ``.call()`` in a
+hook, need ``objectClassName``, ``classChain``, ``newString``,
 ``onMainThread``, ``findClass``, ``findMethod``, ``signatureOf``, ``invoke``,
 ``virtualMethod`` and ``getProperty``.
 

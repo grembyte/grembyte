@@ -793,8 +793,15 @@ class ManagedObject {
     const field = layout.fields.find(candidate => candidate.name === name && !candidate.static);
     if (field === undefined)
       throw new Error(`${layout.name} has no field ${name}`);
-    const base = this.isStruct ? this.address.sub(OBJECT_HEADER) : this.address;
-    return readJs(field.type, base.add(field.offset));
+    return readJs(field.type, this.fieldBase(layout).add(field.offset));
+  }
+
+  fieldBase(layout) {
+    // Where field offsets count from: a struct's offsets include the object
+    // header (Mono) unless the layout says otherwise (Unreal: none).
+    if (!this.isStruct)
+      return this.address;
+    return this.address.sub(layout.headerSize === undefined ? OBJECT_HEADER : layout.headerSize);
   }
 
   setField(name, value) {
@@ -803,12 +810,13 @@ class ManagedObject {
     const field = layout.fields.find(candidate => candidate.name === name && !candidate.static);
     if (field === undefined)
       throw new Error(`${layout.name} has no field ${name}`);
-    const base = this.isStruct ? this.address.sub(OBJECT_HEADER) : this.address;
-    const address = base.add(field.offset);
+    const address = this.fieldBase(layout).add(field.offset);
     const type = field.type;
     if (type.kind === T.VALUETYPE)
       throw new Error(`the struct field ${name} cannot be set as a whole`);
-    if (REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING)
+    if (type.engine !== undefined)
+      engine.writeValue(type, address, value);
+    else if (REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING)
       engine.writeReference(this.isStruct ? null : this.address, address, pointerOf(type, value));
     else
       writeJs(type, address, value);
@@ -958,8 +966,21 @@ function objectJs(pointer) {
   return wrap(new ManagedObject(pointer, klass));
 }
 
+function engineJs(type, address) {
+  // A value only the engine's adapter can read (Unreal: FString, TArray,
+  // weak pointers, bitfield bools ...), as a JavaScript value.
+  const value = engine.valueJs(type, address);
+  if (value.object !== undefined)
+    return objectJs(value.object);
+  if (value.elements !== undefined)
+    return value.elements.map(element => readJs(value.element, element));
+  return value.value;
+}
+
 function readJs(type, address) {
   // A value of ``type`` stored at ``address``, as a JavaScript value.
+  if (type.engine !== undefined)
+    return engineJs(type, address);
   switch (type.kind) {
     case T.BOOLEAN: return address.readU8() !== 0;
     case T.CHAR: return String.fromCharCode(address.readU16());
@@ -1035,6 +1056,10 @@ function resultJs(type, result) {
 
 function writeJs(type, address, value) {
   // Store a JavaScript value as ``type`` at ``address``.
+  if (type.engine !== undefined) {
+    engine.writeValue(type, address, value);
+    return;
+  }
   switch (type.kind) {
     case T.BOOLEAN: address.writeU8(value ? 1 : 0); return;
     case T.CHAR: address.writeU16(typeof value === 'string' ? value.charCodeAt(0) : value); return;
@@ -1048,6 +1073,7 @@ function writeJs(type, address, value) {
     case T.U8: address.writeU64(uint64(String(Math.trunc(value)))); return;
     case T.R4: address.writeFloat(value); return;
     case T.R8: address.writeDouble(value); return;
+    case T.VALUETYPE: throw new Error(`a struct (${type.name}) cannot be replaced`);
     default: address.writePointer(pointerOf(type, value));
   }
 }
@@ -1152,6 +1178,19 @@ function replaceResult(hook, invocation, retval, value) {
                                     BigInt(Math.trunc(value))).toString()));
 }
 
+function replaceFrameResult(hook, call, value) {
+  // Unreal: the result is already where the caller reads it; overwrite it.
+  const type = hook.info.returns;
+  if (type.kind === T.VOID)
+    throw new Error('the method returns nothing (void)');
+  if (call.resultAddress === null)
+    throw new Error('the caller takes no result');
+  const number = type.kind >= T.I1 && type.kind <= T.R8;
+  if (number && (typeof value !== 'number' || !Number.isFinite(value)))
+    throw new Error(`the result must be a number, not ${displayText(value)}`);
+  writeJs(type, call.resultAddress, value);
+}
+
 function writeArgument(context, location, type, value, raw) {
   // Pass ``value`` to the method instead of what the caller passed.
   if (type.byref) {
@@ -1242,10 +1281,79 @@ function currentCaller(threadId, sp) {
   return callFrame(frames);
 }
 
-function debugCaller(returnAddress, caller) {
-  // The debug window's caller: the return address and what ctx.caller is.
-  const text = safely(() => ({ text: frameText(returnAddress) })).text;
+function debugCaller(returnAddress, caller, scriptCaller) {
+  // The debug window's caller: the Blueprint position the call came from
+  // (Unreal), else the return address; and what ctx.caller is.
+  const text = scriptCaller || safely(() => ({ text: frameText(returnAddress) })).text;
   return `${text} · ctx.caller: ${caller === null ? 'null' : `#${caller.hookId} ${caller.method}`}`;
+}
+
+function constantJs(type, value) {
+  // A constant of the Blueprint bytecode (see engine.callFrame) as a JavaScript value.
+  if (value.object !== undefined)
+    return objectJs(value.object);
+  if (type.engine === 'bool' || type.kind === T.BOOLEAN)
+    return value.text === 'true' || value.text === '1';
+  const number = Number(value.text);
+  return value.text !== '' && Number.isFinite(number) ? number : value.text;
+}
+
+function hookArguments(hook, invocation) {
+  // The arguments of a call as JavaScript values: { args, passed, refs,
+  // self, resultAddress, scriptCaller }. passed: [{ name, original,
+  // write(value) }] of those a script may change; refs: [name, type,
+  // pointer] of ref/out ones; scriptCaller: the Blueprint position (Unreal).
+  const context = invocation.context;
+  const { info, layout } = hook;
+  const found = { args: {}, passed: [], refs: [], self: null, resultAddress: null,
+                  scriptCaller: null };
+  if (info.frame) {
+    // The engine finds them in its call frame (Unreal)
+    const call = engine.callFrame(info, context);
+    found.self = call.self === null ? null : objectJs(call.self);
+    found.resultAddress = call.result;
+    found.scriptCaller = call.caller;
+    info.params.forEach((param, i) => {
+      const location = call.args[i];
+      if (location === null)
+        return;
+      const type = { ...param.type, byref: false };
+      let original;
+      try {
+        original = location.address !== undefined ? readJs(type, location.address)
+          : constantJs(type, location.value);
+      } catch (_error) {
+        return;  // a type scripts cannot read (FText, TMap ...): left out like unknown ones
+      }
+      found.args[param.name] = original;
+      if (location.address !== undefined && param.type.byref)
+        found.refs.push([param.name, param.type, location.address]);
+      found.passed.push({ name: param.name, original, write: value => {
+        if (location.address === undefined)
+          throw new Error(`${param.name} is a constant in the Blueprint code calling the method`);
+        // From bytecode the address is the caller's own variable
+        if (!call.own && !param.type.byref)
+          throw new Error(`${param.name} cannot be changed: Blueprint code calls the method ` +
+                          'with its own variable (only ref arguments can be)');
+        writeJs(type, location.address, value);
+      } });
+    });
+    return found;
+  }
+  found.self = layout.self === null ? null : objectJs(rawValue(context, layout.self));
+  info.params.forEach((param, i) => {
+    const location = layout.args[i];
+    if (location === null)
+      return;
+    const raw = rawValue(context, location);
+    const original = registerJs(param.type, raw);
+    found.args[param.name] = original;
+    if (param.type.byref)
+      found.refs.push([param.name, param.type, raw]);
+    found.passed.push({ name: param.name, original,
+                        write: value => writeArgument(context, location, param.type, value, raw) });
+  });
+  return found;
 }
 
 function hookBefore(hook, invocation) {
@@ -1254,22 +1362,13 @@ function hookBefore(hook, invocation) {
   if (!hook.enabled)
     return;
   const context = invocation.context;
-  const { info, layout } = hook;
-  const args = {};
-  const passed = [];
-  info.params.forEach((param, i) => {
-    if (layout.args[i] === null)
-      return;
-    const raw = rawValue(context, layout.args[i]);
-    args[param.name] = registerJs(param.type, raw);
-    passed.push([param, layout.args[i], raw, args[param.name]]);
-  });
+  const { args, passed, self, scriptCaller } = hookArguments(hook, invocation);
   const logs = hook.debug ? [] : null;
   const ctx = {
     phase: 'before',
     args,
     refs: {},
-    this: layout.self === null ? null : objectJs(rawValue(context, layout.self)),
+    this: self,
     caller: currentCaller(invocation.threadId, context.sp),
     result: undefined,
     params: hook.transform.params,
@@ -1284,11 +1383,11 @@ function hookBefore(hook, invocation) {
   const changed = beginChanges();
   try {
     hook.transform.fn(ctx);
-    for (const [param, location, raw, original] of passed) {
-      const value = ctx.args[param.name];
+    for (const { name, original, write } of passed) {
+      const value = ctx.args[name];
       if (value !== original) {
-        writeArgument(context, location, param.type, value, raw);
-        noteChange(param.name, value);
+        write(value);
+        noteChange(name, value);
       }
     }
     hook.errorReported = false;
@@ -1311,7 +1410,7 @@ function hookBefore(hook, invocation) {
     pushHookDebug(hook, {
       threadId: invocation.threadId,
       address: '',
-      caller: debugCaller(invocation.returnAddress, ctx.caller),
+      caller: debugCaller(invocation.returnAddress, ctx.caller, scriptCaller),
       old: '',
       result: text,
       kept: changed.length === 0,
@@ -1325,27 +1424,17 @@ function hookEnter(hook, invocation) {
   engine.drainMain();
   if (!hook.enabled)
     return;
-  const context = invocation.context;
-  const { info, layout } = hook;
-  const args = {};
-  const refs = [];
-  info.params.forEach((param, i) => {
-    if (layout.args[i] === null)
-      return;
-    const raw = rawValue(context, layout.args[i]);
-    args[param.name] = registerJs(param.type, raw);
-    if (param.type.byref)
-      refs.push([param.name, param.type, raw]);
-  });
+  const { args, refs, self, resultAddress, scriptCaller } = hookArguments(hook, invocation);
   const frame = {
     method: hook.signature,
     hookId: hook.id,
     args,
-    this: layout.self === null ? null : objectJs(rawValue(context, layout.self)),
+    this: self,
     caller: null
   };
-  enterFrame(invocation.threadId, context.sp, frame);
-  invocation.hookCall = { args, refs, frame, returnAddress: invocation.returnAddress };
+  enterFrame(invocation.threadId, invocation.context.sp, frame);
+  invocation.hookCall = { args, refs, frame, resultAddress, scriptCaller,
+                          returnAddress: invocation.returnAddress };
 }
 
 function hookLeave(hook, invocation, retval) {
@@ -1355,8 +1444,13 @@ function hookLeave(hook, invocation, retval) {
   leaveFrame(invocation.threadId, call.frame);
   const type = hook.info.returns;
   const isVoid = type.kind === T.VOID && !type.byref;
-  const result = isVoid ? undefined
-    : isFloat(type) ? floatValue(resultRaw(invocation.context, retval, type), type.kind)
+  let result;
+  if (isVoid)
+    result = undefined;
+  else if (hook.info.frame)  // written where the caller asked for it (Unreal)
+    result = call.resultAddress === null ? undefined : readJs(type, call.resultAddress);
+  else
+    result = isFloat(type) ? floatValue(resultRaw(invocation.context, retval, type), type.kind)
       : registerJs(type, resultRaw(invocation.context, retval, type));
   const refs = {};
   for (const [name, refType, pointer] of call.refs)
@@ -1381,8 +1475,12 @@ function hookLeave(hook, invocation, retval) {
   let error = null;
   try {
     returned = hook.transform.fn(ctx);
-    if (returned !== undefined && returned !== null)
-      replaceResult(hook, invocation, retval, returned);
+    if (returned !== undefined && returned !== null) {
+      if (hook.info.frame)
+        replaceFrameResult(hook, call, returned);
+      else
+        replaceResult(hook, invocation, retval, returned);
+    }
     hook.errorReported = false;
   } catch (thrown) {
     error = thrown;
@@ -1401,7 +1499,7 @@ function hookLeave(hook, invocation, retval) {
     pushHookDebug(hook, {
       threadId: invocation.threadId,
       address: '',
-      caller: debugCaller(call.returnAddress, ctx.caller),
+      caller: debugCaller(call.returnAddress, ctx.caller, call.scriptCaller),
       old: displayText(result),
       result: displayText(kept ? result : returned),
       kept,
@@ -1447,14 +1545,11 @@ async function addMethodHook(spec) {
     throw new Error(`Method hook ${spec.id} exists already`);
   const transform = compileHookTransform(spec.transform);
   const info = await engine.prepare(spec.identity);
-  if (info.frame) {
-    engine.releaseCode(info.start);
-    throw new Error(`method hooks are not available for ${engine.id} games yet`);
-  }
   if (methodHooks.has(spec.id))
     throw new Error(`Method hook ${spec.id} exists already`);
   const hook = {
-    id: spec.id, info, layout: argumentLayout(info), transform, enabled: spec.enabled,
+    id: spec.id, info, layout: info.frame ? null : argumentLayout(info), transform,
+    enabled: spec.enabled,
     debug: false, errorReported: false, signature: spec.identity.method,
     phase: spec.phase || 'after'
   };
@@ -1466,7 +1561,8 @@ async function addMethodHook(spec) {
     address: info.start.toString(),
     params: info.params.map(p => `${p.type.name} ${p.name}`),
     returns: info.returns.name,
-    undecoded: hook.layout.args.filter(location => location === null).length
+    // Unreal: which arguments are unknown shows only per call (missing in ctx.args)
+    undecoded: info.frame ? 0 : hook.layout.args.filter(location => location === null).length
   };
 }
 
@@ -1515,6 +1611,7 @@ function removeMethodHook(id) {
     return false;
   hook.listener.detach();
   methodHooks.delete(id);
+  engine.releaseCode(hook.info.start);
   updateUnmapWatch();
   return true;
 }

@@ -42,7 +42,8 @@ class UnrealAdapter(base.EngineAdapter):
 
     id = "unreal"
     display_name = "Unreal Engine"
-    capabilities = frozenset({base.NAMING, base.CATALOG, base.TRACE, base.MONITOR})
+    capabilities = frozenset({base.NAMING, base.CATALOG, base.TRACE, base.MONITOR,
+                              base.METHOD_HOOKS})
     agent_source = UNREAL_AGENT_SOURCE
     # All its code is ordinary machine code in modules; the native trace ran
     # in EVERSPACE (UE4).
