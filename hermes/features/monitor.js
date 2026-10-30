@@ -1317,6 +1317,35 @@ function findObject(className, objectName = null) {
   return object === null ? null : objectJs(object);
 }
 
+function forEachObject(className, callback) {
+  // ctx.forEach("WBP_AbilityPointsTracker_C", tracker => ...): ``callback``
+  // for every live object ctx.find could give, until it returns false; how
+  // many it was called for.
+  if (typeof callback !== 'function')
+    throw new Error('ctx.forEach: the second argument must be a function');
+  let count = 0;
+  for (const object of engine.findObjects(className)) {
+    let wrapped;
+    try {
+      wrapped = objectJs(object);
+    } catch (_error) {
+      continue;  // gone meanwhile
+    }
+    count++;
+    if (callback(wrapped) === false)
+      break;
+  }
+  return count;
+}
+
+function outerName(object) {
+  // ctx.outerName(tracker): "AttributeStatsWidget.PointsAvailableTracker",
+  // a name ctx.find takes (Unreal)
+  if (!(object instanceof ManagedObject) || object.isStruct)
+    throw new Error('ctx.outerName: the argument must be an object');
+  return engine.outerName(object.address);
+}
+
 function displayText(value) {
   if (value === undefined)
     return '';
@@ -1559,6 +1588,8 @@ function hookBefore(hook, invocation) {
     threadId: invocation.threadId,
     call: staticCall,
     find: findObject,
+    forEach: forEachObject,
+    outerName,
     log: (...items) => { logs.push(formatLog(items)); }
   };
   let error = null;
@@ -1655,6 +1686,8 @@ function hookLeave(hook, invocation, retval) {
     threadId: invocation.threadId,
     call: staticCall,
     find: findObject,
+    forEach: forEachObject,
+    outerName,
     log: (...items) => { logs.push(formatLog(items)); }
   };
   let returned;
@@ -1910,6 +1943,8 @@ function runScript(script) {
   const logs = [];
   const ctx = {
     find: findObject,
+    forEach: forEachObject,
+    outerName,
     call: staticCall,
     log: (...items) => { logs.push(formatLog(items)); },
     state: script.state,

@@ -1072,7 +1072,7 @@
   "scripts.label_placeholder": "z. B. Jede Minute heilen",
   "scripts.when": "Wann",
   "scripts.code": "Code",
-  "scripts.code_help": "JavaScript, das auf dem Game-Thread läuft. ctx.find(\"Klassenname\") liefert ein lebendes Objekt dieser Klasse (Unreal, Unity), ctx.find(\"Klassenname\", \"Objektname\") das mit diesem Namen, .call(\"Funktion\", ...args) ruft darauf Spielcode auf; ctx.call(\"Klasse.Methode\", ...) oder ctx.call(\"Klasse:Methode\", ...) ruft eine statische Methode auf. ctx.log(...) schreibt ins Log darunter, ctx.state behält Werte zwischen den Läufen, ctx.runs zählt sie. Ein zurückgegebener Wert wird als Ergebnis angezeigt.",
+  "scripts.code_help": "JavaScript, das auf dem Game-Thread läuft. ctx.find(\"Klassenname\") liefert ein lebendes Objekt dieser Klasse (Unreal, Unity), ctx.find(\"Klassenname\", \"Objektname\") das mit diesem Namen (Unreal auch \"Besitzer.Objektname\", siehe ctx.outerName(obj)), ctx.forEach(\"Klassenname\", obj => ...) ruft die Funktion für jedes solche Objekt auf, .call(\"Funktion\", ...args) ruft darauf Spielcode auf; ctx.call(\"Klasse.Methode\", ...) oder ctx.call(\"Klasse:Methode\", ...) ruft eine statische Methode auf. ctx.log(...) schreibt ins Log darunter, ctx.state behält Werte zwischen den Läufen, ctx.runs zählt sie. Ein zurückgegebener Wert wird als Ergebnis angezeigt.",
   "scripts.unnamed": "(ohne Beschreibung)",
   "scripts.error_empty": "Das Skript enthält keinen Code.",
   "scripts.error_interval": "Ein wiederholtes Skript wartet mindestens {seconds} s.",

@@ -75,7 +75,9 @@ true`` (Unreal) takes the arguments in one block at the parameters' offsets
 (``parmsSize``, the result at ``returnOffset``): ``invoke(method, object,
 block)``, and ``writeParameter(type, address, value)`` stores those of types
 with ``engine`` set. ``findObject(className, name)`` gives scripts a live
-object of a class, with ``name`` (or null) the one of that name (``ctx.find``).
+object of a class, with ``name`` (or null) the one of that name (``ctx.find``),
+``findObjects(className, name)`` all of them (``ctx.forEach``); Unreal's
+``outerName(object)`` names an object in its outer, a name it also finds.
 The object inspector lists what it can call with ``methods(klass)``: ``[{name,
 method, static, owner}]``, the class's own methods first; a ``properties``
 entry's ``setter`` (Mono) is the property's set_ method or null.

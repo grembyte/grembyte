@@ -1511,6 +1511,13 @@ gpointer run_batch (gpointer data) {
     // "UnityEngine.GameObject", "Player(Clone)"). null if none. Asks
     // UnityEngine.Object.FindObjectsOfType(Type), so only on Unity's main
     // thread, and objects of inactive GameObjects are not found.
+    const [object] = findObjects(className, named, 1);
+    return object === undefined ? null : object;
+  }
+
+  // (Frida's JavaScript on Windows has no Infinity: it is NaN there.)
+  function findObjects(className, named = null, limit = Number.MAX_SAFE_INTEGER) {
+    // Up to ``limit`` of the objects findObject could give
     const klass = findClass(className);
     const unityObject = classChain(klass).find(
       current => layout(current).name === 'UnityEngine.Object');
@@ -1524,17 +1531,18 @@ gpointer run_batch (gpointer data) {
     const { result, exception } = invoke(findObjects, NULL, params);
     if (!exception.isNull())
       throw new Error('FindObjectsOfType failed (only possible on Unity\'s main thread)');
+    const found = [];
     if (result.isNull())
-      return null;
+      return found;
     // A managed array: header, bounds, length, then the elements
     const length = result.add(3 * Process.pointerSize).readU32();
     const data = result.add(4 * Process.pointerSize);
-    for (let i = 0; i < length; i++) {
+    for (let i = 0; i < length && found.length < limit; i++) {
       const object = data.add(i * Process.pointerSize).readPointer();
       if (!object.isNull() && (named === null || unityName(object) === named))
-        return object;
+        found.push(object);
     }
-    return null;
+    return found;
   }
 
   function writeReference(object, field, value) {
@@ -1768,7 +1776,7 @@ gpointer run_batch (gpointer data) {
     releaseCode() {},
     objectClassName, classOf, layout, onRuntimeThread: onMonoThread, unityName,
     onMainThread, drainMain, properties, getProperty, methods, signatureOf, findClass,
-    findMethod, findObject, newString, invoke, classChain, writeReference, resolve: resolveMethod,
+    findMethod, findObject, findObjects, newString, invoke, classChain, writeReference, resolve: resolveMethod,
     virtualMethod: (object, method) => api.invoke.virtualMethod(object, method)
   };
 })();

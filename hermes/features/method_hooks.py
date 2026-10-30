@@ -28,6 +28,9 @@ The function gets one ``ctx`` object:
                      Unity), e.g. ctx.find("AlabamaCheatManager").call("GiveHealth", 50)
     ctx.find("ClassName", "ObjectName")   the one of that name, e.g.
                      ctx.find("UnityEngine.GameObject", "Player(Clone)")
+    ctx.forEach("ClassName", obj => ...)   every object ctx.find could give
+    ctx.outerName(obj)   Unreal: "AttributeStatsWidget.PointsAvailableTracker",
+                     a name ctx.find takes (see hermes.features.scripts)
     ctx.log(...)     output shown in the hook debug window
     ctx.method, ctx.hookId, ctx.threadId
 

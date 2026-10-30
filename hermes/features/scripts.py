@@ -18,7 +18,17 @@ The body gets one ``ctx`` object:
                             game thread), then only checked while it lives
     ctx.find("ClassName", "ObjectName")   the one of that name, e.g.
                             ctx.find("UnityEngine.GameObject", "Player(Clone)")
-                            or ctx.find("BP_Hero_C", "BP_Hero_C_1")
+                            or ctx.find("BP_Hero_C", "BP_Hero_C_1"); Unreal
+                            also by the name in its outer (ctx.outerName),
+                            e.g. "AttributeStatsWidget.PointsAvailableTracker".
+                            Class default objects and templates (a widget of
+                            a Widget Blueprint's tree) are never found.
+    ctx.forEach("ClassName", obj => ...)   calls the function for every object
+                            ctx.find could give (until it returns false) and
+                            gives how many; Unreal: reads every object anew
+    ctx.outerName(obj)      Unreal: the object's name after its outer's,
+                            "AttributeStatsWidget.PointsAvailableTracker" (a
+                            widget's outer is the widget showing it)
     ctx.call("Namespace.Class.Method", ...args)   call a static game method
                      (also "Namespace.Class:Method", as the catalog names it)
     ctx.log(...)     output shown in the script log

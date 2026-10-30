@@ -99,7 +99,8 @@ const unreal = (() => {
   const CHUNK = 0x10000;
   const ITEM_SIZES = [0x18, 0x10, 0x14, 0x20, 0x28];
   // UObjectBase: vtable, ObjectFlags, InternalIndex, ClassPrivate, NamePrivate, OuterPrivate
-  const OBJECT_INDEX = 0x0c, OBJECT_CLASS = 0x10, OBJECT_NAME = 0x18, OBJECT_OUTER = 0x20;
+  const OBJECT_FLAGS = 0x08, OBJECT_INDEX = 0x0c, OBJECT_CLASS = 0x10, OBJECT_NAME = 0x18,
+    OBJECT_OUTER = 0x20;
 
   function findObjectArray(ranges) {
     for (const { base, view } of ranges) {
@@ -863,6 +864,8 @@ const unreal = (() => {
       type.engine = 'string';
     } else if (kind === 'NameProperty') {
       type.engine = 'name';
+    } else if (kind === 'TextProperty') {
+      type.engine = 'text';
     } else if (kind === 'ArrayProperty') {
       type.engine = 'array';
       type.property = field;  // the inspector opens it (see elements)
@@ -883,7 +886,7 @@ const unreal = (() => {
         type.valueSize = value.isNull() ? 0 : value.add(L.elementSize).readS32();
       }
     } else {
-      type.engine = 'other';  // FText, delegates: the type only
+      type.engine = 'other';  // delegates: the type only
     }
     return type;
   }
@@ -954,19 +957,89 @@ const unreal = (() => {
     }
   }
 
+  function stringText(data, length) {
+    // A logged string value of ``length`` characters at ``data``
+    if (data.isNull() || length === 0)
+      return { text: '""', string: true };
+    const text = data.readUtf16String(Math.min(length, MAX_TEXT));
+    return { text: JSON.stringify(text) + (length > MAX_TEXT ? '…' : ''), string: true };
+  }
+
+  // FText: TextData, a shared pointer to the text's history. Behind the
+  // history's vtable and reference count (UE5):
+  // - a generated text (a number, a format): its display string, an FString;
+  // - a localized text: its id (namespace, key), the source string, then the
+  //   display string as a shared pointer, made by MakeShared: the FString
+  //   right behind its reference controller.
+  const TEXT_HISTORY_START = 0x10;
+  const TEXT_HISTORY_END = 0x50;
+  const SHARED_CONTROLLER_SIZE = 0x10;
+  const MAX_TEXT_LENGTH = 0x100000;
+
+  function fstringAt(string) {
+    // [characters, length] of the FString at ``string``, or null if the
+    // memory is none.
+    const data = string.readPointer();
+    const count = string.add(Process.pointerSize).readS32();
+    const max = string.add(Process.pointerSize + 4).readS32();
+    if (count === 0 && max >= 0)
+      return [NULL, 0];
+    if (count < 0 || count > max || max > MAX_TEXT_LENGTH || data.isNull()
+        || data.add(2 * (count - 1)).readU16() !== 0)
+      return null;
+    // No 0 before the terminating one
+    const length = count - 1;
+    const probe = Math.min(length, MAX_TEXT);
+    return data.readUtf16String(probe).length === probe ? [data, length] : null;
+  }
+
+  function sharedDisplayString(history) {
+    for (let at = TEXT_HISTORY_START; at < TEXT_HISTORY_END; at += Process.pointerSize) {
+      const object = history.add(at).readPointer();
+      const controller = history.add(at + Process.pointerSize).readPointer();
+      if (!object.isNull() && object.equals(controller.add(SHARED_CONTROLLER_SIZE))) {
+        const string = fstringAt(object);
+        if (string !== null)
+          return string;
+      }
+    }
+    return null;
+  }
+
+  function textString(address) {
+    // [characters, length] of an FText's display string, or null where the
+    // memory does not look like one (an engine version of another layout).
+    try {
+      const history = address.readPointer();
+      if (history.isNull())
+        return [NULL, 0];
+      const shared = sharedDisplayString(history);
+      if (shared !== null)
+        return shared;
+      // A generated text's, else a localized text's source string
+      for (let at = TEXT_HISTORY_START; at < TEXT_HISTORY_END; at += Process.pointerSize) {
+        const string = fstringAt(history.add(at));
+        if (string !== null && !(at > TEXT_HISTORY_START && string[1] === 0))
+          return string;
+      }
+      return null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
   function readValue(type, address) {
     // A value of a type with ``engine``: { text, string? } or { object }.
     switch (type.engine) {
       case 'bool':
         return { text: String((address.add(type.byteOffset).readU8() & type.mask) !== 0) };
-      case 'string': {
+      case 'string':
         // FString: TArray<TCHAR> with the terminating 0
-        const data = address.readPointer();
-        const length = Math.max(0, address.add(Process.pointerSize).readS32() - 1);
-        if (data.isNull() || length === 0)
-          return { text: '""', string: true };
-        const text = data.readUtf16String(Math.min(length, MAX_TEXT));
-        return { text: JSON.stringify(text) + (length > MAX_TEXT ? '…' : ''), string: true };
+        return stringText(address.readPointer(),
+          Math.max(0, address.add(Process.pointerSize).readS32() - 1));
+      case 'text': {
+        const string = textString(address);
+        return string === null ? { text: type.name } : stringText(...string);
       }
       case 'name':
         return { text: fieldName(address) };
@@ -1007,6 +1080,13 @@ const unreal = (() => {
       case 'string': {
         const data = address.readPointer();
         const length = Math.max(0, address.add(Process.pointerSize).readS32() - 1);
+        return { value: data.isNull() || length === 0 ? '' : data.readUtf16String(length) };
+      }
+      case 'text': {
+        const string = textString(address);
+        if (string === null)
+          throw new Error(`the text of this ${type.name} cannot be read`);
+        const [data, length] = string;
         return { value: data.isNull() || length === 0 ? '' : data.readUtf16String(length) };
       }
       case 'name':
@@ -1870,23 +1950,94 @@ const unreal = (() => {
   // the game thread)
   const foundObjects = new Map();
 
+  function outerName(object) {
+    // "AttributeStatsWidget.PointsAvailableTracker": the object's name after
+    // its outer's; a widget's outer is the WidgetTree of the widget showing it.
+    if (!isObject(object))
+      throw new Error(`no object at ${object}`);
+    const name = fieldName(object.add(OBJECT_NAME));
+    let outer = object.add(OBJECT_OUTER).readPointer();
+    if (!outer.isNull() && isObject(outer)
+        && fieldName(outer.add(OBJECT_CLASS).readPointer().add(OBJECT_NAME)) === 'WidgetTree')
+      outer = outer.add(OBJECT_OUTER).readPointer();
+    return outer.isNull() || !isObject(outer) ? name
+      : `${fieldName(outer.add(OBJECT_NAME))}.${name}`;
+  }
+
+  function isNamed(object, named) {
+    // Whether ``object`` is named ``named``: a name, or one as outerName gives
+    if (named === null)
+      return true;
+    return named.includes('.') ? outerName(object) === named
+      : fieldName(object.add(OBJECT_NAME)) === named;
+  }
+
+  // RF_ClassDefaultObject, RF_ArchetypeObject
+  const RF_TEMPLATE = 0x10 | 0x20;
+
+  function isTemplate(s, i, classKinds) {
+    // Whether object ``i`` is no object the game uses: a class default object,
+    // an archetype, or a part of one or of a class (a widget in a Widget
+    // Blueprint's tree, the template of the widgets shown).
+    for (let k = i; k !== undefined; k = s.index.get(s.outer[k])) {
+      if (objectName(s, k).startsWith('Default__')
+          || (ptr(s.address[k]).add(OBJECT_FLAGS).readU32() & RF_TEMPLATE) !== 0
+          || (k !== i && isClass(s, s.klass[k], classKinds)))
+        return true;
+    }
+    return false;
+  }
+
   function stillFound(object, klass, named) {
     // Whether a cached object is still alive, of the class (or a subclass)
     // and, if given, named ``named``.
-    if (!isObject(object))
-      return false;
-    const name = fieldName(object.add(OBJECT_NAME));
-    if (name.startsWith('Default__') || (named !== null && name !== named))
+    if (!isObject(object) || !isNamed(object, named))
       return false;
     return classChain(object.add(OBJECT_CLASS).readPointer())
       .some(current => Number(current.toString()) === klass);
   }
 
+  function searchObjects(klass, named, limit) {
+    // Up to ``limit`` live objects of class ``klass`` (or a subclass) named
+    // ``named`` (see isNamed), in the snapshot of the object table.
+    const s = objects();
+    const kinds = new Map();
+    const classKinds = new Map();
+    const derives = k => {
+      let result = kinds.get(k);
+      if (result === undefined) {
+        result = false;
+        for (let current = k; current !== 0; current = superOf(current)) {
+          if (current === klass) {
+            result = true;
+            break;
+          }
+        }
+        kinds.set(k, result);
+      }
+      return result;
+    };
+    const ownName = named === null ? null : named.substring(named.lastIndexOf('.') + 1);
+    const found = [];
+    for (let i = 0; i < s.address.length && found.length < limit; i++) {
+      if (!derives(s.klass[i]) || (ownName !== null && objectName(s, i) !== ownName))
+        continue;
+      const object = ptr(s.address[i]);
+      try {
+        if (isObject(object) && !isTemplate(s, i, classKinds) && isNamed(object, named))
+          found.push(object);
+      } catch (_error) {
+        // freed meanwhile
+      }
+    }
+    return found;
+  }
+
   function findObject(className, named = null) {
-    // A live object (not a class default object) of the class ``className``
-    // or a subclass, e.g. findObject("AlabamaCheatManager"); with ``named``
-    // the one of that name, e.g. findObject("BP_Hero_C", "BP_Hero_C_1").
-    // null if none.
+    // A live object (no class default object or template) of the class
+    // ``className`` or a subclass, e.g. findObject("AlabamaCheatManager");
+    // with ``named`` the one of that name, e.g. findObject("BP_Hero_C",
+    // "BP_Hero_C_1"), or of that name in its outer (see outerName). null if none.
     reflection();
     const klass = Number(findClass(className).toString());
     const key = `${className}|${named}`;
@@ -1895,37 +2046,23 @@ const unreal = (() => {
       return cached;
     foundObjects.delete(key);
     for (let fresh = 0; fresh < 2; fresh++) {
-      const s = objects();
-      const kinds = new Map();
-      const derives = k => {
-        let result = kinds.get(k);
-        if (result === undefined) {
-          result = false;
-          for (let current = k; current !== 0; current = superOf(current)) {
-            if (current === klass) {
-              result = true;
-              break;
-            }
-          }
-          kinds.set(k, result);
-        }
-        return result;
-      };
-      for (let i = 0; i < s.address.length; i++) {
-        if (!derives(s.klass[i]))
-          continue;
-        const name = objectName(s, i);
-        if (name.startsWith('Default__') || (named !== null && name !== named))
-          continue;
-        const object = ptr(s.address[i]);
-        if (isObject(object)) {
-          foundObjects.set(key, object);
-          return object;
-        }
+      const [object] = searchObjects(klass, named, 1);
+      if (object !== undefined) {
+        foundObjects.set(key, object);
+        return object;
       }
       snapshot = null;  // the object may be newer than the snapshot
     }
     return null;
+  }
+
+  function findObjects(className, named = null) {
+    // All live objects findObject could give, read from the object table anew
+    reflection();
+    const klass = Number(findClass(className).toString());
+    snapshot = null;
+    // (Frida's JavaScript on Windows has no Infinity: it is NaN there.)
+    return searchObjects(klass, named, Number.MAX_SAFE_INTEGER);
   }
 
   return {
@@ -1964,6 +2101,8 @@ const unreal = (() => {
     findClass,
     findMethod,
     findObject,
+    findObjects,
+    outerName,
     classChain,
     objectClassName: object => layout(classOf(object)).name,
     virtualMethod,

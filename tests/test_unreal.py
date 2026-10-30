@@ -86,6 +86,23 @@ _Static_assert(offsetof(SparseSet, num_free) == 52, "TSparseArray::NumFreeIndice
 typedef struct { int32_t key; float value; int32_t hash_next, hash_index; } StatSlot;
 typedef struct { int32_t value; int32_t hash_next, hash_index; } TagSlot;
 typedef struct { void *data; int32_t num, max; } Array;
+/* FText: TextData (the object and its reference controller) and flags; the
+   text history keeps its display string behind its vtable and reference count */
+typedef struct { void *vtable; int32_t refs, weak_refs; String display; } TextHistory;
+typedef struct { void *data; void *controller; uint32_t flags, pad; } Text;
+/* A localized text's history: its id, source string and display string, a
+   shared pointer to an FString that MakeShared put behind its controller */
+typedef struct { void *vtable; int32_t refs, weak_refs; String string; } SharedString;
+typedef struct {
+    void *vtable;
+    int32_t refs, weak_refs;
+    const uint16_t *text_namespace, *key;
+    uint64_t hash;
+    String source;
+    String *display;
+    SharedString *display_controller;
+} LocalizedHistory;
+_Static_assert(offsetof(LocalizedHistory, display) == 0x38, "FTextHistory_Base::LocalizedString");
 /* UEnum::Names: TPair<FName, int64> */
 typedef struct { uint32_t name, number; int64_t value; } EnumName;
 
@@ -402,6 +419,9 @@ int main(void) {
     Field *focus = property(hero, field_class("EnumProperty"), "Focus", 1, 0x74, 0, NULL);
     focus->extra[0] = inner(field_class("ByteProperty"), "UnderlyingType", 1, NULL);
     focus->extra[1] = attribute;
+    FieldClass *text_property = field_class("TextProperty");
+    property(hero, text_property, "Title", 0x18, 0x78, 0, NULL);
+    property(hero, text_property, "Motto", 0x18, 0x90, 0, NULL);
     /* Containers, behind the UObject: TArray<int32>, TArray<FVector>,
        TMap<int32, float> with UE5's MapLayout (ValueOffset, HashNextIdOffset,
        HashIndexOffset, Size, Alignment, sparse array Size), one without a
@@ -464,6 +484,18 @@ int main(void) {
     Object *player = object(bp_hero, "BP_Hero_C_0", level);
     *(int32_t *)((char *)player + 0x70) = 75;
     *((uint8_t *)player + 0x74) = 2;
+    static uint16_t title[] = {'A', 't', 't', 'r', 'i', 'b', 'u', 't', 'e', 0};
+    static TextHistory title_history = {(void *)0x9abc, 1, 1, {title, 10, 10}};
+    *(Text *)((char *)player + 0x78) = (Text){&title_history, NULL, 0, 0};
+    /* Motto: localized, shown as "Mut" */
+    static uint16_t courage[] = {'C', 'o', 'u', 'r', 'a', 'g', 'e', 0};
+    static uint16_t mut[] = {'M', 'u', 't', 0};
+    static uint16_t motto_key[] = {'M', 'O', 'T', 'T', 'O', 0};
+    static SharedString motto_display = {(void *)0x9abd, 1, 1, {mut, 4, 4}};
+    static LocalizedHistory motto_history = {
+        (void *)0x9abe, 1, 1, motto_key + 5, motto_key, 0x1234, {courage, 8, 8},
+        &motto_display.string, &motto_display};
+    *(Text *)((char *)player + 0x90) = (Text){&motto_history, NULL, 0, 0};
     static int32_t score_data[3] = {7, 8, 9};
     static double path_data[6] = {1, 2, 3, 4, 5, 6};
     *(Array *)((char *)player + 0x100) = (Array){score_data, 3, 3};
@@ -495,6 +527,16 @@ int main(void) {
     tag_set->num_bits = 2;
     tag_set->max_bits = 128;
     tag_set->first_free = -1;
+    /* A template of that name, in the Blueprint's class: never found */
+    Object *rival_template = object(bp_hero, "BP_Hero_C_1", bp_hero);
+    *(int32_t *)((char *)rival_template + 0x70) = 99;
+    /* A hero in the player's WidgetTree, as a widget is in the one of the
+       widget showing it: named "BP_Hero_C_0.Sidekick" in its outer */
+    Object *widget_tree_class = object(class_class, "WidgetTree", engine);
+    widget_tree_class->super = object_class;
+    Object *tree = object(widget_tree_class, "WidgetTree_7", player);
+    Object *sidekick = object(bp_hero, "Sidekick", tree);
+    *(int32_t *)((char *)sidekick + 0x70) = 12;
     /* A second hero: scripts find it by its name */
     Object *rival = object(bp_hero, "BP_Hero_C_1", level);
     *(int32_t *)((char *)rival + 0x70) = 30;
@@ -781,7 +823,7 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         # and a bool.
         calls = worker.add_script(ScriptSpec("""
             const hero = ctx.find("BP_Hero_C");
-            ctx.log(hero.name, hero.Health);
+            ctx.log(hero.name, hero.Health, hero.Title);
             hero.call("Rename", "Bob", true);
             return ctx.call("Hero.AddGold", 7);
         """))
@@ -789,7 +831,7 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         assert not failed
         run = run_on_game_thread(calls)
         assert run["error"] is None, run["error"]
-        assert run["logs"] == ["BP_Hero_C_0 75"]
+        assert run["logs"] == ["BP_Hero_C_0 75 Attribute"]
         assert run["result"] == "107"
         assert target.send("renamed", 0) == (4, 1)  # "Bob" and its terminating 0
 
@@ -809,6 +851,9 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         # TMap's named by its key; numbers have an address for the address list.
         values = {field["name"]: field["value"] for field in inspected[0]["fields"]}
         assert values["Focus"]["text"] == "2 (Dexterity)"  # an enum by the name of its value
+        # An FText by its display string: generated, localized (not its source string)
+        assert values["Title"]["text"] == '"Attribute"'
+        assert values["Motto"]["text"] == '"Mut"'
         assert values["Scores"]["text"] == "TArray<int32>[3] {7, 8, 9}"
         assert values["Stats"]["text"] == "TMap<int32, float>[2]"
         assert values["Tags"]["text"] == "TSet<int32>[2]"
@@ -861,7 +906,25 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         for _ in range(2):
             run = run_on_game_thread(named)
             assert run["error"] is None, run["error"]
-            assert run["result"] == "1030"
+            assert run["result"] == "1030"  # not the template's 99
+
+        # Every hero, named in its outer; such a name finds it, too.
+        every = worker.add_script(ScriptSpec("""
+            const names = [];
+            const count = ctx.forEach("BP_Hero_C", hero => {
+                names.push(`${ctx.outerName(hero)}=${hero.Health}`);
+            });
+            ctx.log(count, names.join(" "));
+            let first = 0;
+            ctx.forEach("BP_Hero_C", () => { first++; return false; });
+            return ctx.find("BP_Hero_C", "BP_Hero_C_0.Sidekick").Health + 100 * first;
+        """))
+        _wait_for(qt_app, lambda: every in added)
+        run = run_on_game_thread(every)
+        assert run["error"] is None, run["error"]
+        assert run["logs"] == ["3 /Game/Maps/Start.BP_Hero_C_0=75 BP_Hero_C_0.Sidekick=12"
+                               " /Game/Maps/Start.BP_Hero_C_1=30"]
+        assert run["result"] == "112"
 
         # Unknown functions and classes are reported as the script's error.
         typo = worker.add_script(ScriptSpec('ctx.find("BP_Hero_C").call("Jump");'))

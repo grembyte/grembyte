@@ -1072,7 +1072,7 @@
   "scripts.label_placeholder": "e.g. Heal every minute",
   "scripts.when": "When",
   "scripts.code": "Code",
-  "scripts.code_help": "JavaScript run on the game thread. ctx.find(\"ClassName\") gives a live object of that class (Unreal, Unity), ctx.find(\"ClassName\", \"ObjectName\") the one of that name, .call(\"Function\", ...args) calls game code on it; ctx.call(\"Class.Method\", ...) or ctx.call(\"Class:Method\", ...) calls a static method. ctx.log(...) writes to the log below, ctx.state keeps values between runs, ctx.runs counts them. A value the code returns is shown as its result.",
+  "scripts.code_help": "JavaScript run on the game thread. ctx.find(\"ClassName\") gives a live object of that class (Unreal, Unity), ctx.find(\"ClassName\", \"ObjectName\") the one of that name (Unreal also \"Outer.ObjectName\", see ctx.outerName(obj)), ctx.forEach(\"ClassName\", obj => ...) calls the function for each such object, .call(\"Function\", ...args) calls game code on it; ctx.call(\"Class.Method\", ...) or ctx.call(\"Class:Method\", ...) calls a static method. ctx.log(...) writes to the log below, ctx.state keeps values between runs, ctx.runs counts them. A value the code returns is shown as its result.",
   "scripts.unnamed": "(no description)",
   "scripts.error_empty": "The script has no code.",
   "scripts.error_interval": "A repeating script waits at least {seconds} s.",
