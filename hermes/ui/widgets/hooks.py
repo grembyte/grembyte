@@ -470,7 +470,7 @@ class HookPanel(QGroupBox):
     monitor_requested = pyqtSignal(object)
     # From the debug window: add an address to the address list
     # (address, value type, description)
-    address_requested = pyqtSignal(int, str, str)
+    address_requested = pyqtSignal(object, str, str)  # object: int is 32-bit in Qt
 
     _COLUMNS = (
         "hooks.column_label",
