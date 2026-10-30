@@ -149,3 +149,17 @@ def test_catalog_search_accepts_wildcards():
     assert matches(["*"], method) and matches(["player"], method)
     assert not matches(["damage*player"], method)
     assert not matches(["player.damage"], method)  # "." is literal, not "any character"
+
+
+def test_catalog_search_finds_parameter_and_return_types():
+    from hermes.ui.widgets.catalog import matches  # pylint: disable=import-outside-toplevel
+
+    purchase, preset = catalog_methods("/Script/Alabama", [["AlabamaCheatManager", [
+        ["PurchaseAttribute", "(EPrimaryAttribute,int32)", "void", False, 1,
+         "AlabamaCheatManager:PurchaseAttribute (EPrimaryAttribute,int32)", 0, 0],
+        ["GetPreset", "(FName)", "EPrimaryAttribute", False, 2,
+         "AlabamaCheatManager:GetPreset (FName)", 0, 0]]]], engine="unreal")
+    assert matches(["type:eprimaryattribute"], purchase)
+    assert matches(["type:*attribute", "cheat"], preset)  # the return type, with the class
+    assert not matches(["eprimaryattribute"], purchase)  # plain words: class and name
+    assert not matches(["type:purchase"], purchase)

@@ -55,6 +55,27 @@ def test_arguments_are_read_by_their_type():
     assert parse_argument(_type(0x12), "null") is None
     assert parse_argument(_type(0x12), "0x7f00") == {"address": "0x7f00"}
     assert parse_argument(_type(I4, enumName="Game.DamageType"), "2") == 2
+    attribute = _type(U1, enumName="EPrimaryAttribute",
+                      enumValues={"0": "Might", "2": "Dexterity"})
+    assert parse_argument(attribute, " dexterity ") == 2
+    assert parse_argument(attribute, "0") == 0
+    with pytest.raises(ArgumentError):
+        parse_argument(attribute, "Charm")
+
+
+def test_enum_names_are_the_hint_of_an_empty_argument(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.widgets.method_call import MethodCallDialog
+
+    dialog = MethodCallDialog.__new__(MethodCallDialog)
+    dialog.translations, dialog._editors = translations, []  # pylint: disable=protected-access
+    values = {"0": "Might", "1": "Constitution", "2": "Dexterity", "3": "Perception",
+              "4": "Intellect"}
+    editor = dialog._editor(_type(U1, "EPrimaryAttribute", enumName="EPrimaryAttribute",
+                                  enumValues=values), None)  # pylint: disable=protected-access
+    assert editor.placeholderText() == (
+        "Might, Constitution, Dexterity, Perception, … oder Zahlenwert")
+    assert editor.toolTip().splitlines()[2] == "2 = Dexterity"
 
 
 @pytest.mark.parametrize("param_type, text, key", [

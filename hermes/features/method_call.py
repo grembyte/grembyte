@@ -5,8 +5,10 @@ parameter. ``parse_argument`` turns it into what the agent passes to the
 method (``callStatic`` in hermes/features/monitor.js): a number, bool,
 string, None (null), ``{"address": "0x…"}`` (an object or IntPtr) or
 ``{"struct": "…"}`` (the bytes of a System.Guid, in hex). The
-types are those ``describe_call`` reports: ``{kind, byref, name, enumName?}``
-with ECMA-335 element types as kinds; an enum has the kind of its base type.
+types are those ``describe_call`` reports: ``{kind, byref, name, enumName?,
+enumValues?}`` with ECMA-335 element types as kinds; an enum has the kind of
+its base type, and ``enumValues`` (``{"0": "Might", ...}``, Unreal) lets its
+names be typed in.
 """
 
 import json
@@ -63,6 +65,15 @@ def _integer(text):
         return int(text, 0)  # 0x1f, 0b101
 
 
+def enum_value(param_type, text):
+    """The value of the enum name ``text`` (any case) if ``param_type`` names its values."""
+    word = text.strip().lower()
+    for value, name in (param_type.get("enumValues") or {}).items():
+        if name.lower() == word:
+            return int(value)
+    return None
+
+
 def parse_argument(param_type, text):
     """The value of ``text`` for a parameter of ``param_type``; raises ArgumentError."""
     # pylint: disable=too-many-return-statements,too-many-branches
@@ -108,6 +119,9 @@ def parse_argument(param_type, text):
             raise ArgumentError("call.error_number", text=text)
         return value
     if kind in INTEGER_RANGES:
+        named = enum_value(param_type, text)
+        if named is not None:
+            return named
         try:
             value = _integer(text)
         except ValueError:

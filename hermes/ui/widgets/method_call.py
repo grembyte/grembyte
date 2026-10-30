@@ -40,6 +40,8 @@ from hermes.ui.widgets.method_monitor import stop_worker
 
 # The arguments last typed per method (its signature), for this run of Hermes
 _last_arguments = {}
+# How many of an enum's names the empty argument field shows
+_PLACEHOLDER_NAMES = 4
 
 
 def placeholder_key(param_type):
@@ -50,6 +52,8 @@ def placeholder_key(param_type):
         return "call.placeholder_struct"
     if is_guid(param_type):
         return "call.placeholder_guid"
+    if param_type.get("enumValues"):
+        return "call.placeholder_enum_values"
     if param_type.get("enumName"):
         return "call.placeholder_enum"
     if kind == STRING:
@@ -226,8 +230,13 @@ class MethodCallDialog(QDialog):
             editor.setChecked(last == "true")
         else:
             editor = QLineEdit(last or "")
+            values = param_type.get("enumValues") or {}
             editor.setPlaceholderText(t[placeholder_key(param_type)].format(
-                type=param_type.get("enumName") or param_type["name"]))
+                type=param_type.get("enumName") or param_type["name"],
+                values=", ".join(list(values.values())[:_PLACEHOLDER_NAMES])
+                + (", …" if len(values) > _PLACEHOLDER_NAMES else "")))
+            if values:
+                editor.setToolTip("\n".join(f"{value} = {name}" for value, name in values.items()))
             editor.setEnabled(supported(param_type))
             editor.returnPressed.connect(self.call)
         self._editors.append(editor)

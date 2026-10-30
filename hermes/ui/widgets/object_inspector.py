@@ -39,6 +39,8 @@ _STATIC = QColor("#8b949e")
 _ERROR = QColor("#f85149")
 # Qt's default link blue is unreadable on the dark theme.
 LINK_COLOR = "#58a6ff"
+# Unreal's containers, whose entries the inspector shows as fields
+_CONTAINERS = ("TArray<", "TMap<", "TSet<")
 # Largest height Qt allows a widget (QWIDGETSIZE_MAX)
 _NO_LIMIT = 16777215
 
@@ -154,6 +156,7 @@ class ObjectInspectorDialog(QDialog):
     """
 
     # pylint: disable=too-many-instance-attributes,too-many-arguments,too-many-public-methods
+    # pylint: disable=attribute-defined-outside-init  # the _build_* helpers of _build_ui
 
     # {"address": int, "value_type": str, "label": str} to add to the address list
     address_requested = pyqtSignal(object)
@@ -414,7 +417,10 @@ class ObjectInspectorDialog(QDialog):
         # e.g. "CharacterStats.BaseMight"
         owner = self._type_name.rsplit(".", 1)[-1]
         field = self.table.item(row, _FIELD).text()
-        if owner == "?":
+        if self._type_name.startswith(_CONTAINERS) and self.name:
+            # an entry of a TArray, TMap or TSet: "Inventory[3]", "Spread[Might (…)]"
+            label = self.name + (field if field.startswith("[") else f"[{field}]")
+        elif owner == "?":
             label = field
         elif field.startswith("[") and owner.endswith("[]"):
             label = owner[:-2] + field  # an element, e.g. "Int32[3]"

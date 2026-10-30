@@ -63,10 +63,18 @@ def word_occurs(word, text):
     return word in text
 
 
+TYPE_PREFIX = "type:"
+
+
 def matches(words, method):
-    """Whether every search word occurs in the method's class, name or assembly."""
+    """Whether every search word occurs in the method's class, name or assembly.
+
+    A word ``type:<type>`` occurs in its parameter or return types instead.
+    """
     text = f"{method.class_name}:{method.name} {method.assembly}".lower()
-    return all(word_occurs(word, text) for word in words)
+    types = f"{method.parameters} {method.return_type}".lower()
+    return all(word_occurs(word[len(TYPE_PREFIX):], types) if word.startswith(TYPE_PREFIX)
+               else word_occurs(word, text) for word in words)
 
 
 class CatalogModel(FavoriteColumn, QAbstractTableModel):

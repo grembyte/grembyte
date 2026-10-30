@@ -787,6 +787,40 @@ const unreal = (() => {
   const MAX_TEXT = 120;
   const MAX_ELEMENTS = 8;
 
+  // UEnum after UField: FString CppType, then Names, a TArray of
+  // TPair<FName, int64> ("EPrimaryAttribute::Might", 0).
+  const ENUM_PAIR_SIZE = 16;
+  const MAX_ENUM_VALUES = 1024;
+  const enumCache = new Map();
+
+  function enumValues(uenum) {
+    // { "0": "Might", ... } of a UEnum (cached), or null; without the _MAX
+    // entry UHT adds at the end.
+    const key = uenum.toString();
+    if (enumCache.has(key))
+      return enumCache.get(key);
+    let result = null;
+    try {
+      const names = uenum.add(ue.layout.next + Process.pointerSize + 16);
+      const data = names.readPointer();
+      const count = names.add(8).readS32();
+      if (count > 0 && count <= MAX_ENUM_VALUES && count <= names.add(12).readS32()) {
+        result = {};
+        for (let i = 0; i < count; i++) {
+          const pair = data.add(i * ENUM_PAIR_SIZE);
+          const name = fieldName(pair).replace(/^.*::/, '');
+          if (i === count - 1 && /(^|_)MAX$/.test(name))
+            break;
+          result[pair.add(8).readS64().toString()] = name;
+        }
+      }
+    } catch (_error) {
+      result = null;
+    }
+    enumCache.set(key, result);
+    return result;
+  }
+
   function valueType(field, byref = false) {
     // The monitor's type of an FProperty: { kind, byref, name, ... }.
     const L = ue.layout;
@@ -797,12 +831,18 @@ const unreal = (() => {
       type.kind = NUMBER_KINDS[kind];
     } else if (kind === 'ByteProperty') {
       type.kind = KIND.U1;
-      if (!extra(0).readPointer().isNull())
+      const uenum = extra(0).readPointer();
+      if (!uenum.isNull()) {
         type.enumName = type.name;
+        type.enumValues = enumValues(uenum);
+      }
     } else if (kind === 'EnumProperty') {
       const underlying = extra(0).readPointer();
       type.kind = underlying.isNull() ? KIND.U1 : valueType(underlying).kind;
       type.enumName = type.name;
+      const uenum = extra(8).readPointer();
+      if (!uenum.isNull())
+        type.enumValues = enumValues(uenum);
     } else if (kind === 'BoolProperty') {
       // A bitfield (FieldMask) in the byte at ByteOffset; true sets ByteMask
       type.engine = 'bool';
@@ -825,11 +865,25 @@ const unreal = (() => {
       type.engine = 'name';
     } else if (kind === 'ArrayProperty') {
       type.engine = 'array';
+      type.property = field;  // the inspector opens it (see elements)
       const inner = arrayInner(field);
       type.element = inner.isNull() ? null : valueType(inner);
       type.elementSize = inner.isNull() ? 0 : inner.add(L.elementSize).readS32();
+    } else if (kind === 'MapProperty' || kind === 'SetProperty') {
+      // KeyProp and ValueProp (a set: ElementProp), then the layout of the elements
+      const map = kind === 'MapProperty';
+      const key = extra(0).readPointer();
+      const value = map ? extra(8).readPointer() : NULL;
+      type.engine = map ? 'map' : 'set';
+      type.property = field;
+      type.element = key.isNull() ? null : valueType(key);
+      type.elementSize = key.isNull() ? 0 : key.add(L.elementSize).readS32();
+      if (map) {
+        type.value = value.isNull() ? null : valueType(value);
+        type.valueSize = value.isNull() ? 0 : value.add(L.elementSize).readS32();
+      }
     } else {
-      type.engine = 'other';  // FText, TMap, TSet, delegates: the type only
+      type.engine = 'other';  // FText, delegates: the type only
     }
     return type;
   }
@@ -921,10 +975,26 @@ const unreal = (() => {
       case 'interface':
         return { object: address.readPointer() };
       case 'array':
-        return { text: arrayText(type, address) };
+        return { text: arrayText(type, address), target: containerTarget(type, address) };
+      case 'map':
+      case 'set': {
+        let count;
+        try {
+          count = sparseArray(address).count;
+        } catch (_error) {
+          count = '?';
+        }
+        return { text: `${type.name.replace(/&$/, '')}[${count}]`,
+                 target: containerTarget(type, address) };
+      }
       default:
         return { text: type.name };
     }
+  }
+
+  function containerTarget(type, address) {
+    // What the object inspector opens for a TArray, TMap or TSet (see elements)
+    return { address: address.toString(), property: type.property.toString() };
   }
 
   function valueJs(type, address) {
@@ -992,6 +1062,118 @@ const unreal = (() => {
     for (let i = 0; i < Math.min(count, MAX_ELEMENTS); i++)
       shown.push(elementText(type.element, data.add(i * type.elementSize)));
     return `${name}[${count}] {${shown.join(', ')}${count > MAX_ELEMENTS ? ', …' : ''}}`;
+  }
+
+  // --- Containers: the entries of a TArray, TMap or TSet (the object inspector) ----
+  // A TSet (and a TMap, a TSet of key-value pairs) keeps its elements in a
+  // TSparseArray: a TArray of slots, then a TBitArray of the slots in use
+  // (four uint32 inline, else on the heap; NumBits, MaxBits), FirstFreeIndex
+  // and NumFreeIndices. A slot holds the element, then the hash chain's
+  // HashNextId and HashIndex (two int32).
+
+  const SPARSE_BITS = 16;
+  const SPARSE_NUM_BITS = 40;
+  const SPARSE_MAX_BITS = 44;
+  const SPARSE_FREE = 52;
+  const INLINE_BITS = 128;
+
+  function sparseArray(address) {
+    // { data, slots, count, used(i) } of the TSparseArray at ``address``.
+    const data = address.readPointer();
+    const slots = address.add(8).readS32();
+    const max = address.add(12).readS32();
+    const numBits = address.add(SPARSE_NUM_BITS).readS32();
+    const maxBits = address.add(SPARSE_MAX_BITS).readS32();
+    const free = address.add(SPARSE_FREE).readS32();
+    if (slots < 0 || slots > max || free < 0 || free > slots || numBits < slots
+        || maxBits < numBits || (slots > 0 && data.isNull()))
+      throw new Error('unexpected memory layout of a TSet/TMap');
+    const bits = maxBits > INLINE_BITS ? address.add(SPARSE_BITS + 16).readPointer()
+      : address.add(SPARSE_BITS);
+    return {
+      data, slots, count: slots - free,
+      used: i => (bits.add(4 * Math.floor(i / 32)).readU32() & (1 << (i % 32))) !== 0
+    };
+  }
+
+  function alignOf(size) {
+    // A guess where nothing tells: the largest power of two (up to 8) dividing the size
+    return size % 8 === 0 ? 8 : size % 4 === 0 ? 4 : size % 2 === 0 ? 2 : 1;
+  }
+
+  function alignUp(value, alignment) {
+    return Math.ceil(value / alignment) * alignment;
+  }
+
+  function slotLayout(type) {
+    // { valueOffset, stride } of a TSet's or TMap's slots. The property
+    // keeps them (UE5: FScriptMapLayout ValueOffset, then FScriptSetLayout
+    // HashNextIdOffset, HashIndexOffset, Size; UE4 had a KeyOffset and an
+    // ElementOffset more); where they do not fit the sizes, computed.
+    const map = type.engine === 'map';
+    const keySize = type.elementSize;
+    const valueSize = map ? type.valueSize : 0;
+    const fits = (valueOffset, hashNext, stride) =>
+      (!map || (valueOffset >= keySize && valueOffset < keySize + 16))
+      && hashNext >= (map ? valueOffset + valueSize : keySize)
+      && hashNext < (map ? valueOffset + valueSize : keySize) + 16
+      && stride >= hashNext + 8 && stride <= hashNext + 24 && stride % 4 === 0;
+    const at = type.property.add(ue.layout.extra + (map ? 16 : 8));
+    const ints = [0, 1, 2, 3, 4, 5].map(i => at.add(4 * i).readS32());
+    const candidates = map
+      ? [[ints[0], ints[1], ints[3]], [ints[1], ints[3], ints[5]]]  // UE5, UE4
+      : [[0, ints[0], ints[2]], [0, ints[1], ints[3]]];
+    for (const [valueOffset, hashNext, stride] of candidates)
+      if (fits(valueOffset, hashNext, stride))
+        return { valueOffset, stride };
+    const valueOffset = map ? alignUp(keySize, alignOf(valueSize)) : 0;
+    const hashNext = alignUp(map ? valueOffset + valueSize : keySize, 4);
+    const alignment = Math.max(4, alignOf(keySize), map ? alignOf(valueSize) : 1);
+    return { valueOffset, stride: alignUp(hashNext + 8, alignment) };
+  }
+
+  function elements(target, limit) {
+    // The entries of the TArray, TMap or TSet ``target`` (see readValue), up
+    // to ``limit``: { name, count, entries: [{ name, type, address, offset,
+    // key? }] }; ``key`` ({ type, address }) is a TMap entry's key, ``offset``
+    // where the entry is in the container's data.
+    reflection();
+    const field = ptr(target.property);
+    if (!isProperty(field))
+      throw new Error(`no property at ${field}`);
+    const type = valueType(field);
+    const address = ptr(target.address);
+    const name = type.name;
+    if (type.element === null || (type.engine === 'map' && type.value === null))
+      throw new Error(`the elements of ${name} are unknown`);
+    const entries = [];
+    if (type.engine === 'array') {
+      const data = address.readPointer();
+      const count = data.isNull() ? 0 : Math.max(0, address.add(Process.pointerSize).readS32());
+      for (let i = 0; i < Math.min(count, limit); i++) {
+        const offset = i * type.elementSize;
+        entries.push({ name: `[${i}]`, type: type.element, address: data.add(offset), offset });
+      }
+      return { name, count, entries };
+    }
+    if (type.engine !== 'map' && type.engine !== 'set')
+      throw new Error(`${name} is no TArray, TMap or TSet`);
+    const sparse = sparseArray(address);
+    const { valueOffset, stride } = slotLayout(type);
+    for (let i = 0, shown = 0; i < sparse.slots && entries.length < limit; i++) {
+      if (!sparse.used(i))
+        continue;
+      const slot = sparse.data.add(i * stride);
+      if (type.engine === 'set') {
+        entries.push({ name: `[${shown++}]`, type: type.element, address: slot,
+                       offset: i * stride });
+      } else {
+        entries.push({ name: `[${shown++}]`, type: type.value,
+                       address: slot.add(valueOffset), offset: i * stride + valueOffset,
+                       key: { type: type.element, address: slot } });
+      }
+    }
+    return { name, count: sparse.count, entries };
   }
 
   const layouts = new Map();
@@ -1786,6 +1968,7 @@ const unreal = (() => {
     objectClassName: object => layout(classOf(object)).name,
     virtualMethod,
     methods,
+    elements,
     invoke,
     writeParameter,
     newString: () => {

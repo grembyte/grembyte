@@ -65,8 +65,29 @@ typedef struct Field {
     uint32_t rep_notify[2];
     void *links[4];
     void *extra[2];
+    int32_t layout[6];  /* FMapProperty's MapLayout after KeyProp and ValueProp */
 } Field;
 _Static_assert(offsetof(Field, extra) == 0x78, "FProperty size");
+
+/* TSet's elements, a TSparseArray: slots, the TBitArray of those in use
+   (inline storage, secondary, NumBits, MaxBits), FirstFreeIndex,
+   NumFreeIndices; then the hash */
+typedef struct {
+    void *data;
+    int32_t num, max;
+    uint32_t bits[4];
+    void *secondary;
+    int32_t num_bits, max_bits;
+    int32_t first_free, num_free;
+    uint8_t hash[24];
+} SparseSet;
+_Static_assert(offsetof(SparseSet, num_bits) == 40, "TBitArray::NumBits");
+_Static_assert(offsetof(SparseSet, num_free) == 52, "TSparseArray::NumFreeIndices");
+typedef struct { int32_t key; float value; int32_t hash_next, hash_index; } StatSlot;
+typedef struct { int32_t value; int32_t hash_next, hash_index; } TagSlot;
+typedef struct { void *data; int32_t num, max; } Array;
+/* UEnum::Names: TPair<FName, int64> */
+typedef struct { uint32_t name, number; int64_t value; } EnumName;
 
 struct Object {
     void *vtable;
@@ -133,8 +154,11 @@ static uint32_t name(const char *text) {
     return index;
 }
 
+/* Room for a hero's properties behind the UObject */
+#define OBJECT_SIZE (sizeof(Object) + 0x200)
+
 static Object *object(Object *klass, const char *text, Object *outer) {
-    Object *created = calloc(1, sizeof(Object));
+    Object *created = calloc(1, OBJECT_SIZE);
     int32_t index = g_uobject_array.num++;
     created->vtable = (void *)0x1234;
     created->flags = 0x41;
@@ -170,6 +194,19 @@ static Field *property(Object *owner, FieldClass *klass, const char *text, int32
     while (*last != NULL)
         last = &(*last)->next;
     *last = created;
+    return created;
+}
+
+/* The property of a container's elements (or keys, values): in no class */
+static Field *inner(FieldClass *klass, const char *text, int32_t size, void *extra) {
+    Field *created = calloc(1, sizeof(Field));
+    created->vtable = (void *)0x5678;
+    created->klass = klass;
+    created->name = name(text);
+    created->flags = 0x45;
+    created->array_dim = 1;
+    created->element_size = size;
+    created->extra[0] = extra;
     return created;
 }
 
@@ -354,6 +391,40 @@ int main(void) {
     hero->super = actor;
     /* A field of heroes, in memory an Object leaves unused */
     property(hero, int_property, "Health", 4, 0x70, 0, NULL);
+    /* An enum known by its names: UEnum::Names after UField and CppType,
+       UHT's _MAX last */
+    Object *attribute = object(enum_class, "EPrimaryAttribute", game);
+    static EnumName attribute_names[3];
+    attribute_names[0] = (EnumName){name("EPrimaryAttribute::Might"), 0, 0};
+    attribute_names[1] = (EnumName){name("EPrimaryAttribute::Dexterity"), 0, 2};
+    attribute_names[2] = (EnumName){name("EPrimaryAttribute::EPrimaryAttribute_MAX"), 0, 3};
+    *(Array *)((char *)attribute + 0x40) = (Array){attribute_names, 3, 3};
+    Field *focus = property(hero, field_class("EnumProperty"), "Focus", 1, 0x74, 0, NULL);
+    focus->extra[0] = inner(field_class("ByteProperty"), "UnderlyingType", 1, NULL);
+    focus->extra[1] = attribute;
+    /* Containers, behind the UObject: TArray<int32>, TArray<FVector>,
+       TMap<int32, float> with UE5's MapLayout (ValueOffset, HashNextIdOffset,
+       HashIndexOffset, Size, Alignment, sparse array Size), one without a
+       layout (computed then), TSet<int32> with its SetLayout */
+    FieldClass *array_property = field_class("ArrayProperty");
+    FieldClass *map_property = field_class("MapProperty");
+    FieldClass *set_property = field_class("SetProperty");
+    Field *scores = property(hero, array_property, "Scores", 16, 0x100, 0, NULL);
+    scores->extra[0] = inner(int_property, "Scores", 4, NULL);
+    Field *path = property(hero, array_property, "Path", 16, 0x110, 0, NULL);
+    path->extra[0] = inner(struct_property, "Path", 0x18, vector);
+    static const int32_t stat_layout[6] = {4, 8, 12, 16, 4, 16};
+    Field *stats = property(hero, map_property, "Stats", 80, 0x120, 0, NULL);
+    stats->extra[0] = inner(int_property, "Stats_Key", 4, NULL);
+    stats->extra[1] = inner(float_property, "Stats", 4, NULL);
+    memcpy(stats->layout, stat_layout, sizeof stat_layout);
+    Field *weights = property(hero, map_property, "Weights", 80, 0x170, 0, NULL);
+    weights->extra[0] = inner(int_property, "Weights_Key", 4, NULL);
+    weights->extra[1] = inner(float_property, "Weights", 4, NULL);
+    static const int32_t tag_layout[5] = {4, 8, 12, 4, 12};
+    Field *tags = property(hero, set_property, "Tags", 80, 0x1c0, 0, NULL);
+    tags->extra[0] = inner(int_property, "Tags", 4, NULL);
+    memcpy((char *)tags->extra + 8, tag_layout, sizeof tag_layout);
     g_add_gold = function(function_class, hero, "AddGold",
                           FUNC_NATIVE | FUNC_STATIC | FUNC_PUBLIC, exec_AddGold, 2, 8, 4);
     property(g_add_gold, int_property, "Amount", 4, 0, CPF_PARM, NULL);
@@ -392,6 +463,38 @@ int main(void) {
     Object *level = object(package_class, "/Game/Maps/Start", NULL);
     Object *player = object(bp_hero, "BP_Hero_C_0", level);
     *(int32_t *)((char *)player + 0x70) = 75;
+    *((uint8_t *)player + 0x74) = 2;
+    static int32_t score_data[3] = {7, 8, 9};
+    static double path_data[6] = {1, 2, 3, 4, 5, 6};
+    *(Array *)((char *)player + 0x100) = (Array){score_data, 3, 3};
+    *(Array *)((char *)player + 0x110) = (Array){path_data, 2, 2};
+    /* Stats: slot 1 was freed, so 2 of 3 slots are in use */
+    static StatSlot stat_slots[4] = {{1, 1.5f, -1, 0}, {0, 0, -1, -1}, {3, 2.5f, -1, 1}};
+    SparseSet *stat_set = (SparseSet *)((char *)player + 0x120);
+    stat_set->data = stat_slots;
+    stat_set->num = 3;
+    stat_set->max = 4;
+    stat_set->bits[0] = 0x5;
+    stat_set->num_bits = 3;
+    stat_set->max_bits = 128;
+    stat_set->first_free = 1;
+    stat_set->num_free = 1;
+    static StatSlot weight_slots[1] = {{5, 0.5f, -1, 0}};
+    SparseSet *weight_set = (SparseSet *)((char *)player + 0x170);
+    weight_set->data = weight_slots;
+    weight_set->num = weight_set->max = 1;
+    weight_set->bits[0] = 0x1;
+    weight_set->num_bits = 1;
+    weight_set->max_bits = 128;
+    weight_set->first_free = -1;
+    static TagSlot tag_slots[2] = {{10, -1, 0}, {20, -1, 1}};
+    SparseSet *tag_set = (SparseSet *)((char *)player + 0x1c0);
+    tag_set->data = tag_slots;
+    tag_set->num = tag_set->max = 2;
+    tag_set->bits[0] = 0x3;
+    tag_set->num_bits = 2;
+    tag_set->max_bits = 128;
+    tag_set->first_free = -1;
     /* A second hero: scripts find it by its name */
     Object *rival = object(bp_hero, "BP_Hero_C_1", level);
     *(int32_t *)((char *)rival + 0x70) = 30;
@@ -701,6 +804,38 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         _wait_for(qt_app, lambda: inspected)
         assert [(field["name"], field["value"]["text"]) for field in inspected[0]["fields"]
                 if field["name"] == "Health"] == [("Health", "75")]
+
+        # TArray, TMap and TSet open in the inspector: an entry per row, a
+        # TMap's named by its key; numbers have an address for the address list.
+        values = {field["name"]: field["value"] for field in inspected[0]["fields"]}
+        assert values["Focus"]["text"] == "2 (Dexterity)"  # an enum by the name of its value
+        assert values["Scores"]["text"] == "TArray<int32>[3] {7, 8, 9}"
+        assert values["Stats"]["text"] == "TMap<int32, float>[2]"
+        assert values["Tags"]["text"] == "TSet<int32>[2]"
+
+        def entries(name):
+            inspected.clear()
+            worker.inspect(values[name]["target"])
+            _wait_for(qt_app, lambda: inspected)
+            assert "error" not in inspected[0], inspected[0]
+            return inspected[0]
+
+        scores = entries("Scores")
+        assert (scores["name"], scores["length"]) == ("TArray<int32>", 3)
+        assert [(field["name"], field["value"]["text"], field["valueType"])
+                for field in scores["fields"]] == [
+            ("[0]", "7", "int32"), ("[1]", "8", "int32"), ("[2]", "9", "int32")]
+        assert int(scores["fields"][1]["address"], 16) == int(scores["fields"][0]["address"], 16) + 4
+        path = entries("Path")["fields"]
+        assert path[1]["value"]["text"] == "struct FVector" and path[1]["value"]["target"]
+        stats = entries("Stats")
+        assert stats["length"] == 2  # the freed slot is skipped
+        assert [(field["name"], field["value"]["text"], field["valueType"])
+                for field in stats["fields"]] == [("1", "1.5", "float"), ("3", "2.5", "float")]
+        # Without a layout in the property it is computed from the sizes.
+        assert [(field["name"], field["value"]["text"])
+                for field in entries("Weights")["fields"]] == [("5", "0.5")]
+        assert [field["value"]["text"] for field in entries("Tags")["fields"]] == ["10", "20"]
 
         # The inspector lists the object's UFunctions (not the static ones)
         # and calls one on it, through ProcessEvent on the game thread.

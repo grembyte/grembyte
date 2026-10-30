@@ -234,7 +234,11 @@ function fullText(id) {
 }
 
 function withEnum(type, text) {
-  return type.enumName ? `${text} (${type.enumName})` : text;
+  // 2 (Dexterity) where the adapter knows the enum's names, else 2 (EPrimaryAttribute)
+  if (!type.enumName)
+    return text;
+  const name = type.enumValues ? type.enumValues[text] : undefined;
+  return `${text} (${name === undefined ? type.enumName : name})`;
 }
 
 // Names of Unity objects seen in calls, for values read elsewhere (fields,
@@ -362,6 +366,8 @@ function contents(target) {
   // valueType? }], length? } of an object, array or struct; throws if it is
   // no object any more. A field's ``address`` is where its value is (not for
   // static fields), ``valueType`` its value type if it holds a number.
+  if (target.property)
+    return containerContents(target);
   const address = ptr(target.address);
   let klass;
   if (target.klass) {
@@ -402,6 +408,36 @@ function contents(target) {
       valueType: field.static ? null : valueTypeName(field.type)
     });
   return result;
+}
+
+function containerContents(target) {
+  // The entries of a TArray, TMap or TSet (Unreal, see engine.elements) as
+  // contents: one field per entry, a TMap's named by its key.
+  const container = engine.elements(target, MAX_ELEMENTS);
+  return {
+    name: container.name, address: target.address, length: container.count,
+    fields: container.entries.map(entry => ({
+      name: entry.key ? safely(() => ({ text: keyText(entry.key) })).text : entry.name,
+      type: entry.type.name, offset: entry.offset, static: false,
+      value: safely(() => readValue(entry.type, entry.address)),
+      address: entry.address.toString(), valueType: valueTypeName(entry.type)
+    }))
+  };
+}
+
+const MAX_SUMMARY_FIELDS = 3;
+const MAX_SUMMARY = 100;
+
+function keyText(key) {
+  // A TMap key as text; a struct (e.g. FGameplayAttribute) by its first fields.
+  if (key.type.kind !== T.VALUETYPE)
+    return readValue(key.type, key.address).text;
+  const layout = engine.layout(key.type.klass);
+  const parts = layout.fields.filter(field => !field.static).slice(0, MAX_SUMMARY_FIELDS)
+    .map(field => `${field.name}=${safely(() => readValue(field.type,
+      key.address.add(field.offset))).text}`);
+  const text = `{${parts.join(', ')}}`;
+  return text.length > MAX_SUMMARY ? `${text.substring(0, MAX_SUMMARY)}…}` : text;
 }
 
 function snapshot(value) {
@@ -527,6 +563,9 @@ function targetClass(target) {
 function listMethods(target) {
   // The instance methods of an object, its class's own first:
   // [{ name, method, owner, params, returns }], params as text ("int amount, …").
+  // A TArray, TMap or TSet has none.
+  if (target.property)
+    return [];
   return engine.onRuntimeThread(() => engine.methods(targetClass(target))
     .filter(entry => !entry.static)
     .map(entry => {
