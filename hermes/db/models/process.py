@@ -23,6 +23,9 @@ class Process(Base):  # pylint: disable=too-few-public-methods
     method_hooks = relationship(
         "MethodHook", back_populates="process", cascade="all, delete-orphan"
     )
+    scripts = relationship(
+        "GameScript", back_populates="process", cascade="all, delete-orphan"
+    )
     favorites = relationship(
         "FavoriteRecord", back_populates="process", cascade="all, delete-orphan"
     )

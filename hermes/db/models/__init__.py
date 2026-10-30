@@ -5,6 +5,7 @@
 from hermes.db.models.address import Address  # noqa: F401
 from hermes.db.models.assembly_selection import AssemblySelectionRecord  # noqa: F401
 from hermes.db.models.favorite import FavoriteRecord  # noqa: F401
+from hermes.db.models.game_script import GameScript  # noqa: F401
 from hermes.db.models.hook import Hook  # noqa: F401
 from hermes.db.models.method_hook import MethodHook  # noqa: F401
 from hermes.db.models.pointer_scan import PointerScan  # noqa: F401

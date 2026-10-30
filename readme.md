@@ -17,7 +17,7 @@ Hermes Hook is a desktop application built with Python and PyQt6 for inspecting 
 
 ### More tools
 
-- **File menu**: export the saved addresses, hooks, method hooks and favorites of a game to a JSON file and import them again, delete saved entries or whole processes, and compact the database.
+- **File menu**: export the saved addresses, hooks, method hooks and favorites of a game (not yet its scripts) to a JSON file and import them again, delete saved entries or whole processes, and compact the database.
 - **Memory viewer** for the memory around an address, and the **Sessions** window, which lists the connections to processes (Frida, ptrace) and can cut one that does not respond.
 - **Native trace** (**View → Native trace…**, any engine): Frida's Stalker counts which functions the chosen threads call, first in a baseline, then in a scenario such as paying gold; the functions that are new or called more often in the scenario are the candidates. **Monitor native function …** logs the arguments, result and caller of a function and compares the memory behind pointer arguments before and after the call.
 - **Favorites** (**View → Favorites …**): methods and functions marked with ★ in the catalog or a trace, saved per program with a note.
@@ -32,7 +32,9 @@ Hermes Hook is a desktop application built with Python and PyQt6 for inspecting 
   - The **catalog** lists the classes and UFunctions with C++ parameter types, grouped by package: `/Script/<Module>` for C++ classes, the first folder for Blueprints (`/Game/Blueprints`).
   - **Assemblies …** (here: packages) and the **trace** work as for Mono. The trace hooks the exec thunks of native UFunctions and gives every Blueprint function a hookable stub of its own; it sees calls from Blueprints and through `ProcessEvent` (events, delegates), not C++ calling C++ directly (the native trace sees those).
   - The **method monitor** logs UFunction calls with the object they run on (with its UObject name), arguments and result; the object inspector shows the UProperties of objects and structs. Arguments come from the parameters ProcessEvent passes, or, when a Blueprint calls a native function, from the bytecode of the call (variables and constants; other arguments show as `?`).
-  - Not yet: method hooks, calling methods, call graph.
+  - **Method hooks** change arguments (from ProcessEvent's parameters, or ref arguments from Blueprint code) and fields before a call, or the result after it. Their scripts can call UFunctions: `obj.call("Function", ...args)` runs it through `UObject::ProcessEvent` on the game thread, `ctx.find("ClassName")` gives a live object of a class, e.g. the game's cheat manager.
+  - Not yet: the call graph, and the **Call method** dialog.
+- **Scripts** (tab next to **Hooks**): JavaScript that calls game code by time, once after a delay, every N seconds or by hand, stored per program and started again when it is attached. Example for Avowed, whose `AlabamaCheatManager` has working cheats in the shipping build: `ctx.find("AlabamaCheatManager").call("GiveHealth", 50)` every minute. Unity games can call static methods with `ctx.call("Namespace.Class.Method", ...)`.
 
 ### Freeze or hook?
 

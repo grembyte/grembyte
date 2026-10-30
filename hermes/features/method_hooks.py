@@ -23,6 +23,8 @@ The function gets one ``ctx`` object:
     ctx.params       the hook's parameters
     ctx.state        per-hook object that persists between calls
     ctx.call("Namespace.Class.Method", ...args)   call a static game method
+    ctx.find("ClassName")   a live object of that class or a subclass (Unreal),
+                     e.g. ctx.find("AlabamaCheatManager").call("GiveHealth", 50)
     ctx.log(...)     output shown in the hook debug window
     ctx.method, ctx.hookId, ctx.threadId
 
@@ -42,8 +44,11 @@ Blueprint bytecode, arguments that are no simple variable or constant are
 missing from ``ctx.args``, and only ref arguments can be changed (the others
 are the caller's own variables). Weak object pointers read as objects, TArrays
 as arrays, FString and FName as strings; only numbers, bools and object
-fields can be assigned. Calling game code (``ctx.call``, ``.call()``) is not
-available yet.
+fields can be assigned. ``.call()`` runs a UFunction through ProcessEvent
+(on the game thread, where hooks run); arguments may be numbers, bools,
+objects, structs, strings (FString) and FName texts the game knows. Hooks
+on functions the call reaches do not run for it (Frida skips hooks while one
+runs).
 
 Hooks live in the method monitor's agent (``hermes.features.monitor``)
 and are found again after a restart by their method (``HookSpec.managed``).

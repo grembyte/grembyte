@@ -65,6 +65,7 @@ from hermes.db.repository.assembly_selections import AssemblySelectionRepository
 from hermes.db.repository.favorites import FavoriteRepository
 from hermes.db.repository.game_export import GameExportRepository
 from hermes.db.repository.hooks import HookRepository
+from hermes.db.repository.scripts import ScriptRepository
 from hermes.db.repository.settings import SettingsRepository
 from hermes.db.repository.trace_filters import TraceFilterRepository
 from hermes.hooks.engine import HookSpec
@@ -76,6 +77,7 @@ from hermes.ui.widgets.database_entries import DeleteEntriesDialog
 from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 from hermes.ui.widgets.game_export import GameExportDialog, GameImportDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
+from hermes.ui.widgets.scripts import ScriptPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
 from hermes.ui.widgets.settings_dialog import SettingsDialog
 from hermes.core import activity, logs, sessions
@@ -334,6 +336,7 @@ class MainWindow(QMainWindow):
         self._current_name = None
         self._process_bits = None
         self._hook_repository = HookRepository()
+        self._script_repository = ScriptRepository()
         self._trace_filter_repository = TraceFilterRepository()
         self._address_repository = AddressRepository()
         # Favorites of the program last attached; kept after it exits.
@@ -407,6 +410,7 @@ class MainWindow(QMainWindow):
         self.progress_scan = None
         self.addr_table = None
         self.hook_panel = None
+        self.script_panel = None
         self.bottom_tabs = None
         self.lbl_backend = None
 
@@ -548,6 +552,9 @@ class MainWindow(QMainWindow):
         if self.hook_panel is not None:
             self.hook_panel.set_process(None)
             self.hook_panel.set_process(self._current_pid, self._process_id)
+        if self.script_panel is not None:
+            self.script_panel.set_process(None)
+            self.script_panel.set_process(self._current_pid, self._process_id)
 
     def _open_delete_entries(self):
         """Delete chosen entries of saved processes, or the processes themselves."""
@@ -757,7 +764,25 @@ class MainWindow(QMainWindow):
         self.hook_panel.monitor_requested.connect(
             lambda identity: self._monitor_method(catalog_method_from_identity(identity)))
         self.bottom_tabs.addTab(self.hook_panel, self.translations["hooks.title"])
+
+        self.script_panel = ScriptPanel(
+            self.translations, self, repository=self._script_repository
+        )
+        self.script_panel.setTitle("")
+        self.script_panel.setObjectName("tab_page")
+        self.script_panel.count_changed.connect(self._on_script_count_changed)
+        self.bottom_tabs.addTab(self.script_panel, self.translations["scripts.title"])
         return self.bottom_tabs
+
+    def _on_script_count_changed(self, count):
+        """Show the number of scripts in the tab title."""
+        if self.bottom_tabs is None or self.script_panel is None:
+            return
+        title = self.translations["scripts.title"]
+        self.bottom_tabs.setTabText(
+            self.bottom_tabs.indexOf(self.script_panel),
+            f"{title} ({count})" if count else title,
+        )
 
     def _on_hook_count_changed(self, count):
         """Show the number of hooks in the tab title."""
@@ -2124,6 +2149,8 @@ class MainWindow(QMainWindow):
                 self._auto_select_backend(dlg.selected_pid)
             if self.hook_panel is not None:
                 self.hook_panel.set_process(dlg.selected_pid, process_id)
+            if self.script_panel is not None:
+                self.script_panel.set_process(dlg.selected_pid, process_id)
             self._current_pid = dlg.selected_pid
             if changed:
                 self._process_start_time = process_start_time(dlg.selected_pid)
@@ -2191,6 +2218,8 @@ class MainWindow(QMainWindow):
             self._memory_viewer.set_process(None)
         if self.hook_panel is not None:
             self.hook_panel.set_process(None)
+        if self.script_panel is not None:
+            self.script_panel.set_process(None)
         self._close_catalog()
 
         self._current_pid = None
@@ -2603,6 +2632,8 @@ class MainWindow(QMainWindow):
         self._stop_freeze_worker()
         if self.hook_panel is not None:
             self.hook_panel.shutdown()
+        if self.script_panel is not None:
+            self.script_panel.shutdown()
         if self._sessions_dialog is not None:
             self._sessions_dialog.close()
         if sessions.SESSIONS.sessions():

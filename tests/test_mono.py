@@ -1863,6 +1863,7 @@ def test_method_hook_before_the_call_changes_arguments_and_fields(tmp_path, qt_a
         changed = next(entry for entry in debug if entry["hookId"] == first)
         # Fields are noted when set, arguments once the script is done.
         assert changed["result"] == "Combat.Health=5, min=10, scale=3, crit=false, roll=7"
+        assert changed["old"] == "Combat.Health=100, min=5, scale=1.5, crit=true, roll=-1"
         assert not changed["kept"]
         logged = next(entry for entry in debug if entry["hookId"] == second)
         assert logged["logs"] == ["after 10 3 false 5"]

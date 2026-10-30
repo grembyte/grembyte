@@ -626,12 +626,16 @@ const unreal = (() => {
     const wanted = new Set(tokens);
     const result = [];
     for (const klass of groupNamed(assembly).classes) {
-      for (const fn of functionsOf(klass.address)) {
-        if (!wanted.has(token(klass, fn)))
-          continue;
-        const entry = methodEntry(klass, fn);
-        result.push({ className: klass.name, method: fn.address, entry: entry.slice(0, 6),
-                      flags: entry[6], implFlags: entry[7] });
+      try {
+        for (const fn of functionsOf(klass.address)) {
+          if (!wanted.has(token(klass, fn)))
+            continue;
+          const entry = methodEntry(klass, fn);
+          result.push({ className: klass.name, method: fn.address, entry: entry.slice(0, 6),
+                        flags: entry[6], implFlags: entry[7] });
+        }
+      } catch (_error) {
+        // freed meanwhile (a Blueprint unloaded, e.g. while the game loads)
       }
     }
     return result;
@@ -736,8 +740,19 @@ const unreal = (() => {
   }
 
   function resolve(identity) {
-    // The UFunction of an identity (see identify).
-    const found = methodsByToken(identity.image, [identity.token]);
+    // The UFunction of an identity (see identify). The objects are read anew
+    // if it is not found: its class may have been loaded since the snapshot
+    // (hooks are restored while the game is still loading).
+    let found = [];
+    try {
+      found = methodsByToken(identity.image, [identity.token]);
+    } catch (_error) {
+      // package not loaded in the snapshot
+    }
+    if (found.length === 0) {
+      snapshot = null;
+      found = methodsByToken(identity.image, [identity.token]);
+    }
     if (found.length === 0)
       throw new Error(`${identity.method} is not in ${identity.image} (game updated?)`);
     return found[0].method;
@@ -1081,28 +1096,48 @@ const unreal = (() => {
     if (code === null)
       throw new Error(`${identity.method} has no code: a Blueprint event without a ` +
                       'Blueprint implementing it, or a delegate signature');
+    const { params, returns, instance } = signatureOf(fn);
+    return { ...code, frame: true, function: fn, params, returns, instance };
+  }
+
+  const signatures = new Map();
+
+  function signatureOf(fn) {
+    // { instance, parms: true, params: [{ name, type, offset }], returns,
+    // returnOffset, parmsSize } of a UFunction (cached): its parameters lie
+    // in one block (``parms``), as ProcessEvent and its frame want them.
+    const key = fn.toString();
+    let result = signatures.get(key);
+    if (result !== undefined)
+      return result;
     const L = ue.layout;
     const params = [];
     let returns = { kind: KIND.VOID, byref: false, name: 'void' };
+    let returnOffset = -1;
+    let parmsSize = 0;
     for (let field = fn.add(L.childProperties).readPointer(); !field.isNull();
       field = field.add(L.fieldNext).readPointer()) {
       const flags = field.add(L.propertyFlags).readU32();
       if (!(flags & CPF_PARM))
         continue;
+      const offset = field.add(L.offset).readS32();
+      parmsSize = Math.max(parmsSize, offset
+        + field.add(L.arrayDim).readS32() * field.add(L.elementSize).readS32());
       if (flags & CPF_RETURN_PARM) {
         returns = valueType(field);
+        returnOffset = offset;
         continue;
       }
       const byref = (flags & (CPF_OUT_PARM | CPF_REFERENCE_PARM)) !== 0;
       params.push({ name: fieldName(field.add(L.fieldName)), type: valueType(field, byref),
-                    offset: field.add(L.offset).readS32() });
+                    offset });
     }
     if (returns.kind !== KIND.VOID)
       returns.name = returns.name.replace(/&$/, '');
-    return {
-      ...code, frame: true, function: fn, params, returns,
-      instance: (functionInfo(fn).flags & FUNC_STATIC) === 0
-    };
+    result = { instance: (functionInfo(fn).flags & FUNC_STATIC) === 0, parms: true, params,
+               returns, returnOffset, parmsSize };
+    signatures.set(key, result);
+    return result;
   }
 
   function isProperty(field) {
@@ -1327,6 +1362,354 @@ const unreal = (() => {
   }
 
   refresh();
+  // --- Calling functions -------------------------------------------------------------
+  // Game code runs through UObject::ProcessEvent(Function, Parms), as Blueprints
+  // and C++ do it: the arguments in a block laid out like the function's
+  // parameters (see signatureOf), where the result is written, too. Only on
+  // the game thread (the main thread): onMainThread queues work until the game
+  // thread next enters ProcessEvent, which happens many times a frame.
+
+  const MAIN_TIMEOUT = 3000;
+  const mainQueue = [];
+  let mainHook = null;
+  let draining = false;
+  let processEvent = null;
+  // FStrings of the arguments of the call being made (the game copies them)
+  let callStrings = [];
+
+  function findProcessEvent() {
+    // The one virtual function of UObject that calls a UFunction's Func
+    // (call [reg + Func]); the others call into it.
+    if (processEvent !== null)
+      return processEvent;
+    reflection();
+    const s = objects();
+    const index = s.address.findIndex((_address, i) => s.outer[i] !== 0
+      && objectName(s, i) === 'Default__Object');
+    if (index < 0)
+      throw new Error('Default__Object not found');
+    const vtable = ptr(s.address[index]).readPointer();
+    const funcOffset = ue.layout.func;
+    const found = [];
+    for (let slot = 0; slot < 160; slot++) {
+      const fn = vtable.add(slot * Process.pointerSize).readPointer();
+      if (fn.compare(module.base) < 0 || fn.compare(module.base.add(module.size)) >= 0)
+        break;
+      let bytes;
+      try {
+        bytes = new Uint8Array(fn.readByteArray(0x800));
+      } catch (_error) {
+        // close to the end of the code: what is left of its page
+        const left = 0x1000 - Number(fn.and(0xfff).toString());
+        bytes = new Uint8Array(fn.readByteArray(left));
+      }
+      for (let at = 0; at + 6 <= bytes.length; at++) {
+        // FF /2 with a 32-bit displacement: call [reg + disp32] (not rsp)
+        if (bytes[at] === 0xff && (bytes[at + 1] & 0xf8) === 0x90 && (bytes[at + 1] & 7) !== 4
+            && bytes[at + 2] === (funcOffset & 0xff) && bytes[at + 3] === (funcOffset >> 8)
+            && bytes[at + 4] === 0 && bytes[at + 5] === 0) {
+          found.push(fn);
+          break;
+        }
+      }
+    }
+    if (found.length !== 1)
+      throw new Error(`UObject::ProcessEvent not found (${found.length} candidates)`);
+    processEvent = {
+      address: found[0],
+      call: new NativeFunction(found[0], 'void', ['pointer', 'pointer', 'pointer'])
+    };
+    return processEvent;
+  }
+
+  function isGameThread() {
+    return Process.getCurrentThreadId() === mainThreadId();
+  }
+
+  function drainMain() {
+    // Run the queued work; call it on any thread, it only acts on the game thread.
+    if (draining || mainQueue.length === 0 || !isGameThread())
+      return;
+    draining = true;  // our own calls pass ProcessEvent, too
+    try {
+      while (mainQueue.length > 0) {
+        const job = mainQueue.shift();
+        clearTimeout(job.timer);
+        try {
+          job.resolve(job.work());
+        } catch (error) {
+          job.reject(error);
+        }
+      }
+    } finally {
+      draining = false;
+    }
+    if (mainHook !== null) {
+      const hook = mainHook;
+      mainHook = null;
+      setTimeout(() => hook.detach(), 0);  // not from within its own callback
+    }
+  }
+
+  function onMainThread(work) {
+    // A promise of work()'s result, computed on the game thread.
+    let start;
+    try {
+      start = findProcessEvent().address;
+      mainThreadId();  // found here, not first in the hook on the game thread
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return new Promise((resolve, reject) => {
+      const job = { work, resolve, reject };
+      job.timer = setTimeout(() => {
+        const index = mainQueue.indexOf(job);
+        if (index >= 0)
+          mainQueue.splice(index, 1);
+        reject(new Error('the game thread did not run game code for 3 s (paused or loading?)'));
+      }, MAIN_TIMEOUT);
+      mainQueue.push(job);
+      if (mainHook === null)
+        mainHook = Interceptor.attach(start, {
+          onEnter() {
+            drainMain();
+          }
+        });
+    });
+  }
+
+  function invoke(fn, object, parms) {
+    // Call a UFunction with its parameter block (see signatureOf); game thread
+    // only. A static function is called on its class's default object.
+    if (!isGameThread())
+      throw new Error('game code can only be called on the game thread');
+    let self = object;
+    if (self === null || self.isNull())
+      self = defaultObject(fn.add(OBJECT_OUTER).readPointer());
+    try {
+      findProcessEvent().call(self, fn, parms);
+    } finally {
+      callStrings = [];
+    }
+    return { result: parms, exception: NULL };
+  }
+
+  function writeParameter(type, address, value) {
+    // Store an argument of a type with ``engine`` in a parameter block.
+    switch (type.engine) {
+      case 'string': {
+        // FString: TCHAR data, Num and Max with the terminating 0
+        const text = value === null || value === undefined ? '' : String(value);
+        if (text.length === 0) {
+          address.writePointer(NULL);
+          address.add(Process.pointerSize).writeS32(0);
+          address.add(Process.pointerSize + 4).writeS32(0);
+          return;
+        }
+        const data = Memory.alloc(2 * (text.length + 1));
+        data.writeUtf16String(text);
+        callStrings.push(data);
+        address.writePointer(data);
+        address.add(Process.pointerSize).writeS32(text.length + 1);
+        address.add(Process.pointerSize + 4).writeS32(text.length + 1);
+        return;
+      }
+      case 'name': {
+        const [index, number] = nameOf(String(value));
+        address.writeU32(index);
+        address.add(4).writeU32(number);
+        return;
+      }
+      case 'bool':
+        writeValue(type, address, value);
+        return;
+      default:
+        throw new Error(`a ${type.name} cannot be passed from scripts`);
+    }
+  }
+
+  const nameIndexes = new Map();
+
+  function nameOf(text) {
+    // [index, number] of an FName the game knows: one an object is named
+    // (Name_3 is Name with number 4).
+    let found = nameIndexes.get(text);
+    if (found !== undefined)
+      return found;
+    const s = objects();
+    const match = /^(.*)_(\d+)$/.exec(text);
+    for (let i = 0; i < s.address.length && found === undefined; i++) {
+      const base = nameText(s.name[i], 0);
+      if (base === text)
+        found = [s.name[i], 0];
+      else if (match !== null && base === match[1] && String(Number(match[2])) === match[2])
+        found = [s.name[i], Number(match[2]) + 1];
+    }
+    if (found === undefined)
+      throw new Error(`the FName "${text}" is unknown (no object has it)`);
+    nameIndexes.set(text, found);
+    return found;
+  }
+
+  function classChain(klass) {
+    const chain = [];
+    for (let current = Number(klass.toString()); current !== 0; current = superOf(current))
+      chain.push(ptr(current));
+    return chain;  // the class first, UObject last
+  }
+
+  function classNameMatches(klass, name) {
+    // By its name (BP_Player_C) or C++ name (ABP_Player_C, UAlabamaCheatManager)
+    const own = nameOfAddress(Number(klass.toString()));
+    return own === name || cppName(Number(klass.toString())) + own === name;
+  }
+
+  const classesByName = new Map();
+
+  function findClass(name) {
+    // A loaded class (or struct) by its name, e.g. "AlabamaCheatManager".
+    reflection();
+    const cached = classesByName.get(name);
+    if (cached !== undefined && isObject(cached))
+      return cached;
+    const s = objects();
+    const kinds = new Map();
+    for (let i = 0; i < s.address.length; i++) {
+      if (s.outer[i] === 0 || !isClass(s, s.klass[i], kinds))
+        continue;
+      const klass = ptr(s.address[i]);
+      if (classNameMatches(klass, name)) {
+        classesByName.set(name, klass);
+        return klass;
+      }
+    }
+    throw new Error(`class ${name} not found (not loaded?)`);
+  }
+
+  // Functions found by name: scripts run each run's calls again, and a search
+  // by name reads the object table when its snapshot is old (on the game thread)
+  const methodsByName = new Map();
+
+  function cachedMethod(key, find) {
+    const cached = methodsByName.get(key);
+    if (cached !== undefined && isObject(cached))
+      return cached;
+    const found = find();
+    methodsByName.set(key, found);
+    return found;
+  }
+
+  function findMethod(klass, name, argumentCount, wantStatic) {
+    return cachedMethod(`${klass}|${name}|${argumentCount}|${wantStatic}`,
+                        () => searchMethod(klass, name, argumentCount, wantStatic));
+  }
+
+  function searchMethod(klass, name, argumentCount, wantStatic) {
+    // The UFunction ``name`` of the class or a base class taking
+    // ``argumentCount`` arguments; ``wantStatic`` true/false or null for any.
+    for (const current of classChain(klass)) {
+      for (const fn of functionsOf(current)) {
+        if (fn.name !== name)
+          continue;
+        const signature = signatureOf(fn.address);
+        if ((wantStatic === null || !signature.instance === wantStatic)
+            && signature.params.length === argumentCount)
+          return fn.address;
+      }
+    }
+    throw new Error(`${layout(klass).name} has no ${wantStatic ? 'static ' : ''}function ` +
+                    `${name} with ${argumentCount} argument(s)`);
+  }
+
+  function virtualMethod(object, fn) {
+    // What ProcessEvent should run for ``fn`` on ``object``: the override of
+    // its class (a Blueprint's event graph, a subclass's implementation).
+    const klass = object.add(OBJECT_CLASS).readPointer();
+    return cachedMethod(`${klass}|${fn}`, () => {
+      const name = fieldName(fn.add(OBJECT_NAME));
+      for (const current of classChain(klass)) {
+        const found = functionsOf(current).find(candidate => candidate.name === name);
+        if (found !== undefined)
+          return found.address;
+      }
+      return fn;
+    });
+  }
+
+  const defaultObjects = new Map();
+
+  function defaultObject(klass) {
+    // The class default object (Default__Name) a class's static functions run on.
+    const cached = defaultObjects.get(klass.toString());
+    if (cached !== undefined && isObject(cached))
+      return cached;
+    const found = searchDefaultObject(klass);
+    defaultObjects.set(klass.toString(), found);
+    return found;
+  }
+
+  function searchDefaultObject(klass) {
+    const s = objects();
+    const wanted = `Default__${nameOfAddress(Number(klass.toString()))}`;
+    const i = s.address.findIndex((address, k) => s.klass[k] === Number(klass.toString())
+      && objectName(s, k) === wanted);
+    if (i < 0)
+      throw new Error(`${wanted} not found`);
+    return ptr(s.address[i]);
+  }
+
+  // className -> the object findObject found last: checked, not searched for
+  // again (a search reads every object, tens of milliseconds on the game thread)
+  const foundObjects = new Map();
+
+  function stillFound(object, klass) {
+    // Whether a cached object is still alive and of the class (or a subclass).
+    if (!isObject(object) || fieldName(object.add(OBJECT_NAME)).startsWith('Default__'))
+      return false;
+    return classChain(object.add(OBJECT_CLASS).readPointer())
+      .some(current => Number(current.toString()) === klass);
+  }
+
+  function findObject(className) {
+    // A live object (not a class default object) of the class ``className``
+    // or a subclass, e.g. findObject("AlabamaCheatManager"); null if none.
+    reflection();
+    const klass = Number(findClass(className).toString());
+    const cached = foundObjects.get(className);
+    if (cached !== undefined && stillFound(cached, klass))
+      return cached;
+    foundObjects.delete(className);
+    for (let fresh = 0; fresh < 2; fresh++) {
+      const s = objects();
+      const kinds = new Map();
+      const derives = k => {
+        let result = kinds.get(k);
+        if (result === undefined) {
+          result = false;
+          for (let current = k; current !== 0; current = superOf(current)) {
+            if (current === klass) {
+              result = true;
+              break;
+            }
+          }
+          kinds.set(k, result);
+        }
+        return result;
+      };
+      for (let i = 0; i < s.address.length; i++) {
+        if (!derives(s.klass[i]) || objectName(s, i).startsWith('Default__'))
+          continue;
+        const object = ptr(s.address[i]);
+        if (isObject(object)) {
+          foundObjects.set(className, object);
+          return object;
+        }
+      }
+      snapshot = null;  // the object may be newer than the snapshot
+    }
+    return null;
+  }
+
   return {
     id: 'unreal',
     refresh,
@@ -1355,9 +1738,22 @@ const unreal = (() => {
     writeValue,
     // UObjects need no write barrier
     writeReference: (_owner, address, pointer) => address.writePointer(pointer),
-    // Unreal has no getters to evaluate, nor a main thread to wait for.
+    // Unreal has no getters to evaluate.
     properties: () => [],
-    drainMain: () => {},
+    drainMain,
+    onMainThread,
+    signatureOf,
+    findClass,
+    findMethod,
+    findObject,
+    classChain,
+    objectClassName: object => layout(classOf(object)).name,
+    virtualMethod,
+    invoke,
+    writeParameter,
+    newString: () => {
+      throw new Error('Unreal has no string objects: FString arguments are written in place');
+    },
     onRuntimeThread: work => new Promise(resolve => resolve(work())),
     // The monitor shows Unity's object names; here the UObject's FName.
     unityName: uobjectName,

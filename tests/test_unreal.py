@@ -188,16 +188,46 @@ static volatile int32_t g_gold = 100;
 static volatile int32_t g_ticks;
 static volatile int32_t g_loud;
 
+static volatile int32_t g_name_length;
+static volatile int32_t g_events;
+
 /* Every FFrame has FFrame's vtable. */
 static void *g_frame_vtable[4];
 
-/* Like ProcessEvent: a frame of the function's own over its parameters */
-__attribute__((noinline)) static void process_event(Object *function, Object *self, void *parms,
-                                                    void *result) {
-    Frame frame = {g_frame_vtable, 0, function, self, function->script, parms};
-    native_fn code = *(native_fn volatile *)&function->func;
-    code(self, &frame, result);
+__attribute__((noinline)) static void count_event(void) {
+    g_events = g_events + 1;
 }
+
+/* UObject::ProcessEvent: a frame of the function's own over its parameters,
+   and the call of its Func the way Unreal's code makes it, call [reg + Func] */
+__attribute__((noinline)) void UObject_ProcessEvent(Object *self, Object *function,
+                                                    void *parms) {
+    Frame frame = {g_frame_vtable, 0, function, self, function->script, parms};
+    void *result = function->return_value_offset == 0xffff ? NULL
+        : (char *)parms + function->return_value_offset;
+    void *stack = &frame;
+    count_event();
+    __asm__ volatile("call *0xd8(%%rax)"
+                     : "+a"(function), "+D"(self), "+S"(stack), "+d"(result)
+                     :
+                     : "rcx", "r8", "r9", "r10", "r11", "memory", "cc",
+                       "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
+                       "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
+}
+
+/* Other virtual functions of UObject, before and after ProcessEvent */
+__attribute__((noinline)) void UObject_BeginDestroy(Object *self) {
+    self->flags |= 0x8000;
+}
+
+__attribute__((noinline)) void UObject_PostLoad(Object *self) {
+    self->flags |= 0x10000;
+}
+
+static void *g_object_vtable[] = {
+    (void *)UObject_BeginDestroy, (void *)UObject_PostLoad, (void *)UObject_ProcessEvent,
+    (void *)UObject_PostLoad, NULL
+};
 
 __attribute__((noinline)) void exec_AddGold(Object *context, Frame *stack, void *result) {
     int32_t amount;
@@ -227,6 +257,7 @@ __attribute__((noinline)) void exec_Rename(Object *context, Frame *stack, void *
     (void)context;
     (void)result;
     g_loud = stack->locals[16];
+    g_name_length = ((String *)stack->locals)->num;
 }
 
 /* The script interpreter: Loot's script calls AddGold(Amount), then
@@ -238,7 +269,7 @@ __attribute__((noinline)) void ProcessInternal(Object *context, Frame *stack, vo
         native_fn code = *(native_fn volatile *)&g_add_gold->func;
         code(context, stack, &total);
         float delta = 0;
-        process_event(g_tick, context, &delta, NULL);
+        UObject_ProcessEvent(context, g_tick, &delta);
     }
 }
 
@@ -277,6 +308,8 @@ int main(void) {
     Object *package_class = object(class_class, "Package", core);
     Object *enum_class = object(class_class, "Enum", core);
     core->klass = package_class;
+    Object *default_object = object(object_class, "Default__Object", core);
+    default_object->vtable = g_object_vtable;
     field_class_object->super = object_class;
     struct_class->super = field_class_object;
     class_class->super = struct_class;
@@ -325,14 +358,16 @@ int main(void) {
                           FUNC_NATIVE | FUNC_STATIC | FUNC_PUBLIC, exec_AddGold, 2, 8, 4);
     property(g_add_gold, int_property, "Amount", 4, 0, CPF_PARM, NULL);
     property(g_add_gold, int_property, "ReturnValue", 4, 4, CPF_PARM | CPF_RETURN_PARM, NULL);
+    object(hero, "Default__Hero", game);
     g_tick = function(function_class, hero, "Tick", FUNC_NATIVE | FUNC_PUBLIC, exec_Tick,
                       1, 4, 0xffff);
     property(g_tick, float_property, "DeltaSeconds", 4, 0, CPF_PARM, NULL);
     g_rename = function(function_class, hero, "Rename", FUNC_NATIVE | FUNC_PUBLIC, exec_Rename,
                         2, 24, 0xffff);
     property(g_rename, str_property, "NewName", 16, 0, CPF_PARM, NULL);
-    /* FBoolProperty: FieldSize 1, ByteOffset 0, ByteMask and FieldMask 0xff */
-    property(g_rename, bool_property, "bLoud", 1, 16, CPF_PARM, (void *)0xffff0001ULL);
+    /* FBoolProperty of a native bool: FieldSize 1, ByteOffset 0, ByteMask 1,
+       FieldMask 0xff */
+    property(g_rename, bool_property, "bLoud", 1, 16, CPF_PARM, (void *)0xff010001ULL);
     /* A Blueprint event the native class declares: no script, nothing to hook */
     Object *on_looted = function(function_class, hero, "OnLooted",
                                  FUNC_EVENT | FUNC_PUBLIC | FUNC_BLUEPRINT_EVENT,
@@ -367,10 +402,10 @@ int main(void) {
     while (scanf("%15s %d", cmd, &value) == 2) {
         if (strcmp(cmd, "tick") == 0) {
             float delta = 0.016f;
-            process_event(g_tick, player, &delta, NULL);
+            UObject_ProcessEvent(player, g_tick, &delta);
         } else if (strcmp(cmd, "loot") == 0) {
             struct { Object *target; int32_t amount; } parms = {player, value};
-            process_event(g_loot, player, &parms, NULL);
+            UObject_ProcessEvent(player, g_loot, &parms);
         } else if (strcmp(cmd, "rename") == 0) {
             char text[16];
             uint16_t wide[16];
@@ -378,7 +413,11 @@ int main(void) {
             for (int i = 0; i <= length; i++)
                 wide[i] = (uint16_t)text[i];
             struct { String name; uint8_t loud; } parms = {{wide, length + 1, length + 1}, 1};
-            process_event(g_rename, player, &parms, NULL);
+            UObject_ProcessEvent(player, g_rename, &parms);
+        } else if (strcmp(cmd, "renamed") == 0) {
+            printf("%d %d\n", g_name_length, g_loud);
+            fflush(stdout);
+            continue;
         }
         printf("%d %d\n", g_gold, *(native_fn volatile *)&g_loot->func == ProcessInternal);
         fflush(stdout);
@@ -391,7 +430,7 @@ int main(void) {
 def _build(tmp_path):
     (tmp_path / "fake_game.c").write_text(_FAKE_GAME_SOURCE)
     binary = tmp_path / "fakegame-Linux-Shipping"
-    subprocess.run(["gcc", "-O0", "-fPIE", "-pie", str(tmp_path / "fake_game.c"),
+    subprocess.run(["gcc", "-O0", "-mno-red-zone", "-fPIE", "-pie", str(tmp_path / "fake_game.c"),
                     "-o", str(binary)], check=True)
     return binary
 
@@ -603,6 +642,64 @@ def test_method_monitor_reads_arguments_from_the_call_frame(tmp_path, qt_app):
         assert [(arg["name"], arg["text"]) for arg in call["args"]] == [
             ("NewName", '"Hero 7"'), ("bLoud", "true")]
         worker.remove_monitor(rename)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.scripts import ScriptSpec, ScriptWorker
+
+    target = _Target(_build(tmp_path))
+    worker = ScriptWorker(target.pid)
+    added, failed, runs = [], {}, []
+    worker.script_added.connect(added.append)
+    worker.script_failed.connect(failed.__setitem__)
+    worker.script_ran.connect(lambda script_id, run: runs.append((script_id, run)))
+
+    def run_on_game_thread(script_id):
+        # Scripts run when the game thread next enters ProcessEvent.
+        runs.clear()
+        worker.run_now(script_id)
+        _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+        assert runs[0][0] == script_id
+        return runs[0][1]
+
+    try:
+        worker.start()
+        # A static function runs on the class default object; its result is
+        # read from the parameter block. An instance function gets an FString
+        # and a bool.
+        calls = worker.add_script(ScriptSpec("""
+            const hero = ctx.find("BP_Hero_C");
+            ctx.log(hero.name, hero.Health);
+            hero.call("Rename", "Bob", true);
+            return ctx.call("Hero.AddGold", 7);
+        """))
+        _wait_for(qt_app, lambda: calls in added or calls in failed)
+        assert not failed
+        run = run_on_game_thread(calls)
+        assert run["error"] is None, run["error"]
+        assert run["logs"] == ["BP_Hero_C_0 75"]
+        assert run["result"] == "107"
+        assert target.send("renamed", 0) == (4, 1)  # "Bob" and its terminating 0
+
+        # Unknown functions and classes are reported as the script's error.
+        typo = worker.add_script(ScriptSpec('ctx.find("BP_Hero_C").call("Jump");'))
+        _wait_for(qt_app, lambda: typo in added)
+        run = run_on_game_thread(typo)
+        assert "has no function Jump with 0 argument(s)" in run["error"]
+
+        # A repeating script runs again and again while the game runs.
+        runs.clear()
+        repeating = worker.add_script(ScriptSpec(
+            "ctx.state.n = (ctx.state.n || 0) + 1; return ctx.state.n;", "repeat", 0.1))
+        _wait_for(qt_app, lambda: target.send("tick", 0)
+                  and len([r for r in runs if r[0] == repeating]) >= 3)
+        assert [r[1]["result"] for r in runs if r[0] == repeating][:3] == ["1", "2", "3"]
     finally:
         worker.requestInterruption()
         worker.wait(5000)

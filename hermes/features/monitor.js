@@ -500,9 +500,12 @@ function callStatic(identity, args) {
     const { result, exception } = invokeMethod(method, null, values);
     if (!exception.isNull())
       return { exception: exceptionText(exception) };
-    const returns = engine.signatureOf(method).returns;
+    const signature = engine.signatureOf(method);
+    const returns = signature.returns;
     if (returns.kind === T.VOID && !returns.byref)
       return { result: null };
+    if (signature.parms)  // Unreal: written into the parameter block
+      return { result: safely(() => readValue(returns, result.add(signature.returnOffset), true)) };
     return { result: resultValue(returns, result) };
   });
 }
@@ -814,13 +817,19 @@ class ManagedObject {
     const type = field.type;
     if (type.kind === T.VALUETYPE)
       throw new Error(`the struct field ${name} cannot be set as a whole`);
+    let old;
+    try {
+      old = readJs(type, address);
+    } catch (_error) {
+      // shown without its old value
+    }
     if (type.engine !== undefined)
       engine.writeValue(type, address, value);
     else if (REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING)
       engine.writeReference(this.isStruct ? null : this.address, address, pointerOf(type, value));
     else
       writeJs(type, address, value);
-    noteChange(`${shortClass(layout.name)}.${name}`, value);
+    noteChange(`${shortClass(layout.name)}.${name}`, value, old);
   }
 
   get(name) {
@@ -942,10 +951,18 @@ function endChanges(changed) {
     changeStacks.delete(threadId);
 }
 
-function noteChange(what, value) {
+function noteChange(what, value, old) {
+  // old: the value before, if known (not for properties: their getter is game code)
   const stack = changeStacks.get(Process.getCurrentThreadId());
   if (stack !== undefined)
-    stack[stack.length - 1].push(`${what}=${displayText(value)}`);
+    stack[stack.length - 1].push({ what, value, old });
+}
+
+function changesText(changed, before) {
+  // name=value of the changes, or of the old values (those known)
+  return changed.filter(change => !before || change.old !== undefined)
+    .map(change => `${change.what}=${displayText(before ? change.old : change.value)}`)
+    .join(', ');
 }
 
 function wrap(object) {
@@ -1094,6 +1111,8 @@ function pointerOf(type, value) {
 function invokeMethod(method, self, args) {
   // Call game code with JavaScript arguments: { result, exception }.
   const signature = engine.signatureOf(method);
+  if (signature.parms)
+    return invokeWithParms(method, signature, self, args);
   const params = Memory.alloc(Process.pointerSize * Math.max(args.length, 1));
   const keep = [];
   signature.params.forEach((param, i) => {
@@ -1119,11 +1138,52 @@ function invokeMethod(method, self, args) {
   return engine.invoke(method, self === null ? NULL : self, params);
 }
 
+function invokeWithParms(method, signature, self, args) {
+  // Unreal: the arguments in one block laid out like the parameters, where
+  // the function writes its result, too ({ result: the block }).
+  const parms = Memory.alloc(Math.max(signature.parmsSize, 8));
+  parms.writeByteArray(new ArrayBuffer(Math.max(signature.parmsSize, 8)));
+  signature.params.forEach((param, i) => {
+    const type = { ...param.type, byref: false };
+    const address = parms.add(param.offset);
+    const value = args[i];
+    if (type.engine !== undefined)
+      engine.writeParameter(type, address, value);
+    else if (type.kind === T.VALUETYPE) {
+      if (!(value instanceof ManagedObject))
+        throw new Error(`argument ${param.name} must be a ${type.name}`);
+      Memory.copy(address, value.address, type.structSize);
+    } else if (REFERENCE_KINDS.has(type.kind))
+      address.writePointer(pointerOf(type, value));
+    else
+      writeJs(type, address, value);
+  });
+  return engine.invoke(method, self, parms);
+}
+
+// Struct results of Unreal calls live in their parameter block: kept for a while
+const keptBlocks = [];
+
+function parmsResultJs(signature, parms) {
+  const type = signature.returns;
+  if (type.kind === T.VOID && !type.byref)
+    return undefined;
+  if (type.kind === T.VALUETYPE) {
+    keptBlocks.push(parms);
+    if (keptBlocks.length > 64)
+      keptBlocks.shift();
+  }
+  return readJs(type, parms.add(signature.returnOffset));
+}
+
 function callMethod(method, self, args) {
   // Call game code with JavaScript arguments; returns its result.
   const { result, exception } = invokeMethod(method, self, args);
   throwIfException(exception);
-  return resultJs(engine.signatureOf(method).returns, result);
+  const signature = engine.signatureOf(method);
+  if (signature.parms)
+    return parmsResultJs(signature, result);
+  return resultJs(signature.returns, result);
 }
 
 function staticCall(qualifiedName, ...args) {
@@ -1134,6 +1194,12 @@ function staticCall(qualifiedName, ...args) {
   const klass = engine.findClass(qualifiedName.substring(0, dot));
   const method = engine.findMethod(klass, qualifiedName.substring(dot + 1), args.length, true);
   return callMethod(method, null, args);
+}
+
+function findObject(className) {
+  // ctx.find("AlabamaCheatManager"): a live object of that class (Unreal), or null
+  const object = engine.findObject(className);
+  return object === null ? null : objectJs(object);
 }
 
 function displayText(value) {
@@ -1377,6 +1443,7 @@ function hookBefore(hook, invocation) {
     hookId: hook.id,
     threadId: invocation.threadId,
     call: staticCall,
+    find: findObject,
     log: logs === null ? () => {} : (...items) => { logs.push(formatLog(items)); }
   };
   let error = null;
@@ -1387,7 +1454,7 @@ function hookBefore(hook, invocation) {
       const value = ctx.args[name];
       if (value !== original) {
         write(value);
-        noteChange(name, value);
+        noteChange(name, value, original);
       }
     }
     hook.errorReported = false;
@@ -1396,10 +1463,11 @@ function hookBefore(hook, invocation) {
   } finally {
     endChanges(changed);
   }
-  const text = changed.join(', ');
+  const text = changesText(changed, false);
+  const oldText = changesText(changed, true);
   const stats = hookStats.get(hook.id) || { count: 0 };
   stats.count++;
-  stats.last = { old: '', result: text || '—', kept: changed.length === 0,
+  stats.last = { old: oldText, result: text || '—', kept: changed.length === 0,
                  error: error === null ? null : String(error) };
   hookStats.set(hook.id, stats);
   if (error !== null && !hook.errorReported) {
@@ -1411,7 +1479,7 @@ function hookBefore(hook, invocation) {
       threadId: invocation.threadId,
       address: '',
       caller: debugCaller(invocation.returnAddress, ctx.caller, scriptCaller),
-      old: '',
+      old: oldText,
       result: text,
       kept: changed.length === 0,
       logs,
@@ -1469,6 +1537,7 @@ function hookLeave(hook, invocation, retval) {
     hookId: hook.id,
     threadId: invocation.threadId,
     call: staticCall,
+    find: findObject,
     log: logs === null ? () => {} : (...items) => { logs.push(formatLog(items)); }
   };
   let returned;
@@ -1637,6 +1706,98 @@ function flushHooks() {
   }
 }
 
+// --- Scripts: game code run by time (see hermes/features/scripts.py) -------------
+// A script is a function body run with ``ctx`` on the game thread (see
+// engine.onMainThread): once some seconds after it is added, every some
+// seconds, or only when asked (``mode``: once, repeat, manual). A repeating
+// script waits for its run to end before the next is timed.
+
+const scripts = new Map();
+
+function compileScript(source) {
+  return new Function('ctx', source);
+}
+
+function addScript(spec) {
+  if (scripts.has(spec.id))
+    throw new Error(`Script ${spec.id} exists already`);
+  const script = { id: spec.id, fn: compileScript(spec.source), mode: spec.mode,
+                   seconds: spec.seconds, enabled: spec.enabled, state: {}, runs: 0,
+                   timer: null, running: false, removed: false };
+  scripts.set(spec.id, script);
+  timeScript(script);
+  return true;
+}
+
+function updateScript(id, spec) {
+  // New code or timing; the script's ctx.state stays.
+  const script = requireScript(id);
+  const fn = compileScript(spec.source);
+  Object.assign(script, { fn, mode: spec.mode, seconds: spec.seconds, enabled: spec.enabled });
+  timeScript(script);
+  return true;
+}
+
+function removeScript(id) {
+  const script = scripts.get(id);
+  if (script === undefined)
+    return false;
+  script.removed = true;
+  clearTimeout(script.timer);
+  scripts.delete(id);
+  return true;
+}
+
+function requireScript(id) {
+  const script = scripts.get(id);
+  if (script === undefined)
+    throw new Error(`Script ${id} does not exist`);
+  return script;
+}
+
+function timeScript(script) {
+  clearTimeout(script.timer);
+  script.timer = null;
+  if (!script.enabled || script.removed || script.mode === 'manual')
+    return;
+  if (script.mode === 'once' && script.runs > 0)
+    return;
+  script.timer = setTimeout(() => {
+    script.timer = null;
+    runScript(script);
+  }, Math.max(0, script.seconds * 1000));
+}
+
+function runScript(script) {
+  // Run it on the game thread; reports 'script-run'.
+  if (script.running)
+    return false;
+  script.running = true;
+  const logs = [];
+  const ctx = {
+    find: findObject,
+    call: staticCall,
+    log: (...items) => { logs.push(formatLog(items)); },
+    state: script.state,
+    runs: script.runs,
+    scriptId: script.id
+  };
+  const started = Date.now();
+  const report = (result, error) => {
+    script.running = false;
+    script.runs++;
+    send({ kind: 'script-run', scriptId: script.id, time: started, runs: script.runs,
+           result: error === null ? displayText(result) : '', logs,
+           error: error === null ? null
+             : (error && error.stack ? `${error}\n${error.stack}` : String(error)) });
+    if (script.mode === 'repeat' || script.mode === 'once')
+      timeScript(script);
+  };
+  engine.onMainThread(() => script.fn(ctx)).then(result => report(result, null),
+                                                 error => report(undefined, error));
+  return true;
+}
+
 function flush() {
   flushHooks();
   if (events.length === 0 && dropped.size === 0)
@@ -1687,8 +1848,14 @@ rpc.exports = {
     requireMethodHook(id).debug = enabled;
     return true;
   },
+  addScript,
+  updateScript,
+  removeScript,
+  runScriptNow: id => runScript(requireScript(id)),
   dispose() {
     clearInterval(flushTimer);
+    for (const id of Array.from(scripts.keys()))
+      removeScript(id);
     for (const id of Array.from(monitors.keys()))
       removeMonitor(id);
     for (const id of Array.from(methodHooks.keys()))

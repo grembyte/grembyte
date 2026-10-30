@@ -418,3 +418,48 @@ def test_init_db_sets_aside_a_table_of_the_first_versions(tmp_path):
         db.exec_driver_sql("DELETE FROM processes WHERE id = 1")
     assert repository.list_addresses(1) == [] and gold
     engine.dispose()
+
+
+def test_scripts_are_saved_changed_and_deleted_per_process(tmp_path):
+    # pylint: disable=import-outside-toplevel
+    from hermes.db.repository.scripts import ScriptRepository
+    from hermes.features.scripts import ScriptSpec
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+    try:
+        hooks = HookRepository(sessions)
+        scripts = ScriptRepository(sessions)
+        game = hooks.get_or_create_process("game", "/games/game")
+        other = hooks.get_or_create_process("other", "/games/other")
+        heal = scripts.add_script(game, label="Heal", source="ctx.log(1);", mode="repeat",
+                                  seconds=60)
+        scripts.add_script(other, label="Gold", source="return 1;", mode="manual", seconds=0)
+
+        scripts.update_script(heal, seconds=30, enabled=False)
+        [saved] = scripts.list_scripts(game)
+        assert (saved.label, saved.source, saved.mode, saved.seconds, saved.enabled) == (
+            "Heal", "ctx.log(1);", "repeat", 30, False)
+        spec = ScriptSpec(saved.source, saved.mode, saved.seconds, saved.enabled, saved.label)
+        assert spec.to_agent(3) == {"id": 3, "source": "ctx.log(1);", "mode": "repeat",
+                                    "seconds": 30, "enabled": False}
+
+        scripts.delete_script(heal)
+        assert scripts.list_scripts(game) == []
+        assert [script.label for script in scripts.list_scripts(other)] == ["Gold"]
+    finally:
+        engine.dispose()
+
+
+def test_script_spec_rejects_unknown_modes_and_busy_loops():
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.scripts import ScriptSpec
+
+    with pytest.raises(ValueError):
+        ScriptSpec("return 1;", "hourly", 60)
+    with pytest.raises(ValueError):
+        ScriptSpec("return 1;", "repeat", 0)
+    with pytest.raises(ValueError):
+        ScriptSpec("return 1;", "once", -1)
+    assert ScriptSpec("return 1;", "once", 0).mode == "once"

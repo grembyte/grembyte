@@ -244,7 +244,21 @@ Next steps:
   address stays. The trace's callers could use the same.
 - Monitor gaps: `EX_LocalOutVariable` (needs `FFrame::OutParms`) and nested expressions show
   as `?`; FText, TMap, TSet and delegates show their type only
-- Method hooks for UFunctions (change arguments in `Locals`, the result at `Result`)
+- **Done (2026-10-30):** method hooks for UFunctions (change arguments in `Locals`, the
+  result at `Result`).
+- **Done (2026-10-30):** calling UFunctions and scripts. `UObject::ProcessEvent` is the one
+  virtual function of `Default__Object`'s vtable whose code calls `[reg + Func]` (Avowed:
+  slot 77); calls run on the game thread (the main thread: Avowed 348), queued until it
+  next enters ProcessEvent, where a temporary interceptor runs them. The parameter block
+  is laid out from the function's properties; FStrings point at buffers of the agent (the
+  game copies them), FNames are looked up among the objects' names, static functions run
+  on the class default object. Avowed: `BP_CheatManager_C` (an `AlabamaCheatManager`) is
+  the player controller's `CheatManager` (+0x400); 147 of its 152 functions have code in
+  the shipping build (`GiveHealth`, `AddCurrency`, `ToggleUnlimitedStamina` checked live).
+  Scripts (hermes/features/scripts.py) run such calls by time. Hooks on functions a call
+  reaches do not fire for it (Frida's interceptor ignores the thread inside a callback).
+- Unreal in the **Call method** dialog (FString/struct arguments need input of their own),
+  and scripts in the game export
 - Call graph from Blueprint bytecode (`UStruct::Script`)
 - UE4 before 4.23 (`TNameEntryArray` instead of `FNamePool`) and 32-bit games are not
   supported
