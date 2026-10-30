@@ -1791,15 +1791,28 @@ function runScript(script) {
     script.running = false;
     script.runs++;
     send({ kind: 'script-run', scriptId: script.id, time: started, runs: script.runs,
-           result: error === null ? displayText(result) : '', logs,
+           result: error === null ? result.text : '',
+           target: error === null ? result.target : undefined, logs,
            error: error === null ? null
              : (error && error.stack ? `${error}\n${error.stack}` : String(error)) });
     if (script.mode === 'repeat' || script.mode === 'once')
       timeScript(script);
   };
-  engine.onMainThread(() => script.fn(ctx)).then(result => report(result, null),
-                                                 error => report(undefined, error));
+  engine.onMainThread(() => scriptResult(script.fn(ctx))).then(
+    result => report(result, null), error => report(undefined, error));
   return true;
+}
+
+function scriptResult(value) {
+  // What a script returned: { text, target? } (target: an object or struct
+  // the inspector can open). Read on the game thread, where Unity may be
+  // asked for an object's name.
+  if (!(value instanceof ManagedObject))
+    return { text: displayText(value) };
+  if (!value.isStruct)
+    return objectValue(value.address, true);
+  return { text: `${engine.layout(value.klass).name}@${value.address}`,
+           target: { address: value.address.toString(), klass: value.klass.toString() } };
 }
 
 function flush() {

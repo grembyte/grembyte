@@ -181,17 +181,24 @@ STYLE = """
     /* ------------------------------------------------------------------
        Layout chrome
        ------------------------------------------------------------------ */
-    QSplitter::handle {
-        background-color: transparent;
-    }
+    /* A 2px line in the middle of the handle shows where to drag;
+       hovered or dragged, the whole handle turns blue. */
     QSplitter::handle:horizontal {
-        width: 6px;
+        width: 8px;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 rgba(0, 0, 0, 0), stop:0.37 rgba(0, 0, 0, 0),
+            stop:0.38 #6e7681, stop:0.62 #6e7681,
+            stop:0.63 rgba(0, 0, 0, 0), stop:1 rgba(0, 0, 0, 0));
     }
     QSplitter::handle:vertical {
-        height: 6px;
+        height: 8px;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 rgba(0, 0, 0, 0), stop:0.37 rgba(0, 0, 0, 0),
+            stop:0.38 #6e7681, stop:0.62 #6e7681,
+            stop:0.63 rgba(0, 0, 0, 0), stop:1 rgba(0, 0, 0, 0));
     }
-    QSplitter::handle:hover {
-        background-color: #1f6feb;
+    QSplitter::handle:hover, QSplitter::handle:pressed {
+        background: #1f6feb;
     }
 
     QToolBar {

@@ -1069,5 +1069,6 @@
   "scan_area.tooltip": "Fold the scan results and the value search away, so that addresses, hooks and scripts get the whole window (Ctrl+Shift+F). The choice is kept.",
   "native.risky_engine": "Risky in {engine} games: the native trace crashed Shadowrun Returns (Mono, Linux) within seconds, likely because Stalker also rewrites the JIT code and Mono then takes a fault there for a crash. The catalog, the trace and the method monitor are safe.",
   "native.risky_question": "Start it anyway? The game may crash; save first.",
-  "call.inspect": "Inspect"
+  "call.inspect": "Inspect",
+  "scripts.inspect": "Inspect"
 }

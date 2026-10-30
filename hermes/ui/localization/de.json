@@ -1069,5 +1069,6 @@
   "scan_area.tooltip": "Scan-Ergebnisse und Wertsuche einklappen, damit Adressen, Hooks und Skripte das ganze Fenster bekommen (Strg+Umschalt+F). Die Wahl bleibt erhalten.",
   "native.risky_engine": "Riskant in {engine}-Spielen: Der native Trace hat Shadowrun Returns (Mono, Linux) nach wenigen Sekunden abstürzen lassen, vermutlich weil Stalker auch den JIT-Code umschreibt und Mono einen Fehler dort für einen Absturz hält. Katalog, Trace und Methoden-Überwachung sind sicher.",
   "native.risky_question": "Trotzdem starten? Das Spiel kann abstürzen – vorher speichern.",
-  "call.inspect": "Inspizieren"
+  "call.inspect": "Inspizieren",
+  "scripts.inspect": "Inspizieren"
 }

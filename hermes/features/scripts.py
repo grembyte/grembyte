@@ -25,7 +25,9 @@ The body gets one ``ctx`` object:
 
 Objects are the wrappers method hooks get (``.call(name, ...args)``,
 ``.field(name)``, fields as properties, ``.name``, ``.className``); a value
-the body returns is shown as its result. Example (Avowed)::
+the body returns is shown as its result, an object with a ``target`` the
+object inspector opens (``inspect``, ``evaluate`` and ``full_text`` work as
+the method monitor's). Example (Avowed)::
 
     const cheats = ctx.find("AlabamaCheatManager");
     cheats.call("GiveHealth", 50);
@@ -94,12 +96,20 @@ class ScriptWorker(QThread):
     script_removed = pyqtSignal(int)
     # script id, error text (compiling it, or a command failed)
     script_failed = pyqtSignal(int, str)
-    # script id, {time, runs, result, logs, error}
+    # script id, {time, runs, result, target?, logs, error}
     script_ran = pyqtSignal(int, dict)
+    # As MethodMonitorWorker's, for the object inspector (see hermes.ui.widgets.inspection)
+    inspected = pyqtSignal(int, dict)
+    inspect_failed = pyqtSignal(int, str)
+    evaluated = pyqtSignal(int, list)
+    evaluate_failed = pyqtSignal(int, str)
+    text_fetched = pyqtSignal(int, object)
+    text_failed = pyqtSignal(int, str)
     agent_log = pyqtSignal(str, str)
     worker_failed = pyqtSignal(str)
 
     _ids = itertools.count(1)
+    _requests = itertools.count(1)
 
     def __init__(self, pid, parent=None):
         super().__init__(parent)
@@ -123,6 +133,24 @@ class ScriptWorker(QThread):
 
     def run_now(self, script_id):
         self._commands.put(("run", script_id, None))
+
+    def inspect(self, target):
+        """Read an object (a result's ``target``); expect inspected or inspect_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("inspect", request_id, target))
+        return request_id
+
+    def evaluate(self, target, names):
+        """Call the named getters of an object on the game's main thread."""
+        request_id = next(self._requests)
+        self._commands.put(("evaluate", request_id, (target, list(names))))
+        return request_id
+
+    def full_text(self, text_id):
+        """Fetch the whole text of a long string value (its ``fullText``)."""
+        request_id = next(self._requests)
+        self._commands.put(("text", request_id, text_id))
+        return request_id
 
     @sessions.tracked(sessions.SCRIPTS)
     def run(self):
@@ -181,8 +209,26 @@ class ScriptWorker(QThread):
                     self.script_removed.emit(script_id)
             elif action == "run":
                 api.run_script_now(script_id)
+            elif action in self._REQUESTS:
+                self._answer(api, action, script_id, argument)
+                return
         except frida.RPCException as error:
             self.script_failed.emit(script_id, str(error))
+
+    # request action -> (agent call, answer signal, failure signal)
+    _REQUESTS = {
+        "inspect": ("inspect", "inspected", "inspect_failed"),
+        "evaluate": ("evaluate", "evaluated", "evaluate_failed"),
+        "text": ("full_text", "text_fetched", "text_failed"),
+    }
+
+    def _answer(self, api, action, request_id, argument):
+        call, answered, failed = self._REQUESTS[action]
+        arguments = argument if action == "evaluate" else (argument,)
+        try:
+            getattr(self, answered).emit(request_id, getattr(api, call)(*arguments))
+        except frida.RPCException as error:
+            getattr(self, failed).emit(request_id, str(error))
 
     def _on_message(self, message, _data):
         if message.get("type") == "error":

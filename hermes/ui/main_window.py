@@ -414,6 +414,7 @@ class MainWindow(QMainWindow):
         self.hook_panel = None
         self.script_panel = None
         self.bottom_tabs = None
+        self._address_box = None
         self.lbl_backend = None
 
         self._build_menu()
@@ -765,6 +766,12 @@ class MainWindow(QMainWindow):
         address_box.setTitle("")
         address_box.setObjectName("tab_page")
         self.bottom_tabs.addTab(address_box, self.translations["address_table.title"])
+        self._address_box = address_box
+        # Whoever adds or removes rows (scan, inspector, saved addresses), the
+        # tab shows how many there are, like those of hooks and scripts.
+        model = self.addr_table.model()
+        for signal in (model.rowsInserted, model.rowsRemoved, model.modelReset):
+            signal.connect(self._on_address_count_changed)
 
         self.hook_panel = HookPanel(
             self.translations, self, repository=self._hook_repository
@@ -790,6 +797,7 @@ class MainWindow(QMainWindow):
         self.script_panel.setTitle("")
         self.script_panel.setObjectName("tab_page")
         self.script_panel.count_changed.connect(self._on_script_count_changed)
+        self.script_panel.address_requested.connect(self._add_inspected_address)
         self.bottom_tabs.addTab(self.script_panel, self.translations["scripts.title"])
         return self.bottom_tabs
 
@@ -813,6 +821,17 @@ class MainWindow(QMainWindow):
             self.translations["scan_area.hide" if visible else "scan_area.show"])
         self.btn_scan_area.setToolTip(self.translations["scan_area.tooltip"])
         self._settings.setValue("scan_area_visible", visible)
+
+    def _on_address_count_changed(self, *_args):
+        """Show the number of tracked addresses in the tab title."""
+        if self.bottom_tabs is None or self.addr_table is None:
+            return
+        count = self.addr_table.rowCount()
+        title = self.translations["address_table.title"]
+        self.bottom_tabs.setTabText(
+            self.bottom_tabs.indexOf(self._address_box),
+            f"{title} ({count})" if count else title,
+        )
 
     def _on_hook_count_changed(self, count):
         """Show the number of hooks in the tab title."""

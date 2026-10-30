@@ -687,6 +687,18 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         assert run["result"] == "107"
         assert target.send("renamed", 0) == (4, 1)  # "Bob" and its terminating 0
 
+        # An object it returns comes with a target the inspector reads.
+        inspected = []
+        worker.inspected.connect(lambda _request, contents: inspected.append(contents))
+        hero = worker.add_script(ScriptSpec('return ctx.find("BP_Hero_C");'))
+        _wait_for(qt_app, lambda: hero in added)
+        run = run_on_game_thread(hero)
+        assert run["result"].startswith('ABP_Hero_C "BP_Hero_C_0"@0x')
+        worker.inspect(run["target"])
+        _wait_for(qt_app, lambda: inspected)
+        assert [(field["name"], field["value"]["text"]) for field in inspected[0]["fields"]
+                if field["name"] == "Health"] == [("Health", "75")]
+
         # Unknown functions and classes are reported as the script's error.
         typo = worker.add_script(ScriptSpec('ctx.find("BP_Hero_C").call("Jump");'))
         _wait_for(qt_app, lambda: typo in added)

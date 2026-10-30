@@ -1,5 +1,6 @@
 """The scripts tab: JavaScript that calls game code by time (see hermes.features.scripts)."""
 
+import html
 from datetime import datetime
 
 from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
@@ -16,6 +17,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QTextBrowser,
     QPushButton,
     QSplitter,
     QTableWidget,
@@ -27,6 +29,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from hermes.features.scripts import MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker
 from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.syntax_hint import SyntaxHint
 from hermes.ui.widgets.table import resizable_columns, set_row_height
@@ -143,6 +146,8 @@ class ScriptPanel(QGroupBox):
     # pylint: disable=too-many-instance-attributes
 
     count_changed = pyqtSignal(int)
+    # a field of an inspected object to put on the address list (see ObjectInspectorDialog)
+    address_requested = pyqtSignal(object)
 
     _COLUMNS = (
         "scripts.column_label",
@@ -159,6 +164,10 @@ class ScriptPanel(QGroupBox):
         self._pid = None
         self._process_id = None
         self._worker = None
+        # the inspectors of objects scripts returned (with the worker's agent)
+        self.inspections = None
+        # objects scripts returned, by their number in the log's links
+        self._results = []
         # script id -> {spec, saved_id, status, runs, last}
         self._scripts = {}
         self._build_ui()
@@ -211,9 +220,10 @@ class ScriptPanel(QGroupBox):
         self.table.doubleClicked.connect(self._edit_selected)
         splitter.addWidget(self.table)
 
-        self.log_view = QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setMaximumBlockCount(MAX_LOG_LINES)
+        self.log_view = QTextBrowser()
+        self.log_view.setOpenLinks(False)
+        self.log_view.anchorClicked.connect(self._on_link)
+        self.log_view.document().setMaximumBlockCount(MAX_LOG_LINES)
         self.log_view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.log_view.setPlaceholderText(self.translations["scripts.log_placeholder"])
         splitter.addWidget(self.log_view)
@@ -281,8 +291,21 @@ class ScriptPanel(QGroupBox):
             self.btn_toggle.setText(self.translations[
                 "scripts.resume" if not state["spec"].enabled else "scripts.pause"])
 
-    def _log(self, text):
-        self.log_view.appendPlainText(text)
+    def _log(self, text, target=None, name=""):
+        """Add a line to the log; with ``target`` (an object) a link that inspects it."""
+        line = f'<span style="white-space: pre-wrap">{html.escape(text)}</span>'
+        if target and self.inspections is not None:
+            self._results.append((self.inspections, target, name))
+            line += (f'  <a href="inspect:{len(self._results) - 1}">'
+                     f'{html.escape(self.translations["scripts.inspect"])}</a>')
+        self.log_view.append(line)
+
+    def _on_link(self, url):
+        kind, _, number = url.toString().partition(":")
+        if kind == "inspect" and number.isdigit() and int(number) < len(self._results):
+            inspections, target, name = self._results[int(number)]
+            if inspections is self.inspections:  # the game is still attached
+                inspections.inspect(target, name=name)
 
     # ------------------------------------------------------------------
     # Process
@@ -348,6 +371,9 @@ class ScriptPanel(QGroupBox):
             lambda script_id, message: self._on_failed(worker, script_id, message))
         worker.script_ran.connect(lambda script_id, run: self._on_ran(worker, script_id, run))
         worker.worker_failed.connect(lambda message: self._on_worker_failed(worker, message))
+        self.inspections = Inspections(self.translations, worker, self.window(),
+                                       time=lambda: datetime.now().strftime("%H:%M:%S"))
+        self.inspections.address_requested.connect(self.address_requested.emit)
         self._worker = worker
         worker.start()
         return worker
@@ -480,7 +506,7 @@ class ScriptPanel(QGroupBox):
         else:
             state["last"] = run.get("result") or "—"
             if run.get("result"):
-                self._log(f"{time} {label}: = {run['result']}")
+                self._log(f"{time} {label}: = {run['result']}", run.get("target"), label)
         self._show(script_id)
         if state["status"] == "running":
             self._set_status(script_id, "active" if state["spec"].enabled else "paused")
