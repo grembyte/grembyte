@@ -2319,3 +2319,62 @@ def test_agent_answers_while_mono_works_on_a_thread_of_its_own(tmp_path, qt_app)
             worker.requestInterruption()
             worker.wait(5000)
         target.close()
+
+
+@requires_target
+def test_hook_panel_logs_scripts_and_acts_on_several_hooks(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.features.method_hooks import MethodHookSpec
+    from hermes.ui.widgets.hooks import HookPanel
+
+    target, panel = _MonoTarget(_build(tmp_path)), HookPanel(translations)
+    status = lambda row: panel.table.item(row, 4).text()  # pylint: disable=unnecessary-lambda-assignment
+    try:
+        panel.set_process(target.pid)
+        logger = panel.add_method_hook(MethodHookSpec(_ROLL_DAMAGE, _method_transform(
+            "function (ctx) { ctx.log('rolled', ctx.result); }"), label="Logger"))
+        doubler = panel.add_method_hook(MethodHookSpec(_ROLL_DAMAGE, _method_transform(
+            "function (ctx) { return ctx.result * 2; }"), label="Doppelt"))
+        _wait_for(qt_app, lambda: status(0) == status(1) == "Aktiv")
+
+        # What a script logs shows below the table without debug mode.
+        assert target.send("roll", 5) == (30, 42)
+        _wait_for(qt_app, lambda: f"#{logger} Logger: rolled 15" in panel.log_view.toPlainText())
+        assert panel._debug_window is None
+
+        # Both selected: Edit is for one hook only; debug, pause and remove act on both.
+        panel.table.selectAll()
+        assert panel._selected_hook_ids() == [logger, doubler]
+        assert not panel.btn_edit.isEnabled() and panel.btn_debug.isEnabled()
+        panel.btn_debug.click()
+        assert all(panel._hooks[hook_id]["debug"] for hook_id in (logger, doubler))
+        assert panel.btn_debug.isChecked() and panel._debug_window.isVisible()
+        panel.btn_debug.click()
+        assert not any(panel._hooks[hook_id]["debug"] for hook_id in (logger, doubler))
+
+        panel.btn_toggle.click()
+        _wait_for(qt_app, lambda: status(0) == status(1) == "Pausiert")
+        assert panel.btn_toggle.text() == translations["hooks.resume"]
+        time.sleep(0.2)
+        assert target.send("roll", 5) == (15, 42)
+        panel.btn_toggle.click()
+        _wait_for(qt_app, lambda: status(0) == status(1) == "Aktiv")
+
+        # A script's error goes to the log as well.
+        panel.table.selectRow(1)
+        assert panel.btn_edit.isEnabled()
+        panel._method_worker.set_transform(doubler, _method_transform(
+            "function (ctx) { return ctx.nothing.here; }"))
+        time.sleep(0.2)
+        target.send("roll", 5)
+        _wait_for(qt_app, lambda: f"#{doubler} Doppelt: Fehler:" in panel.log_view.toPlainText())
+
+        panel.table.selectAll()
+        panel.btn_remove.click()
+        _wait_for(qt_app, lambda: panel.table.rowCount() == 0)
+        assert target.send("roll", 5) == (15, 42)
+    finally:
+        if panel._debug_window is not None:
+            panel._debug_window.close()
+        panel.shutdown(timeout_ms=None)
+        target.close()

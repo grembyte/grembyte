@@ -1327,6 +1327,9 @@ def test_debug_mode_reports_calls_and_skipped_writes(tmp_path, qt_app, translati
         time.sleep(0.3)
         qt_app.processEvents()
         assert len(window.entries()) == 2
+        # Out of debug mode, what the script logs still shows below the table.
+        _wait_for(qt_app, lambda: f"#{hook_id} Gold: delta 1" in panel.log_view.toPlainText())
+        assert f"#{hook_id} Gold: delta 10" in panel.log_view.toPlainText()
     finally:
         panel.shutdown(timeout_ms=None)
         target.close()

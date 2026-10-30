@@ -1,9 +1,10 @@
 """Dialogs and panel for creating and managing value hooks and method hooks."""
 
 import dataclasses
+from datetime import datetime
 
 from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtGui import QColor, QFontDatabase  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy.exc import SQLAlchemyError
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QLineEdit,
     QMenu,
     QPlainTextEdit,
+    QSplitter,
     QPushButton,
     QSpinBox,
     QStackedWidget,
@@ -47,6 +49,11 @@ from hermes.ui.widgets.table import add_copy_actions, resizable_columns, set_row
 HOOK_STOP_TIMEOUT_MS = 3000
 # The agent allocates one page per trampoline (x86-64 Linux).
 TRAMPOLINE_SIZE = 0x1000
+
+# States in which a hook can be edited, paused or debugged
+_LIVE = frozenset({"active", "paused", "error", "training", "reverted"})
+# Lines the log below the table keeps
+MAX_LOG_LINES = 2000
 
 _STATUS_COLORS = {
     "installing": "#d29922",
@@ -527,7 +534,8 @@ class HookPanel(QGroupBox):
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Several hooks at once: pause, debug or remove them together
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         set_row_height(self.table)
@@ -543,8 +551,35 @@ class HookPanel(QGroupBox):
         self.table.doubleClicked.connect(self._edit_selected)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
-        layout.addWidget(self.table)
+
+        # What the hooks' scripts log (ctx.log, console.log) and their errors,
+        # also outside debug mode; the debug window has every call.
+        self.log_view = QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setMaximumBlockCount(MAX_LOG_LINES)
+        self.log_view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.log_view.setPlaceholderText(self.translations["hooks.log_placeholder"])
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self.table)
+        splitter.addWidget(self.log_view)
+        splitter.setSizes([200, 70])
+        layout.addWidget(splitter)
         self._update_buttons()
+
+    def _log(self, text, time=None):
+        """Add a line to the log below the table; ``time`` in ms (else now)."""
+        moment = datetime.now() if time is None else datetime.fromtimestamp(time / 1000)
+        self.log_view.appendPlainText(f"{moment.strftime('%H:%M:%S')} {text}")
+
+    def _on_hook_logs(self, worker, lines, dropped):
+        if not self._is_current(worker):
+            return
+        for line in lines:
+            self._log(f"{self._hook_name(line.get('hookId'))}: {line.get('text', '')}",
+                      line.get("time"))
+        for hook_id, count in dropped.items():
+            self._log(self.translations["hooks.log_dropped"].format(
+                hook=self._hook_name(hook_id), count=count))
 
     def _is_current(self, worker):
         """Whether signals of ``worker`` still concern this panel."""
@@ -567,8 +602,11 @@ class HookPanel(QGroupBox):
         row = self.table.rowAt(position.y())
         if row < 0:
             return
-        self.table.selectRow(row)
-        menu = self.context_menu(self._selected_hook_id()) or QMenu(self)
+        if not self.table.selectionModel().isRowSelected(row):
+            self.table.selectRow(row)
+        item = self.table.item(row, 0)
+        hook_id = None if item is None else item.data(Qt.ItemDataRole.UserRole)
+        menu = self.context_menu(hook_id) or QMenu(self)
         add_copy_actions(menu, self.table, position, self.translations)
         menu.exec(self.table.viewport().mapToGlobal(position))
 
@@ -614,12 +652,19 @@ class HookPanel(QGroupBox):
                 return row
         return -1
 
+    def _selected_hook_ids(self):
+        """The ids of the selected hooks, in table order."""
+        ids = []
+        for index in sorted(self.table.selectionModel().selectedRows(), key=lambda i: i.row()):
+            item = self.table.item(index.row(), 0)
+            if item is not None:
+                ids.append(item.data(Qt.ItemDataRole.UserRole))
+        return ids
+
     def _selected_hook_id(self):
-        row = self.table.currentRow()
-        if row < 0 or not self.table.selectionModel().hasSelection():
-            return None
-        item = self.table.item(row, 0)
-        return None if item is None else item.data(Qt.ItemDataRole.UserRole)
+        """The selected hook, if exactly one is selected."""
+        ids = self._selected_hook_ids()
+        return ids[0] if len(ids) == 1 else None
 
     def _set_cell(self, hook_id, column, text, color=None, tooltip=None):
         row = self._row_of(hook_id)
@@ -650,21 +695,18 @@ class HookPanel(QGroupBox):
         self._update_buttons()
 
     def _update_buttons(self):
-        state = self._hooks.get(self._selected_hook_id())
-        live = state is not None and state["status"] in {
-            "active", "paused", "error", "training", "reverted"
-        }
-        self.btn_edit.setEnabled(live)
+        # Edit works on one hook; pause, debug and remove on all selected.
+        states = [state for state in map(self._hooks.get, self._selected_hook_ids())
+                  if state is not None]
+        live = bool(states) and all(state["status"] in _LIVE for state in states)
+        self.btn_edit.setEnabled(live and len(states) == 1)
         self.btn_toggle.setEnabled(live)
         self.btn_debug.setEnabled(live)
-        self.btn_debug.setChecked(state is not None and state.get("debug", False))
-        self.btn_remove.setEnabled(state is not None)
-        self.btn_toggle.setText(
-            self.translations[
-                "hooks.resume" if state is not None and state["status"] == "paused"
-                else "hooks.pause"
-            ]
-        )
+        self.btn_debug.setChecked(bool(states) and all(state.get("debug") for state in states))
+        self.btn_remove.setEnabled(bool(states))
+        self.btn_toggle.setText(self.translations[
+            "hooks.resume" if states and all(state["status"] == "paused" for state in states)
+            else "hooks.pause"])
 
     # ------------------------------------------------------------------
     # Public API
@@ -777,6 +819,8 @@ class HookPanel(QGroupBox):
         worker.hook_events.connect(lambda events: self._on_events(worker, events))
         worker.hook_debug.connect(
             lambda events, dropped: self._on_debug_events(worker, events, dropped))
+        worker.hook_logs.connect(
+            lambda lines, dropped: self._on_hook_logs(worker, lines, dropped))
         worker.hook_ended.connect(lambda hook_id: self._on_method_ended(worker, hook_id))
         worker.agent_log.connect(lambda level, text: self._on_agent_log(worker, level, text))
         worker.transform_error.connect(
@@ -923,11 +967,13 @@ class HookPanel(QGroupBox):
         self._update_buttons()
 
     def _toggle_debug_selected(self):
-        hook_id = self._selected_hook_id()
-        state = self._hooks.get(hook_id)
-        if state is None:
+        """Debug mode for all selected hooks: on unless all have it, then off."""
+        hook_ids = [hook_id for hook_id in self._selected_hook_ids() if hook_id in self._hooks]
+        if not hook_ids:
             return
-        self.set_debug(hook_id, not state.get("debug", False))
+        enable = not all(self._hooks[hook_id].get("debug") for hook_id in hook_ids)
+        for hook_id in hook_ids:
+            self.set_debug(hook_id, enable)
 
     def _on_debug_window_closed(self):
         """Closing the window ends debug mode: it costs time in the game."""
@@ -944,7 +990,10 @@ class HookPanel(QGroupBox):
             self._debug_window.add_events(events, dropped)
 
     def _on_agent_log(self, worker, level, text):
-        if self._is_current(worker) and self._debug_window is not None:
+        if not self._is_current(worker):
+            return
+        self._log(f"[{level}] {text}")
+        if self._debug_window is not None:
             self._debug_window.add_console(level, text)
 
     # ------------------------------------------------------------------
@@ -1122,6 +1171,9 @@ class HookPanel(QGroupBox):
         )
         worker.hook_debug.connect(
             lambda events, dropped: self._on_debug_events(worker, events, dropped)
+        )
+        worker.hook_logs.connect(
+            lambda lines, dropped: self._on_hook_logs(worker, lines, dropped)
         )
         worker.agent_log.connect(
             lambda level, text: self._on_agent_log(worker, level, text)
@@ -1366,6 +1418,8 @@ class HookPanel(QGroupBox):
         if state is None:
             return
         message = message.splitlines()[0] if message else message
+        self._log(self.translations["hooks.log_error"].format(
+            hook=self._hook_name(hook_id), message=message))
         if state["status"] in {"installing", "training"}:
             self._set_status(hook_id, "failed", message)
         self.status_label.setText(
@@ -1445,6 +1499,8 @@ class HookPanel(QGroupBox):
     def _on_transform_error(self, worker, hook_id, message):
         if not self._is_current(worker):
             return
+        self._log(self.translations["hooks.log_error"].format(
+            hook=self._hook_name(hook_id), message=message))
         self._set_status(hook_id, "error", message)
         self.status_label.setText(
             self.translations["hooks.transform_error"].format(message=message)
@@ -1453,6 +1509,7 @@ class HookPanel(QGroupBox):
     def _on_worker_message(self, worker, key, message):
         if not self._is_current(worker):
             return
+        self._log(self.translations[key].format(message=message))
         self.status_label.setText(self.translations[key].format(message=message))
 
     def _on_worker_finished(self, worker):
@@ -1550,12 +1607,20 @@ class HookPanel(QGroupBox):
         self.add_hook(state["spec"], site, saved_id=saved_id)
 
     def _toggle_selected(self):
-        hook_id = self._selected_hook_id()
+        """Pause the selected hooks, or resume them if all are paused."""
+        hook_ids = [hook_id for hook_id in self._selected_hook_ids() if hook_id in self._hooks]
+        if not hook_ids:
+            return
+        enable = all(self._hooks[hook_id]["status"] == "paused" for hook_id in hook_ids)
+        for hook_id in hook_ids:
+            if (self._hooks[hook_id]["status"] == "paused") == enable:
+                self._set_enabled(hook_id, enable)
+
+    def _set_enabled(self, hook_id, enable):
         state = self._hooks.get(hook_id)
         worker = None if state is None else self._worker_of(state)
         if worker is None:
             return
-        enable = state["status"] == "paused"
         worker.set_enabled(hook_id, enable)
         state["spec"] = dataclasses.replace(state["spec"], enabled=enable)
         if state["saved_id"] is not None:
@@ -1570,7 +1635,10 @@ class HookPanel(QGroupBox):
             self._set_status(hook_id, "training" if state.get("training") else "active")
 
     def _remove_selected(self):
-        hook_id = self._selected_hook_id()
+        for hook_id in self._selected_hook_ids():
+            self._remove(hook_id)
+
+    def _remove(self, hook_id):
         state = self._hooks.get(hook_id)
         if state is None:
             return

@@ -234,7 +234,9 @@ A hook stores a **copy** of the template it was created from. Later changes to t
 
 ### Debugging hooks
 
-**◉ Debug** in the **Hooks** tab puts the selected hook into debug mode. The debug window then logs every call with time, thread, address, caller, old value, game value, result, `ctx.log` output and errors with their stack. Writes the hook skips appear too, with the reason, such as "writes another address" or "caller not learned". Debug mode costs time in the game; with very many calls the agent drops entries and only counts them. Closing the window ends debug mode.
+Below the hook table, a log shows what hook scripts write with `ctx.log` or `console.log` and the errors of hooks, also without debug mode (at most 100 lines per 0.1 s; more are counted as dropped).
+
+Several hooks can be selected at once (Ctrl/Shift-click): **Pause**, **◉ Debug** and **Remove** act on all of them, **Edit** on one. **◉ Debug** in the **Hooks** tab puts the selected hooks into debug mode. The debug window then logs every call with time, thread, address, caller, old value, game value, result, `ctx.log` output and errors with their stack. Writes the hook skips appear too, with the reason, such as "writes another address" or "caller not learned". Debug mode costs time in the game; with very many calls the agent drops entries and only counts them. Closing the window ends debug mode.
 
 ### Example templates in the code
 

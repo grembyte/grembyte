@@ -1070,5 +1070,8 @@
   "native.risky_engine": "Riskant in {engine}-Spielen: Der native Trace hat Shadowrun Returns (Mono, Linux) nach wenigen Sekunden abstürzen lassen, vermutlich weil Stalker auch den JIT-Code umschreibt und Mono einen Fehler dort für einen Absturz hält. Katalog, Trace und Methoden-Überwachung sind sicher.",
   "native.risky_question": "Trotzdem starten? Das Spiel kann abstürzen – vorher speichern.",
   "call.inspect": "Inspizieren",
-  "scripts.inspect": "Inspizieren"
+  "scripts.inspect": "Inspizieren",
+  "hooks.log_placeholder": "Was Hook-Skripte loggen (ctx.log, console.log) und ihre Fehler erscheinen hier, auch ohne Debug-Modus. Jeden einzelnen Aufruf zeigt „Debug“.",
+  "hooks.log_error": "{hook}: Fehler: {message}",
+  "hooks.log_dropped": "{hook}: {count} weitere Zeilen verworfen (es loggt schneller, als sie angezeigt werden können)"
 }

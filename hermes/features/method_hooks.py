@@ -128,6 +128,9 @@ class MethodHookWorker(QThread):
     hook_updated = pyqtSignal(int)
     # [{hookId, count, last: {old, result, kept, error}}]
     hook_events = pyqtSignal(list)
+    # ctx.log lines of scripts (also outside debug mode): [{hookId, time, text}],
+    # lines dropped per hook id (more than the agent sends at once)
+    hook_logs = pyqtSignal(list, dict)
     transform_error = pyqtSignal(int, str)
     hook_debug = pyqtSignal(list, dict)
     # hook id: the game freed the method's code (e.g. while exiting)
@@ -254,6 +257,11 @@ class MethodHookWorker(QThread):
             self.hook_debug.emit(
                 payload.get("events", []),
                 {int(key): count for key, count in payload.get("dropped", {}).items()},
+            )
+        elif kind == "hook-logs":
+            self.hook_logs.emit(
+                payload.get("lines", []),
+                {int(hook_id): count for hook_id, count in payload.get("dropped", {}).items()},
             )
         elif kind == "transform-error":
             self.transform_error.emit(payload.get("hookId", 0), payload.get("error", ""))

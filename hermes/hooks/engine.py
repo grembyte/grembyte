@@ -312,6 +312,9 @@ class HookWorker(QThread):
     hook_profile = pyqtSignal(list)
     # debug events of hooks in debug mode, events dropped per hook id
     hook_debug = pyqtSignal(list, dict)
+    # ctx.log lines of scripts (also outside debug mode): [{hookId, time, text}],
+    # lines dropped per hook id (more than the agent sends at once)
+    hook_logs = pyqtSignal(list, dict)
     # console.log output of the agent and its transforms: level, text
     agent_log = pyqtSignal(str, str)
     agent_warning = pyqtSignal(str)
@@ -506,6 +509,11 @@ class HookWorker(QThread):
         elif kind == "debug":
             self.hook_debug.emit(
                 payload.get("events", []),
+                {int(hook_id): count for hook_id, count in payload.get("dropped", {}).items()},
+            )
+        elif kind == "hook-logs":
+            self.hook_logs.emit(
+                payload.get("lines", []),
                 {int(hook_id): count for hook_id, count in payload.get("dropped", {}).items()},
             )
         elif kind == "callers":

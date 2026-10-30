@@ -1070,5 +1070,8 @@
   "native.risky_engine": "Risky in {engine} games: the native trace crashed Shadowrun Returns (Mono, Linux) within seconds, likely because Stalker also rewrites the JIT code and Mono then takes a fault there for a crash. The catalog, the trace and the method monitor are safe.",
   "native.risky_question": "Start it anyway? The game may crash; save first.",
   "call.inspect": "Inspect",
-  "scripts.inspect": "Inspect"
+  "scripts.inspect": "Inspect",
+  "hooks.log_placeholder": "What hook scripts log (ctx.log, console.log) and their errors show here, also without debug mode. Every call: Debug.",
+  "hooks.log_error": "{hook}: error: {message}",
+  "hooks.log_dropped": "{hook}: {count} more lines dropped (it logs faster than they can be shown)"
 }

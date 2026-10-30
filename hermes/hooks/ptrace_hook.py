@@ -72,6 +72,9 @@ class PtraceHookWorker(PtraceWatchpointEngine):
     managed_failed = pyqtSignal(int, str)
     site_state = pyqtSignal(list, str, int, str)
     hook_profile = pyqtSignal(list)
+    # ctx.log lines of scripts (also outside debug mode): [{hookId, time, text}],
+    # lines dropped per hook id (more than the agent sends at once)
+    hook_logs = pyqtSignal(list, dict)
     hook_debug = pyqtSignal(list, dict)
     agent_log = pyqtSignal(str, str)
     agent_warning = pyqtSignal(str)

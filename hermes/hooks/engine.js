@@ -96,6 +96,11 @@ const frameCache = new Map();
 const PROLOGUE_INSTRUCTIONS = 24;
 const debugEvents = [];
 const debugDropped = new Map();
+// What scripts write with ctx.log, also outside debug mode (the hook panel's
+// log): { hookId, time, text }, at most MAX_HOOK_LOGS per flush; more are counted.
+const MAX_HOOK_LOGS = 100;
+const hookLogs = [];
+const hookLogsDropped = new Map();
 const hooks = new Map();
 const sites = new Map();
 const retiredSites = [];
@@ -750,13 +755,21 @@ function writeValue(io, target, value) {
   }
 }
 
-function ignoreLog() {}
+function pushHookLogs(hook, lines) {
+  const time = Date.now();
+  for (const text of lines) {
+    if (hookLogs.length >= MAX_HOOK_LOGS)
+      hookLogsDropped.set(hook.id, (hookLogsDropped.get(hook.id) || 0) + 1);
+    else
+      hookLogs.push({ hookId: hook.id, time, text });
+  }
+}
 
 function applyTransform(hook, threadId, pending) {
   // Runs on every hooked write: strings are only made when a transform asks.
   const { target, old: oldValue } = pending;
   const current = readTarget(hook.io, target);
-  const logs = hook.debug ? [] : null;
+  const logs = [];
   const ctx = {
     old: oldValue,
     new: current,
@@ -768,9 +781,9 @@ function applyTransform(hook, threadId, pending) {
     get writePc() { return hook.site.writeIns.address.toString(); },
     threadId,
     hookId: hook.id,
-    log: logs === null ? ignoreLog : (...args) => { logs.push(formatLog(args)); }
+    log: (...args) => { logs.push(formatLog(args)); }
   };
-  const entry = logs === null ? null : {
+  const entry = !hook.debug ? null : {
     threadId,
     address: target.toString(),
     caller: pending.caller,
@@ -796,6 +809,8 @@ function applyTransform(hook, threadId, pending) {
       entry.error = errorText(error);
       pushDebug(hook, entry);
     }
+    if (logs.length > 0)
+      pushHookLogs(hook, logs);
     reportError(hook, error);
     return;
   }
@@ -803,6 +818,8 @@ function applyTransform(hook, threadId, pending) {
     entry.result = result;
     pushDebug(hook, entry);
   }
+  if (logs.length > 0)
+    pushHookLogs(hook, logs);
   hook.stats.count += 1;
   // The address is made a string when the stats are sent (flushStats).
   hook.stats.last = { old: oldValue, new: current, result, threadId, address: target };
@@ -3021,6 +3038,11 @@ function flushStats() {
       dropped: Object.fromEntries(debugDropped)
     });
     debugDropped.clear();
+  }
+  if (hookLogs.length > 0 || hookLogsDropped.size > 0) {
+    send({ kind: 'hook-logs', lines: hookLogs.splice(0),
+           dropped: Object.fromEntries(hookLogsDropped) });
+    hookLogsDropped.clear();
   }
 }
 

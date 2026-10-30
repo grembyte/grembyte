@@ -768,6 +768,11 @@ const methodHooks = new Map();
 const hookStats = new Map();
 const hookDebug = [];
 const hookDebugDropped = new Map();
+// What scripts write with ctx.log, also outside debug mode (the hook panel's
+// log): { hookId, time, text }, at most MAX_HOOK_LOGS per flush; more are counted.
+const MAX_HOOK_LOGS = 100;
+const hookLogs = [];
+const hookLogsDropped = new Map();
 // Per thread the hooked calls (after the call) that are still running, the
 // innermost last: ctx.caller of a nested hook. A frame whose method left by an
 // exception never sees onLeave; enterFrame drops it once the stack is below it.
@@ -1433,7 +1438,7 @@ function hookBefore(hook, invocation) {
     return;
   const context = invocation.context;
   const { args, passed, self, scriptCaller } = hookArguments(hook, invocation);
-  const logs = hook.debug ? [] : null;
+  const logs = [];
   const ctx = {
     phase: 'before',
     args,
@@ -1448,7 +1453,7 @@ function hookBefore(hook, invocation) {
     threadId: invocation.threadId,
     call: staticCall,
     find: findObject,
-    log: logs === null ? () => {} : (...items) => { logs.push(formatLog(items)); }
+    log: (...items) => { logs.push(formatLog(items)); }
   };
   let error = null;
   const changed = beginChanges();
@@ -1474,6 +1479,8 @@ function hookBefore(hook, invocation) {
   stats.last = { old: oldText, result: text || '—', kept: changed.length === 0,
                  error: error === null ? null : String(error) };
   hookStats.set(hook.id, stats);
+  if (logs.length > 0)
+    pushHookLogs(hook, logs);
   if (error !== null && !hook.errorReported) {
     hook.errorReported = true;
     send({ kind: 'transform-error', hookId: hook.id, error: String(error) });
@@ -1527,7 +1534,7 @@ function hookLeave(hook, invocation, retval) {
   const refs = {};
   for (const [name, refType, pointer] of call.refs)
     refs[name] = readJs({ ...refType, byref: false }, pointer);
-  const logs = hook.debug ? [] : null;
+  const logs = [];
   const ctx = {
     phase: 'after',
     args: call.args,
@@ -1542,7 +1549,7 @@ function hookLeave(hook, invocation, retval) {
     threadId: invocation.threadId,
     call: staticCall,
     find: findObject,
-    log: logs === null ? () => {} : (...items) => { logs.push(formatLog(items)); }
+    log: (...items) => { logs.push(formatLog(items)); }
   };
   let returned;
   let error = null;
@@ -1564,6 +1571,8 @@ function hookLeave(hook, invocation, retval) {
   stats.last = { old: displayText(result), result: displayText(kept ? result : returned),
                  kept, error: error === null ? null : String(error) };
   hookStats.set(hook.id, stats);
+  if (logs.length > 0)
+    pushHookLogs(hook, logs);
   if (error !== null && !hook.errorReported) {
     hook.errorReported = true;
     send({ kind: 'transform-error', hookId: hook.id, error: String(error) });
@@ -1594,6 +1603,16 @@ function formatLog(items) {
       return String(item);
     }
   }).join(' ');
+}
+
+function pushHookLogs(hook, lines) {
+  const time = Date.now();
+  for (const text of lines) {
+    if (hookLogs.length >= MAX_HOOK_LOGS)
+      hookLogsDropped.set(hook.id, (hookLogsDropped.get(hook.id) || 0) + 1);
+    else
+      hookLogs.push({ hookId: hook.id, time, text });
+  }
 }
 
 function pushHookDebug(hook, entry) {
@@ -1707,6 +1726,11 @@ function flushHooks() {
     send({ kind: 'hook-debug', events: hookDebug.splice(0),
            dropped: Object.fromEntries(hookDebugDropped) });
     hookDebugDropped.clear();
+  }
+  if (hookLogs.length > 0 || hookLogsDropped.size > 0) {
+    send({ kind: 'hook-logs', lines: hookLogs.splice(0),
+           dropped: Object.fromEntries(hookLogsDropped) });
+    hookLogsDropped.clear();
   }
 }
 
