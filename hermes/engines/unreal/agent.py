@@ -32,6 +32,15 @@ interpreter (``releaseCode`` restores them). Either way it sees calls through
 ``ProcessEvent`` and from Blueprint code, not C++ calling C++ directly (the
 native trace sees those), nor Blueprint code calling a Blueprint function of
 its own class directly (the interpreter does not pass ``Func`` for that).
+
+For the method monitor, ``prepare`` answers ``frame: true`` and
+``callFrame`` finds a call's arguments in its ``FFrame`` (Node, Object, Code,
+Locals): through ProcessEvent the frame is the function's own and Locals its
+parameters; called from Blueprint code, a native function gets the caller's
+frame with Code at the argument expressions, of which the simple ones
+(``EX_LocalVariable``, ``EX_InstanceVariable``, constants, ``EX_Self``) are
+decoded. ``layout`` and ``readValue`` read objects and structs through their
+FProperties (FString, FName, TArray, bitfield bools, weak pointers).
 """
 
 from hermes.core.agent_source import load_agent_source

@@ -305,10 +305,18 @@ function readValue(type, address, ask = false) {
       return stringValue(address.readPointer());
     }
     default:
+      if (type.engine !== undefined)
+        return engineValue(type, address, ask);
       if (REFERENCE_KINDS.has(type.kind))
         return objectValue(address.readPointer(), ask);
       return { text: `? (${type.name})` };
   }
+}
+
+function engineValue(type, address, ask) {
+  // A value only the engine's adapter can read (Unreal: FString, TArray ...).
+  const value = engine.readValue(type, address);
+  return value.object !== undefined ? objectValue(value.object, ask) : value;
 }
 
 function registerValue(type, raw, ask = false) {
@@ -356,16 +364,17 @@ function contents(target) {
   // static fields), ``valueType`` its value type if it holds a number.
   const address = ptr(target.address);
   let klass;
-  let base = address;
   if (target.klass) {
     klass = ptr(target.klass);
-    base = address.sub(OBJECT_HEADER);  // struct field offsets count a header
   } else {
     klass = engine.classOf(address);
     if (klass === null)
       throw new Error(`no object at ${address} (any more)`);
   }
   const layout = engine.layout(klass);
+  // Mono's struct field offsets count an object header; Unreal's do not.
+  const header = layout.headerSize === undefined ? OBJECT_HEADER : layout.headerSize;
+  const base = target.klass ? address.sub(header) : address;
   const result = { name: layout.name, address: address.toString(), fields: [] };
   if (layout.rank > 0) {
     const length = address.add(ARRAY_LENGTH).readU32();
@@ -527,9 +536,57 @@ function argumentValue(monitor, type, raw) {
   return monitor.objects ? snapshot(value) : value;
 }
 
+function frameValue(monitor, type, location) {
+  // An argument the engine found in its call frame (see engine.callFrame):
+  // where it is ({ address }), or its value ({ value }, a constant).
+  if (location.value !== undefined) {
+    const value = location.value.object !== undefined
+      ? safely(() => objectValue(location.value.object, true)) : location.value;
+    return monitor.objects ? snapshot(value) : value;
+  }
+  const value = safely(() => readValue({ ...type, byref: false }, location.address, true));
+  const shown = monitor.objects ? snapshot(value) : value;
+  return type.byref ? { ...shown, text: `&${location.address} → ${shown.text}` } : shown;
+}
+
+function onFrameEnter(monitor, invocation) {
+  // The engine reads the arguments from its own call frame (Unreal).
+  const { info } = monitor;
+  const call = engine.callFrame(info, invocation.context);
+  const pointers = [];
+  const record = {
+    monitorId: monitor.id,
+    time: Date.now(),
+    threadId: invocation.threadId,
+    self: call.self === null ? null
+      : argumentValue(monitor, { kind: 0x12, byref: false }, call.self),
+    args: info.params.map((param, i) => {
+      const location = call.args[i];
+      if (location === null)
+        return { name: param.name, text: '?' };
+      if (param.type.byref && location.address !== undefined)
+        pointers.push([i, location.address]);
+      return { name: param.name, ...frameValue(monitor, param.type, location) };
+    }),
+    // The Blueprint function it came from, else the native code
+    caller: call.caller || safely(() => ({ text: frameText(invocation.returnAddress) })).text
+  };
+  if (monitor.returns) {
+    invocation.record = record;
+    invocation.pointers = pointers;
+    invocation.resultAddress = call.result;
+  } else {
+    push(monitor, record);
+  }
+}
+
 function onEnter(monitor, invocation) {
   // Already on a game thread: run waiting property reads if it is the main one.
   engine.drainMain();
+  if (monitor.info.frame) {
+    onFrameEnter(monitor, invocation);
+    return;
+  }
   const context = invocation.context;
   const { info, layout } = monitor;
   const pointers = [];
@@ -564,7 +621,13 @@ function onLeave(monitor, invocation, retval) {
   if (record === undefined)
     return;
   const type = monitor.info.returns;
-  if (type.kind !== T.VOID || type.byref) {
+  if (monitor.info.frame) {
+    // Written where the caller asked for it (the frame's Result)
+    if (type.kind !== T.VOID && invocation.resultAddress !== null) {
+      const value = safely(() => readValue(type, invocation.resultAddress, true));
+      record.result = monitor.objects ? snapshot(value) : value;
+    }
+  } else if (type.kind !== T.VOID || type.byref) {
     const value = safely(() => registerValue(
       type, resultRaw(invocation.context, retval, type), true));
     delete value.pointer;
@@ -603,7 +666,7 @@ async function addMonitor(spec) {
   const hasObjects = info.instance || isObject(info.returns)
     || info.params.some(param => isObject(param.type));
   const monitor = {
-    id: spec.id, info, layout: argumentLayout(info),
+    id: spec.id, info, layout: info.frame ? null : argumentLayout(info),
     returns: spec.returns === null ? hasResults : spec.returns,
     objects: spec.objects === null ? hasObjects : spec.objects,
     errorReported: false
@@ -635,7 +698,8 @@ async function addMonitor(spec) {
     instance: info.instance,
     params: info.params.map(p => `${p.type.name} ${p.name}`),  // Mono names byref types 'T&'
     returns: info.returns.name,
-    undecoded: monitor.layout.args.filter(location => location === null).length,
+    // Unreal: which arguments are unknown shows only per call ('?')
+    undecoded: info.frame ? 0 : monitor.layout.args.filter(location => location === null).length,
     // what the method has to show, and the options in effect
     hasResults,
     hasObjects,
@@ -650,6 +714,7 @@ function removeMonitor(id) {
     return false;
   monitor.listener.detach();
   monitors.delete(id);
+  engine.releaseCode(monitor.info.start);
   updateUnmapWatch();
   return true;
 }
@@ -1382,6 +1447,10 @@ async function addMethodHook(spec) {
     throw new Error(`Method hook ${spec.id} exists already`);
   const transform = compileHookTransform(spec.transform);
   const info = await engine.prepare(spec.identity);
+  if (info.frame) {
+    engine.releaseCode(info.start);
+    throw new Error(`method hooks are not available for ${engine.id} games yet`);
+  }
   if (methodHooks.has(spec.id))
     throw new Error(`Method hook ${spec.id} exists already`);
   const hook = {

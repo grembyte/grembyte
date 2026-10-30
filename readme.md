@@ -31,7 +31,8 @@ Hermes Hook is a desktop application built with Python and PyQt6 for inspecting 
 - **Unreal Engine games** (4.23 and later, 64-bit; e.g. Avowed under Proton): Hermes finds the engine's reflection data (`FNamePool`, `GUObjectArray`) in memory, without signatures or a mod loader.
   - The **catalog** lists the classes and UFunctions with C++ parameter types, grouped by package: `/Script/<Module>` for C++ classes, the first folder for Blueprints (`/Game/Blueprints`).
   - **Assemblies …** (here: packages) and the **trace** work as for Mono. The trace hooks the exec thunks of native UFunctions and gives every Blueprint function a hookable stub of its own; it sees calls from Blueprints and through `ProcessEvent` (events, delegates), not C++ calling C++ directly (the native trace sees those).
-  - Not yet: method monitor, method hooks, call graph, object inspector.
+  - The **method monitor** logs UFunction calls with the object they run on (with its UObject name), arguments and result; the object inspector shows the UProperties of objects and structs. Arguments come from the parameters ProcessEvent passes, or, when a Blueprint calls a native function, from the bytecode of the call (variables and constants; other arguments show as `?`).
+  - Not yet: method hooks, calling methods, call graph.
 
 ### Freeze or hook?
 

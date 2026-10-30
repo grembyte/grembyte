@@ -1,6 +1,18 @@
-"""Method monitor: log the calls of C# methods (e.g. Unity games with Mono).
+"""Method monitor: log the calls of methods (C# methods of Mono games, UFunctions
+of Unreal games).
 
 It works through the engine adapter of the game (see hermes/engines).
+
+For Unreal games the adapter hooks a UFunction's Func and finds the arguments
+in its call frame rather than in registers (``frame``, see
+hermes/engines/unreal/agent.py): in the parameters ProcessEvent passes, or,
+when Blueprint code calls a native function, in the bytecode of the call
+(variables and constants; other arguments show as ``?``). The result is read
+where the caller wants it written. The caller is the Blueprint function and
+bytecode offset the call came from (``WBP_HUD_C:Tick+0x35``) when a script
+runs above it, else the native return address. Objects show their UObject name, and the
+inspector their UProperties. Method hooks and calling methods are not
+available there yet.
 
 Mono compiles the method (see ``engine.prepare``), and a Frida interceptor on
 its native code reports every call with its arguments, the calling method

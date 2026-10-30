@@ -679,17 +679,23 @@ const unreal = (() => {
     return stub;
   }
 
-  function releaseCode() {
-    // Give the Blueprint functions their interpreter back; the stubs stay,
-    // a thread may still be in one.
-    for (const { fn, code } of redirected.values()) {
+  function releaseCode(start) {
+    // Give Blueprint functions their Func back: all of them, or the one whose
+    // stub is ``start``. The stubs stay, a thread may still be in one. A Func
+    // another agent has redirected since (to a stub that jumps to ours) stays.
+    for (const [key, { fn, code }] of Array.from(redirected)) {
+      const stub = stubs.get(key);
+      if (start !== undefined && !stub.equals(start))
+        continue;
+      redirected.delete(key);
       try {
-        fn.add(ue.layout.func).writePointer(code);
+        const func = fn.add(ue.layout.func);
+        if (func.readPointer().equals(stub))
+          func.writePointer(code);
       } catch (_error) {
         // freed meanwhile
       }
     }
-    redirected.clear();
   }
 
   function codeOf(fn) {
@@ -734,6 +740,491 @@ const unreal = (() => {
     return code;
   }
 
+  // --- Values: what the method monitor and the object inspector read ------------
+  // Their types are the monitor's (ECMA-335 element types, see engine.TYPE) where a
+  // property holds a number, an object, or a struct; what has no such type
+  // (FString, FName, TArray, bitfield bools, weak pointers ...) carries
+  // ``engine`` and is read by readValue.
+
+  const KIND = {
+    VOID: 0x01, BOOLEAN: 0x02, I1: 0x04, U1: 0x05, I2: 0x06, U2: 0x07, I4: 0x08, U4: 0x09,
+    I8: 0x0a, U8: 0x0b, R4: 0x0c, R8: 0x0d, VALUETYPE: 0x11, CLASS: 0x12
+  };
+  const NUMBER_KINDS = {
+    Int8Property: KIND.I1, Int16Property: KIND.I2, IntProperty: KIND.I4,
+    Int64Property: KIND.I8, UInt16Property: KIND.U2, UInt32Property: KIND.U4,
+    UInt64Property: KIND.U8, FloatProperty: KIND.R4, DoubleProperty: KIND.R8
+  };
+  const OBJECT_KINDS = new Set(['ObjectProperty', 'ObjectPtrProperty', 'ClassProperty',
+                                'ClassPtrProperty']);
+  const WEAK_KINDS = new Set(['WeakObjectProperty', 'LazyObjectProperty', 'SoftObjectProperty',
+                              'SoftClassProperty']);
+  const MAX_TEXT = 120;
+  const MAX_ELEMENTS = 8;
+
+  function valueType(field, byref = false) {
+    // The monitor's type of an FProperty: { kind, byref, name, ... }.
+    const L = ue.layout;
+    const kind = fieldName(field.add(L.fieldClass).readPointer());
+    const type = { kind: 0, byref, name: propertyType(field) };
+    const extra = offset => field.add(L.extra + offset);
+    if (NUMBER_KINDS[kind] !== undefined) {
+      type.kind = NUMBER_KINDS[kind];
+    } else if (kind === 'ByteProperty') {
+      type.kind = KIND.U1;
+      if (!extra(0).readPointer().isNull())
+        type.enumName = type.name;
+    } else if (kind === 'EnumProperty') {
+      const underlying = extra(0).readPointer();
+      type.kind = underlying.isNull() ? KIND.U1 : valueType(underlying).kind;
+      type.enumName = type.name;
+    } else if (kind === 'BoolProperty') {
+      // A bitfield (FieldMask) in the byte at ByteOffset
+      type.engine = 'bool';
+      type.byteOffset = extra(1).readU8();
+      type.mask = extra(3).readU8();
+    } else if (OBJECT_KINDS.has(kind)) {
+      type.kind = KIND.CLASS;
+    } else if (kind === 'StructProperty') {
+      type.kind = KIND.VALUETYPE;
+      type.klass = extra(0).readPointer();
+      type.structSize = field.add(L.elementSize).readS32();
+    } else if (WEAK_KINDS.has(kind)) {
+      type.engine = 'weak';
+    } else if (kind === 'InterfaceProperty') {
+      type.engine = 'interface';
+    } else if (kind === 'StrProperty') {
+      type.engine = 'string';
+    } else if (kind === 'NameProperty') {
+      type.engine = 'name';
+    } else if (kind === 'ArrayProperty') {
+      type.engine = 'array';
+      const inner = extra(0).readPointer();
+      type.element = inner.isNull() ? null : valueType(inner);
+      type.elementSize = inner.isNull() ? 0 : inner.add(L.elementSize).readS32();
+    } else {
+      type.engine = 'other';  // FText, TMap, TSet, delegates: the type only
+    }
+    return type;
+  }
+
+  function isObject(address) {
+    // Whether a live UObject is at ``address``: the object table's item at
+    // its index points back at it.
+    const index = address.add(OBJECT_INDEX).readS32();
+    const table = ue.objects.table;
+    if (index < 0 || index >= table.add(0x14).readS32())
+      return false;
+    const items = table.readPointer().add(8 * Math.floor(index / CHUNK)).readPointer();
+    return items.add((index % CHUNK) * ue.objects.itemSize).readPointer().equals(address);
+  }
+
+  function objectAt(index, serial) {
+    // The object of a weak pointer (FWeakObjectPtr: index and serial number)
+    const table = ue.objects.table;
+    if (index < 0 || index >= table.add(0x14).readS32())
+      return NULL;
+    const item = table.readPointer().add(8 * Math.floor(index / CHUNK)).readPointer()
+      .add((index % CHUNK) * ue.objects.itemSize);
+    // FUObjectItem: Object, Flags, ClusterRootIndex, SerialNumber
+    return item.add(Process.pointerSize + 8).readS32() === serial ? item.readPointer() : NULL;
+  }
+
+  function classOf(object) {
+    // The class of a UObject, or null if ``object`` is none (any more).
+    try {
+      reflection();
+      return isObject(object) ? object.add(OBJECT_CLASS).readPointer() : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function uobjectName(object) {
+    // The FName of a UObject (e.g. BP_Player_C_0), for the monitor's texts.
+    try {
+      return isObject(object) ? fieldName(object.add(OBJECT_NAME)) : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function objectText(object) {
+    if (object.isNull())
+      return 'null';
+    const klass = classOf(object);
+    return klass === null ? `${object} (no object)`
+      : `${cppName(Number(klass.toString()))} "${uobjectName(object)}"@${object}`;
+  }
+
+  function numberText(type, address) {
+    switch (type.kind) {
+      case KIND.BOOLEAN: return String(address.readU8() !== 0);
+      case KIND.I1: return String(address.readS8());
+      case KIND.U1: return String(address.readU8());
+      case KIND.I2: return String(address.readS16());
+      case KIND.U2: return String(address.readU16());
+      case KIND.I4: return String(address.readS32());
+      case KIND.U4: return String(address.readU32());
+      case KIND.I8: return address.readS64().toString();
+      case KIND.U8: return address.readU64().toString();
+      case KIND.R4: return String(address.readFloat());
+      case KIND.R8: return String(address.readDouble());
+      default: return null;
+    }
+  }
+
+  function readValue(type, address) {
+    // A value of a type with ``engine``: { text, string? } or { object }.
+    switch (type.engine) {
+      case 'bool':
+        return { text: String((address.add(type.byteOffset).readU8() & type.mask) !== 0) };
+      case 'string': {
+        // FString: TArray<TCHAR> with the terminating 0
+        const data = address.readPointer();
+        const length = Math.max(0, address.add(Process.pointerSize).readS32() - 1);
+        if (data.isNull() || length === 0)
+          return { text: '""', string: true };
+        const text = data.readUtf16String(Math.min(length, MAX_TEXT));
+        return { text: JSON.stringify(text) + (length > MAX_TEXT ? '…' : ''), string: true };
+      }
+      case 'name':
+        return { text: fieldName(address) };
+      case 'weak':
+        return { object: objectAt(address.readS32(), address.add(4).readS32()) };
+      case 'interface':
+        return { object: address.readPointer() };
+      case 'array':
+        return { text: arrayText(type, address) };
+      default:
+        return { text: type.name };
+    }
+  }
+
+  function elementText(type, address) {
+    if (type.kind === KIND.CLASS)
+      return objectText(address.readPointer());
+    const number = numberText(type, address);
+    if (number !== null)
+      return number;
+    if (type.engine === undefined)
+      return type.name;
+    const value = readValue(type, address);
+    return value.object !== undefined ? objectText(value.object) : value.text;
+  }
+
+  function arrayText(type, address) {
+    // TArray<int32>[3] {1, 2, 3}: the first elements of a simple type
+    const data = address.readPointer();
+    const count = address.add(Process.pointerSize).readS32();
+    const name = type.name.replace(/&$/, '');
+    if (count <= 0 || data.isNull() || type.element === null)
+      return `${name}[${Math.max(count, 0)}]`;
+    if (type.element.kind === KIND.VALUETYPE || type.element.engine === 'other')
+      return `${name}[${count}]`;
+    const shown = [];
+    for (let i = 0; i < Math.min(count, MAX_ELEMENTS); i++)
+      shown.push(elementText(type.element, data.add(i * type.elementSize)));
+    return `${name}[${count}] {${shown.join(', ')}${count > MAX_ELEMENTS ? ', …' : ''}}`;
+  }
+
+  const layouts = new Map();
+
+  function layout(klass) {
+    // { name, valueType, rank, headerSize, fields: [{ name, type, offset, static }] }
+    // of a class or struct, inherited fields first. Offsets count from the
+    // object's or struct's start (no header).
+    const key = klass.toString();
+    let result = layouts.get(key);
+    if (result !== undefined)
+      return result;
+    reflection();
+    const L = ue.layout;
+    const address = Number(klass.toString());
+    const isStruct = Number(klass.add(OBJECT_CLASS).readPointer().toString()) === L.scriptStruct;
+    const chain = [];
+    for (let current = address; current !== 0; current = superOf(current))
+      chain.unshift(current);
+    const fields = [];
+    for (const current of chain) {
+      for (let field = ptr(current).add(L.childProperties).readPointer(); !field.isNull();
+        field = field.add(L.fieldNext).readPointer()) {
+        const count = field.add(L.arrayDim).readS32();
+        fields.push({
+          name: fieldName(field.add(L.fieldName)) + (count > 1 ? `[${count}]` : ''),
+          type: valueType(field),
+          offset: field.add(L.offset).readS32(),
+          static: false
+        });
+      }
+    }
+    result = {
+      name: isStruct ? `F${nameOfAddress(address)}` : cppName(address),
+      valueType: isStruct, rank: 0, headerSize: 0, fields
+    };
+    layouts.set(key, result);
+    return result;
+  }
+
+  // --- Method monitor: where a call's arguments are --------------------------------
+  // Func is called as (UObject* Context, FFrame& Stack, void* Result). Through
+  // ProcessEvent (and for every Blueprint function) Stack is the function's own
+  // frame and its Locals the parameters. Called from Blueprint code, a native
+  // function gets the caller's frame, its Code at the expressions of the
+  // arguments, which the exec thunk evaluates itself: the simple ones (variables,
+  // constants, self) are read from the bytecode here, the rest stays unknown.
+
+  // FFrame: FOutputDevice (vtable, two flags), Node, Object, Code, Locals
+  const FRAME_NODE = 0x10, FRAME_OBJECT = 0x18, FRAME_CODE = 0x20, FRAME_LOCALS = 0x28;
+  const REGISTERS = Process.platform === 'windows' ? ['rcx', 'rdx', 'r8'] : ['rdi', 'rsi', 'rdx'];
+  // EExprToken: the bytecode of the expressions read
+  const EX = {
+    LOCAL_VARIABLE: 0x00, INSTANCE_VARIABLE: 0x01, SELF: 0x17, INT_CONST: 0x1d,
+    FLOAT_CONST: 0x1e, OBJECT_CONST: 0x20, NAME_CONST: 0x21, BYTE_CONST: 0x24, INT_ZERO: 0x25,
+    INT_ONE: 0x26, TRUE: 0x27, FALSE: 0x28, NO_OBJECT: 0x2a, INT_CONST_BYTE: 0x2c,
+    INT64_CONST: 0x35, UINT64_CONST: 0x36, DOUBLE_CONST: 0x37
+  };
+
+  function prepare(identity) {
+    // The code to hook and the signature of a UFunction: { start, size,
+    // frame: true, function, instance, params: [{ name, type, offset }], returns }.
+    reflection();
+    const fn = resolve(identity);
+    const code = codeOf(fn);
+    if (code === null)
+      throw new Error(`${identity.method} has no code: a Blueprint event without a ` +
+                      'Blueprint implementing it, or a delegate signature');
+    const L = ue.layout;
+    const params = [];
+    let returns = { kind: KIND.VOID, byref: false, name: 'void' };
+    for (let field = fn.add(L.childProperties).readPointer(); !field.isNull();
+      field = field.add(L.fieldNext).readPointer()) {
+      const flags = field.add(L.propertyFlags).readU32();
+      if (!(flags & CPF_PARM))
+        continue;
+      if (flags & CPF_RETURN_PARM) {
+        returns = valueType(field);
+        continue;
+      }
+      const byref = (flags & (CPF_OUT_PARM | CPF_REFERENCE_PARM)) !== 0;
+      params.push({ name: fieldName(field.add(L.fieldName)), type: valueType(field, byref),
+                    offset: field.add(L.offset).readS32() });
+    }
+    if (returns.kind !== KIND.VOID)
+      returns.name = returns.name.replace(/&$/, '');
+    return {
+      ...code, frame: true, function: fn, params, returns,
+      instance: (functionInfo(fn).flags & FUNC_STATIC) === 0
+    };
+  }
+
+  function isProperty(field) {
+    try {
+      return fieldName(field.add(ue.layout.fieldClass).readPointer()).endsWith('Property');
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function expression(code, frame) {
+    // [value, next] of the bytecode expression at ``code``: value is
+    // { address } of a variable, or { value } of a constant; null if unknown.
+    const L = ue.layout;
+    const token = code.readU8();
+    const after = code.add(1);
+    switch (token) {
+      case EX.LOCAL_VARIABLE:
+      case EX.INSTANCE_VARIABLE: {
+        const property = after.readPointer();
+        if (!isProperty(property))
+          return null;
+        const base = frame.add(token === EX.LOCAL_VARIABLE ? FRAME_LOCALS : FRAME_OBJECT)
+          .readPointer();
+        return [{ address: base.add(property.add(L.offset).readS32()) }, after.add(8)];
+      }
+      case EX.SELF: return [{ value: { object: frame.add(FRAME_OBJECT).readPointer() } }, after];
+      case EX.NO_OBJECT: return [{ value: { object: NULL } }, after];
+      case EX.OBJECT_CONST: return [{ value: { object: after.readPointer() } }, after.add(8)];
+      case EX.INT_CONST: return [{ value: { text: String(after.readS32()) } }, after.add(4)];
+      case EX.FLOAT_CONST: return [{ value: { text: String(after.readFloat()) } }, after.add(4)];
+      case EX.DOUBLE_CONST: return [{ value: { text: String(after.readDouble()) } }, after.add(8)];
+      case EX.INT64_CONST:
+        return [{ value: { text: after.readS64().toString() } }, after.add(8)];
+      case EX.UINT64_CONST:
+        return [{ value: { text: after.readU64().toString() } }, after.add(8)];
+      case EX.BYTE_CONST:
+      case EX.INT_CONST_BYTE: return [{ value: { text: String(after.readU8()) } }, after.add(1)];
+      case EX.INT_ZERO: return [{ value: { text: '0' } }, after];
+      case EX.INT_ONE: return [{ value: { text: '1' } }, after];
+      case EX.TRUE: return [{ value: { text: 'true' } }, after];
+      case EX.FALSE: return [{ value: { text: 'false' } }, after];
+      // FScriptName: ComparisonIndex, DisplayIndex, Number
+      case EX.NAME_CONST:
+        return [{ value: { text: nameText(after.readU32(), after.add(8).readU32()) } },
+                after.add(12)];
+      default: return null;
+    }
+  }
+
+  // --- Callers: the Blueprint function a call came from ----------------------------
+  // Called from bytecode, the frame passed is the caller's: its Node. Through
+  // ProcessEvent the frame is the function's own; the frames of the script
+  // functions running on the thread are further up the stack, and every FFrame
+  // starts with the same vtable. The nearest one that holds up (its Node a
+  // UFunction, its Object alive, its Code in Node's bytecode) is the caller:
+  // stale frames left in a caller's stack memory fail that.
+
+  const CALLER_SEARCH = 0x40000;
+  let frameVtable = null;
+  const functionTexts = new Map();
+  const stackEnds = new Map();
+
+  function functionText(fn) {
+    // 'Class:Function' of a UFunction, read from the objects themselves (no
+    // snapshot: this runs on game threads).
+    const key = fn.toString();
+    let text = functionTexts.get(key);
+    if (text === undefined) {
+      const owner = fn.add(OBJECT_OUTER).readPointer();
+      text = `${fieldName(owner.add(OBJECT_NAME))}:${fieldName(fn.add(OBJECT_NAME))}`;
+      functionTexts.set(key, text);
+    }
+    return text;
+  }
+
+  function isFunction(address) {
+    // A UFunction (or a subclass of it): its class derives from Function.
+    if (!isObject(address))
+      return false;
+    let klass = Number(address.add(OBJECT_CLASS).readPointer().toString());
+    for (let depth = 0; klass !== 0 && depth < 8; depth++, klass = superOf(klass)) {
+      if (klass === ue.layout.functionClass)
+        return true;
+    }
+    return false;
+  }
+
+  function scriptPosition(frame) {
+    // 'Class:Function+0x…' of a frame running a function's bytecode, or null.
+    const node = frame.add(FRAME_NODE).readPointer();
+    const code = frame.add(FRAME_CODE).readPointer();
+    if (code.isNull() || !isFunction(node) || !isObject(frame.add(FRAME_OBJECT).readPointer()))
+      return null;
+    const script = node.add(ue.layout.script).readPointer();
+    const length = node.add(ue.layout.script + Process.pointerSize).readS32();
+    if (script.isNull() || code.compare(script) < 0 || code.compare(script.add(length)) > 0)
+      return null;
+    return `${functionText(node)}+0x${code.sub(script).toString(16)}`;
+  }
+
+  function stackEnd(sp) {
+    // Where the thread's stack ends (cached per thread).
+    const thread = Process.getCurrentThreadId();
+    let end = stackEnds.get(thread);
+    if (end === undefined || sp.compare(end) >= 0) {
+      const range = Process.findRangeByAddress(sp);
+      end = range === null ? sp : range.base.add(range.size);
+      stackEnds.set(thread, end);
+    }
+    return end;
+  }
+
+  function enclosingScript(own, sp) {
+    // The nearest script frame above ``sp`` other than ``own``.
+    const end = stackEnd(sp);
+    const size = Math.min(CALLER_SEARCH, Number(end.sub(sp).toString()));
+    if (size <= 0)
+      return null;
+    for (const hit of Memory.scanSync(sp, size, pointerPattern(frameVtable))) {
+      if (hit.address.equals(own))
+        continue;
+      try {
+        const position = scriptPosition(hit.address);
+        if (position !== null)
+          return position;
+      } catch (_error) {
+        // not a frame
+      }
+    }
+    return null;
+  }
+
+  function pointerPattern(pointer) {
+    const hex = pointer.toString(16).replace(/^0x/, '').padStart(2 * Process.pointerSize, '0');
+    return hex.match(/../g).reverse().join(' ');
+  }
+
+  function callerOf(frame, own, sp) {
+    // The Blueprint position a call came from, or null.
+    try {
+      if (frameVtable === null)
+        frameVtable = frame.readPointer();
+      if (!own)
+        return scriptPosition(frame);
+      return frameVtable.isNull() ? null : enclosingScript(frame, sp);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  // How far an interface's part may lie inside the object implementing it
+  const MAX_INTERFACE_OFFSET = 0x1000;
+
+  function owningObject(address) {
+    // The object at ``address``, or the one an interface pointer points into.
+    try {
+      for (let back = 0; back <= MAX_INTERFACE_OFFSET; back += Process.pointerSize) {
+        if (isObject(address.sub(back)))
+          return address.sub(back);
+      }
+    } catch (_error) {
+      // not readable
+    }
+    return address;
+  }
+
+  function callFrame(info, context) {
+    // Where the arguments of a call are, on entering Func: { self, args:
+    // [{ address } or { value } or null], result, caller } (result: where the
+    // return value will be written, or null; caller: the Blueprint function
+    // and bytecode offset the call came from, or null).
+    const self = context[REGISTERS[0]];
+    const frame = context[REGISTERS[1]];
+    const result = context[REGISTERS[2]];
+    const own = frame.add(FRAME_NODE).readPointer().equals(info.function);
+    const call = { self: info.instance ? self : null, args: info.params.map(() => null),
+                   result: result.isNull() ? null : result,
+                   caller: callerOf(frame, own, context.sp) };
+    if (own) {
+      // Its own frame knows the object; Context may point into it instead
+      // (the part of an interface the object implements).
+      if (info.instance)
+        call.self = frame.add(FRAME_OBJECT).readPointer();
+      const locals = frame.add(FRAME_LOCALS).readPointer();
+      if (!locals.isNull())
+        call.args = info.params.map(param => ({ address: locals.add(param.offset) }));
+      return call;
+    }
+    if (info.instance)
+      call.self = owningObject(self);
+    let code = frame.add(FRAME_CODE).readPointer();
+    if (code.isNull())
+      return call;
+    for (let i = 0; i < info.params.length; i++) {
+      let found;
+      try {
+        found = expression(code, frame);
+      } catch (_error) {
+        found = null;
+      }
+      if (found === null)
+        break;  // where the next argument starts is unknown now
+      call.args[i] = found[0];
+      code = found[1];
+    }
+    return call;
+  }
+
   refresh();
   return {
     id: 'unreal',
@@ -754,6 +1245,17 @@ const unreal = (() => {
     cancelBatches: () => 0,
     batchesRunning: () => false,
     releaseCode,
+    prepare,
+    callFrame,
+    classOf,
+    layout,
+    readValue,
+    // Unreal has no getters to evaluate, nor a main thread to wait for.
+    properties: () => [],
+    drainMain: () => {},
+    onRuntimeThread: work => new Promise(resolve => resolve(work())),
+    // The monitor shows Unity's object names; here the UObject's FName.
+    unityName: uobjectName,
     // For checks and troubleshooting: where the reflection was found.
     reflection: () => {
       const found = reflection();

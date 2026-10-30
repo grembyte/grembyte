@@ -17,7 +17,8 @@ Available independent of any engine:
 
 For Unity games with Mono there are also the catalog, the trace (with preselection
 filters), the method monitor and method hooks, through the engine adapter layer
-(`hermes/engines/`). For Unreal Engine games there are the catalog and the trace.
+(`hermes/engines/`). For Unreal Engine games there are the catalog, the trace and the method
+monitor.
 
 Methods and functions found in the catalog, the trace or the native trace can be marked
 with ★ (first table column). Favorites are saved per program at once, so they survive a
@@ -187,7 +188,7 @@ subpackage with an `EngineAdapter` subclass and an agent part that registers its
 
 | Engine | Approach | Result |
 |---|---|---|
-| **Unreal** | Reflection through GNames/GObjects | **catalog and trace done (2026-10-30)**, see below |
+| **Unreal** | Reflection through GNames/GObjects | **catalog, trace and method monitor done (2026-10-30)**, see below |
 | **IL2CPP** (Unity without Mono) | `global-metadata.dat` + the `il2cpp_*` API | like Mono, but compiled ahead of time; shares the .NET model of the JS contract |
 | **Godot** | ClassDB / object properties | scene tree and variables |
 | **Lua engines** | hook the `lua_*` API | tables and variables of the script state |
@@ -225,11 +226,25 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
 
 Next steps:
 
-- Callers in the trace are the interpreter's call site (`exe+0x…`); the calling Blueprint
-  function is in the `FFrame` (`Stack.Node`) and could name it
-- Method monitor for UFunctions: arguments from the parameter buffer (`ProcessEvent`) or
-  the `FFrame`, with the FProperty offsets the catalog already reads
-- Object inspector: fields of a UObject from its class's FProperty chain (offsets known)
+- **Done (2026-10-30):** method monitor and object inspector. `prepare` answers
+  `frame: true`; `callFrame` reads the `FFrame` (Node 0x10, Object 0x18, Code 0x20, Locals
+  0x28, checked in Avowed): through ProcessEvent `Node` is the function and `Locals` its
+  parameters; from Blueprint bytecode `Code` points at the argument expressions, of which
+  local and instance variables, constants and `self` are decoded. The result is read from
+  the frame's `Result` pointer. Avowed: player, companions, encounters (`AActor*`, enums,
+  floats) decoded live. Learned: for interface functions `Context` points into the object
+  (the interface part, e.g. +0x318); `Stack.Object` is the object, from bytecode the agent
+  searches back for the object table's entry.
+- **Done (2026-10-30):** callers in the monitor. From bytecode the frame passed is the
+  caller's (`Node` + `Code` = `Class:Function+0x…` in its bytecode); through ProcessEvent the
+  agent scans up to 256 KiB of the thread's stack for FFrame's vtable (learned from the
+  first frame it sees) and takes the nearest frame whose Node is a UFunction, Object alive
+  and Code inside Node's bytecode. Avowed: `MinimapIconInterface:DetermineMinimapIconType`
+  ← `WBP_InGameHUDWindow_C:Tick+0x35`. Without a script frame above, the native return
+  address stays. The trace's callers could use the same.
+- Monitor gaps: `EX_LocalOutVariable` (needs `FFrame::OutParms`) and nested expressions show
+  as `?`; FText, TMap, TSet and delegates show their type only
+- Method hooks for UFunctions (change arguments in `Locals`, the result at `Result`)
 - Call graph from Blueprint bytecode (`UStruct::Script`)
 - UE4 before 4.23 (`TNameEntryArray` instead of `FNamePool`) and 32-bit games are not
   supported
@@ -273,7 +288,7 @@ runs; optionally memory through `ctx.read`/`ctx.write`.
 
 **1 (Stalker diff trace)** and **2 (accesses of an instruction)** bring the most
 independent of any engine and use much of what exists. Among the adapters, **Unreal** has
-catalog and trace now; its method monitor is the next step there. **IL2CPP** is the most
+catalog, trace and method monitor now; method hooks are the next step there. **IL2CPP** is the most
 obvious one for Unity games without Mono.
 
 ## Write hooks under anti-tamper protection (2026-10-27)

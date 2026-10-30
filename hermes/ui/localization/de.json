@@ -624,7 +624,7 @@
   "monitor.type_arguments_title": "Generische Klasse",
   "monitor.type_arguments_label": "{method} gehört zu einer generischen Klasse. Code haben nur ihre Instanzen, z. B. die, die eine Schreibüberwachung nannte (ReactiveProperty`1<int>).\n\nTyp-Argumente für {parameters}, durch Kommas getrennt (z. B. int, string, Game.Item, List`1<int>):",
   "monitor.type_arguments_count": "Die Klasse braucht {count} Typ-Argument(e): {parameters}.",
-  "monitor.hint": "Protokolliert jeden Aufruf der überwachten C#-Methoden. Kleine Methoden baut Mono oft direkt in ihre Aufrufer ein (Inlining); diese Aufrufe sieht der Monitor nicht.",
+  "monitor.hint": "Protokolliert jeden Aufruf der überwachten Methoden. Kleine Methoden baut Mono oft direkt in ihre Aufrufer ein (Inlining); diese Aufrufe sieht der Monitor nicht. Bei Unreal-Spielen sieht er Aufrufe aus Blueprints und über ProcessEvent; ruft ein Blueprint eine native Funktion auf, liest er einfache Argumente (Variablen, Konstanten) aus dem Bytecode, die übrigen zeigt er als „?“.",
   "monitor.column_method": "Methode",
   "monitor.column_signature": "Signatur",
   "monitor.column_calls": "Aufrufe",

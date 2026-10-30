@@ -8,9 +8,12 @@ function runs through a stand-in script interpreter (``ProcessInternal``).
 Its layout is not Avowed's (FField with a 16-byte owner, 24-byte object
 items), so the adapter has to find the offsets rather than assume them.
 
-Commands: ``tick`` calls Hero:Tick, ``loot N`` calls BP_Hero_C:Loot through
-its Func, whose script calls Hero:AddGold. Each answers with the gold and
-whether Loot's Func is the interpreter again.
+Calls go through Func with an FFrame, as in Unreal: ``tick`` calls
+Hero:Tick and ``rename N`` Hero:Rename (FString, bool) like ProcessEvent does
+(the frame's Locals hold the parameters); ``loot N`` calls BP_Hero_C:Loot that
+way, whose script calls Hero:AddGold with its local Amount (the caller's
+frame, Code at an EX_LocalVariable). Each answers with the gold and whether
+Loot's Func is the interpreter again.
 """
 
 import subprocess
@@ -32,7 +35,18 @@ _FAKE_GAME_SOURCE = r"""
 #include <unistd.h>
 
 typedef struct Object Object;
-typedef void (*native_fn)(Object *context, void *stack, void *result);
+typedef struct Frame Frame;
+typedef void (*native_fn)(Object *context, Frame *stack, void *result);
+/* FFrame: FOutputDevice (vtable, flags), Node, Object, Code, Locals */
+struct Frame {
+    void *vtable;
+    uint64_t flags;
+    Object *node;
+    Object *object;
+    uint8_t *code;
+    uint8_t *locals;
+};
+typedef struct { uint16_t *data; int32_t num, max; } String;
 
 typedef struct { uint32_t name, number; uint64_t id, cast_flags; } FieldClass;
 typedef struct Field {
@@ -166,33 +180,66 @@ static void add_function(Object *klass, Object *function) {
     *last = function;
 }
 
-static Object *g_add_gold, *g_tick, *g_loot;
+#define EX_LOCAL_VARIABLE 0x00
+#define EX_END_FUNCTION_PARMS 0x16
+
+static Object *g_add_gold, *g_tick, *g_loot, *g_rename;
 static volatile int32_t g_gold = 100;
 static volatile int32_t g_ticks;
+static volatile int32_t g_loud;
 
-static void invoke(Object *function, Object *self, void *parms) {
+/* Every FFrame has FFrame's vtable. */
+static void *g_frame_vtable[4];
+
+/* Like ProcessEvent: a frame of the function's own over its parameters */
+__attribute__((noinline)) static void process_event(Object *function, Object *self, void *parms,
+                                                    void *result) {
+    Frame frame = {g_frame_vtable, 0, function, self, function->script, parms};
     native_fn code = *(native_fn volatile *)&function->func;
-    code(self, parms, NULL);
+    code(self, &frame, result);
 }
 
-__attribute__((noinline)) void exec_AddGold(Object *context, void *stack, void *result) {
+__attribute__((noinline)) void exec_AddGold(Object *context, Frame *stack, void *result) {
+    int32_t amount;
     (void)context;
-    (void)result;
-    g_gold += *(volatile int32_t *)stack;
+    if (stack->node == g_add_gold) {
+        amount = *(int32_t *)stack->locals;
+    } else {
+        /* Called from bytecode: evaluate the argument, a local variable */
+        Field *local;
+        memcpy(&local, stack->code + 1, sizeof(local));
+        amount = *(int32_t *)(stack->locals + local->offset);
+        stack->code += 1 + sizeof(local) + 1;
+    }
+    g_gold += amount;
+    if (result != NULL)
+        *(int32_t *)result = g_gold;
 }
 
-__attribute__((noinline)) void exec_Tick(Object *context, void *stack, void *result) {
+__attribute__((noinline)) void exec_Tick(Object *context, Frame *stack, void *result) {
     (void)context;
     (void)stack;
     (void)result;
     g_ticks = g_ticks + 1;
 }
 
-/* The script interpreter: Loot's script adds gold. */
-__attribute__((noinline)) void ProcessInternal(Object *context, void *stack, void *result) {
+__attribute__((noinline)) void exec_Rename(Object *context, Frame *stack, void *result) {
+    (void)context;
     (void)result;
-    if (context != NULL)
-        invoke(g_add_gold, context, stack);
+    g_loud = stack->locals[16];
+}
+
+/* The script interpreter: Loot's script calls AddGold(Amount), then
+   broadcasts a delegate that ticks the hero (through ProcessEvent). */
+__attribute__((noinline)) void ProcessInternal(Object *context, Frame *stack, void *result) {
+    int32_t total = 0;
+    (void)result;
+    if (context != NULL && stack->node == g_loot) {
+        native_fn code = *(native_fn volatile *)&g_add_gold->func;
+        code(context, stack, &total);
+        float delta = 0;
+        process_event(g_tick, context, &delta, NULL);
+    }
 }
 
 static Object *function(Object *klass, Object *outer, const char *text, uint32_t flags,
@@ -243,6 +290,8 @@ int main(void) {
     FieldClass *float_property = field_class("FloatProperty");
     FieldClass *struct_property = field_class("StructProperty");
     FieldClass *object_property = field_class("ObjectProperty");
+    FieldClass *str_property = field_class("StrProperty");
+    FieldClass *bool_property = field_class("BoolProperty");
 
     Object *vector = object(script_struct, "Vector", core);
     vector->properties_size = 0x18;
@@ -270,6 +319,8 @@ int main(void) {
     Object *game = object(package_class, "/Script/FakeGame", NULL);
     Object *hero = object(class_class, "Hero", game);
     hero->super = actor;
+    /* A field of heroes, in memory an Object leaves unused */
+    property(hero, int_property, "Health", 4, 0x70, 0, NULL);
     g_add_gold = function(function_class, hero, "AddGold",
                           FUNC_NATIVE | FUNC_STATIC | FUNC_PUBLIC, exec_AddGold, 2, 8, 4);
     property(g_add_gold, int_property, "Amount", 4, 0, CPF_PARM, NULL);
@@ -277,6 +328,11 @@ int main(void) {
     g_tick = function(function_class, hero, "Tick", FUNC_NATIVE | FUNC_PUBLIC, exec_Tick,
                       1, 4, 0xffff);
     property(g_tick, float_property, "DeltaSeconds", 4, 0, CPF_PARM, NULL);
+    g_rename = function(function_class, hero, "Rename", FUNC_NATIVE | FUNC_PUBLIC, exec_Rename,
+                        2, 24, 0xffff);
+    property(g_rename, str_property, "NewName", 16, 0, CPF_PARM, NULL);
+    /* FBoolProperty: FieldSize 1, ByteOffset 0, ByteMask and FieldMask 0xff */
+    property(g_rename, bool_property, "bLoud", 1, 16, CPF_PARM, (void *)0xffff0001ULL);
     /* A Blueprint event the native class declares: no script, nothing to hook */
     Object *on_looted = function(function_class, hero, "OnLooted",
                                  FUNC_EVENT | FUNC_PUBLIC | FUNC_BLUEPRINT_EVENT,
@@ -288,14 +344,19 @@ int main(void) {
     bp_hero->super = hero;
     g_loot = function(function_class, bp_hero, "Loot", FUNC_PUBLIC, ProcessInternal,
                       2, 12, 0xffff);
-    static uint8_t script[] = {0x1c, 0x53};
+    property(g_loot, object_property, "Target", 8, 0, CPF_PARM, hero);
+    Field *amount = property(g_loot, int_property, "Amount", 4, 8, CPF_PARM, NULL);
+    /* AddGold(Amount): the argument, then the end of the arguments */
+    static uint8_t script[1 + sizeof(Field *) + 1];
+    script[0] = EX_LOCAL_VARIABLE;
+    memcpy(script + 1, &amount, sizeof(amount));
+    script[1 + sizeof(Field *)] = EX_END_FUNCTION_PARMS;
     g_loot->script = script;
     g_loot->script_num = g_loot->script_max = sizeof(script);
-    property(g_loot, object_property, "Target", 8, 0, CPF_PARM, hero);
-    property(g_loot, int_property, "Amount", 4, 8, CPF_PARM, NULL);
 
     Object *level = object(package_class, "/Game/Maps/Start", NULL);
     Object *player = object(bp_hero, "BP_Hero_C_0", level);
+    *(int32_t *)((char *)player + 0x70) = 75;
     for (int i = 0; i < FILLERS; i++)
         object(object_class, "Filler", game);
 
@@ -306,10 +367,18 @@ int main(void) {
     while (scanf("%15s %d", cmd, &value) == 2) {
         if (strcmp(cmd, "tick") == 0) {
             float delta = 0.016f;
-            invoke(g_tick, player, &delta);
+            process_event(g_tick, player, &delta, NULL);
         } else if (strcmp(cmd, "loot") == 0) {
-            int32_t parms[3] = {0, 0, value};
-            invoke(g_loot, player, &parms[2]);
+            struct { Object *target; int32_t amount; } parms = {player, value};
+            process_event(g_loot, player, &parms, NULL);
+        } else if (strcmp(cmd, "rename") == 0) {
+            char text[16];
+            uint16_t wide[16];
+            int length = snprintf(text, sizeof(text), "Hero %d", value);
+            for (int i = 0; i <= length; i++)
+                wide[i] = (uint16_t)text[i];
+            struct { String name; uint8_t loud; } parms = {{wide, length + 1, length + 1}, 1};
+            process_event(g_rename, player, &parms, NULL);
         }
         printf("%d %d\n", g_gold, *(native_fn volatile *)&g_loot->func == ProcessInternal);
         fflush(stdout);
@@ -365,13 +434,14 @@ def test_catalog_lists_packages_classes_and_ufunctions(tmp_path, qt_app):
                 for m in hero.values()] == [
             ("Hero", "AddGold", "(int32)", "int32", True, "Hero:AddGold (int32)"),
             ("Hero", "Tick", "(float)", "void", False, "Hero:Tick (float)"),
+            ("Hero", "Rename", "(FString,bool)", "void", False, "Hero:Rename (FString,bool)"),
             ("Hero", "OnLooted", "(AHero*)", "void", False, "Hero:OnLooted (AHero*)"),
         ]
         assert all(method.engine == "unreal" for method in hero.values())
         [loot] = loaded["/Game/Blueprints"]
         assert loot.signature == "BP_Hero_C:Loot (AHero*,int32)"
         # Tokens hash the names: the same in every run of the game.
-        assert len({m.token for m in hero.values()} | {loot.token}) == 4
+        assert len({m.token for m in hero.values()} | {loot.token}) == 5
     finally:
         target.close()
 
@@ -410,7 +480,7 @@ def test_trace_hooks_native_and_blueprint_functions(tmp_path, qt_app):
         _wait_for(qt_app, lambda: planned or failed)
         assert not failed
         # OnLooted has no script: nothing to hook.
-        assert planned[0] == {"methods": 3, "skipped": {"abstract": 1, "native": 0, "generic": 0},
+        assert planned[0] == {"methods": 4, "skipped": {"abstract": 1, "native": 0, "generic": 0},
                               "assemblies": ["/Script/FakeGame", "/Game/Blueprints"]}
 
         worker.trace([])
@@ -418,7 +488,7 @@ def test_trace_hooks_native_and_blueprint_functions(tmp_path, qt_app):
         assert not failed
         methods, info = started[0]
         assert (info["notCompiled"], info["failed"]) == (0, 0)
-        assert sorted(method.name for method in methods) == ["AddGold", "Loot", "Tick"]
+        assert sorted(method.name for method in methods) == ["AddGold", "Loot", "Rename", "Tick"]
         # The Blueprint function runs through a stub of its own now.
         assert target.send("loot", 0)[1] == 0
 
@@ -429,7 +499,7 @@ def test_trace_hooks_native_and_blueprint_functions(tmp_path, qt_app):
         scenario = record("scenario", ("tick", 0), ("loot", 5), ("tick", 0))
         rows = analyze(scenario, baseline)
         assert [(methods[row.method].name, row.verdict, row.calls) for row in rows] == [
-            ("Loot", NEW, 1), ("AddGold", NEW, 1), ("Tick", SAME, 2)]
+            ("Loot", NEW, 1), ("AddGold", NEW, 1), ("Tick", SAME, 3)]
         calls = recording_calls(scenario)
         assert [methods[call.method].name for call in calls] == ["Loot", "AddGold"]
         assert all(call.caller.startswith("fakegame-Linux-Shipping+0x") for call in calls)
@@ -440,4 +510,100 @@ def test_trace_hooks_native_and_blueprint_functions(tmp_path, qt_app):
         # Stopping gave the Blueprint function its interpreter back.
         assert target.send("loot", 1) == (106, 1)
     finally:
+        target.close()
+
+
+def _catalog(qt_app, pid):
+    """{signature: CatalogMethod} of the game's packages."""
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.catalog import CatalogWorker
+
+    worker = CatalogWorker(pid)
+    loaded = {}
+    worker.assembly_loaded.connect(loaded.__setitem__)
+    _run(qt_app, worker, worker.assemblies_found)
+    return {method.signature: method for methods in loaded.values() for method in methods}
+
+
+@requires_target
+def test_method_monitor_reads_arguments_from_the_call_frame(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.monitor import MethodMonitorWorker
+
+    target = _Target(_build(tmp_path))
+    methods = _catalog(qt_app, target.pid)
+    worker = MethodMonitorWorker(target.pid)
+    added, failed, calls = {}, {}, []
+    worker.monitor_added.connect(added.__setitem__)
+    worker.monitor_failed.connect(failed.__setitem__)
+    worker.calls.connect(lambda events, _dropped, _counts: calls.extend(events))
+
+    def monitor(signature, **options):
+        monitor_id = worker.add_monitor(methods[signature].identity(), **options)
+        _wait_for(qt_app, lambda: monitor_id in added or monitor_id in failed)
+        assert not failed
+        return monitor_id
+
+    def one_call(monitor_id, command, value):
+        calls.clear()
+        answer = target.send(command, value)
+
+        def mine():
+            return [call for call in calls if call["monitorId"] == monitor_id]
+
+        _wait_for(qt_app, mine)
+        assert len(mine()) == 1
+        return answer, mine()[0]
+
+    try:
+        worker.start()
+        # Called from Loot's bytecode: the argument is Loot's local Amount.
+        add_gold = monitor("Hero:AddGold (int32)", returns=True)
+        assert added[add_gold]["params"] == ["int32 Amount"]
+        assert (added[add_gold]["returns"], added[add_gold]["instance"]) == ("int32", False)
+        answer, call = one_call(add_gold, "loot", 5)
+        assert answer == (105, 1)
+        assert call["self"] is None
+        assert [(arg["name"], arg["text"]) for arg in call["args"]] == [("Amount", "5")]
+        assert call["result"] == {"text": "105"}
+        # The Blueprint function whose bytecode called it
+        assert call["caller"] == "BP_Hero_C:Loot+0x0"
+        worker.remove_monitor(add_gold)
+
+        # A Blueprint function, through ProcessEvent: its parameters, the
+        # object it runs on (with its name), and a snapshot of its fields
+        loot = monitor("BP_Hero_C:Loot (AHero*,int32)", objects=True)
+        answer, call = one_call(loot, "loot", 2)
+        assert answer == (107, 0)
+        assert call["self"]["text"].startswith('ABP_Hero_C "BP_Hero_C_0"@0x')
+        target_arg, amount = call["args"]
+        assert target_arg["text"] == call["self"]["text"]
+        assert amount["text"] == "2"
+        # Native code called it (no script frame above).
+        assert call["caller"].startswith("fakegame-Linux-Shipping+0x")
+        health = target_arg["snapshot"]["fields"][0]
+        assert (health["name"], health["type"], health["value"], health["valueType"]) == (
+            "Health", "int32", {"text": "75"}, "int32")
+        worker.remove_monitor(loot)
+        # Removing the monitor gives Loot its interpreter back (the worker
+        # does it in a moment).
+        _wait_for(qt_app, lambda: target.send("loot", 0) == (107, 1))
+
+        # Tick through ProcessEvent while Loot's script runs: Loot is found
+        # further up the stack, at the end of its bytecode.
+        tick = monitor("Hero:Tick (float)")
+        _answer, call = one_call(tick, "loot", 0)
+        assert call["caller"] == "BP_Hero_C:Loot+0xa"
+        _answer, call = one_call(tick, "tick", 0)
+        assert call["caller"].startswith("fakegame-Linux-Shipping+0x")
+        worker.remove_monitor(tick)
+
+        rename = monitor("Hero:Rename (FString,bool)")
+        _answer, call = one_call(rename, "rename", 7)
+        assert [(arg["name"], arg["text"]) for arg in call["args"]] == [
+            ("NewName", '"Hero 7"'), ("bLoud", "true")]
+        worker.remove_monitor(rename)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
         target.close()

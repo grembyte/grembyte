@@ -326,7 +326,7 @@ class CatalogDialog(QDialog):
         unsupported = self.translations["engine.unsupported"].format(
             engine=self.engine.display_name)
         for button, capability in ((self.calls_button, engine_base.CALL_GRAPH),
-                                   (self.call_button, engine_base.MONITOR),
+                                   (self.call_button, engine_base.CALL),
                                    (self.monitor_button, engine_base.MONITOR)):
             if not self.engine.supports(capability):
                 button.setToolTip(unsupported)
@@ -475,9 +475,10 @@ class CatalogDialog(QDialog):
         self.copy_button.setEnabled(method is not None)
         self.calls_button.setEnabled(method is not None
                                      and self.engine.supports(engine_base.CALL_GRAPH))
-        self.monitor_button.setEnabled(method is not None and self._can_run(method))
+        self.monitor_button.setEnabled(method is not None
+                                       and self._can_run(method, engine_base.MONITOR))
         self.call_button.setEnabled(method is not None and method.static
-                                    and self._can_run(method))
+                                    and self._can_run(method, engine_base.CALL))
         if method is None:
             self.details_label.setText("")
             return
@@ -489,19 +490,19 @@ class CatalogDialog(QDialog):
             assembly=method.assembly,
         ))
 
-    def _can_run(self, _method):
-        """Whether a method can be monitored or called: in a running game whose
-        engine adapter can."""
-        return self.game is None and self.engine.supports(engine_base.MONITOR)
+    def _can_run(self, _method, capability):
+        """Whether a method can be monitored or called (``capability``): in a
+        running game whose engine adapter can."""
+        return self.game is None and self.engine.supports(capability)
 
     def _request_monitor(self):
         method = self.selected_method()
-        if method is not None and self._can_run(method):
+        if method is not None and self._can_run(method, engine_base.MONITOR):
             self.monitor_requested.emit(method)
 
     def _request_call(self):
         method = self.selected_method()
-        if method is not None and method.static and self._can_run(method):
+        if method is not None and method.static and self._can_run(method, engine_base.CALL):
             self.call_requested.emit(method)
 
     def _show_calls(self):

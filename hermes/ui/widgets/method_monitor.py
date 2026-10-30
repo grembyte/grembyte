@@ -21,6 +21,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
+from hermes.engines import base as engine_base
+from hermes.engines.registry import engine_by_id
 from hermes.features.catalog import short_name
 from hermes.features.monitor import MethodMonitorWorker
 from hermes.ui.widgets.object_inspector import ObjectInspectorDialog, link_label, link_width
@@ -77,6 +79,12 @@ def call_values(call, translations):
         values.append((translations["monitor.column_result"], call["result"]))
     return values
 
+
+
+def _hookable(method):
+    """Whether the engine of ``method`` offers method hooks."""
+    engine = engine_by_id(method.engine)
+    return engine is not None and engine.supports(engine_base.METHOD_HOOKS)
 
 class CallLogModel(QAbstractTableModel):
     """The latest calls, newest last."""
@@ -399,17 +407,22 @@ class MethodMonitorDialog(QDialog):
     def _update_buttons(self):
         selected = self.methods_table.currentRow() >= 0
         self.remove_button.setEnabled(selected)
-        self.hook_button.setEnabled(selected)
+        method = self._selected_method()
+        self.hook_button.setEnabled(method is not None and _hookable(method))
 
-    def _request_hook(self):
+    def _selected_method(self):
         row = self.methods_table.currentRow()
         if row < 0:
-            return
+            return None
         signature = self.methods_table.item(row, _M_METHOD).toolTip()
         state = next((state for state in self._monitors.values()
                       if state["method"].signature == signature), None)
-        if state is not None:
-            self.hook_requested.emit(state["method"])
+        return None if state is None else state["method"]
+
+    def _request_hook(self):
+        method = self._selected_method()
+        if method is not None and _hookable(method):
+            self.hook_requested.emit(method)
 
     # --- Worker ----------------------------------------------------------------
     def _on_added(self, monitor_id, info):

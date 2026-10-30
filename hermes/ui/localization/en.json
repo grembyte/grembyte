@@ -624,7 +624,7 @@
   "monitor.type_arguments_title": "Generic class",
   "monitor.type_arguments_label": "{method} belongs to a generic class. Only its instances have code, e.g. the one a write watch named (ReactiveProperty`1<int>).\n\nType arguments for {parameters}, separated by commas (e.g. int, string, Game.Item, List`1<int>):",
   "monitor.type_arguments_count": "The class needs {count} type argument(s): {parameters}.",
-  "monitor.hint": "Logs every call of the monitored C# methods. Mono often builds small methods right into their callers (inlining); the monitor does not see those calls.",
+  "monitor.hint": "Logs every call of the monitored methods. Mono often builds small methods right into their callers (inlining); the monitor does not see those calls. In Unreal games it sees calls from Blueprints and through ProcessEvent; when a Blueprint calls a native function, it reads simple arguments (variables, constants) from the bytecode and shows the others as “?”.",
   "monitor.column_method": "Method",
   "monitor.column_signature": "Signature",
   "monitor.column_calls": "Calls",

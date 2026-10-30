@@ -52,13 +52,21 @@ Trace (``TRACE``): ``methodsByToken(assembly, tokens)`` with ECMA-335 flags,
 what ``compileAll`` changed in the game to make code hookable (once the trace
 has removed its hooks).
 
-Method monitor and method hooks (``MONITOR``): ``prepare(identity)`` (code
-and signature), the object model (``TYPE`` element types, ``classOf``,
-``objectClassName``, ``layout``, ``classChain``, ``newString``,
-``writeReference``), running code (``onRuntimeThread``, ``onMainThread``,
-``drainMain``, ``findClass``, ``findMethod``, ``signatureOf``, ``invoke``,
-``virtualMethod``, ``properties``, ``getProperty``) and ``unityName`` for
-Unity games.
+Method monitor (``MONITOR``): ``prepare(identity)`` (code and signature),
+the object model (``TYPE`` element types, ``classOf``, ``layout``,
+``properties``), ``onRuntimeThread``, ``drainMain`` and ``unityName`` (the
+name of a Unity object; Unreal: the UObject's name). Arguments are read where
+the platform's calling convention puts them, unless ``prepare`` answers
+``frame: true``: then ``callFrame(info, context)`` says on entry where each
+one is (``{address}`` or ``{value}``) and where the result will be, and
+types with ``engine`` set are read by ``readValue(type, address)`` (Unreal).
+``layout`` may give ``headerSize``, where struct field offsets start
+(Mono: after an object header).
+
+Method hooks (``METHOD_HOOKS``) and calling methods (``CALL``) also need
+``objectClassName``, ``classChain``, ``newString``, ``writeReference``,
+``onMainThread``, ``findClass``, ``findMethod``, ``signatureOf``, ``invoke``,
+``virtualMethod`` and ``getProperty``.
 
 The platform helpers an adapter may use (``spawnThread``, ``watchUnmaps``,
 ``pauseThreads``) are in platform.js.
@@ -89,6 +97,7 @@ TRACE = "trace"
 MONITOR = "monitor"
 METHOD_HOOKS = "method_hooks"
 CALL_GRAPH = "call_graph"
+CALL = "call"
 
 
 class EngineAdapter:
