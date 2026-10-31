@@ -17,7 +17,7 @@ Hermes Hook is a desktop application built with Python and PyQt6 for inspecting 
 
 ### More tools
 
-- **File menu**: export the saved addresses, hooks, method hooks and favorites of a game (not yet its scripts) to a JSON file and import them again, delete saved entries or whole processes, and compact the database.
+- **File menu**: export the saved addresses, hooks, method hooks, favorites and scripts of a game to a JSON file and import them again, delete saved entries or whole processes, and compact the database.
 - **Memory viewer** for the memory around an address, and the **Sessions** window, which lists the connections to processes (Frida, ptrace) and can cut one that does not respond.
 - **Native trace** (**View → Native trace…**, any engine): Frida's Stalker counts which functions the chosen threads call, first in a baseline, then in a scenario such as paying gold; the functions that are new or called more often in the scenario are the candidates. **Monitor native function …** logs the arguments, result and caller of a function and compares the memory behind pointer arguments before and after the call.
 - **Favorites** (**View → Favorites …**): methods and functions marked with ★ in the catalog or a trace, saved per program with a note.

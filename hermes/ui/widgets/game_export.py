@@ -43,7 +43,8 @@ from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.table import resizable_columns, set_row_height
 
 # Columns after the game's name and platform: the counts of its entries
-_COUNT_COLUMNS = ("addresses", "hooks", "method_hooks", "favorites", "pointer_scans")
+# Pointer scans last: the import's table leaves them out
+_COUNT_COLUMNS = ("addresses", "hooks", "method_hooks", "favorites", "scripts", "pointer_scans")
 
 
 class GameExportDialog(QDialog):

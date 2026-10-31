@@ -12,6 +12,7 @@ from hermes.db.base import Base
 from hermes.db.models import (
     Address,
     FavoriteRecord,
+    GameScript,
     Hook,
     HookTemplate,
     MethodHook,
@@ -70,6 +71,8 @@ def fixture_repository(sessions):
                        transform_name="x", transform_source="", transform_parameters=[],
                        transform_params={}),
             FavoriteRecord(process_id=poe.id, kind="method", key="k", data={}),
+            GameScript(process_id=ds_exp.id, label="Souls", source="ctx.log(1);",
+                       mode="repeat", seconds=2.5, enabled=False),
         ])
         session.flush()
         session.add(PointerScan(address_id=souls.id, max_depth=3, max_offset=0x400,
@@ -98,7 +101,7 @@ def test_games_are_grouped_by_name_and_empty_ones_left_out(repository):
     souls = games["DarkSoulsIII.ex"]
     assert souls.paths == [PROTON_GE, PROTON_EXP] and souls.platform == "Windows"
     assert souls.counts == {"addresses": 1, "hooks": 1, "method_hooks": 0, "favorites": 0,
-                            "pointer_scans": 1}
+                            "scripts": 1, "pointer_scans": 1}
 
 
 def test_export_holds_all_processes_of_the_game_and_their_templates(repository):
@@ -109,6 +112,9 @@ def test_export_holds_all_processes_of_the_game_and_their_templates(repository):
     assert souls["label"] == "Souls" and souls["pointer"] == {"module": "DarkSoulsIII.exe"}
     assert "pointer_scan" not in souls and "process_id" not in souls
     assert export["processes"][1]["hooks"][0]["transform_params"] == {"maximum": 450}
+    [script] = export["processes"][1]["scripts"]
+    assert (script["label"], script["source"], script["mode"], script["seconds"],
+            script["enabled"]) == ("Souls", "ctx.log(1);", "repeat", 2.5, False)
     assert [template["name"] for template in export["templates"]] == ["Begrenzen"]
     json.dumps(export)  # JSON-ready, dates included
 
@@ -172,7 +178,7 @@ def test_import_mixes_in_what_the_target_does_not_hold(sessions, repository):
 
     result = repository.import_export(export, target_id)
     assert result.added == {"addresses": 1, "hooks": 1, "method_hooks": 0, "favorites": 0,
-                            "pointer_scans": 1}
+                            "scripts": 1, "pointer_scans": 1}
     assert result.templates == 0  # "Begrenzen" exists with the same code
     with sessions() as session:
         [hook] = session.scalars(select(Hook).where(Hook.process_id == target_id))
@@ -182,10 +188,19 @@ def test_import_mixes_in_what_the_target_does_not_hold(sessions, repository):
             select(PointerScan).where(PointerScan.address_id == address.id)).one()
         assert scan.chains == [{"module": "DarkSoulsIII.exe", "offsets": [8]}]
         assert session.get(Process, target_id).path == "/steam/Proton 12/wine64-preloader"
+        [script] = session.scalars(select(GameScript).where(GameScript.process_id == target_id))
+        assert (script.label, script.mode, script.seconds, script.enabled) == (
+            "Souls", "repeat", 2.5, False)
 
     again = repository.import_export(export, target_id)
     assert sum(again.added.values()) == 0
-    assert again.skipped == {"addresses": 1, "hooks": 1, "method_hooks": 0, "favorites": 0}
+    assert again.skipped == {"addresses": 1, "hooks": 1, "method_hooks": 0, "favorites": 0,
+                             "scripts": 1}
+
+    # Exports made before scripts were exported hold none.
+    for process in export["processes"]:
+        del process["scripts"]
+    assert sum(repository.import_export(export, target_id).added.values()) == 0
 
 
 def test_import_replaces_the_targets_entries(sessions, repository):

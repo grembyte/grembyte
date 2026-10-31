@@ -2,8 +2,9 @@
 
 A game is all processes of one name: the same game is saved once per path,
 e.g. under two Proton versions. The export holds per process its address
-list, hooks, method hooks and favorites, and the templates its hooks were
-created from. The candidate chains of pointer scans are only exported when
+list, hooks, method hooks, favorites and scripts, and the templates its
+hooks were created from. Exports without scripts (made before they were
+exported) are read as having none. The candidate chains of pointer scans are only exported when
 asked for: they can be large.
 
 An import puts all entries of a file into one saved process, whatever path
@@ -29,6 +30,7 @@ from hermes.db.models import (
     Address,
     AssemblySelectionRecord,
     FavoriteRecord,
+    GameScript,
     Hook,
     HookTemplate,
     MethodHook,
@@ -48,9 +50,10 @@ _COUNTED = (
     ("hooks", Hook),
     ("method_hooks", MethodHook),
     ("favorites", FavoriteRecord),
+    ("scripts", GameScript),
 )
 # Kinds of entries ``delete_entries`` can delete
-DELETABLE = ("addresses", "pointer_scans", "hooks", "method_hooks", "favorites")
+DELETABLE = ("addresses", "pointer_scans", "hooks", "method_hooks", "favorites", "scripts")
 
 
 @dataclass
@@ -224,6 +227,7 @@ class GameExportRepository:
             "hooks": rows(Hook),
             "method_hooks": rows(MethodHook),
             "favorites": rows(FavoriteRecord),
+            "scripts": rows(GameScript),
         }
 
     def delete_entries(self, process_id, kinds, remove_process=False):
@@ -320,11 +324,17 @@ def _favorite_key(row):
     return row.get("key")
 
 
+def _script_key(row):
+    # When it runs and whether it is paused are settings of the same script
+    return (row.get("label"), row.get("source"))
+
+
 _IMPORTED = (
     ("addresses", Address, _address_key),
     ("hooks", Hook, _hook_key),
     ("method_hooks", MethodHook, _method_hook_key),
     ("favorites", FavoriteRecord, _favorite_key),
+    ("scripts", GameScript, _script_key),
 )
 
 
@@ -394,7 +404,7 @@ def import_into(session_factory, export, process_id, replace=False):
     """Put the entries of ``export`` into the saved process ``process_id``.
 
     ``replace`` deletes its address list (with pointer scans), hooks, method
-    hooks and favorites first; else entries it holds already are left out.
+    hooks, favorites and scripts first; else entries it holds already are left out.
     Returns an ImportResult.
     """
     result = ImportResult({key: 0 for key, *_rest in _IMPORTED},
