@@ -624,7 +624,9 @@ function callResult(method, self, args) {
   const returns = signature.returns;
   const answer = {};
   if (signature.parms) {
-    // Unreal: the result and outputs are written into the parameter block
+    // Unreal: the result and outputs are written into the parameter block,
+    // which the object inspector opens later (a TArray, a struct)
+    keepBlock(result);
     const outputs = signature.params.filter(param => param.out).map(param => ({
       name: param.name,
       value: safely(() => readValue({ ...param.type, byref: false },
@@ -1385,18 +1387,22 @@ function invokeWithParms(method, signature, self, args) {
   return engine.invoke(method, self, parms);
 }
 
-// Struct results of Unreal calls live in their parameter block: kept for a while
+// Results of Unreal calls live in their parameter block (structs, and what the
+// call dialog shows the object inspector): kept for a while
 const keptBlocks = [];
+
+function keepBlock(parms) {
+  keptBlocks.push(parms);
+  if (keptBlocks.length > 64)
+    keptBlocks.shift();
+}
 
 function parmsResultJs(signature, parms) {
   const type = signature.returns;
   if (type.kind === T.VOID && !type.byref)
     return undefined;
-  if (type.kind === T.VALUETYPE) {
-    keptBlocks.push(parms);
-    if (keptBlocks.length > 64)
-      keptBlocks.shift();
-  }
+  if (type.kind === T.VALUETYPE)
+    keepBlock(parms);
   return readJs(type, parms.add(signature.returnOffset));
 }
 
