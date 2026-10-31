@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
 
+from hermes.engines.unreal.adapter import bootstrapped_game
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from hermes.ui.localization import load_translations
@@ -155,7 +156,12 @@ class ProcessSelectDialog(QDialog):
     def _accept(self):
         row = self.list.currentRow()
         if row >= 0:
-            self.selected_pid = int(self.list.item(row, 0).text())
-            self.selected_name = self.list.item(row, 1).text()
-            self.selected_path = self.list.item(row, 2).text()
+            pid, name, path = (self.list.item(row, column).text() for column in range(3))
+            # An Unreal game's bootstrap only starts the game; attach to that.
+            game = bootstrapped_game(path, [proc[2] for proc in self._all_procs])
+            if game is not None:
+                pid, name, path = next(proc for proc in self._all_procs if proc[2] == game)
+            self.selected_pid = int(pid)
+            self.selected_name = name
+            self.selected_path = path
             self.accept()

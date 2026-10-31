@@ -715,7 +715,9 @@ int main(void) {
 
 def _build(tmp_path):
     (tmp_path / "fake_game.c").write_text(_FAKE_GAME_SOURCE)
-    binary = tmp_path / "fakegame-Linux-Shipping"
+    # Where a packaged game keeps it; detection looks for Binaries/<Platform>/.
+    binary = tmp_path / "FakeGame" / "Binaries" / "Linux" / "fakegame-Linux-Shipping"
+    binary.parent.mkdir(parents=True)
     subprocess.run(["gcc", "-O0", "-mno-red-zone", "-fPIE", "-pie", str(tmp_path / "fake_game.c"),
                     "-o", str(binary)], check=True)
     return binary

@@ -51,5 +51,37 @@ class UnrealAdapter(base.EngineAdapter):
     framework_prefixes = (tuple(f"/Script/{module}" for module in _ENGINE_MODULES)
                           + ("/Engine/", "/Paper2D/", "/Niagara/", "/Wwise", "/Script/AkAudio"))
 
+    def is_runtime_path(self, path):
+        # A packaged game runs from <Project>/Binaries/<Platform>/; an
+        # executable of the same name in the game's root only starts it.
+        parts = _path_parts(path)
+        return (len(parts) >= 3 and parts[-3].lower() == "binaries"
+                and self.is_runtime_file(parts[-1]))
+
     def is_runtime_file(self, name):
         return _RUNTIME_NAMES.search(name) is not None
+
+
+def _path_parts(path):
+    return [part for part in re.split(r"[\\/]", path) if part]
+
+
+def bootstrapped_game(path, paths):
+    """Return the running game that the bootstrap executable ``path`` started.
+
+    A packaged Unreal game's root holds a small executable that only starts
+    the real one in <Project>/Binaries/<Platform>/ (Gothic 1 Remake gives both
+    the same name). Returns the entry of ``paths`` that is such a game below
+    ``path``'s directory, or None if ``path`` is no bootstrap of a running game.
+    """
+    root = [part.lower() for part in _path_parts(path)[:-1]]
+    if not root or (len(root) >= 2 and root[-2] == "binaries"):
+        return None
+    for candidate in paths:
+        parts = _path_parts(candidate)
+        if (len(parts) == len(root) + 4
+                and [part.lower() for part in parts[:len(root)]] == root
+                and parts[-3].lower() == "binaries"
+                and _RUNTIME_NAMES.search(parts[-1])):
+            return candidate
+    return None

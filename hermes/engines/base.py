@@ -138,19 +138,24 @@ class EngineAdapter:
         """Return whether the process has loaded this engine's runtime."""
         if sys.platform == "win32":
             try:
-                return any(self.is_runtime_file(ntpath.basename(mapping.path))
+                return any(self.is_runtime_path(mapping.path)
                            for mapping in read_mappings(pid) if mapping.module is not None)
             except OSError:
                 return False
         try:
             with open(f"{proc_root}/{pid}/maps", encoding="utf-8", errors="replace") as maps:
                 return any(
-                    self.is_runtime_file(os.path.basename(line.split(maxsplit=5)[-1].strip()))
+                    self.is_runtime_path(line.split(maxsplit=5)[-1].strip())
                     for line in maps
                     if "/" in line
                 )
         except OSError:
             return False
+
+    def is_runtime_path(self, path):
+        """Whether the mapped file at ``path`` is the engine's runtime."""
+        name = ntpath.basename(path) if sys.platform == "win32" else os.path.basename(path)
+        return self.is_runtime_file(name)
 
     def is_runtime_file(self, name):
         """Whether a mapped file of that name is the engine's runtime."""

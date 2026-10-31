@@ -13,6 +13,7 @@ from hermes.core.wine_helper import (
     parse_list,
     read_environ,
     server_socket,
+    sibling_start_times,
     wine_loader,
 )
 from tests.test_hooks import linux_only
@@ -89,6 +90,42 @@ def test_matches_game_by_name_then_closest_creation_time():
     assert match_process(processes[3:], "start.exe", None).pid == 12
     with pytest.raises(HelperError):
         match_process(processes, "game.exe", 0)
+
+
+def test_same_named_processes_match_in_the_order_they_started():
+    # Gothic 1 Remake: the bootstrap and the game it starts share a name, and
+    # Wine registered both 0.8 s after their Unix start.
+    processes = [WineProcess(320, 86_554, "G1R-Win64-Shipping.exe"),
+                 WineProcess(340, 86_724, "G1R-Win64-Shipping.exe")]
+    siblings = [85_920, 85_790]
+
+    assert match_process(processes, "g1r-win64-shipping.exe", 85_920,
+                         siblings_ms=siblings).pid == 340
+    assert match_process(processes, "g1r-win64-shipping.exe", 85_790,
+                         siblings_ms=siblings).pid == 320
+    # Without the siblings, closeness alone picks the bootstrap.
+    assert match_process(processes, "g1r-win64-shipping.exe", 85_920).pid == 320
+
+
+@linux_only
+def test_finds_the_starts_of_same_named_processes_in_the_prefix(tmp_path):
+    (tmp_path / "stat").write_text("cpu 1 2 3\nbtime 1000\n")
+    ticks = os.sysconf("SC_CLK_TCK")
+    programs = {
+        41: (r"S:\Gothic\G1R-Win64-Shipping.exe", "/pfx", 5),
+        42: (r"S:\Gothic\G1R\Binaries\Win64\G1R-Win64-Shipping.exe", "/pfx", 7),
+        43: (r"S:\Gothic\G1R-Win64-Shipping.exe", "/other", 9),  # another prefix
+        44: (r"S:\Gothic\Launcher.exe", "/pfx", 11),
+    }
+    for pid, (program, prefix, start) in programs.items():
+        (tmp_path / str(pid)).mkdir()
+        (tmp_path / str(pid) / "cmdline").write_bytes(program.encode() + b"\0G1R\0")
+        (tmp_path / str(pid) / "environ").write_bytes(f"WINEPREFIX={prefix}\0".encode())
+        fields = ["S"] + ["0"] * 18 + [str(start * ticks), "0"]
+        (tmp_path / str(pid) / "stat").write_text(f"{pid} (x) {' '.join(fields)}\n")
+
+    starts = sibling_start_times(42, "g1r-win64-shipping.exe", proc_root=str(tmp_path))
+    assert sorted(starts) == [1_005_000, 1_007_000]
 
 
 def test_reads_architecture_and_tells_same_named_programs_apart():

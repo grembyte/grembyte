@@ -4,7 +4,7 @@ import pytest
 
 from hermes.engines import base
 from hermes.engines.mono.adapter import MonoAdapter
-from hermes.engines.unreal.adapter import UnrealAdapter
+from hermes.engines.unreal.adapter import UnrealAdapter, bootstrapped_game
 from hermes.engines.registry import (
     ENGINE_AGENT_SOURCE, ENGINES, detect_engine, engine_by_id, resolve_engine,
 )
@@ -68,6 +68,30 @@ def test_detects_the_engine_from_the_mapped_runtime(tmp_path):
     assert detect_engine(44, proc_root=str(tmp_path)).id == "unreal"
     assert detect_engine(42, proc_root=str(tmp_path)) is None
     assert detect_engine(43, proc_root=str(tmp_path)) is None
+
+
+@linux_only
+def test_an_unreal_bootstrap_of_the_games_name_is_not_the_game(tmp_path):
+    # Gothic 1 Remake: the bootstrap in the game's root has the game's name.
+    _maps(tmp_path, 45, "/games/Gothic 1 Remake/G1R-Win64-Shipping.exe")
+    _maps(tmp_path, 46, "/games/Gothic 1 Remake/G1R/Binaries/Win64/G1R-Win64-Shipping.exe")
+    assert detect_engine(45, proc_root=str(tmp_path)) is None
+    assert detect_engine(46, proc_root=str(tmp_path)).id == "unreal"
+
+
+def test_finds_the_game_an_unreal_bootstrap_started():
+    gothic = r"S:\steamapps\common\Gothic 1 Remake"
+    game = gothic + r"\G1R\Binaries\Win64\G1R-Win64-Shipping.exe"
+    running = ["/usr/bin/bash", gothic + r"\G1R-Win64-Shipping.exe", game]
+    assert bootstrapped_game(gothic + r"\G1R-Win64-Shipping.exe", running) == game
+    # Paths differ in case under Wine; the bootstrap may have another name.
+    avowed = r"S:\Avowed\Alabama\Binaries\Win64\Avowed-Win64-Shipping.exe"
+    assert bootstrapped_game(r"s:\avowed\Avowed.exe", [avowed]) == avowed
+    # The game itself, a bootstrap whose game is not running, other programs
+    assert bootstrapped_game(game, running) is None
+    assert bootstrapped_game(r"S:\Avowed\Avowed.exe", running) is None
+    assert bootstrapped_game("/usr/bin/bash", running) is None
+    assert bootstrapped_game("", running) is None
 
 
 def test_resolve_prefers_a_given_adapter_then_detection():

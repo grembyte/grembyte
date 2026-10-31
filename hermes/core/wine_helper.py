@@ -14,6 +14,7 @@ its own and never see the game.
 """
 
 import logging
+import ntpath
 import os
 import subprocess
 import threading
@@ -211,13 +212,45 @@ def start_time_ms(pid, proc_root="/proc"):
     return boot * 1000 + ticks * 1000 // os.sysconf("SC_CLK_TCK")
 
 
-def match_process(processes, exe_name, started_ms, bits=None):
+def sibling_start_times(pid, exe_name, proc_root="/proc"):
+    """Return when the Unix processes running ``exe_name`` in ``pid``'s prefix started.
+
+    In milliseconds since the Unix epoch, ``pid``'s own start among them. A
+    Wine process's command line begins with its Windows program.
+    """
+    prefix = wine_prefix(read_environ(pid, proc_root))
+    exe_name = exe_name.lower()
+    times = []
+    for entry in os.listdir(proc_root):
+        if not entry.isdigit():
+            continue
+        try:
+            program = (Path(proc_root) / entry / "cmdline").read_bytes().split(b"\0", 1)[0]
+        except OSError:
+            continue
+        if ntpath.basename(program.decode("utf-8", "replace").strip()).lower() != exe_name:
+            continue
+        try:
+            if wine_prefix(read_environ(int(entry), proc_root)) != prefix:
+                continue
+        except HelperError:
+            continue
+        started = start_time_ms(int(entry), proc_root)
+        if started is not None:
+            times.append(started)
+    return times
+
+
+def match_process(processes, exe_name, started_ms, bits=None, siblings_ms=()):
     """Pick the Windows process that is the game.
 
     Matches on the executable name and, if given, the architecture (a 32- and a
-    64-bit program may share a name); among several left, the one
-    whose creation time is closest to the Unix process's start wins (Wine
-    registers a process with its server right as it starts).
+    64-bit program may share a name). Among several left, the order of their
+    creation decides when ``siblings_ms``, the starts of the Unix processes
+    of that name, has as many entries: Wine registers a process some way off
+    its Unix start (Gothic 1 Remake: 0.8 s later), more than lies between an
+    Unreal bootstrap and the game it starts, but in the same order. Otherwise
+    the one whose creation time is closest to the Unix process's start wins.
     """
     exe_name = exe_name.lower()
     candidates = [proc for proc in processes if proc.name.lower() == exe_name
@@ -226,6 +259,9 @@ def match_process(processes, exe_name, started_ms, bits=None):
         raise HelperError(f"{exe_name} is not among the prefix's Windows processes")
     if len(candidates) == 1 or started_ms is None:
         return candidates[0]
+    if len(siblings_ms) == len(candidates) and started_ms in siblings_ms:
+        rank = sorted(siblings_ms).index(started_ms)
+        return sorted(candidates, key=lambda proc: proc.created_ms)[rank]
     return min(candidates, key=lambda proc: abs(proc.created_ms - started_ms))
 
 
@@ -266,7 +302,7 @@ class Helper:
         if code != 0:
             raise HelperError(f"Helper could not list processes: {output.strip()}")
         return match_process(parse_list(output), exe_name, start_time_ms(self.pid),
-                             self.bits).pid
+                             self.bits, sibling_start_times(self.pid, exe_name)).pid
 
     def inject(self, windows_pid, dll_path, load_library=None):
         """Load ``dll_path`` (a Windows path) into ``windows_pid``."""
