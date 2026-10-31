@@ -489,11 +489,18 @@ class MainWindow(QMainWindow):
         view_menu = menu_bar.addMenu(self.translations["menu.view"])
         view_menu.setToolTipsVisible(True)
 
+        # Shown or hidden by _set_scan_area_visible once the layout exists
+        self.act_scan_area = view_menu.addAction(self.translations["menu.scan_area"])
+        self.act_scan_area.setCheckable(True)
+        self.act_scan_area.setToolTip(self.translations["scan_area.tooltip"])
+        self.act_scan_area.setShortcut("Ctrl+Shift+F")
+
         self.act_templates = view_menu.addAction(
             material_icon("library_books"), self.translations["menu.templates"])
         self.act_templates.setToolTip(self.translations["templates.button_tooltip"])
         self.act_templates.triggered.connect(self._open_template_dialog)
 
+        # What the game's engine offers (see _update_catalog_button)
         view_menu.addSeparator()
 
         self.act_assemblies = view_menu.addAction(
@@ -513,6 +520,13 @@ class MainWindow(QMainWindow):
             material_icon("track_changes"), self.translations["menu.trace"])
         self.act_trace.triggered.connect(self._open_trace)
 
+        self.act_gas = view_menu.addAction(
+            material_icon("tune"), self.translations["menu.gas"])
+        self.act_gas.triggered.connect(self._open_gas_attributes)
+
+        # Native tools: any engine, they follow the machine code
+        view_menu.addSeparator()
+
         self.act_native_trace = view_menu.addAction(
             material_icon("radar"), self.translations["menu.native_trace"])
         self.act_native_trace.triggered.connect(self._open_native_trace)
@@ -523,20 +537,10 @@ class MainWindow(QMainWindow):
 
         view_menu.addSeparator()
 
-        # Shown or hidden by _set_scan_area_visible once the layout exists
-        self.act_scan_area = view_menu.addAction(self.translations["menu.scan_area"])
-        self.act_scan_area.setCheckable(True)
-        self.act_scan_area.setToolTip(self.translations["scan_area.tooltip"])
-        self.act_scan_area.setShortcut("Ctrl+Shift+F")
-
         self.act_favorites = view_menu.addAction(
             material_icon("star_border"), self.translations["menu.favorites"])
         self.act_favorites.setToolTip(self.translations["favorites.button_tooltip"])
         self.act_favorites.triggered.connect(self._open_favorites)
-
-        self.act_gas = view_menu.addAction(
-            material_icon("functions"), self.translations["menu.gas"])
-        self.act_gas.triggered.connect(self._open_gas_attributes)
         self._update_catalog_button()
 
     def _open_export(self):

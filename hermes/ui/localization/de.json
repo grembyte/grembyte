@@ -1106,7 +1106,7 @@
   "hooks.log_placeholder": "Was Hook-Skripte loggen (ctx.log, console.log) und ihre Fehler erscheinen hier, auch ohne Debug-Modus. Jeden einzelnen Aufruf zeigt „Debug“.",
   "hooks.log_error": "{hook}: Fehler: {message}",
   "hooks.log_dropped": "{hook}: {count} weitere Zeilen verworfen (es loggt schneller, als sie angezeigt werden können)",
-  "menu.gas": "GAS-Attribute…",
+  "menu.gas": "GAS-Attribute …",
   "gas.button_tooltip": "Die Attribute des Gameplay Ability Systems der Spielfigur (Unreal-Spiele): live lesen, Basiswerte setzen, festhalten",
   "gas.title": "GAS-Attribute",
   "gas.hint": "Die Attribute der Spielfigur in Unreal-Spielen mit dem Gameplay Ability System. Basis ist der eigene Wert, Aktuell die Basis mit den aktiven Effekten (Ausrüstung, Essen, Talente). Doppelklick auf einen Basiswert ändert ihn: Das Spiel setzt ihn selbst, seine Effekte wirken also weiter (ein Schadensmultiplikator 3 mit +40 % Bonus wird 4,2). Das Spiel setzt Basiswerte auch selbst (Laden, Stufenaufstieg); „Festhalten“ setzt den Wert dann wieder, per Skript im Skripte-Tab.",
