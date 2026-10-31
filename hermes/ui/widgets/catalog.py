@@ -24,6 +24,7 @@ from hermes.engines.registry import resolve_engine
 from hermes.features.assemblies import missing_assemblies
 from hermes.features.catalog import CachedCatalogWorker, CatalogWorker
 from hermes.features.favorites import CATALOG
+from hermes.features.method_call import call_capability
 from hermes.ui.widgets.call_graph import CallGraphDialog
 from hermes.ui.widgets.favorites import (
     FAVORITE_COLUMN,
@@ -507,8 +508,8 @@ class CatalogDialog(QDialog):
                                      and self.engine.supports(engine_base.CALL_GRAPH))
         self.monitor_button.setEnabled(method is not None
                                        and self._can_run(method, engine_base.MONITOR))
-        self.call_button.setEnabled(method is not None and method.static
-                                    and self._can_run(method, engine_base.CALL))
+        self.call_button.setEnabled(method is not None
+                                    and self._can_run(method, call_capability(method)))
         if method is None:
             self.details_label.setText("")
             return
@@ -532,7 +533,7 @@ class CatalogDialog(QDialog):
 
     def _request_call(self):
         method = self.selected_method()
-        if method is not None and method.static and self._can_run(method, engine_base.CALL):
+        if method is not None and self._can_run(method, call_capability(method)):
             self.call_requested.emit(method)
 
     def _show_calls(self):

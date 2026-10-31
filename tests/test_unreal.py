@@ -13,7 +13,9 @@ Hero:Tick and ``rename N`` Hero:Rename (FString, bool) like ProcessEvent does
 (the frame's Locals hold the parameters); ``loot N`` calls BP_Hero_C:Loot that
 way, whose script calls Hero:AddGold with its local Amount (the caller's
 frame, Code at an EX_LocalVariable). Each answers with the gold and whether
-Loot's Func is the interpreter again.
+Loot's Func is the interpreter again. Hero:MoveBy (FVector, out int32) is
+only called by hermes; ``moved 0`` answers with the sum of its last offset
+and how often it ran.
 """
 
 import subprocess
@@ -238,7 +240,8 @@ static void add_function(Object *klass, Object *function) {
 #define EX_LOCAL_VARIABLE 0x00
 #define EX_END_FUNCTION_PARMS 0x16
 
-static Object *g_add_gold, *g_tick, *g_loot, *g_rename;
+static Object *g_add_gold, *g_tick, *g_loot, *g_rename, *g_move_by;
+static volatile int32_t g_moved, g_moves;
 static volatile int32_t g_gold = 100;
 static volatile int32_t g_ticks;
 static volatile int32_t g_loud;
@@ -313,6 +316,16 @@ __attribute__((noinline)) void exec_Rename(Object *context, Frame *stack, void *
     (void)result;
     g_loud = stack->locals[16];
     g_name_length = ((String *)stack->locals)->num;
+}
+
+/* MoveBy(FVector Offset, out int32 Distance): the sum of the offset's values */
+__attribute__((noinline)) void exec_MoveBy(Object *context, Frame *stack, void *result) {
+    struct { double x, y, z; int32_t distance; } *parms = (void *)stack->locals;
+    (void)context;
+    (void)result;
+    g_moved = (int32_t)(parms->x + parms->y + parms->z);
+    g_moves = g_moves + 1;
+    parms->distance = g_moved;
 }
 
 /* The Gameplay Ability System: FGameplayAttribute names an attribute by
@@ -522,6 +535,10 @@ int main(void) {
                                  FUNC_EVENT | FUNC_PUBLIC | FUNC_BLUEPRINT_EVENT,
                                  ProcessInternal, 1, 8, 0xffff);
     property(on_looted, object_property, "By", 8, 0, CPF_PARM, hero);
+    g_move_by = function(function_class, hero, "MoveBy", FUNC_NATIVE | FUNC_STATIC | FUNC_PUBLIC,
+                         exec_MoveBy, 2, 28, 0xffff);
+    property(g_move_by, struct_property, "Offset", 0x18, 0, CPF_PARM, vector);
+    property(g_move_by, int_property, "Distance", 4, 0x18, CPF_PARM | CPF_OUT_PARM, NULL);
 
     Object *blueprint = object(package_class, "/Game/Blueprints/BP_Hero", NULL);
     Object *bp_hero = object(generated_class, "BP_Hero_C", blueprint);
@@ -679,6 +696,10 @@ int main(void) {
             printf("%d %d\n", (int)(data[0] * 10 + 0.5f), (int)(data[1] * 10 + 0.5f));
             fflush(stdout);
             continue;
+        } else if (strcmp(cmd, "moved") == 0) {
+            printf("%d %d\n", g_moved, g_moves);
+            fflush(stdout);
+            continue;
         } else if (strcmp(cmd, "renamed") == 0) {
             printf("%d %d\n", g_name_length, g_loud);
             fflush(stdout);
@@ -741,12 +762,13 @@ def test_catalog_lists_packages_classes_and_ufunctions(tmp_path, qt_app):
             ("Hero", "Tick", "(float)", "void", False, "Hero:Tick (float)"),
             ("Hero", "Rename", "(FString,bool)", "void", False, "Hero:Rename (FString,bool)"),
             ("Hero", "OnLooted", "(AHero*)", "void", False, "Hero:OnLooted (AHero*)"),
+            ("Hero", "MoveBy", "(FVector,int32&)", "void", True, "Hero:MoveBy (FVector,int32&)"),
         ]
         assert all(method.engine == "unreal" for method in hero.values())
         [loot] = loaded["/Game/Blueprints"]
         assert loot.signature == "BP_Hero_C:Loot (AHero*,int32)"
         # Tokens hash the names: the same in every run of the game.
-        assert len({m.token for m in hero.values()} | {loot.token}) == 5
+        assert len({m.token for m in hero.values()} | {loot.token}) == 6
     finally:
         target.close()
 
@@ -785,7 +807,7 @@ def test_trace_hooks_native_and_blueprint_functions(tmp_path, qt_app):
         _wait_for(qt_app, lambda: planned or failed)
         assert not failed
         # OnLooted has no script: nothing to hook.
-        assert planned[0] == {"methods": 4, "skipped": {"abstract": 1, "native": 0, "generic": 0},
+        assert planned[0] == {"methods": 5, "skipped": {"abstract": 1, "native": 0, "generic": 0},
                               "assemblies": ["/Script/FakeGame", "/Game/Blueprints"]}
 
         worker.trace([])
@@ -793,7 +815,8 @@ def test_trace_hooks_native_and_blueprint_functions(tmp_path, qt_app):
         assert not failed
         methods, info = started[0]
         assert (info["notCompiled"], info["failed"]) == (0, 0)
-        assert sorted(method.name for method in methods) == ["AddGold", "Loot", "Rename", "Tick"]
+        assert sorted(method.name for method in methods) == [
+            "AddGold", "Loot", "MoveBy", "Rename", "Tick"]
         # The Blueprint function runs through a stub of its own now.
         assert target.send("loot", 0)[1] == 0
 
@@ -908,6 +931,78 @@ def test_method_monitor_reads_arguments_from_the_call_frame(tmp_path, qt_app):
         assert [(arg["name"], arg["text"]) for arg in call["args"]] == [
             ("NewName", '"Hero 7"'), ("bLoud", "true")]
         worker.remove_monitor(rename)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_the_call_dialog_calls_ufunctions_static_and_on_found_objects(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.method_call import parse_argument
+    from hermes.features.monitor import MethodMonitorWorker
+
+    target = _Target(_build(tmp_path))
+    methods = _catalog(qt_app, target.pid)
+    worker = MethodMonitorWorker(target.pid)
+    described, called, failed = {}, {}, {}
+    worker.call_described.connect(described.__setitem__)
+    worker.called.connect(called.__setitem__)
+    worker.call_failed.connect(failed.__setitem__)
+
+    def describe(signature, instance=False):
+        request = worker.describe_call(methods[signature].identity(), instance)
+        _wait_for(qt_app, lambda: request in described or request in failed)
+        assert request not in failed, failed[request]
+        return described[request]["params"]
+
+    def answer(request):
+        # Calls run when the game thread next enters ProcessEvent.
+        _wait_for(qt_app, lambda: target.send("tick", 0)
+                  and (request in called or request in failed))
+        return called.get(request) or failed[request]
+
+    try:
+        worker.start()
+        # A struct of numbers comes with its fields; the output needs no input.
+        offset, distance = describe("Hero:MoveBy (FVector,int32&)")
+        assert [(field["name"], field["offset"]) for field in offset["type"]["fields"]] == [
+            ("X", 0), ("Y", 8), ("Z", 16)]
+        assert offset["type"]["structSize"] == 0x18 and not offset.get("out")
+        assert distance["out"] is True
+        move_by = methods["Hero:MoveBy (FVector,int32&)"].identity()
+        result = answer(worker.call(move_by, [parse_argument(offset["type"], "Z=3; X=1,5"),
+                                              None]))
+        assert result == {"result": None, "outputs": [
+            {"name": "Distance", "value": {"text": "4"}}]}
+        assert target.send("moved", 0) == (4, 1)
+
+        # An instance function runs on a live object of its class: the first
+        # found, or the one named or at an address.
+        rename = methods["Hero:Rename (FString,bool)"].identity()
+        name, loud = describe("Hero:Rename (FString,bool)", instance=True)
+        assert (name["type"]["engine"], loud["type"]["engine"]) == ("string", "bool")
+        result = answer(worker.call_found(rename, "Hero", "", ["Ann", False]))
+        assert result["result"] is None
+        assert result["object"]["text"].startswith('ABP_Hero_C "BP_Hero_C_0"@0x')
+        assert target.send("renamed", 0) == (4, 0)
+        result = answer(worker.call_found(rename, "Hero", "BP_Hero_C_1", ["Bobby", True]))
+        assert result["object"]["text"].startswith('ABP_Hero_C "BP_Hero_C_1"@0x')
+        assert target.send("renamed", 0) == (6, 1)
+        address = result["object"]["target"]["address"]
+        result = answer(worker.call_found(rename, "Hero", address, ["Al", True]))
+        assert result["object"]["target"]["address"] == address
+        assert target.send("renamed", 0) == (3, 1)
+
+        # Wrong objects are refused before anything runs.
+        assert "no live Hero named Nobody" in answer(
+            worker.call_found(rename, "Hero", "Nobody", ["X", True]))
+        assert "no Hero at 0x10" in answer(worker.call_found(rename, "Hero", "0x10", ["X", True]))
+        request = worker.describe_call(rename)
+        _wait_for(qt_app, lambda: request in failed)
+        assert "no static method" in failed[request]
+        assert target.send("renamed", 0) == (3, 1)
     finally:
         worker.requestInterruption()
         worker.wait(5000)

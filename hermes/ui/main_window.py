@@ -50,6 +50,7 @@ from hermes.features.catalog import (
     split_type_arguments,
     with_type_arguments,
 )
+from hermes.features.method_call import call_capability
 from hermes.core.wine_gadget import gadget_loader, gadget_port, wine_bits
 from hermes.platform import (
     ProcessMemory, is_wine_process, process_start_time, program_bits, read_mappings,
@@ -1799,10 +1800,11 @@ class MainWindow(QMainWindow):
         monitor.activateWindow()
 
     def _call_method(self, method):
-        """Call a static C# method chosen in the catalog or the favorites."""
+        """Call a method chosen in the catalog or the favorites: a static one, or
+        (Unreal) an instance method on a live object of its class."""
         if self._current_pid is None:
             return
-        if not self._engine_can(method, engine_base.CALL, self.translations["catalog.call"]):
+        if not self._engine_can(method, call_capability(method), self.translations["catalog.call"]):
             return
         parameters = generic_parameters(method)
         if parameters:

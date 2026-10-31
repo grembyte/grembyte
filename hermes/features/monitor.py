@@ -11,8 +11,10 @@ when Blueprint code calls a native function, in the bytecode of the call
 where the caller wants it written. The caller is the Blueprint function and
 bytecode offset the call came from (``WBP_HUD_C:Tick+0x35``) when a script
 runs above it, else the native return address. Objects show their UObject name, and the
-inspector their UProperties. Method hooks and calling methods are not
-available there yet.
+inspector their UProperties. Calls go through ProcessEvent on the game
+thread; an instance UFunction of the catalog runs on a live object of its
+class (``call_found``), and outputs (``out``) are read from the parameter
+block afterwards.
 
 Mono compiles the method (see ``engine.prepare``), and a Frida interceptor on
 its native code reports every call with its arguments, the calling method
@@ -118,7 +120,8 @@ class MethodMonitorWorker(QThread):
     methods_failed = pyqtSignal(int, str)
     # request id, {params: [{name, type}], returns} of a static or instance method
     call_described = pyqtSignal(int, dict)
-    # request id, {result: value or None (void)} or {exception: text}
+    # request id, {result: value or None (void), outputs?: [{name, value}],
+    # object?: value} or {exception: text}
     called = pyqtSignal(int, dict)
     call_failed = pyqtSignal(int, str)
     # request id, the whole text of a long string value (None: no longer kept)
@@ -170,10 +173,11 @@ class MethodMonitorWorker(QThread):
         self._commands.put(("evaluate", request_id, (target, list(names))))
         return request_id
 
-    def describe_call(self, identity):
-        """Read the parameters of a static method; expect call_described or call_failed."""
+    def describe_call(self, identity, instance=False):
+        """Read the parameters of a static method, or with ``instance`` of an
+        instance method (see ``call_found``); expect call_described or call_failed."""
         request_id = next(self._requests)
-        self._commands.put(("describe", request_id, identity))
+        self._commands.put(("describe", request_id, (identity, instance)))
         return request_id
 
     def call(self, identity, arguments):
@@ -184,6 +188,17 @@ class MethodMonitorWorker(QThread):
         """
         request_id = next(self._requests)
         self._commands.put(("call", request_id, (identity, list(arguments))))
+        return request_id
+
+    def call_found(self, identity, class_name, object_text, arguments):
+        """Call an instance method on a live object of ``class_name``, on the
+        game's main thread: the first one found if ``object_text`` is empty,
+        else the one of that name or at that address (0x…). Expect called
+        (with ``object``, the object it ran on) or call_failed. As ``call``: game code.
+        """
+        request_id = next(self._requests)
+        self._commands.put(("call_found", request_id,
+                            (identity, class_name, object_text, list(arguments))))
         return request_id
 
     def list_methods(self, target):
@@ -282,12 +297,17 @@ class MethodMonitorWorker(QThread):
                     self.evaluate_failed.emit(monitor_id, str(error))
             elif action == "describe":
                 try:
-                    self.call_described.emit(monitor_id, api.describe_call(argument))
+                    self.call_described.emit(monitor_id, api.describe_call(*argument))
                 except frida.RPCException as error:
                     self.call_failed.emit(monitor_id, str(error))
             elif action == "call":
                 try:
                     self.called.emit(monitor_id, api.call_static(*argument))
+                except frida.RPCException as error:
+                    self.call_failed.emit(monitor_id, str(error))
+            elif action == "call_found":
+                try:
+                    self.called.emit(monitor_id, api.call_found(*argument))
                 except frida.RPCException as error:
                     self.call_failed.emit(monitor_id, str(error))
             elif action == "methods":

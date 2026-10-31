@@ -112,6 +112,9 @@ MONITOR = "monitor"
 METHOD_HOOKS = "method_hooks"
 CALL_GRAPH = "call_graph"
 CALL = "call"
+# Instance methods of the catalog called on a live object of their class
+# (``findObject``); Mono only finds Unity objects, so it is offered for Unreal
+CALL_FOUND = "call_found"
 # The player's Gameplay Ability System attributes (see the Unreal adapter)
 GAS = "gas"
 

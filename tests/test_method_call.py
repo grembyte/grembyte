@@ -1,6 +1,7 @@
 """Calling static methods: reading the arguments typed in, the call dialog."""
 
 import os
+import struct
 
 import pytest
 
@@ -10,12 +11,15 @@ from hermes.features.method_call import (
     CHAR,
     I4,
     R4,
+    R8,
     STRING,
     U1,
     VALUETYPE,
     ArgumentError,
     argument_text,
+    can_call,
     parse_argument,
+    supported,
 )
 from hermes.ui.localization import load_translations
 
@@ -24,6 +28,9 @@ GIVE_ITEM = CatalogMethod("Assembly-CSharp", "Scripts", "GiveItem", "(string,int
                           True, 0x06000010, "Scripts:GiveItem (string,int)")
 UPDATE = CatalogMethod("Assembly-CSharp", "Game.Loop", "Update", "()", "void",
                        False, 0x06000011, "Game.Loop:Update ()")
+GIVE_HEALTH = CatalogMethod("/Script/Alabama", "AlabamaCheatManager", "GiveHealth",
+                            "(float,int32&)", "void", False, 0x1234,
+                            "AlabamaCheatManager:GiveHealth (float,int32&)", "unreal")
 
 
 def _type(kind, name="T", **extra):
@@ -76,6 +83,55 @@ def test_enum_names_are_the_hint_of_an_empty_argument(qt_app, translations):
     assert editor.placeholderText() == (
         "Might, Constitution, Dexterity, Perception, … oder Zahlenwert")
     assert editor.toolTip().splitlines()[2] == "2 = Dexterity"
+
+
+def test_unreal_types_are_typed_in_as_text_and_bools():
+    fstring = _type(0, "FString", engine="string")
+    fname = _type(0, "FName", engine="name")
+    flag = _type(0, "bool", engine="bool")
+    assert all(supported(param_type) for param_type in (fstring, fname, flag))
+    assert parse_argument(fstring, " Bob ") == " Bob "
+    assert parse_argument(fname, "Sword_3") == "Sword_3"
+    assert parse_argument(flag, "wahr") is True
+    # Containers, FText and delegates cannot be typed in.
+    for engine in ("array", "map", "set", "text", "weak", "interface", "other"):
+        assert not supported(_type(0, "TArray<int32>", engine=engine))
+
+
+def _vector(kind=R8):
+    return _type(VALUETYPE, "FVector", structSize=24, fields=[
+        {"name": name, "kind": kind, "offset": 8 * i} for i, name in enumerate("XYZ")])
+
+
+def test_structs_of_numbers_are_typed_in_by_their_fields():
+    vector = _vector()
+    assert supported(vector)
+    in_order = parse_argument(vector, "1, 2,5 -3")
+    assert in_order["struct"] == struct.pack("<ddd", 1, 2.5, -3).hex()
+    assert argument_text(in_order) == "{X=1.0, Y=2.5, Z=-3.0}"
+    # By name, in any case and order; the fields not named are 0
+    named = parse_argument(vector, "z = 3; x=1")
+    assert named["struct"] == struct.pack("<ddd", 1, 0, 3).hex()
+    # Integers and enum names, at their offsets in a larger struct
+    point = _type(VALUETYPE, "FIntPoint", structSize=12, fields=[
+        {"name": "X", "kind": I4, "offset": 0},
+        {"name": "Kind", "kind": U1, "offset": 8, "enumValues": {"2": "Dexterity"}}])
+    assert parse_argument(point, "-1 dexterity")["struct"] == "ffffffff0000000002000000"
+    # Without its fields (a struct of structs, Mono's Vector3 unread) it is not supported.
+    assert not supported(_type(VALUETYPE, "FTransform", structSize=96))
+
+
+@pytest.mark.parametrize("text, key", [
+    ("1 2", "call.error_struct_count"),
+    ("X=1 2", "call.error_struct_mixed"),
+    ("W=1", "call.error_struct_field"),
+    ("1 zwei 3", "call.error_number"),
+])
+def test_wrong_struct_values_say_why(text, key, translations):
+    with pytest.raises(ArgumentError) as raised:
+        parse_argument(_vector(), text)
+    assert raised.value.key == key
+    assert translations[key].format(**raised.value.values)
 
 
 @pytest.mark.parametrize("param_type, text, key", [
@@ -143,8 +199,13 @@ class _FakeWorker:
     def start(self):
         pass
 
-    def describe_call(self, identity):
-        self.requests.append(("describe", identity))
+    def describe_call(self, identity, instance=False):
+        self.requests.append(("describe", identity, instance) if instance
+                             else ("describe", identity))
+        return len(self.requests)
+
+    def call_found(self, identity, class_name, object_text, arguments):
+        self.requests.append(("call_found", identity, class_name, object_text, arguments))
         return len(self.requests)
 
     def call(self, identity, arguments):
@@ -227,6 +288,70 @@ def test_call_dialog_reads_arguments_and_logs_results(qt_app, translations, monk
         {"name": "position", "type": _type(VALUETYPE, "UnityEngine.Vector3")}],
         "returns": _type(0x01)})
     assert not dialog.call_button.isEnabled()
+    dialog.close()
+
+
+def test_unreal_instance_functions_run_on_a_found_object(qt_app, translations, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from PyQt6.QtWidgets import QCheckBox  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.ui.widgets import method_call
+
+    monkeypatch.setattr(method_call, "MethodMonitorWorker", _FakeWorker)
+    monkeypatch.setattr(method_call, "_last_arguments", {})
+    assert can_call(GIVE_HEALTH) and not can_call(UPDATE)  # Mono finds no objects for it
+    dialog = method_call.MethodCallDialog(translations, 1234)
+    worker = dialog._worker
+    dialog.set_method(GIVE_HEALTH)
+    assert worker.requests == [("describe", GIVE_HEALTH.identity(), True)]
+    assert "AlabamaCheatManager" in dialog.hint_label.text()
+    # An object field first, then the inputs; an output gets none.
+    worker.call_described.emit(1, {"params": [
+        {"name": "Amount", "type": _type(R4, "float")},
+        {"name": "bQuiet", "type": _type(0, "bool", engine="bool")},
+        {"name": "Healed", "type": _type(I4, "int32", byref=True), "out": True}],
+        "returns": _type(0x01, "void")})
+    assert dialog.form.rowCount() == 4
+    assert "AlabamaCheatManager" in dialog.object_edit.placeholderText()
+    amount, quiet = dialog._editors
+    assert isinstance(quiet, QCheckBox)
+    assert dialog.call_button.isEnabled()
+    amount.setText("50")
+    quiet.setChecked(True)
+    dialog.call_button.click()
+    assert worker.requests[1] == ("call_found", GIVE_HEALTH.identity(), "AlabamaCheatManager",
+                                  "", [50.0, True, None])
+    worker.called.emit(2, {"result": None, "outputs": [
+        {"name": "Healed", "value": {"text": "35"}}], "object": {
+            "text": 'UBP_CheatManager_C "BP_CheatManager_C_0"@0x7f00'}})
+    assert dialog.log.toPlainText().endswith(
+        'AlabamaCheatManager:GiveHealth(50.0, true) auf UBP_CheatManager_C '
+        '"BP_CheatManager_C_0"@0x7f00  → (void); Healed = 35')
+
+    # The object typed in goes with the call, and is kept with the arguments.
+    dialog.object_edit.setText("BP_CheatManager_C_1")
+    dialog.call_button.click()
+    assert worker.requests[2][3] == "BP_CheatManager_C_1"
+    dialog.set_method(GIVE_HEALTH)
+    worker.call_described.emit(4, {"params": [
+        {"name": "Amount", "type": _type(R4, "float")},
+        {"name": "bQuiet", "type": _type(0, "bool", engine="bool")},
+        {"name": "Healed", "type": _type(I4, "int32", byref=True), "out": True}],
+        "returns": _type(0x01, "void")})
+    assert dialog.object_edit.text() == "BP_CheatManager_C_1"
+    assert dialog._editors[0].text() == "50" and dialog._editors[1].isChecked()
+
+    # A TArray cannot be typed in; a struct of numbers can.
+    dialog.set_method(GIVE_HEALTH)
+    worker.call_described.emit(5, {"params": [
+        {"name": "Items", "type": _type(0, "TArray<int32>", engine="array")}],
+        "returns": _type(0x01, "void")})
+    assert not dialog.call_button.isEnabled()
+    dialog.set_method(GIVE_HEALTH)
+    worker.call_described.emit(6, {"params": [{"name": "Where", "type": _vector()}],
+                                   "returns": _type(0x01, "void")})
+    assert dialog.call_button.isEnabled()
+    assert dialog._editors[0].placeholderText().startswith("X Y Z, z. B. 1 2 3 oder X=1; Y=2")
     dialog.close()
 
 

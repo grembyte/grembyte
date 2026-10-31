@@ -17,8 +17,8 @@ Available independent of any engine:
 
 For Unity games with Mono there are also the catalog, the trace (with preselection
 filters), the method monitor and method hooks, through the engine adapter layer
-(`hermes/engines/`). For Unreal Engine games there are the catalog, the trace and the method
-monitor.
+(`hermes/engines/`). For Unreal Engine games there are the catalog, the trace, the method
+monitor, method hooks, calling UFunctions (dialog and scripts) and the GAS attributes window.
 
 Methods and functions found in the catalog, the trace or the native trace can be marked
 with ★ (first table column). Favorites are saved per program at once, so they survive a
@@ -188,7 +188,7 @@ subpackage with an `EngineAdapter` subclass and an agent part that registers its
 
 | Engine | Approach | Result |
 |---|---|---|
-| **Unreal** | Reflection through GNames/GObjects | **catalog, trace and method monitor done (2026-10-30)**, see below |
+| **Unreal** | Reflection through GNames/GObjects | **catalog, trace, method monitor, hooks and calls done (2026-10-30/31)**, see below |
 | **IL2CPP** (Unity without Mono) | `global-metadata.dat` + the `il2cpp_*` API | like Mono, but compiled ahead of time; shares the .NET model of the JS contract |
 | **Godot** | ClassDB / object properties | scene tree and variables |
 | **Lua engines** | hook the `lua_*` API | tables and variables of the script state |
@@ -257,8 +257,18 @@ Next steps:
   the shipping build (`GiveHealth`, `AddCurrency`, `ToggleUnlimitedStamina` checked live).
   Scripts (hermes/features/scripts.py) run such calls by time. Hooks on functions a call
   reaches do not fire for it (Frida's interceptor ignores the thread inside a callback).
-- Unreal in the **Call method** dialog (FString/struct arguments need input of their own),
-  and scripts in the game export
+- **Done (2026-10-31):** scripts in the game export.
+- **Done (2026-10-31):** Unreal in the **Call method** dialog. FString and FName as text, bools
+  as a checkbox, enums by name; a struct whose fields are all numbers (FVector) is typed field
+  by field (`1 2 3` or `X=1; Z=3`), its bytes built in Python from the fields `describe_call`
+  adds (Mono's structs of numbers get them too). Outputs (`CPF_OutParm` without
+  `CPF_ReferenceParm`, Blueprint's rule) need no input and are read from the parameter block
+  after the call. An instance UFunction of the catalog or the favorites runs on a live object
+  of its class (`call_found`, capability `CALL_FOUND`): the first one `findObject` gives, or one
+  named or at an address (checked against the class). Not typed in: TArray, TMap, TSet,
+  FText, delegates, structs of structs.
+- **Done (2026-10-31):** GAS attributes window (View → "GAS attributes …"): the player's
+  attribute sets, base values set through the game's own setter, held by a script.
 - Call graph from Blueprint bytecode (`UStruct::Script`)
 - UE4 before 4.23 (`TNameEntryArray` instead of `FNamePool`) and 32-bit games are not
   supported
@@ -301,9 +311,10 @@ runs; optionally memory through `ctx.read`/`ctx.write`.
 ### Recommendation
 
 **1 (Stalker diff trace)** and **2 (accesses of an instruction)** bring the most
-independent of any engine and use much of what exists. Among the adapters, **Unreal** has
-catalog, trace and method monitor now; method hooks are the next step there. **IL2CPP** is the most
-obvious one for Unity games without Mono.
+independent of any engine and use much of what exists; 2 is the next larger step. Among the
+adapters, **Unreal** has catalog, trace, method monitor, hooks and calls now; the call graph
+from Blueprint bytecode is left there. **IL2CPP** is the most obvious one for Unity games
+without Mono.
 
 ## Write hooks under anti-tamper protection (2026-10-27)
 

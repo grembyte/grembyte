@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy.exc import SQLAlchemyError
 
 from hermes.features.favorites import METHOD, favorite_key, favorite_of
+from hermes.features.method_call import can_call
 from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.table import copy_menu, resizable_columns
@@ -190,7 +191,7 @@ class FavoritesDialog(QDialog):
     method_monitor_requested = pyqtSignal(list)
     # [NativeFunction] to log the calls of
     native_monitor_requested = pyqtSignal(list)
-    # static CatalogMethod to call ("Call …")
+    # CatalogMethod to call ("Call …"), see _callable_method
     call_requested = pyqtSignal(object)
 
     def __init__(self, translations, store, parent=None):
@@ -417,11 +418,12 @@ class FavoritesDialog(QDialog):
 
     @staticmethod
     def _callable_method(favorites):
-        """The CatalogMethod of the only selected favorite if it is static, else None."""
+        """The CatalogMethod of the only selected favorite if it can be called
+        (static, or an instance UFunction), else None."""
         if len(favorites) != 1 or favorites[0].kind != METHOD:
             return None
         method = favorites[0].method()
-        return method if method.static else None
+        return method if can_call(method) else None
 
     def _request_call(self):
         method = self._callable_method(self.selected_favorites())

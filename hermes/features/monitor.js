@@ -522,19 +522,48 @@ function evaluate(target, names) {
 
 // --- Calling static methods (the method call dialog) ------------------------------
 
-function staticMethod(identity) {
+function catalogMethod(identity, instance = false) {
   const method = engine.resolve(identity);
-  if (engine.signatureOf(method).instance)
-    throw new Error(`${identity.method} is no static method`);
+  if (engine.signatureOf(method).instance !== instance)
+    throw new Error(`${identity.method} is no ${instance ? 'instance' : 'static'} method`);
   return method;
 }
 
-function describeCall(identity) {
-  // The parameters and result type of a static method: { params, returns }.
-  return engine.onRuntimeThread(() => {
-    const { params, returns } = engine.signatureOf(staticMethod(identity));
-    return { params, returns };
-  });
+const STRUCT_FIELD_KINDS = new Set([T.I1, T.U1, T.I2, T.U2, T.I4, T.U4, T.I8, T.U8, T.R4, T.R8]);
+
+function callSignature(method) {
+  // { params, returns } as the dialog reads them: a struct whose fields are
+  // all numbers (FVector, UnityEngine.Vector3) comes with them, { name, kind,
+  // offset, enumValues? } from the struct's start, so it can be typed in.
+  const { params, returns } = engine.signatureOf(method);
+  return {
+    params: params.map(param => {
+      const type = param.type;
+      if (type.kind !== T.VALUETYPE || !type.structSize || type.klass === undefined)
+        return param;
+      let layout;
+      try {
+        layout = engine.layout(type.klass);
+      } catch (_error) {
+        return param;  // not typed in, as before
+      }
+      const fields = layout.fields.filter(field => !field.static);
+      if (fields.length === 0 || !fields.every(field => STRUCT_FIELD_KINDS.has(field.type.kind)
+                                               && field.type.engine === undefined))
+        return param;
+      const header = layout.headerSize || 0;
+      return { ...param, type: { ...type, fields: fields.map(field => ({
+        name: field.name, kind: field.type.kind, offset: field.offset - header,
+        enumValues: field.type.enumValues })) } };
+    }),
+    returns
+  };
+}
+
+function describeCall(identity, instance = false) {
+  // The parameters and result type of a static method, or with ``instance``
+  // of an instance method (see callFound): { params, returns }.
+  return engine.onRuntimeThread(() => callSignature(catalogMethod(identity, instance)));
 }
 
 function callStatic(identity, args) {
@@ -542,7 +571,36 @@ function callStatic(identity, args) {
   // dialog read (see hermes/features/method_call.py; an object or IntPtr as
   // { address }, a struct such as a Guid as { struct: its bytes in hex }):
   // { result } with the value it returned, or { exception }.
-  return engine.onMainThread(() => callResult(staticMethod(identity), null, args));
+  return engine.onMainThread(() => callResult(catalogMethod(identity), null, args));
+}
+
+function callFound(identity, className, objectText, args) {
+  // Call an instance method of the catalog on a live object of its class
+  // (``className``), on the game's main thread: the first one found, the one
+  // named ``objectText`` or at that address (0x…). As callStatic, and with the
+  // object it ran on ({ object }).
+  return engine.onMainThread(() => {
+    const method = catalogMethod(identity, true);
+    const object = foundObject(className, (objectText || '').trim());
+    return { ...callResult(engine.virtualMethod(object, method), object, args),
+             object: objectValue(object, true) };
+  });
+}
+
+function foundObject(className, text) {
+  if (!/^0x[0-9a-f]+$/i.test(text)) {
+    const object = engine.findObject(className, text === '' ? null : text);
+    if (object === null)
+      throw new Error(text === '' ? `no live ${className} found`
+        : `no live ${className} named ${text}`);
+    return object;
+  }
+  const object = ptr(text);
+  const klass = engine.classOf(object);
+  const wanted = engine.findClass(className);
+  if (klass === null || !engine.classChain(klass).some(current => current.equals(wanted)))
+    throw new Error(`no ${className} at ${object}`);
+  return object;
 }
 
 function callResult(method, self, args) {
@@ -562,10 +620,22 @@ function callResult(method, self, args) {
     return { exception: exceptionText(exception) };
   const signature = engine.signatureOf(method);
   const returns = signature.returns;
+  const answer = {};
+  if (signature.parms) {
+    // Unreal: the result and outputs are written into the parameter block
+    const outputs = signature.params.filter(param => param.out).map(param => ({
+      name: param.name,
+      value: safely(() => readValue({ ...param.type, byref: false },
+                                    result.add(param.offset), true))
+    }));
+    if (outputs.length > 0)
+      answer.outputs = outputs;
+  }
   if (returns.kind === T.VOID && !returns.byref)
-    return { result: null };
-  if (signature.parms)  // Unreal: written into the parameter block
-    return { result: safely(() => readValue(returns, result.add(signature.returnOffset), true)) };
+    return { ...answer, result: null };
+  if (signature.parms)
+    return { ...answer,
+             result: safely(() => readValue(returns, result.add(signature.returnOffset), true)) };
   return { result: resultValue(returns, result) };
 }
 
@@ -612,10 +682,7 @@ function instanceMethod(method) {
 
 function describeMethod(method) {
   // The parameters and result type of an instance method: { params, returns }.
-  return engine.onRuntimeThread(() => {
-    const { params, returns } = engine.signatureOf(instanceMethod(method));
-    return { params, returns };
-  });
+  return engine.onRuntimeThread(() => callSignature(instanceMethod(method)));
 }
 
 function callOn(target, method, args) {
@@ -1298,6 +1365,8 @@ function invokeWithParms(method, signature, self, args) {
     const type = { ...param.type, byref: false };
     const address = parms.add(param.offset);
     const value = args[i];
+    if (param.out && (value === null || value === undefined))
+      return;  // an output: the function writes it
     if (type.engine !== undefined)
       engine.writeParameter(type, address, value);
     else if (type.kind === T.VALUETYPE) {
@@ -2101,6 +2170,7 @@ rpc.exports = {
   evaluate,
   describeCall,
   callStatic,
+  callFound,
   listMethods,
   describeMethod,
   callOn,

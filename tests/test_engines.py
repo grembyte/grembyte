@@ -39,11 +39,11 @@ def test_unreal_ignores_launchers_and_other_engines(name):
 
 def test_unreal_adapter_capabilities_and_framework_filter():
     unreal = engine_by_id("unreal")
-    for capability in (base.CATALOG, base.TRACE, base.MONITOR, base.METHOD_HOOKS):
+    for capability in (base.CATALOG, base.TRACE, base.MONITOR, base.METHOD_HOOKS, base.CALL,
+                       base.CALL_FOUND):
         assert unreal.supports(capability)
-    # Not yet: the call graph, calling methods
-    for capability in (base.CALL_GRAPH, base.CALL):
-        assert not unreal.supports(capability)
+    # Not yet: the call graph
+    assert not unreal.supports(base.CALL_GRAPH)
     for package in ("/Script/CoreUObject", "/Script/Engine", "/Script/UMG",
                     "/Script/GameplayAbilities", "/Engine/EngineMaterials"):
         assert unreal.is_framework_assembly(package)
@@ -88,6 +88,7 @@ def test_mono_adapter_capabilities_and_framework_filter():
     for capability in (base.NAMING, base.CATALOG, base.TRACE, base.MONITOR, base.METHOD_HOOKS,
                        base.CALL_GRAPH, base.CALL):
         assert mono.supports(capability)
+    assert not mono.supports(base.CALL_FOUND)  # finds Unity objects only
     assert mono.is_framework_assembly("UnityEngine.CoreModule")
     assert mono.is_framework_assembly("Rewired_Core") and mono.is_framework_assembly("Steamworks")
     assert not mono.is_framework_assembly("Assembly-CSharp")

@@ -1368,7 +1368,7 @@ const unreal = (() => {
   const signatures = new Map();
 
   function signatureOf(fn) {
-    // { instance, parms: true, params: [{ name, type, offset }], returns,
+    // { instance, parms: true, params: [{ name, type, offset, out }], returns,
     // returnOffset, parmsSize } of a UFunction (cached): its parameters lie
     // in one block (``parms``), as ProcessEvent and its frame want them.
     const key = fn.toString();
@@ -1394,8 +1394,10 @@ const unreal = (() => {
         continue;
       }
       const byref = (flags & (CPF_OUT_PARM | CPF_REFERENCE_PARM)) !== 0;
+      // An output only (Blueprint's rule): nothing to pass, the function writes it
+      const out = (flags & CPF_OUT_PARM) !== 0 && (flags & CPF_REFERENCE_PARM) === 0;
       params.push({ name: fieldName(field.add(L.fieldName)), type: valueType(field, byref),
-                    offset });
+                    offset, out });
     }
     if (returns.kind !== KIND.VOID)
       returns.name = returns.name.replace(/&$/, '');

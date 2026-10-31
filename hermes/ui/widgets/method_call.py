@@ -1,4 +1,6 @@
-"""Call a static C# method of the running game with arguments typed in."""
+"""Call a method of the running game with arguments typed in: a static C# method
+or UFunction, an instance method of an inspected object, or (Unreal) an
+instance UFunction of the catalog on a live object of its class."""
 
 import html
 from datetime import datetime
@@ -19,17 +21,21 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 
 from hermes.features.method_call import (
-    BOOLEAN,
     CHAR,
+    ENGINE_NAME,
     INTEGER_RANGES,
     REFERENCES,
     R4,
     R8,
-    STRING,
     ArgumentError,
     argument_text,
+    is_bool,
     is_guid,
+    is_number_struct,
+    is_output,
+    is_text,
     parse_argument,
+    struct_field_names,
     supported,
 )
 from hermes.features.monitor import MethodMonitorWorker
@@ -49,14 +55,19 @@ def placeholder_key(param_type):
     # pylint: disable=too-many-return-statements
     kind = param_type["kind"]
     if not supported(param_type):
-        return "call.placeholder_struct"
+        return ("call.placeholder_unsupported" if "engine" in param_type
+                else "call.placeholder_struct")
     if is_guid(param_type):
         return "call.placeholder_guid"
+    if is_number_struct(param_type):
+        return "call.placeholder_struct_fields"
     if param_type.get("enumValues"):
         return "call.placeholder_enum_values"
     if param_type.get("enumName"):
         return "call.placeholder_enum"
-    if kind == STRING:
+    if param_type.get("engine") == ENGINE_NAME:
+        return "call.placeholder_name"
+    if is_text(param_type):
         return "call.placeholder_string"
     if kind == CHAR:
         return "call.placeholder_char"
@@ -75,9 +86,11 @@ class MethodCallDialog(QDialog):
 
     Not modal. The call runs on the game's main thread, like the property
     getters of the object inspector (see hermes.features.monitor); its result
-    or exception goes to the log below. An object it returns opens in the
-    object inspector, and its log line links to it. One method at a time:
-    ``set_method`` (static) or ``set_instance_method`` shows another one.
+    or exception goes to the log below, with the values of outputs (Unreal).
+    An object it returns opens in the object inspector, and its log line links
+    to it. One method at a time: ``set_method`` (static, or an instance
+    method of an engine that finds objects: then an object field comes first)
+    or ``set_instance_method`` shows another one.
 
     The dialog runs a MethodMonitorWorker of its own for ``pid``, or uses
     ``worker`` (one of an object inspector's window, which keeps it running).
@@ -95,10 +108,14 @@ class MethodCallDialog(QDialog):
         self.setModal(False)
         self.translations = translations
         self.method = None
-        # what is called: {key, name, describe(), call(arguments)}
+        # what is called: {key, name, describe(), call(arguments), found?}
         self._spec = None
         self._params = None
+        # the parameters typed in (not outputs) and their editors
+        self._inputs = []
         self._editors = []
+        # where the object of a found call is typed in (see set_method)
+        self.object_edit = None
         self._describe_request = None
         # call request id -> (the log line's start, the method's name)
         self._calls = {}
@@ -157,14 +174,30 @@ class MethodCallDialog(QDialog):
 
     # --- The method --------------------------------------------------------------
     def set_method(self, method):
-        """Show ``method`` (a static CatalogMethod) and read its parameters."""
+        """Show ``method`` (a CatalogMethod) and read its parameters.
+
+        An instance method runs on a live object of its class (an engine with
+        ``CALL_FOUND``): the first one found, or the one whose name or
+        address is typed in above the arguments.
+        """
         self.method = method
-        self.hint_label.setText(self.translations["call.hint"])
+        if method.static:
+            self.hint_label.setText(self.translations["call.hint"])
+            self._show({
+                "key": method.signature, "text": method.signature,
+                "name": method.signature.split(" (")[0],
+                "describe": lambda: self._worker.describe_call(method.identity()),
+                "call": lambda arguments: self._worker.call(method.identity(), arguments),
+            })
+            return
+        self.hint_label.setText(self.translations["call.hint_found"].format(
+            type=method.class_name))
         self._show({
             "key": method.signature, "text": method.signature,
-            "name": method.signature.split(" (")[0],
-            "describe": lambda: self._worker.describe_call(method.identity()),
-            "call": lambda arguments: self._worker.call(method.identity(), arguments),
+            "name": method.signature.split(" (")[0], "found": method.class_name,
+            "describe": lambda: self._worker.describe_call(method.identity(), instance=True),
+            "call": lambda arguments: self._worker.call_found(
+                method.identity(), method.class_name, self.object_edit.text(), arguments),
         })
 
     def set_instance_method(self, target, entry, object_text):
@@ -197,44 +230,69 @@ class MethodCallDialog(QDialog):
     def _clear_form(self):
         while self.form.rowCount():
             self.form.removeRow(0)
+        self._inputs = []
         self._editors = []
+        self.object_edit = None
 
     def _on_described(self, request_id, info):
         if request_id != self._describe_request:
             return  # another method was chosen since
         self._describe_request = None
+        t = self.translations
         self._params = info.get("params", [])
         last = _last_arguments.get(self._spec["key"], [])
-        for i, param in enumerate(self._params):
+        if "found" in self._spec:
+            # The object comes first; its text is kept with the arguments.
+            self.object_edit = QLineEdit(last[0] if last else "")
+            self.object_edit.setPlaceholderText(t["call.placeholder_found"].format(
+                type=self._spec["found"]))
+            self.object_edit.returnPressed.connect(self.call)
+            self.form.addRow(t["call.object"].format(type=self._spec["found"]),
+                             self.object_edit)
+            last = last[1:]
+        self._inputs = [param for param in self._params if not is_output(param)]
+        for param in self._params:
+            if is_output(param):
+                hint = QLabel(t["call.output"])
+                hint.setStyleSheet("color: #8b949e;")
+                self.form.addRow(self._param_label(param), hint)
+                continue
+            i = len(self._editors)
             self.form.addRow(self._param_label(param), self._editor(
                 param["type"], last[i] if i < len(last) else None))
         if not self._params:
-            self.form.addRow(QLabel(self.translations["call.no_parameters"]))
-        usable = all(supported(param["type"]) for param in self._params)
+            self.form.addRow(QLabel(t["call.no_parameters"]))
+        usable = all(supported(param["type"]) for param in self._inputs)
         self.call_button.setEnabled(usable)
-        self.status_label.setText("" if usable else self.translations["call.unsupported"])
-        if self._editors and isinstance(self._editors[0], QLineEdit):
-            self._editors[0].setFocus()
+        self.status_label.setText("" if usable else t["call.unsupported"])
+        first = self.object_edit or (self._editors[0] if self._editors else None)
+        if isinstance(first, QLineEdit):
+            first.setFocus()
 
     def _param_label(self, param):
         param_type = param["type"]
         name = param_type.get("enumName") or param_type["name"]
-        if param_type.get("byref"):
+        if param.get("out"):
+            name += " (out)"
+        elif param_type.get("byref"):
             name += " (ref)"
         return f"{param['name']}  ({name})"
 
     def _editor(self, param_type, last):
         t = self.translations
-        if param_type["kind"] == BOOLEAN and not param_type.get("byref"):
+        if is_bool(param_type) and ("engine" in param_type or not param_type.get("byref")):
             editor = QCheckBox()
             editor.setChecked(last == "true")
         else:
             editor = QLineEdit(last or "")
             values = param_type.get("enumValues") or {}
+            fields = struct_field_names(param_type) if is_number_struct(param_type) else []
             editor.setPlaceholderText(t[placeholder_key(param_type)].format(
                 type=param_type.get("enumName") or param_type["name"],
                 values=", ".join(list(values.values())[:_PLACEHOLDER_NAMES])
-                + (", …" if len(values) > _PLACEHOLDER_NAMES else "")))
+                + (", …" if len(values) > _PLACEHOLDER_NAMES else ""),
+                fields=" ".join(fields),
+                fields_example="; ".join(f"{name}={i + 1}" for i, name in enumerate(fields[:2]))))
             if values:
                 editor.setToolTip("\n".join(f"{value} = {name}" for value, name in values.items()))
             editor.setEnabled(supported(param_type))
@@ -251,9 +309,15 @@ class MethodCallDialog(QDialog):
         """Call the method with the arguments typed in."""
         if self._params is None or not self.call_button.isEnabled():
             return
-        texts = self._texts()
+        texts = iter(self._texts())
         arguments = []
-        for param, text in zip(self._params, texts):
+        typed = []
+        for param in self._params:
+            if is_output(param):
+                arguments.append(None)
+                continue
+            text = next(texts)
+            typed.append(text)
             try:
                 arguments.append(parse_argument(param["type"], text))
             except ArgumentError as error:
@@ -261,10 +325,12 @@ class MethodCallDialog(QDialog):
                     name=param["name"],
                     message=self.translations[error.key].format(**error.values)))
                 return
-        _last_arguments[self._spec["key"]] = texts
+        found = [self.object_edit.text()] if self.object_edit is not None else []
+        _last_arguments[self._spec["key"]] = found + typed
         name = self._spec["name"]
-        line = (f"{datetime.now().strftime('%H:%M:%S')}  {name}("
-                f"{', '.join(argument_text(value) for value in arguments)})")
+        shown = [argument_text(value) for param, value in zip(self._params, arguments)
+                 if not is_output(param)]
+        line = f"{datetime.now().strftime('%H:%M:%S')}  {name}({', '.join(shown)})"
         self._calls[self._spec["call"](arguments)] = (line, name)
         self.call_button.setEnabled(False)
         self.status_label.setText(self.translations["call.calling"])
@@ -280,8 +346,12 @@ class MethodCallDialog(QDialog):
         else:
             result = answer.get("result")
             target = result.get("target") if result else None
-            self._log(f"{line}  → {result.get('text', '') if result else t['call.void']}",
-                      target, f"{name}()")
+            if answer.get("object"):
+                line += t["call.on_object"].format(object=answer["object"]["text"])
+            text = f"{line}  → {result.get('text', '') if result else t['call.void']}"
+            for output in answer.get("outputs", []):
+                text += f"; {output['name']} = {output['value'].get('text', '')}"
+            self._log(text, target, f"{name}()")
             self.status_label.setText(t["call.done"])
             if target:
                 self.inspections.inspect(target, name=f"{name}()")
