@@ -256,8 +256,25 @@ __attribute__((noinline)) static void count_event(void) {
     g_events = g_events + 1;
 }
 
+/* The call of a UFunction's Func the way Unreal's code makes it, call [reg + Func] */
+#define CALL_FUNC(function, self, stack, result) \
+    __asm__ volatile("call *0xd8(%%rax)" \
+                     : "+a"(function), "+D"(self), "+S"(stack), "+d"(result) \
+                     : \
+                     : "rcx", "r8", "r9", "r10", "r11", "memory", "cc", \
+                       "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", \
+                       "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15")
+
+#ifdef OUT_OF_LINE_INVOKE
+/* UFunction::Invoke, as some games keep it out of ProcessEvent */
+__attribute__((noinline)) static void UFunction_Invoke(Object *function, Object *self,
+                                                       void *stack, void *result) {
+    CALL_FUNC(function, self, stack, result);
+}
+#endif
+
 /* UObject::ProcessEvent: a frame of the function's own over its parameters,
-   and the call of its Func the way Unreal's code makes it, call [reg + Func] */
+   and the call of its Func */
 __attribute__((noinline)) void UObject_ProcessEvent(Object *self, Object *function,
                                                     void *parms) {
     Frame frame = {g_frame_vtable, 0, function, self, function->script, parms};
@@ -265,12 +282,11 @@ __attribute__((noinline)) void UObject_ProcessEvent(Object *self, Object *functi
         : (char *)parms + function->return_value_offset;
     void *stack = &frame;
     count_event();
-    __asm__ volatile("call *0xd8(%%rax)"
-                     : "+a"(function), "+D"(self), "+S"(stack), "+d"(result)
-                     :
-                     : "rcx", "r8", "r9", "r10", "r11", "memory", "cc",
-                       "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
-                       "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
+#ifdef OUT_OF_LINE_INVOKE
+    UFunction_Invoke(function, self, stack, result);
+#else
+    CALL_FUNC(function, self, stack, result);
+#endif
 }
 
 /* Other virtual functions of UObject, before and after ProcessEvent */
@@ -1193,6 +1209,34 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         _wait_for(qt_app, lambda: target.send("tick", 0)
                   and len([r for r in runs if r[0] == repeating]) >= 3)
         assert [r[1]["result"] for r in runs if r[0] == repeating][:3] == ["1", "2", "3"]
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_process_event_is_found_when_it_calls_an_out_of_line_invoke(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.scripts import ScriptSpec, ScriptWorker
+
+    # As in Gothic 1 Remake: ProcessEvent calls UFunction::Invoke, which
+    # makes the call [reg + Func].
+    target = _Target(_build(tmp_path, "OUT_OF_LINE_INVOKE"))
+    worker = ScriptWorker(target.pid)
+    added, failed, runs = [], {}, []
+    worker.script_added.connect(added.append)
+    worker.script_failed.connect(failed.__setitem__)
+    worker.script_ran.connect(lambda script_id, run: runs.append((script_id, run)))
+    try:
+        worker.start()
+        calls = worker.add_script(ScriptSpec('return ctx.call("Hero.AddGold", 7);'))
+        _wait_for(qt_app, lambda: calls in added or calls in failed)
+        assert not failed
+        worker.run_now(calls)
+        _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+        assert runs[0][1]["error"] is None, runs[0][1]["error"]
+        assert runs[0][1]["result"] == "107"
     finally:
         worker.requestInterruption()
         worker.wait(5000)

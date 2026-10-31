@@ -1646,7 +1646,9 @@ const unreal = (() => {
 
   function findProcessEvent() {
     // The one virtual function of UObject that calls a UFunction's Func
-    // (call [reg + Func]); the others call into it.
+    // (call [reg + Func]); the others call into it. Where no slot does, the
+    // one that calls a short function doing it (some games do not inline
+    // UFunction::Invoke).
     if (processEvent !== null)
       return processEvent;
     reflection();
@@ -1657,29 +1659,75 @@ const unreal = (() => {
       throw hermesError('error.unreal.not_found', { name: 'Default__Object' });
     const vtable = ptr(s.address[index]).readPointer();
     const funcOffset = ue.layout.func;
-    const found = [];
-    for (let slot = 0; slot < 160; slot++) {
-      const fn = vtable.add(slot * Process.pointerSize).readPointer();
-      if (fn.compare(module.base) < 0 || fn.compare(module.base.add(module.size)) >= 0)
-        break;
-      let bytes;
+    const inCode = fn => fn.compare(module.base) >= 0
+      && fn.compare(module.base.add(module.size)) < 0;
+    const readCode = fn => {
       try {
-        bytes = new Uint8Array(fn.readByteArray(0x800));
+        return new Uint8Array(fn.readByteArray(0x800));
       } catch (_error) {
         // close to the end of the code: what is left of its page
         const left = 0x1000 - Number(fn.and(0xfff).toString());
-        bytes = new Uint8Array(fn.readByteArray(left));
+        return new Uint8Array(fn.readByteArray(left));
       }
+    };
+    const callsFunc = bytes => {
       for (let at = 0; at + 6 <= bytes.length; at++) {
         // FF /2 with a 32-bit displacement: call [reg + disp32] (not rsp)
         if (bytes[at] === 0xff && (bytes[at + 1] & 0xf8) === 0x90 && (bytes[at + 1] & 7) !== 4
             && bytes[at + 2] === (funcOffset & 0xff) && bytes[at + 3] === (funcOffset >> 8)
-            && bytes[at + 4] === 0 && bytes[at + 5] === 0) {
-          found.push(fn);
-          break;
+            && bytes[at + 4] === 0 && bytes[at + 5] === 0)
+          return true;
+      }
+      return false;
+    };
+    const invokes = fn => {
+      // Whether fn calls Func before its first ret: a short function like
+      // UFunction::Invoke, not the code after it.
+      let at = fn;
+      for (let count = 0; count < 64; count++) {
+        const instruction = Instruction.parse(at);
+        if (instruction.mnemonic === 'ret' || instruction.mnemonic === 'int3')
+          return false;
+        const [operand] = instruction.operands;
+        if (instruction.mnemonic === 'call' && operand !== undefined && operand.type === 'mem'
+            && operand.value.disp === funcOffset && operand.value.base !== 'rsp')
+          return true;
+        at = instruction.next;
+      }
+      return false;
+    };
+    const callsInvoke = (fn, bytes) => {
+      for (let at = 0; at + 5 <= bytes.length; at++) {
+        // E8: call rel32
+        if (bytes[at] !== 0xe8)
+          continue;
+        const rel = bytes[at + 1] | (bytes[at + 2] << 8) | (bytes[at + 3] << 16)
+          | (bytes[at + 4] << 24);
+        const target = fn.add(at + 5 + rel);
+        if (!inCode(target))
+          continue;
+        try {
+          if (invokes(target))
+            return true;
+        } catch (_error) {
+          // not readable or not code
         }
       }
+      return false;
+    };
+    const direct = [];
+    const throughCall = [];
+    for (let slot = 0; slot < 160; slot++) {
+      const fn = vtable.add(slot * Process.pointerSize).readPointer();
+      if (!inCode(fn))
+        break;
+      const bytes = readCode(fn);
+      if (callsFunc(bytes))
+        direct.push(fn);
+      else if (direct.length === 0 && callsInvoke(fn, bytes))
+        throughCall.push(fn);
     }
+    const found = direct.length > 0 ? direct : throughCall;
     if (found.length !== 1)
       throw hermesError('error.unreal.no_process_event', { count: found.length });
     processEvent = {
