@@ -105,6 +105,31 @@ typedef struct {
     SharedString *display_controller;
 } LocalizedHistory;
 _Static_assert(offsetof(LocalizedHistory, display) == 0x38, "FTextHistory_Base::LocalizedString");
+/* A string table's text: its history shares an FStringTableReferenceData
+   (weak self-reference, TableId, Key, ...) with a weak pointer to the
+   FStringTableEntry (its table, then the source string); each behind its
+   controller as MakeShared puts them */
+typedef struct {
+    void *vtable;
+    int32_t refs, weak_refs;
+    void *owner, *owner_controller;
+    String source;
+    uint64_t display_id[2];
+} TableEntry;
+typedef struct {
+    void *vtable;
+    int32_t refs, weak_refs;
+    void *self, *self_controller;
+    uint32_t table_id, table_number;
+    const uint16_t *key;
+    uint64_t hash, revision;
+    void *entry, *entry_controller;
+} TableReference;
+typedef struct {
+    void *vtable;
+    int32_t refs, weak_refs;
+    void *reference, *reference_controller;
+} TableHistory;
 /* UEnum::Names: TPair<FName, int64> */
 typedef struct { uint32_t name, number; int64_t value; } EnumName;
 
@@ -530,6 +555,8 @@ int main(void) {
     FieldClass *text_property = field_class("TextProperty");
     property(hero, text_property, "Title", 0x18, 0x78, 0, NULL);
     property(hero, text_property, "Motto", 0x18, 0x90, 0, NULL);
+    property(hero, text_property, "Lore", 0x18, 0xa8, 0, NULL);
+    property(hero, text_property, "Epitaph", 0x18, 0xc0, 0, NULL);
     /* Containers, behind the UObject: TArray<int32>, TArray<FVector>,
        TMap<int32, float> with UE5's MapLayout (ValueOffset, HashNextIdOffset,
        HashIndexOffset, Size, Alignment, sparse array Size), one without a
@@ -608,6 +635,25 @@ int main(void) {
         (void *)0x9abe, 1, 1, motto_key + 5, motto_key, 0x1234, {courage, 8, 8},
         &motto_display.string, &motto_display};
     *(Text *)((char *)player + 0x90) = (Text){&motto_history, NULL, 0, 0};
+    /* Lore: from a string table */
+    static uint16_t legend[] = {'L', 'e', 'g', 'e', 'n', 'd', 'e', 0};
+    static uint16_t lore_key[] = {'L', 'O', 'R', 'E', 0};
+    static TableEntry lore_entry = {(void *)0x9abf, 1, 2, NULL, NULL, {legend, 8, 8}, {7, 0}};
+    static TableReference lore_reference = {(void *)0x9ac0, 1, 2, NULL, NULL, 0x30c0, 0,
+                                            lore_key, 0x5678, 2, NULL, NULL};
+    lore_reference.self = &lore_reference.self;
+    lore_reference.self_controller = &lore_reference;
+    lore_reference.entry = &lore_entry.owner;
+    lore_reference.entry_controller = &lore_entry;
+    static TableHistory lore_history = {(void *)0x9ac1, 1, 1, NULL, NULL};
+    lore_history.reference = &lore_reference.self;
+    lore_history.reference_controller = &lore_reference;
+    *(Text *)((char *)player + 0xa8) = (Text){&lore_history, NULL, 0, 0};
+    /* Epitaph: empty (FText::GetEmpty), its id the empty string */
+    static uint16_t nothing[] = {0};
+    static LocalizedHistory empty_history = {
+        (void *)0x9ac2, 30000, 1, nothing, nothing, 0, {NULL, 0, 0}, NULL, NULL};
+    *(Text *)((char *)player + 0xc0) = (Text){&empty_history, NULL, 0, 0};
     static int32_t score_data[3] = {7, 8, 9};
     static double path_data[6] = {1, 2, 3, 4, 5, 6};
     *(Array *)((char *)player + 0x100) = (Array){score_data, 3, 3};
@@ -1121,9 +1167,12 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         # TMap's named by its key; numbers have an address for the address list.
         values = {field["name"]: field["value"] for field in inspected[0]["fields"]}
         assert values["Focus"]["text"] == "2 (Dexterity)"  # an enum by the name of its value
-        # An FText by its display string: generated, localized (not its source string)
+        # An FText by its display string: generated, localized (not its source
+        # string); from a string table, by its entry's string; an empty one
         assert values["Title"]["text"] == '"Attribute"'
         assert values["Motto"]["text"] == '"Mut"'
+        assert values["Lore"]["text"] == '"Legende"'
+        assert values["Epitaph"]["text"] == '""'
         assert values["Scores"]["text"] == "TArray<int32>[3] {7, 8, 9}"
         assert values["Stats"]["text"] == "TMap<int32, float>[2]"
         assert values["Tags"]["text"] == "TSet<int32>[2]"

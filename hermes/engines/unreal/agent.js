@@ -971,10 +971,16 @@ const unreal = (() => {
   // - a generated text (a number, a format): its display string, an FString;
   // - a localized text: its id (namespace, key), the source string, then the
   //   display string as a shared pointer, made by MakeShared: the FString
-  //   right behind its reference controller.
+  //   right behind its reference controller;
+  // - a string table's text: a shared FStringTableReferenceData (its weak
+  //   self-reference, TableId, Key, ...) with a weak pointer to the
+  //   FStringTableEntry: its table (a weak pointer), the source string, in
+  //   some versions the display string as a shared pointer.
   const TEXT_HISTORY_START = 0x10;
   const TEXT_HISTORY_END = 0x50;
   const SHARED_CONTROLLER_SIZE = 0x10;
+  const TABLE_ENTRY_SOURCE = 0x10;
+  const TABLE_ENTRY_DISPLAY = 0x20;
   const MAX_TEXT_LENGTH = 0x100000;
 
   function fstringAt(string) {
@@ -994,14 +1000,43 @@ const unreal = (() => {
     return data.readUtf16String(probe).length === probe ? [data, length] : null;
   }
 
+  function sharedObjectAt(pointer) {
+    // The object of the shared or weak pointer at ``pointer`` if MakeShared
+    // made it and it is alive (its controller's shared reference count), or null.
+    const object = pointer.readPointer();
+    const controller = pointer.add(Process.pointerSize).readPointer();
+    if (object.isNull() || !object.equals(controller.add(SHARED_CONTROLLER_SIZE)))
+      return null;
+    return controller.add(Process.pointerSize).readS32() > 0 ? object : null;
+  }
+
+  function tableEntryString(reference) {
+    // A string table's text by its FStringTableReferenceData (see above)
+    for (let at = TEXT_HISTORY_START; at < TEXT_HISTORY_END; at += Process.pointerSize) {
+      const entry = sharedObjectAt(reference.add(at));
+      if (entry === null)
+        continue;
+      const display = sharedObjectAt(entry.add(TABLE_ENTRY_DISPLAY));
+      const string = display !== null ? fstringAt(display) : null;
+      if (string !== null)
+        return string;
+      const source = fstringAt(entry.add(TABLE_ENTRY_SOURCE));
+      if (source !== null)
+        return source;
+    }
+    return null;
+  }
+
   function sharedDisplayString(history) {
     for (let at = TEXT_HISTORY_START; at < TEXT_HISTORY_END; at += Process.pointerSize) {
-      const object = history.add(at).readPointer();
-      const controller = history.add(at + Process.pointerSize).readPointer();
-      if (!object.isNull() && object.equals(controller.add(SHARED_CONTROLLER_SIZE))) {
+      const object = sharedObjectAt(history.add(at));
+      if (object !== null) {
         const string = fstringAt(object);
         if (string !== null)
           return string;
+        const entry = tableEntryString(object);
+        if (entry !== null)
+          return entry;
       }
     }
     return null;
@@ -1017,13 +1052,18 @@ const unreal = (() => {
       const shared = sharedDisplayString(history);
       if (shared !== null)
         return shared;
-      // A generated text's, else a localized text's source string
+      // A generated text's, else a localized text's source string; an empty
+      // one behind the first may be its id, so only if there is no other
+      // (an empty text, FText::GetEmpty)
+      let empty = null;
       for (let at = TEXT_HISTORY_START; at < TEXT_HISTORY_END; at += Process.pointerSize) {
         const string = fstringAt(history.add(at));
         if (string !== null && !(at > TEXT_HISTORY_START && string[1] === 0))
           return string;
+        if (string !== null)
+          empty = string;
       }
-      return null;
+      return empty;
     } catch (_error) {
       return null;
     }
