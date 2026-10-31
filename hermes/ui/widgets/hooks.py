@@ -39,6 +39,7 @@ from hermes.hooks.transforms import (
     example_templates,
 )
 from hermes.hooks.syntax import BODY
+from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.hook_debug import HookDebugWindow
 from hermes.ui.widgets.icons import set_button_icon
@@ -123,7 +124,7 @@ class TransformForm(QWidget):
             editor.setCurrentIndex(max(index, 0))
             return editor
         if parameter.kind == "code":
-            editor = QPlainTextEdit("" if value is None else str(value))
+            editor = CodeEditor("" if value is None else str(value))
             editor.setMinimumHeight(120)
             return editor
         editor = QLineEdit("" if value is None else format_number(value))
@@ -305,8 +306,8 @@ class HookDialog(QDialog):
         self.template_combo.currentIndexChanged.connect(self._on_template_selected)
         if self._copy_index is not None:
             self.template_combo.setCurrentIndex(self._copy_index)
-        layout.addWidget(self.forms)
-        layout.addStretch()
+        # A code parameter takes the height the window grows by
+        layout.addWidget(self.forms, 1)
         self._update_template_notice()
 
         self.error_label = QLabel("")

@@ -30,6 +30,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from hermes.features.scripts import MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker
 from hermes.hooks.syntax import BODY
+from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.icons import material_icon, set_button_icon
 from hermes.ui.widgets.inspection import Inspections
@@ -100,13 +101,13 @@ class ScriptDialog(QDialog):
         self.mode_combo.currentIndexChanged.connect(self._update_seconds)
         self._update_seconds()
 
-        self.code_edit = QPlainTextEdit(spec.source if spec else EXAMPLE)
-        self.code_edit.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.code_edit = CodeEditor(spec.source if spec else EXAMPLE)
         self.code_edit.setMinimumHeight(200)
         form.addRow(translations["scripts.code"], self.code_edit)
         self.syntax_hint = SyntaxHint(translations, self.code_edit, BODY)
         form.addRow("", self.syntax_hint)
-        layout.addLayout(form)
+        # The code takes the height the window grows by
+        layout.addLayout(form, 1)
 
         help_label = WrappedLabel(translations["scripts.code_help"])
         help_label.setStyleSheet("color:#8b949e;")
@@ -115,7 +116,6 @@ class ScriptDialog(QDialog):
         self.error_label = WrappedLabel("")
         self.error_label.setStyleSheet("color:#f85149;")
         layout.addWidget(self.error_label)
-        layout.addStretch()
         layout.addLayout(dialog_button_row(translations, "button.save" if spec
                                            else "scripts.create", self._accept, self.reject))
         self._enabled = spec.enabled if spec else True

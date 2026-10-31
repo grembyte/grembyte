@@ -29,6 +29,7 @@ from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES
 from hermes.hooks.transforms import PARAMETER_NAME, TransformDefinition, TransformParameter
 from hermes.hooks.sandbox import TransformSandbox
 from hermes.hooks.syntax import BODY, FUNCTION
+from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.hooks import TransformForm, format_number, parse_number
 from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import WrappedLabel
@@ -198,10 +199,7 @@ class TemplateDialog(QDialog):
         layout.addLayout(param_buttons)
 
         layout.addWidget(QLabel(self.translations["templates.source"]))
-        self.source_input = QPlainTextEdit()
-        self.source_input.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        )
+        self.source_input = CodeEditor()
         self.source_input.setMinimumHeight(180)
         layout.addWidget(self.source_input, 1)
         self.syntax_hint = SyntaxHint(self.translations, self.source_input, FUNCTION)
