@@ -25,6 +25,7 @@ from pathlib import PurePath
 
 from sqlalchemy import DateTime, delete, func, select
 
+from hermes.core.messages import LocalizedError
 from hermes.db.engine import SESSION_LOCAL
 from hermes.db.models import (
     Address,
@@ -79,7 +80,7 @@ class ImportResult:
     templates: int = 0
 
 
-class ImportFormatError(ValueError):
+class ImportFormatError(LocalizedError, ValueError):
     """The file is no export of hermes-hook, or of a newer version."""
 
 
@@ -277,13 +278,13 @@ def read_export(path):
         with open(path, encoding="utf-8") as file:
             export = json.load(file)
     except json.JSONDecodeError as error:
-        raise ImportFormatError(str(error)) from error
+        raise ImportFormatError("error.game_export.not_json", error=error) from error
     if not isinstance(export, dict) or export.get("format") != EXPORT_FORMAT:
-        raise ImportFormatError("not an export of hermes-hook")
+        raise ImportFormatError("error.game_export.not_export")
     if not isinstance(export.get("version"), int) or export["version"] > EXPORT_VERSION:
-        raise ImportFormatError(f"export version {export.get('version')} is not supported")
+        raise ImportFormatError("error.game_export.version", version=export.get("version"))
     if not isinstance(export.get("processes"), list):
-        raise ImportFormatError("the export holds no processes")
+        raise ImportFormatError("error.game_export.no_processes")
     return export
 
 

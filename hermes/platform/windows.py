@@ -14,6 +14,7 @@ import string
 from contextlib import contextmanager
 from ctypes import wintypes
 
+from hermes.core.messages import LocalizedOSError
 from hermes.platform.mapping import Mapping
 
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -392,7 +393,8 @@ class ProcessMemory:
                                   ctypes.byref(wintypes.DWORD()))
         _FlushInstructionCache(self._handle, ctypes.c_void_p(address), len(data))
         if not written:
-            raise OSError(f"Incomplete memory write of {len(data)} bytes at {address:#x}")
+            raise LocalizedOSError("error.platform.incomplete_write_windows", size=len(data),
+                                   address=f"{address:#x}")
 
 
 def process_start_time(pid, proc_root=None):  # pylint: disable=unused-argument

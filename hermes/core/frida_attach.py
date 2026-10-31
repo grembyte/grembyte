@@ -22,7 +22,7 @@ import time
 
 import frida
 
-from hermes.core import activity, wine_gadget
+from hermes.core import activity, messages, wine_gadget
 from hermes.platform import is_wine_process
 
 # Agents above this size are sent to the gadget in parts.
@@ -67,7 +67,8 @@ def attach_session(pid):
         session = wine_gadget.connect(pid) if wine else frida.attach(pid)
     except Exception as error:
         activity.record("attach_failed", pid=pid, session=session_number, kind=kind,
-                        via="gadget" if wine else "frida.attach", error=str(error))
+                        via="gadget" if wine else "frida.attach",
+                        error=messages.describe(error))
         raise
     activity.record("attached", pid=pid, session=session_number, kind=kind,
                     via="gadget" if wine else "frida.attach",
@@ -169,7 +170,7 @@ class RecordedScript:
             if self._deferred is not None:
                 self._load_deferred()
         except Exception as error:
-            activity.record("agent_load_failed", **self._fields(), error=str(error))
+            activity.record("agent_load_failed", **self._fields(), error=messages.describe(error))
             raise
         self._loaded = time.monotonic()
         activity.record("agent_loaded", **self._fields(), size=self._size,
@@ -231,7 +232,7 @@ class RecordedExports:
             try:
                 result = function(*args, **kwargs)
             except Exception as error:
-                activity.rpc_ended(handle, str(error).split("\n", 1)[0])
+                activity.rpc_ended(handle, messages.describe(error).split("\n", 1)[0])
                 raise
             activity.rpc_ended(handle)
             return result

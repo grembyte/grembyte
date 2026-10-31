@@ -2,6 +2,7 @@
 
 from sqlalchemy import select
 
+from hermes.core.messages import LocalizedValueError
 from hermes.db.engine import SESSION_LOCAL
 from hermes.db.models import TraceFilterRecord
 from hermes.features.trace_filters import TraceFilter
@@ -33,7 +34,8 @@ class TraceFilterRepository:
                 TraceFilterRecord.name == trace_filter.name,
                 TraceFilterRecord.id != trace_filter.filter_id)).first()
             if duplicate is not None:
-                raise ValueError(f"A filter named {trace_filter.name!r} already exists")
+                raise LocalizedValueError("error.trace_filters.duplicate",
+                                          name=repr(trace_filter.name))
             record = (None if trace_filter.filter_id is None
                       else session.get(TraceFilterRecord, trace_filter.filter_id))
             if record is None:

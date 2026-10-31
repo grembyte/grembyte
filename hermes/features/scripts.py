@@ -66,7 +66,7 @@ from dataclasses import dataclass
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import logs
+from hermes.core import logs, messages
 from hermes.core import sessions
 from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
@@ -90,11 +90,12 @@ class ScriptSpec:
 
     def __post_init__(self):
         if self.mode not in MODES:
-            raise ValueError(f"mode must be one of {', '.join(MODES)}")
+            raise messages.LocalizedValueError("error.scripts.mode", modes=", ".join(MODES))
         if self.seconds < 0:
-            raise ValueError("seconds must not be negative")
+            raise messages.LocalizedValueError("error.scripts.negative_seconds")
         if self.mode == "repeat" and self.seconds < MIN_REPEAT_SECONDS:
-            raise ValueError(f"a repeating script waits at least {MIN_REPEAT_SECONDS} s")
+            raise messages.LocalizedValueError("error.scripts.repeat_minimum",
+                                              seconds=MIN_REPEAT_SECONDS)
 
     def to_agent(self, script_id):
         return {
@@ -233,7 +234,7 @@ class ScriptWorker(QThread):
             script.set_log_handler(self._on_log)
             script.load()
             if not self._ready.wait(5):
-                raise RuntimeError("Timed out while loading the script agent")
+                raise messages.LocalizedRuntimeError("error.scripts.load_timeout")
             while (not self.isInterruptionRequested() and self._detach_reason is None
                    and self._agent_error is None):
                 try:
@@ -244,10 +245,11 @@ class ScriptWorker(QThread):
             if self._agent_error and not self.isInterruptionRequested():
                 raise RuntimeError(self._agent_error)
             if self._detach_reason and not self.isInterruptionRequested():
-                raise RuntimeError(f"Target process detached: {self._detach_reason}")
+                raise messages.LocalizedRuntimeError("error.agent.detached",
+                                                     reason=self._detach_reason)
         except FRIDA_ERRORS + (OSError, RuntimeError) as error:
             if not self.isInterruptionRequested():
-                self.worker_failed.emit(str(error))
+                self.worker_failed.emit(messages.describe(error))
         finally:
             if script is not None:
                 try:
@@ -281,7 +283,7 @@ class ScriptWorker(QThread):
                 self._answer(api, action, script_id, argument)
                 return
         except frida.RPCException as error:
-            self.script_failed.emit(script_id, str(error))
+            self.script_failed.emit(script_id, messages.describe(error))
 
     # request action -> (agent call, answer signal, failure signal)
     _REQUESTS = {
@@ -302,11 +304,12 @@ class ScriptWorker(QThread):
         try:
             getattr(self, answered).emit(request_id, getattr(api, call)(*arguments))
         except frida.RPCException as error:
-            getattr(self, failed).emit(request_id, str(error))
+            getattr(self, failed).emit(request_id, messages.describe(error))
 
     def _on_message(self, message, _data):
         if message.get("type") == "error":
-            self._agent_error = message.get("stack", "Script agent failed")
+            self._agent_error = messages.describe(
+                message.get("stack", messages.text("error.scripts.agent_failed")))
             self._ready.set()
             return
         payload = message.get("payload", {})

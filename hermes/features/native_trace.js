@@ -416,7 +416,7 @@ function stillFollowed() {
 function compile(threadCount) {
   // The CModule and its memory, all of it zeroed.
   if (Process.arch !== 'x64' && Process.arch !== 'ia32')
-    throw new Error(`the native trace needs an x86 processor, not ${Process.arch}`);
+    throw hermesError('error.native_trace.needs_x86', { arch: Process.arch });
   const memory = {
     state: Memory.alloc(32),
     keys: Memory.alloc(Process.pointerSize * FUNCTION_CAPACITY),
@@ -451,7 +451,7 @@ function compile(threadCount) {
 function start(spec) {
   // spec: { threads: [ids], modules: [names to follow], ranges: [[base, size]] to run natively }
   if (trace !== null)
-    throw new Error('a trace is running already');
+    throw hermesError('error.native_trace.running');
   const followed = new Set(spec.modules);
   if (WINDOWS) {
     const excluded = spec.modules.filter(name => excludedModules.has(name));
@@ -739,21 +739,21 @@ function slotNumbers(t, slots) {
 
 function requireTrace() {
   if (trace === null)
-    throw new Error('no trace is running');
+    throw hermesError('error.native_trace.not_running');
   return trace;
 }
 
 async function begin(phase) {
   const t = requireTrace();
   if (PHASES[phase] === undefined)
-    throw new Error(`unknown phase ${phase}`);
+    throw hermesError('error.native_trace.unknown_phase', { phase });
   t.setPhase(0);  // calls from before belong to no phase
   t.phase = null;
   // Let callouts that observed the previous phase finish before clearing tables.
   const deadline = Date.now() + QUIESCE_TIMEOUT;
   while (t.state.add(12).readS32() !== 0) {
     if (Date.now() > deadline)
-      throw new Error('a followed thread did not leave the trace\'s code; try again');
+      throw hermesError('error.native_trace.thread_busy');
     await new Promise(resolve => setTimeout(resolve, 1));
   }
   zero(t.counts, 4 * FUNCTION_CAPACITY);
@@ -851,7 +851,7 @@ function finish() {
   const t = requireTrace();
   const phase = t.phase;
   if (phase === null)
-    throw new Error('nothing is being recorded');
+    throw hermesError('error.native_trace.not_recording');
   t.setPhase(0);
   t.phase = null;
   const duration = Date.now() - t.began;

@@ -37,7 +37,7 @@ from dataclasses import dataclass
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import activity, logs, settings
+from hermes.core import activity, logs, messages, settings
 from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
 from hermes.features import catalog_cache, games
@@ -301,8 +301,10 @@ class AgentWorker(QThread):
     command_failed = pyqtSignal(str, str)
     worker_failed = pyqtSignal(str)
 
-    # What failed to load, for the error message
+    # What failed to load, for the log
     agent_name = "trace"
+    # Its error messages: error.<agent_key>.load_timeout and .agent_failed
+    agent_key = "trace"
 
     def __init__(self, pid, parent=None):
         super().__init__(parent)
@@ -365,10 +367,11 @@ class AgentWorker(QThread):
             if self._agent_error and not self.isInterruptionRequested():
                 raise RuntimeError(self._agent_error)
             if self._detach_reason and not self.isInterruptionRequested():
-                raise RuntimeError(f"Target process detached: {self._detach_reason}")
+                raise messages.LocalizedRuntimeError("error.agent.detached",
+                                                     reason=self._detach_reason)
         except FRIDA_ERRORS + (OSError, RuntimeError) as error:
             if not self.isInterruptionRequested():
-                self.worker_failed.emit(str(error))
+                self.worker_failed.emit(messages.describe(error))
         finally:
             self._unload_script()
             if session is not None:
@@ -384,7 +387,7 @@ class AgentWorker(QThread):
         script.load()
         self._script = script
         if not self._ready.wait(5):
-            raise RuntimeError(f"Timed out while loading the {self.agent_name}")
+            raise messages.LocalizedRuntimeError(f"error.{self.agent_key}.load_timeout")
 
     def _unload_script(self):
         script = self._script
@@ -405,7 +408,7 @@ class AgentWorker(QThread):
             self._run_command(api, action, argument)
         except frida.RPCException as error:
             # Without the agent's stack trace
-            self.command_failed.emit(action, str(error).split("\n", 1)[0])
+            self.command_failed.emit(action, messages.describe(error))
 
     def _run_command(self, api, action, argument):
         if action == "begin":
@@ -421,7 +424,8 @@ class AgentWorker(QThread):
 
     def _on_message(self, message, _data):
         if message.get("type") == "error":
-            self._agent_error = message.get("stack", f"{self.agent_name} agent failed")
+            self._agent_error = messages.describe(
+                message.get("stack", messages.text(f"error.{self.agent_key}.agent_failed")))
             self._ready.set()
             return
         payload = message.get("payload", {})
@@ -434,7 +438,8 @@ class AgentWorker(QThread):
         elif kind == "live":
             self.live.emit(payload)
         elif kind == "agent-error":
-            logs.log.error("%s agent: %s", self.agent_name, payload.get("error", ""))
+            logs.log.error("%s agent: %s", self.agent_name,
+                           messages.describe(payload.get("error", "")))
         else:
             self._on_payload(kind, payload)
 
@@ -463,6 +468,7 @@ class TraceWorker(AgentWorker):
     ended = pyqtSignal()
 
     agent_name = "Mono trace"
+    agent_key = "mono_trace"
 
     def __init__(self, pid, parent=None, engine=None, selection=()):
         super().__init__(pid, parent)

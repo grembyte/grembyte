@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 
+from hermes.core.messages import LocalizedOSError
 from hermes.platform.mapping import Mapping
 
 # Kernel mappings that are no memory of the program.
@@ -114,7 +115,8 @@ class ProcessMemory:
         self._file.seek(address)
         written = self._file.write(data)
         if written != len(data):
-            raise OSError(f"Incomplete memory write: wrote {written} of {len(data)} bytes")
+            raise LocalizedOSError("error.platform.incomplete_write_linux", written=written,
+                                   size=len(data))
 
 
 def process_start_time(pid, proc_root="/proc"):

@@ -85,7 +85,7 @@ from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.scripts import ScriptPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
 from hermes.ui.widgets.settings_dialog import SettingsDialog
-from hermes.core import activity, logs, sessions
+from hermes.core import activity, logs, messages, sessions
 from hermes.core import settings as app_settings
 from hermes.ui import workers
 from hermes.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
@@ -330,6 +330,7 @@ class MainWindow(QMainWindow):
         """Initialize the main window and construct its interface."""
         super().__init__()
         self.translations = load_translations(language)
+        messages.use(self.translations)
         self.setWindowTitle(self.translations["app.window_title"])
         self.setMinimumSize(1100, 700)
         self.resize(1280, 800)

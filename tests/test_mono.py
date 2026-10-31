@@ -2352,7 +2352,7 @@ def test_mono_trace_preparation_can_be_cancelled(tmp_path, qt_app):
         began = time.monotonic()
         worker.cancel()
         _wait_for(qt_app, lambda: failed)
-        assert failed == [("start", "Error: cancelled")]
+        assert failed == [("start", "cancelled")]
         assert time.monotonic() - began < 1.5
         assert not started
         # The game was not disturbed.

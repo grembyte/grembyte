@@ -23,7 +23,7 @@ const engine = (() => {
 
   function current() {
     if (!refresh())
-      throw new Error('no supported engine runtime in the process');
+      throw hermesError('error.engine.no_runtime');
     return active;
   }
 
@@ -44,7 +44,7 @@ const engine = (() => {
       const adapter = current();
       const value = adapter[key];
       if (value === undefined)
-        throw new Error(`the ${adapter.id} engine adapter has no ${String(key)}`);
+        throw hermesError('error.engine.no_member', { engine: adapter.id, name: String(key) });
       return value;
     }
   });

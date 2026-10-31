@@ -20,3 +20,13 @@ def _private_window_state(tmp_path, monkeypatch):
     path = str(tmp_path / "window-state.ini")
     monkeypatch.setattr(window_state, "settings",
                         lambda: QSettings(path, QSettings.Format.IniFormat))
+
+
+@pytest.fixture(autouse=True)
+def _english_messages():
+    """Undo the language a window chose for error messages (see hermes.core.messages)."""
+    # pylint: disable=import-outside-toplevel
+    from hermes.core import messages
+
+    yield
+    messages.use(None)

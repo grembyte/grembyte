@@ -9,6 +9,7 @@ import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs
+from hermes.core.messages import LocalizedValueError
 from hermes.core.pointer import module_bases, resolve_chain
 from hermes.platform import ProcessMemory, read_mappings
 from hermes.core.value_types import AUTO_VALUE_TYPES, VALUE_TYPES
@@ -59,7 +60,7 @@ class ValueRange:
                 if kind.is_integer else float(text)
             )
         except (AttributeError, TypeError, ValueError) as error:
-            raise ValueError(f"Invalid scan value: {text!r}") from error
+            raise LocalizedValueError("error.scanner.invalid_value", text=repr(text)) from error
         if kind.is_integer:
             return cls(center - tolerance, center + tolerance)
 
@@ -90,9 +91,9 @@ class ValueRange:
         try:
             tolerance = int(text, 0) if kind.is_integer else float(text)
         except ValueError as error:
-            raise ValueError(f"Invalid tolerance: {text!r}") from error
+            raise LocalizedValueError("error.scanner.invalid_tolerance", text=repr(text)) from error
         if not tolerance >= 0:
-            raise ValueError(f"Invalid tolerance: {text!r}")
+            raise LocalizedValueError("error.scanner.invalid_tolerance", text=repr(text))
         return tolerance
 
     @staticmethod
@@ -337,9 +338,9 @@ class ScanWorker(QThread):
         if auto_types and self.scan_mode not in {
             "exact", "greater_than", "less_than", "between"
         }:
-            raise ValueError("Auto data type requires a value-based first scan")
+            raise LocalizedValueError("error.scanner.auto_needs_value")
         if self.scan_mode in PREVIOUS_VALUE_MODES:
-            raise ValueError("This scan type requires a previous scan")
+            raise LocalizedValueError("error.scanner.needs_previous")
 
         value_types = AUTO_VALUE_TYPES if auto_types else (self.value_type,)
         formats = {
@@ -636,7 +637,8 @@ class ScanWorker(QThread):
         try:
             return "<" + cls._VALUE_FORMATS[value_type]
         except KeyError as error:
-            raise ValueError(f"Unsupported data type: {value_type}") from error
+            raise LocalizedValueError("error.value_types.unsupported_type",
+                                      type=value_type) from error
 
     def _get_numpy_dtype(self):
         return self._get_numpy_dtype_for(self.value_type)
@@ -646,7 +648,8 @@ class ScanWorker(QThread):
         try:
             return cls._NUMPY_DTYPES[value_type]
         except KeyError as error:
-            raise ValueError(f"Unsupported data type: {value_type}") from error
+            raise LocalizedValueError("error.value_types.unsupported_type",
+                                      type=value_type) from error
 
     @staticmethod
     def _scan_ranges(mappings):
@@ -663,7 +666,7 @@ class ScanWorker(QThread):
             )
             return struct.unpack(value_format, struct.pack(value_format, parsed))[0]
         except (AttributeError, OverflowError, TypeError, ValueError, struct.error) as error:
-            raise ValueError(f"Invalid scan value: {value!r}") from error
+            raise LocalizedValueError("error.scanner.invalid_value", text=repr(value)) from error
 
     def _matches_array(self, values, target, upper, previous=None):
         if self.scan_mode == "unknown_start":
@@ -748,4 +751,5 @@ class ValueRefreshWorker(QThread):
         try:
             return "<" + _VALUE_FORMATS[value_type]
         except KeyError as error:
-            raise ValueError(f"Unsupported data type: {value_type}") from error
+            raise LocalizedValueError("error.value_types.unsupported_type",
+                                      type=value_type) from error

@@ -31,7 +31,7 @@ from dataclasses import dataclass
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import logs
+from hermes.core import logs, messages
 from hermes.core import sessions
 from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
@@ -348,7 +348,7 @@ class CallGraphWorker(QThread):
             self._serve(script.exports_sync)
         except FRIDA_ERRORS + (frida.RPCException, OSError, RuntimeError) as error:
             if not self.isInterruptionRequested():
-                self.worker_failed.emit(str(error))
+                self.worker_failed.emit(messages.describe(error))
         finally:
             for close in (script and script.unload, session and session.detach):
                 if close:
@@ -371,7 +371,7 @@ class CallGraphWorker(QThread):
             except NotCached:
                 self.request_failed.emit(request_id, self.NOT_CACHED)
             except frida.RPCException as error:
-                self.request_failed.emit(request_id, str(error).split("\n", 1)[0])
+                self.request_failed.emit(request_id, messages.describe(error))
 
     # --- Answers ---------------------------------------------------------------
     def _answer_callees(self, api, request_id, method):

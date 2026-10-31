@@ -1014,6 +1014,7 @@ def test_the_call_dialog_calls_ufunctions_static_and_on_found_objects(tmp_path, 
 @requires_target
 def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
+    from hermes.core import messages
     from hermes.features.scripts import ScriptSpec, ScriptWorker
 
     target = _Target(_build(tmp_path))
@@ -1145,7 +1146,7 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         typo = worker.add_script(ScriptSpec('ctx.find("BP_Hero_C").call("Jump");'))
         _wait_for(qt_app, lambda: typo in added)
         run = run_on_game_thread(typo)
-        assert "has no function Jump with 0 argument(s)" in run["error"]
+        assert "has no function Jump with 0 argument(s)" in messages.describe(run["error"])
 
         # A repeating script runs again and again while the game runs.
         runs.clear()

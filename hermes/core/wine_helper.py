@@ -21,6 +21,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from hermes.core.messages import LocalizedError
 from hermes.platform import process_start_time
 
 # The helper's source and build script; build.sh puts the executables into
@@ -42,7 +43,7 @@ _build_tried = False
 _COPIED_WINE_VARS = {"WINEPREFIX", "WINEARCH"}
 
 
-class HelperError(RuntimeError):
+class HelperError(LocalizedError, RuntimeError):
     """The helper could not load the DLL."""
 
 
@@ -73,8 +74,8 @@ def helper_path(bits, build=True):
     if not path.exists() and build:
         build_helpers(path.parent)
     if not path.exists():
-        raise HelperError(f"Helper not built: {path} (run {HELPER_DIR / 'build.sh'}; "
-                          "it needs mingw64-gcc and mingw32-gcc, or pip install ziglang)")
+        raise HelperError("error.helper.not_built", path=path,
+                          script=HELPER_DIR / "build.sh")
     return path
 
 
@@ -105,7 +106,7 @@ def read_environ(pid, proc_root="/proc"):
     try:
         raw = (Path(proc_root) / str(pid) / "environ").read_bytes()
     except OSError as error:
-        raise HelperError(f"Cannot read the game's environment: {error}") from error
+        raise HelperError("error.helper.environment", error=error) from error
     environ = {}
     for entry in raw.split(b"\0"):
         name, sep, value = entry.partition(b"=")
@@ -154,7 +155,7 @@ def wine_loader(pid, environ, proc_root="/proc"):
     try:
         exe = (Path(proc_root) / str(pid) / "exe").readlink()
     except OSError as error:
-        raise HelperError(f"Cannot read the game's executable: {error}") from error
+        raise HelperError("error.helper.executable", error=error) from error
     loader = environ.get("WINELOADER")
     roots = (Path("/"), Path(proc_root) / str(pid) / "root")
     for root in roots:
@@ -168,7 +169,7 @@ def wine_loader(pid, environ, proc_root="/proc"):
             if found:
                 return found
             directory = directory.parent
-    raise HelperError(f"No wine program found near {exe}")
+    raise HelperError("error.helper.no_wine", exe=exe)
 
 
 def helper_environment(environ, base=None):
@@ -256,7 +257,7 @@ def match_process(processes, exe_name, started_ms, bits=None, siblings_ms=()):
     candidates = [proc for proc in processes if proc.name.lower() == exe_name
                   and (bits is None or proc.bits in (0, bits))]
     if not candidates:
-        raise HelperError(f"{exe_name} is not among the prefix's Windows processes")
+        raise HelperError("error.helper.no_windows_process", name=exe_name)
     if len(candidates) == 1 or started_ms is None:
         return candidates[0]
     if len(siblings_ms) == len(candidates) and started_ms in siblings_ms:
@@ -279,11 +280,9 @@ class Helper:
         try:
             socket = server_socket(prefix)
         except OSError as error:
-            raise HelperError(f"Wine prefix {prefix} not accessible: {error}") from error
+            raise HelperError("error.helper.prefix", prefix=prefix, error=error) from error
         if not socket.exists():
-            raise HelperError(
-                f"No wineserver socket for {prefix} at {socket}; the game's "
-                "/tmp may not be shared with the host")
+            raise HelperError("error.helper.no_server", prefix=prefix, socket=socket)
 
     def run(self, *args):
         """Run the helper with ``args``; return ``(exit code, stdout)``."""
@@ -293,14 +292,14 @@ class Helper:
                 env=self.env, stdin=subprocess.DEVNULL, capture_output=True,
                 timeout=HELPER_TIMEOUT, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise HelperError(f"Could not run the helper: {error}") from error
+            raise HelperError("error.helper.run", error=error) from error
         return done.returncode, done.stdout.decode("utf-8", "replace")
 
     def windows_pid(self, exe_name):
         """Return the game's Windows process ID."""
         code, output = self.run("list")
         if code != 0:
-            raise HelperError(f"Helper could not list processes: {output.strip()}")
+            raise HelperError("error.helper.list", output=output.strip())
         return match_process(parse_list(output), exe_name, start_time_ms(self.pid),
                              self.bits, sibling_start_times(self.pid, exe_name)).pid
 
@@ -313,5 +312,7 @@ class Helper:
         lines = [line.strip() for line in output.splitlines() if line.strip()]
         result = lines[-1] if lines else ""
         if code != 0 or not result.startswith("ok"):
-            raise HelperError(
-                f"Helper failed (exit {code}): {result.removeprefix('error ') or 'no output'}")
+            detail = result.removeprefix("error ")
+            if not detail:
+                raise HelperError("error.helper.failed_silent", code=code)
+            raise HelperError("error.helper.failed", code=code, detail=detail)

@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import logs
+from hermes.core import logs, messages
 from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
 from hermes.core.frida_attach import attach_session
@@ -191,10 +191,10 @@ class CatalogWorker(QThread):
                     self.assembly_loaded.emit(
                         name, catalog_methods(name, classes, self.engine.id))
                 except frida.RPCException as error:
-                    self.assembly_failed.emit(name, str(error))
+                    self.assembly_failed.emit(name, messages.describe(error))
         except FRIDA_ERRORS + (frida.RPCException, OSError, RuntimeError) as error:
             if not self.isInterruptionRequested():
-                self.catalog_failed.emit(str(error))
+                self.catalog_failed.emit(messages.describe(error))
         finally:
             if script is not None:
                 try:

@@ -40,6 +40,8 @@ import math
 import re
 from dataclasses import dataclass, field
 
+from hermes.core.messages import LocalizedValueError
+
 
 _TRANSFORMS = {}
 
@@ -151,15 +153,15 @@ def create_transform(kind, **params):
     try:
         cls = _TRANSFORMS[kind]
     except KeyError as error:
-        raise ValueError(f"Unknown transform kind: {kind}") from error
+        raise LocalizedValueError("error.transforms.unknown_kind", kind=kind) from error
     return cls(**params)
 
 
 def _require_number(name, value):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{name} must be a number, got {value!r}")
+        raise LocalizedValueError("error.transforms.not_number", name=name, value=repr(value))
     if not math.isfinite(value):
-        raise ValueError(f"{name} must be finite, got {value!r}")
+        raise LocalizedValueError("error.transforms.not_finite", name=name, value=repr(value))
     return value
 
 
@@ -229,9 +231,8 @@ function (ctx) {
     def validate(self, params):
         _require_number("factor", params["factor"])
         if params["direction"] not in self.DIRECTIONS:
-            raise ValueError(
-                f"direction must be one of {', '.join(self.DIRECTIONS)}"
-            )
+            raise LocalizedValueError("error.transforms.choice", name="direction",
+                                      choices=", ".join(self.DIRECTIONS))
         return params
 
 
@@ -285,13 +286,13 @@ function (ctx) {
         minimum = params["minimum"]
         maximum = params["maximum"]
         if minimum is None and maximum is None:
-            raise ValueError("clamp needs a minimum, a maximum or both")
+            raise LocalizedValueError("error.transforms.clamp_bounds")
         if minimum is not None:
             _require_number("minimum", minimum)
         if maximum is not None:
             _require_number("maximum", maximum)
         if minimum is not None and maximum is not None and minimum > maximum:
-            raise ValueError("minimum must not be greater than maximum")
+            raise LocalizedValueError("error.transforms.clamp_order")
         return params
 
 
@@ -311,7 +312,7 @@ class ScriptTransform(ValueTransform):
 
     def __init__(self, source, **params):
         if not isinstance(source, str) or not source.strip():
-            raise ValueError("script transform needs a function source")
+            raise LocalizedValueError("error.transforms.script_source")
         self.source = source
         super().__init__(**params)
 
@@ -341,11 +342,12 @@ class TemplateTransform(ValueTransform):
             name = parameter.label or parameter.name
             if value is None:
                 if not parameter.optional and parameter.kind != "code":
-                    raise ValueError(f"{name} needs a value")
+                    raise LocalizedValueError("error.transforms.needs_value", name=name)
             elif parameter.kind == "number":
                 _require_number(name, value)
             elif parameter.kind == "choice" and value not in parameter.choices:
-                raise ValueError(f"{name} must be one of {', '.join(map(str, parameter.choices))}")
+                raise LocalizedValueError("error.transforms.choice", name=name,
+                                          choices=", ".join(map(str, parameter.choices)))
             values[parameter.name] = value
         return values
 

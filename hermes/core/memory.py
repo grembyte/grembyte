@@ -3,6 +3,7 @@
 import os
 import re
 
+from hermes.core.messages import LocalizedError, LocalizedValueError
 from hermes.core.pointer import module_bases
 from hermes.platform import ProcessMemory
 from hermes.core.value_types import value_type as get_value_type
@@ -14,11 +15,11 @@ _HEX = re.compile(r"(0x)?[0-9a-fA-F]+", re.IGNORECASE)
 _LAST_OFFSET = re.compile(r"\s*(?P<sign>[+-])\s*(?P<offset>(0x)?[0-9a-fA-F]+)\s*$", re.IGNORECASE)
 
 
-class UnknownModuleError(ValueError):
+class UnknownModuleError(LocalizedError, ValueError):
     """An address names a module the process has not loaded."""
 
     def __init__(self, module):
-        super().__init__(f"Unknown module: {module}")
+        super().__init__("error.memory.unknown_module", module=module)
         self.module = module
 
 
@@ -85,11 +86,11 @@ def parse_address(text, mappings=None):
                 continue
             address = bases[base] + offset
         if address < 0:
-            raise ValueError(f"Negative address: {text!r}")
+            raise LocalizedValueError("error.memory.negative_address", text=repr(text))
         return address
     if unknown is not None:
         raise UnknownModuleError(unknown)
-    raise ValueError(f"Invalid address: {text!r}")
+    raise LocalizedValueError("error.memory.invalid_address", text=repr(text))
 
 
 def describe_address(mappings, address):

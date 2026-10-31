@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy.exc import SQLAlchemyError
 
 from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES
+from hermes.db.repository.hooks import DuplicateTemplateError
 from hermes.hooks.transforms import PARAMETER_NAME, TransformDefinition, TransformParameter
 from hermes.hooks.sandbox import TransformSandbox
 from hermes.hooks.syntax import BODY, FUNCTION
@@ -510,13 +511,12 @@ class TemplateDialog(QDialog):
         try:
             definition = self.editor_definition()
             template_id = self._repository.save_template(definition, self._current_id)
+        except DuplicateTemplateError:
+            self.error_label.setText(self.translations["templates.name_exists"].format(
+                name=self.name_input.text().strip()))
+            return False
         except ValueError as error:
-            message = str(error)
-            if "already exists" in message:
-                message = self.translations["templates.name_exists"].format(
-                    name=self.name_input.text().strip()
-                )
-            self.error_label.setText(message)
+            self.error_label.setText(str(error))
             return False
         except SQLAlchemyError as error:
             self.error_label.setText(self.translations["hooks.db_failed"].format(message=error))

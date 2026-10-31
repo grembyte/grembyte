@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from PyQt6.QtQml import QJSEngine  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import messages
 from hermes.core.value_types import VALUE_TYPES
 
 
@@ -24,7 +25,7 @@ VALUE_LIMITS = {
 }
 
 _RUNNER = r"""
-(function (fn, data, state) {
+(function (fn, data, state, callError) {
   // QJSEngine has no globalThis.
   const global = Function('return this')();
   const logs = [];
@@ -41,7 +42,7 @@ _RUNNER = r"""
   const previousConsole = global.console;
   global.console = { log, info: log, warn: log, error: log, debug: log };
   // Game code is out of reach here (method hooks).
-  const call = () => { throw new Error('ctx.call() only works in the game'); };
+  const call = () => { throw new Error(callError); };
   const ctx = Object.assign({ call }, data, { state, log });
   let result;
   let error = null;
@@ -90,7 +91,7 @@ def normalize_value(value, value_type):
     """Mirror the agent: finite numbers only; integers truncated and clamped."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) \
             or not math.isfinite(value):
-        raise ValueError(f"Transform returned {value}, expected a finite number")
+        raise messages.LocalizedValueError("error.hooks.transform_not_number", value=value)
     limits = VALUE_LIMITS[value_type]
     if limits is None:
         return float(value)
@@ -109,6 +110,11 @@ class TransformSandbox:
         """Start again with an empty ``ctx.state``."""
         self._state = self._engine.newObject()
 
+    def _call(self, fn, data):
+        """Run ``fn`` with ``data`` as ctx through the runner."""
+        return self._runner.call([fn, self._engine.toScriptValue(data), self._state,
+                                  messages.text("error.hooks.sandbox_call")])
+
     def run_method(self, source, params, result):
         """Call a method hook's ``source`` like the agent would for ``result``.
 
@@ -120,11 +126,11 @@ class TransformSandbox:
         if fn.isError():
             return SandboxResult(error=fn.toString())
         if not fn.isCallable():
-            return SandboxResult(error="The source does not evaluate to a function")
+            return SandboxResult(error=messages.text("error.hooks.not_a_function"))
         data = {"phase": "after", "result": result, "args": {}, "refs": {}, "this": None,
                 "caller": None,
                 "params": dict(params), "method": "Test", "hookId": 0, "threadId": 0}
-        outcome = self._runner.call([fn, self._engine.toScriptValue(data), self._state])
+        outcome = self._call(fn, data)
         if outcome.isError():
             return SandboxResult(error=outcome.toString())
         outcome = outcome.toVariant()
@@ -146,7 +152,7 @@ class TransformSandbox:
         if fn.isError():
             return SandboxResult(error=fn.toString())
         if not fn.isCallable():
-            return SandboxResult(error="The source does not evaluate to a function")
+            return SandboxResult(error=messages.text("error.hooks.not_a_function"))
         data = {
             "old": old,
             "new": new,
@@ -158,7 +164,7 @@ class TransformSandbox:
             "threadId": 0,
             "hookId": 0,
         }
-        outcome = self._runner.call([fn, self._engine.toScriptValue(data), self._state])
+        outcome = self._call(fn, data)
         if outcome.isError():
             return SandboxResult(error=outcome.toString())
         outcome = outcome.toVariant()

@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
+from hermes.core import messages
 from hermes.features.method_call import (
     CHAR,
     ENGINE_NAME,
@@ -341,7 +342,7 @@ class MethodCallDialog(QDialog):
             return
         t = self.translations
         if "exception" in answer:
-            self._log(f"{line}  ⚠ {answer['exception']}")
+            self._log(f"{line}  ⚠ {messages.describe(answer['exception'])}")
             self.status_label.setText(t["call.threw"])
         else:
             result = answer.get("result")

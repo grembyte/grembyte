@@ -14,7 +14,7 @@ const mono = (() => {
     const address = name => {
       const found = module.findExportByName(name);
       if (found === null)
-        throw new Error(`${module.name} does not export ${name}`);
+        throw hermesError('error.mono.no_export', { module: module.name, name });
       return found;
     };
     // Exclusive: the calls are short, and some run in exception handlers.
@@ -338,7 +338,7 @@ const mono = (() => {
       image = loadedImages(api.catalog).find(
         candidate => api.imageName(candidate).readUtf8String() === identity.image) || NULL;
     if (image.isNull())
-      throw new Error(`assembly ${identity.image} is not loaded (yet)`);
+      throw hermesError('error.mono.assembly_not_loaded_yet', { assembly: identity.image });
     return image;
   }
 
@@ -348,32 +348,31 @@ const mono = (() => {
   const METHOD_PINVOKE = 0x2000;
   const IMPL_NOT_IL = 0x0003 | 0x1000;
 
-  function codeless(method) {
-    // Why a method has no code Mono could compile, or null.
+  function codeless(method, name) {
+    // The error why a method has no code Mono could compile, or null.
     const flagsOf = (api.catalog || api.invoke || {}).methodFlags;
     if (flagsOf === undefined)
       return null;
     const implFlags = Memory.alloc(4);
     const flags = flagsOf(method, implFlags);
     if (flags & METHOD_ABSTRACT)
-      return 'is abstract and has no code of its own: monitor the overrides in its subclasses';
+      return hermesError('error.mono.abstract', { method: name });
     if ((flags & METHOD_PINVOKE) || (implFlags.readU32() & IMPL_NOT_IL))
-      return 'is implemented natively, not in IL';
+      return hermesError('error.mono.native', { method: name });
     return null;
   }
 
   function compileOnThread(domain, identity) {
     const method = resolveMethod(identity);
-    const reason = codeless(method);
+    const reason = codeless(method, identity.method);
     if (reason !== null)
-      throw new Error(`${identity.method} ${reason}`);
+      throw reason;
     const code = codeOf(domain, method);
     if (code === null) {
       const head = splitSignature(identity.method);
       if (head !== null && /`\d+$/.test(head.head))
-        throw new Error(`${identity.method} belongs to a generic class and has no code of its ` +
-          'own: monitor an instance with type arguments, e.g. List`1<int>');
-      throw new Error(`Mono did not compile ${identity.method}`);
+        throw hermesError('error.mono.generic_definition', { method: identity.method });
+      throw hermesError('error.mono.not_compiled', { method: identity.method });
     }
     return { method, ...code };
   }
@@ -405,8 +404,8 @@ const mono = (() => {
 
   function resolveMethod(identity) {
     // The method of an identity (on a thread Mono knows).
-    const notFound = () => new Error(`${identity.method} is not in ${identity.image} ` +
-      '(game updated?)');
+    const notFound = () => hermesError('error.mono.method_not_found',
+      { method: identity.method, assembly: identity.image });
     const definition = api.getMethod(findImage(identity), identity.token, NULL);
     if (definition.isNull())
       throw notFound();
@@ -454,7 +453,7 @@ const mono = (() => {
     // A type as Mono describes it: 'Ns.Map`2<int, Ns.Item[]>' is
     // { name: 'Ns.Map`2', args: [{ name: 'int', ... }, { ..., suffix: '[]' }], suffix: '' }.
     let at = 0;
-    const fail = () => new Error(`cannot read the type ${text}`);
+    const fail = () => hermesError('error.mono.unreadable_type', { type: text });
     const suffix = () => {
       const start = at;
       for (;;) {
@@ -524,8 +523,7 @@ const mono = (() => {
 
   function genericsApi() {
     if (api.generics === null || api.catalog === null)
-      throw new Error('this Mono runtime lacks the functions for generic classes ' +
-        '(mono_reflection_type_from_name and others)');
+      throw hermesError('error.mono.no_generics');
     return api.generics;
   }
 
@@ -541,10 +539,11 @@ const mono = (() => {
     const name = reflectionName(g, head);
     const type = g.typeFromName(Memory.allocUtf8String(name), image);
     if (type.isNull())
-      throw new Error(`Mono does not know the type ${name}`);
+      throw hermesError('error.mono.unknown_type', { type: name });
     const method = methodByToken(g, g.typeClass(type), token);
     if (method === null)
-      throw new Error(`${cString(api.fullName(definition, 1))} is not in ${name}`);
+      throw hermesError('error.mono.method_not_in_type',
+                        { method: cString(api.fullName(definition, 1)), type: name });
     return method;
   }
 
@@ -634,7 +633,7 @@ const mono = (() => {
         `[${reflectionName(g, arg)}, ${assemblyOf(g, arg)}]`).join(',') + ']';
     for (const part of parsed.suffix.match(/\[[^\]]*\]|[&*]/g) || []) {
       if (part[0] !== '[')
-        throw new Error(`type arguments with ${part} are not supported`);
+        throw hermesError('error.mono.unsupported_type_argument', { part });
       name += part;
     }
     return name;
@@ -646,7 +645,7 @@ const mono = (() => {
       return api.imageName(g.corlib()).readUtf8String();
     const klass = TYPE_ALIASES[parsed.name] !== undefined ? NULL : classByName(g, parsed.name);
     if (TYPE_ALIASES[parsed.name] === undefined && klass.isNull())
-      throw new Error(`class ${parsed.name} not found`);
+      throw hermesError('error.mono.class_not_found', { name: parsed.name });
     const image = klass.isNull() ? g.corlib() : api.classImage(klass);
     return api.imageName(image).readUtf8String();
   }
@@ -910,7 +909,7 @@ gpointer run_batch (gpointer data) {
   function runBatch(kind, inputs, progress) {
     // A promise of [[first, second], ...] for the inputs (see BATCH_SOURCE).
     if (!refresh())
-      return Promise.reject(new Error('no Mono runtime in the process'));
+      return Promise.reject(hermesError('error.mono.no_runtime'));
     const code = batchFunctions();
     const count = inputs.length;
     const size = Process.pointerSize * Math.max(count, 1);
@@ -1002,7 +1001,7 @@ gpointer run_batch (gpointer data) {
   async function compile(identity) {
     // A promise of { start, size }.
     if (!refresh())
-      throw new Error('no Mono runtime in the process');
+      throw hermesError('error.mono.no_runtime');
     return onMonoThread(domain => {
       const { start, size } = compileOnThread(domain, identity);
       return { start, size };
@@ -1019,9 +1018,9 @@ gpointer run_batch (gpointer data) {
 
   function typesApi() {
     if (!refresh())
-      throw new Error('no Mono runtime in the process');
+      throw hermesError('error.mono.no_runtime');
     if (api.types === null)
-      throw new Error('this Mono runtime lacks the functions to read signatures');
+      throw hermesError('error.mono.no_signatures');
     return api.types;
   }
 
@@ -1068,7 +1067,7 @@ gpointer run_batch (gpointer data) {
     const t = typesApi();
     const signature = t.methodSignature(method);
     if (signature.isNull())
-      throw new Error(`no signature for method ${method}`);
+      throw hermesError('error.mono.no_signature', { method });
     const count = t.paramCount(signature);
     const names = Memory.alloc(Process.pointerSize * Math.max(count, 1));
     t.paramNames(method, names);
@@ -1312,7 +1311,7 @@ gpointer run_batch (gpointer data) {
   function onMainThread(work) {
     // A promise of work()'s result, computed on Unity's main thread.
     if (api === null || api.invoke === null)
-      return Promise.reject(new Error('this Mono runtime cannot run game code'));
+      return Promise.reject(hermesError('error.mono.no_invoke'));
     mainThreadId();  // found here, not first in the hook on a game thread
     return new Promise((resolve, reject) => {
       const job = { work, resolve, reject };
@@ -1320,8 +1319,7 @@ gpointer run_batch (gpointer data) {
         const index = mainQueue.indexOf(job);
         if (index >= 0)
           mainQueue.splice(index, 1);
-        reject(new Error('the game did not run code on its main thread for 3 s ' +
-                         '(still loading, or no Unity game?)'));
+        reject(hermesError('error.mono.main_thread_timeout'));
       }, MAIN_TIMEOUT);
       mainQueue.push(job);
       if (mainHook === null)
@@ -1491,12 +1489,12 @@ gpointer run_batch (gpointer data) {
     for (const current of classChain(klass))
       getComponents = methodTakingType(current, 'GetComponents') || getComponents;
     if (getComponents === null)
-      throw new Error('GameObject.GetComponents(Type) not found');
+      throw hermesError('error.mono.no_get_components');
     const image = api.classImage(klass);
     const component = api.invoke.classFromName(image, Memory.allocUtf8String('UnityEngine'),
                                                Memory.allocUtf8String('Component'));
     if (component.isNull())
-      throw new Error('UnityEngine.Component not found');
+      throw hermesError('error.mono.no_component_class');
     const params = Memory.alloc(Process.pointerSize);
     params.writePointer(api.invoke.typeObject(api.currentDomain(), api.types.classType(component)));
     return invoke(getComponents, gameObject, params);
@@ -1512,7 +1510,7 @@ gpointer run_batch (gpointer data) {
     if (klass !== undefined)
       return klass;
     if (api.catalog === null || api.invoke === null)
-      throw new Error('this Mono runtime cannot look up classes');
+      throw hermesError('error.mono.no_class_lookup');
     const dot = fullName.lastIndexOf('.');
     const space = Memory.allocUtf8String(dot < 0 ? '' : fullName.substring(0, dot));
     const name = Memory.allocUtf8String(fullName.substring(dot + 1));
@@ -1525,7 +1523,7 @@ gpointer run_batch (gpointer data) {
       }
     }
     if (klass === null)
-      throw new Error(`class ${fullName} not found`);
+      throw hermesError('error.mono.class_not_found', { name: fullName });
     classesByName.set(fullName, klass);
     return klass;
   }
@@ -1546,8 +1544,9 @@ gpointer run_batch (gpointer data) {
           return method;
       }
     }
-    throw new Error(`${layout(klass).name} has no ${wantStatic ? 'static ' : ''}method ` +
-                    `${name} with ${argumentCount} argument(s)`);
+    const values = { class_name: layout(klass).name, method: name, count: argumentCount };
+    throw wantStatic ? hermesError('error.mono.no_static_method', values)
+      : hermesError('error.mono.no_method', values);
   }
 
   function findObject(className, named = null) {
@@ -1568,15 +1567,15 @@ gpointer run_batch (gpointer data) {
     const unityObject = classChain(klass).find(
       current => layout(current).name === 'UnityEngine.Object');
     if (unityObject === undefined)
-      throw new Error(`${className} is no UnityEngine.Object; only Unity objects can be found`);
+      throw hermesError('error.mono.not_unity_object', { class_name: className });
     const findObjects = methodTakingType(unityObject, 'FindObjectsOfType');
     if (findObjects === null)
-      throw new Error('UnityEngine.Object.FindObjectsOfType(Type) not found');
+      throw hermesError('error.mono.no_find_objects');
     const params = Memory.alloc(Process.pointerSize);
     params.writePointer(api.invoke.typeObject(api.currentDomain(), api.types.classType(klass)));
     const { result, exception } = invoke(findObjects, NULL, params);
     if (!exception.isNull())
-      throw new Error('FindObjectsOfType failed (only possible on Unity\'s main thread)');
+      throw hermesError('error.mono.find_objects_failed');
     const found = [];
     if (result.isNull())
       return found;
@@ -1601,7 +1600,7 @@ gpointer run_batch (gpointer data) {
 
   function newString(text) {
     if (api.stringNew === null)
-      throw new Error('this Mono runtime cannot create strings');
+      throw hermesError('error.mono.no_strings');
     return api.stringNew(api.currentDomain(), Memory.allocUtf8String(text));
   }
 
@@ -1628,9 +1627,9 @@ gpointer run_batch (gpointer data) {
 
   function catalogApi() {
     if (!refresh())
-      throw new Error('no Mono runtime in the process');
+      throw hermesError('error.mono.no_runtime');
     if (api.catalog === null)
-      throw new Error('this Mono runtime lacks the functions for a catalog');
+      throw hermesError('error.mono.no_catalog');
     return api.catalog;
   }
 
@@ -1686,7 +1685,7 @@ gpointer run_batch (gpointer data) {
     const image = loadedImages(c).find(
       candidate => api.imageName(candidate).readUtf8String() === assembly);
     if (image === undefined)
-      throw new Error(`assembly ${assembly} is not loaded`);
+      throw hermesError('error.mono.assembly_not_loaded', { assembly });
     return image;
   }
 
@@ -1754,7 +1753,7 @@ gpointer run_batch (gpointer data) {
     // token (u32), size (u32), code. Size 0: no code (abstract, native, ...).
     const c = catalogApi();
     if (api.il === null)
-      throw new Error('this Mono runtime lacks the functions to read IL code');
+      throw hermesError('error.mono.no_il');
     return onMonoThread(() => {
       const image = imageNamed(c, assembly);
       const sizes = Memory.alloc(8);

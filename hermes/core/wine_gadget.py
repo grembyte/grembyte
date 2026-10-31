@@ -36,6 +36,7 @@ from pathlib import Path
 import frida
 
 from hermes.core import activity, wine_helper
+from hermes.core.messages import LocalizedError
 from hermes.platform import process_start_time
 from hermes.core.ptrace_engine import (
     _WAIT_ANY,
@@ -102,7 +103,7 @@ class _Regs(ctypes.Structure):
     _fields_ = [(name, ctypes.c_uint64) for name in _REG_NAMES]
 
 
-class GadgetError(RuntimeError):
+class GadgetError(LocalizedError, RuntimeError):
     """The gadget could not be loaded."""
 
 
@@ -257,23 +258,23 @@ def ensure_gadget(bits, version=None, download=True):
     if target.exists():
         return target
     if not download:
-        raise GadgetError(f"Gadget not present: {target}")
+        raise GadgetError("error.gadget.not_present", path=target)
     url = _GADGET_URL.format(version=version, arch=arch)
     try:
         digest = _published_digest(version, url.rsplit("/", 1)[1])
         with urllib.request.urlopen(url, timeout=60) as response:
             compressed = response.read()
         if digest is not None and hashlib.sha256(compressed).hexdigest() != digest:
-            raise GadgetError(f"The gadget from {url} does not match its SHA-256 {digest}")
+            raise GadgetError("error.gadget.digest", url=url, digest=digest)
         dll = lzma.decompress(compressed)
         if not _is_pe(dll, arch):
-            raise GadgetError(f"The gadget from {url} is no {arch} DLL")
+            raise GadgetError("error.gadget.not_pe", url=url, arch=arch)
         # Written in full or not at all: a cut-off file would be taken as the gadget.
         partial = target.with_name(target.name + ".part")
         partial.write_bytes(dll)
         os.replace(partial, target)
     except (OSError, ValueError, lzma.LZMAError) as error:
-        raise GadgetError(f"Could not download the gadget from {url}: {error}") from error
+        raise GadgetError("error.gadget.download", url=url, error=error) from error
     return target
 
 
@@ -340,7 +341,7 @@ def _free_port():
                 return port
             except OSError:
                 continue
-    raise GadgetError("No free port for the gadget listener")
+    raise GadgetError("error.gadget.no_port")
 
 
 # -- ptrace loader ------------------------------------------------------------
@@ -393,10 +394,7 @@ class _Tracee:
                 if tid not in self._attached:
                     self._attach_thread(tid)
         if not self._attached:
-            raise GadgetError(
-                "Could not ptrace the game. Set "
-                "/proc/sys/kernel/yama/ptrace_scope to 0 and detach any other "
-                "debugger (including a running Frida session).")
+            raise GadgetError("error.gadget.ptrace")
 
     def _attach_thread(self, tid):
         try:
@@ -604,7 +602,7 @@ def _trap_site(memory, images, load_library):
         address = _resolve(memory, images, module, name)
         if address and address != load_library:
             return address
-    raise GadgetError("No function to anchor the return trap")
+    raise GadgetError("error.gadget.no_trap")
 
 
 def _load_library_address(memory, images):
@@ -612,7 +610,7 @@ def _load_library_address(memory, images):
         address = _resolve(memory, images, module, "LoadLibraryW")
         if address:
             return address
-    raise GadgetError("Could not find LoadLibraryW in the target")
+    raise GadgetError("error.gadget.no_load_library")
 
 
 def _hot_points(memory, images, extra=()):
@@ -642,7 +640,7 @@ def load_gadget(pid, timeout=20.0, download=True, hot_points=(), method=METHOD_A
     try:
         images = pe_images(pid, memory)
         if not images:
-            raise GadgetError("No PE modules found; is this really a Wine process?")
+            raise GadgetError("error.gadget.no_pe_modules")
         main = next((img for img in images if img.name.endswith(".exe")), images[0])
         # A 32-bit game under the new WoW64 also maps 64-bit system DLLs of the
         # same names; only the game's own architecture is of use.
@@ -661,14 +659,12 @@ def load_gadget(pid, timeout=20.0, download=True, hot_points=(), method=METHOD_A
                 return url
             except wine_helper.HelperError as error:
                 if method == METHOD_HELPER:
-                    raise GadgetError(str(error)) from error
+                    raise GadgetError("error.gadget.helper", error=error) from error
                 helper_error = error
                 log.warning("Windows helper could not load the gadget, "
                             "trying ptrace: %s", error)
         if main.bits != 64:
-            raise GadgetError(
-                "The Frida gadget could not be loaded into this 32-bit game "
-                f"({helper_error}). Use the ptrace backend.")
+            raise GadgetError("error.gadget.no_32bit", error=helper_error)
         _load_with_ptrace(pid, memory, images, dll, timeout, hot_points)
         _remember_loader(pid, METHOD_PTRACE)
     finally:
@@ -717,7 +713,7 @@ def _load_with_ptrace(pid, memory, images, dll, timeout, hot_points):
     trap = _trap_site(memory, images, load_library)
     hot = _hot_points(memory, images, hot_points)
     if not hot:
-        raise GadgetError("No hot function found to borrow a thread at")
+        raise GadgetError("error.gadget.no_hot_function")
     wide = (_windows_path(dll) + "\0").encode("utf-16-le")
 
     tracee = _Tracee(pid)
@@ -727,9 +723,7 @@ def _load_with_ptrace(pid, memory, images, dll, timeout, hot_points):
         tid, _addr = tracee.catch_breakpoint(timeout)
         tracee.clear_breakpoints(memory)
         if tid is None:
-            raise GadgetError(
-                "No thread reached a hot function in time. The game may be "
-                "idle; try again once it is interacting.")
+            raise GadgetError("error.gadget.idle")
         _call_load_library(memory, tracee, tid, load_library, trap, wide, timeout)
     finally:
         tracee.clear_breakpoints(memory)
@@ -786,7 +780,7 @@ def _call_load_library(memory, tracee, tid, load_library, trap, wide, timeout):
                 continue
             if not os.WIFSTOPPED(status):
                 returned = True  # nothing left to restore
-                raise GadgetError("The borrowed thread exited during the call")
+                raise GadgetError("error.gadget.thread_exited")
             if status >> 16 == PTRACE_EVENT_CLONE:
                 _ptrace(PTRACE_CONT, tid, 0, 0)
                 continue
@@ -801,10 +795,9 @@ def _call_load_library(memory, tracee, tid, load_library, trap, wide, timeout):
             # Its own signals reach it, e.g. a guard page fault Wine handles.
             _ptrace(PTRACE_CONT, tid, 0, 0 if stop_signal == signal.SIGSTOP else stop_signal)
         if result is None:
-            raise GadgetError("LoadLibraryW did not return within the timeout; "
-                              "the borrowed thread is left in the call")
+            raise GadgetError("error.gadget.load_timeout")
         if not result:
-            raise GadgetError("LoadLibraryW returned NULL; the gadget did not load")
+            raise GadgetError("error.gadget.load_null")
     finally:
         tracee.clear_breakpoints(memory, [trap])
         if returned:
@@ -863,7 +856,7 @@ def _wait_listening(pid, timeout=5.0):
         if port is not None:
             return port
         time.sleep(0.05)
-    raise GadgetError("The gadget loaded but does not listen for Frida")
+    raise GadgetError("error.gadget.not_listening")
 
 
 def _device(url, fresh=False):
@@ -897,8 +890,7 @@ def connect(pid, download=True):
                                 seconds=round(time.monotonic() - began, 3))
                 if isinstance(error, GadgetError):
                     raise
-                raise GadgetError(
-                    f"Could not load the Frida gadget into the game: {error}") from error
+                raise GadgetError("error.gadget.load", error=error) from error
             activity.record("gadget_loaded", pid=pid, port=port, method=gadget_loader(pid),
                             seconds=round(time.monotonic() - began, 3))
         url = f"127.0.0.1:{port}"

@@ -41,7 +41,7 @@ import re
 import frida
 from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import sessions
+from hermes.core import messages, sessions
 from hermes.features.trace import AgentWorker
 from hermes.core.agent_source import load_agent_source
 
@@ -57,7 +57,7 @@ MAX_DUMP = 0x10000
 
 FUNCTION, INSTRUCTION, AUTO = "function", "instruction", "auto"
 
-_AGENT_SOURCE = (
+_AGENT_SOURCE = messages.AGENT_SOURCE + (
     load_agent_source(__file__)
     .replace("MAX_LOGGED_VALUE", str(MAX_LOGGED_PER_SECOND))
     .replace("MAX_CHANGES_VALUE", str(MAX_CHANGES))
@@ -137,6 +137,7 @@ class NativeMonitorWorker(AgentWorker):
     add_failed = pyqtSignal(int, str)
 
     agent_name = "native monitor"
+    agent_key = "native_monitor"
 
     def __init__(self, pid, parent=None):
         super().__init__(pid, parent)
@@ -173,7 +174,7 @@ class NativeMonitorWorker(AgentWorker):
             self.added.emit(argument["id"], api.add(argument))
         except frida.RPCException as error:
             # e.g. no such function: the other monitors go on
-            self.add_failed.emit(argument["id"], str(error).split("\n", 1)[0])
+            self.add_failed.emit(argument["id"], messages.describe(error))
 
     def _run_command(self, api, action, argument):
         if action == "remove":

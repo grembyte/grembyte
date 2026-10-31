@@ -140,7 +140,7 @@ function rawValue(context, location) {
 function resultRaw(context, retval, type) {
   // The raw result as registerValue takes it.
   if (ABI === 'x86' && isFloat(type))
-    throw new Error('32-bit: a float result is in the x87 register st0, which Frida cannot read');
+    throw hermesError('error.monitor.x87_float');
   if (ABI === 'x86' && is64(type))
     return uint64(((BigInt(context.edx.toUInt32()) << 32n)
                    | BigInt(retval.toUInt32())).toString());
@@ -377,7 +377,7 @@ function contents(target) {
   } else {
     klass = engine.classOf(address);
     if (klass === null)
-      throw new Error(`no object at ${address} (any more)`);
+      throw hermesError('error.monitor.object_gone', { address });
   }
   const layout = engine.layout(klass);
   // Mono's struct field offsets count an object header; Unreal's do not.
@@ -504,7 +504,7 @@ function evaluate(target, names) {
     const address = ptr(target.address);
     const klass = target.klass ? ptr(target.klass) : engine.classOf(address);
     if (klass === null)
-      throw new Error(`no object at ${address} (any more)`);
+      throw hermesError('error.monitor.object_gone', { address });
     return engine.properties(klass).filter(property => names.includes(property.name))
       .map(property => {
         let value;
@@ -525,7 +525,9 @@ function evaluate(target, names) {
 function catalogMethod(identity, instance = false) {
   const method = engine.resolve(identity);
   if (engine.signatureOf(method).instance !== instance)
-    throw new Error(`${identity.method} is no ${instance ? 'instance' : 'static'} method`);
+    throw hermesError(
+      instance ? 'error.monitor.no_instance_method' : 'error.monitor.no_static_method',
+      { method: identity.method });
   return method;
 }
 
@@ -591,15 +593,15 @@ function foundObject(className, text) {
   if (!/^0x[0-9a-f]+$/i.test(text)) {
     const object = engine.findObject(className, text === '' ? null : text);
     if (object === null)
-      throw new Error(text === '' ? `no live ${className} found`
-        : `no live ${className} named ${text}`);
+      throw text === '' ? hermesError('error.monitor.no_live_object', { className })
+        : hermesError('error.monitor.no_live_named', { className, name: text });
     return object;
   }
   const object = ptr(text);
   const klass = engine.classOf(object);
   const wanted = engine.findClass(className);
   if (klass === null || !engine.classChain(klass).some(current => current.equals(wanted)))
-    throw new Error(`no ${className} at ${object}`);
+    throw hermesError('error.monitor.wrong_object', { className, address: object });
   return object;
 }
 
@@ -646,7 +648,7 @@ function targetClass(target) {
   const address = ptr(target.address);
   const klass = target.klass ? ptr(target.klass) : engine.classOf(address);
   if (klass === null)
-    throw new Error(`no object at ${address} (any more)`);
+    throw hermesError('error.monitor.object_gone', { address });
   return klass;
 }
 
@@ -676,7 +678,7 @@ function listMethods(target) {
 function instanceMethod(method) {
   const fn = ptr(method);
   if (!engine.signatureOf(fn).instance)
-    throw new Error(`${method} is no instance method`);
+    throw hermesError('error.monitor.no_instance_method', { method });
   return fn;
 }
 
@@ -849,10 +851,10 @@ function isObject(type) {
 async function addMonitor(spec) {
   // spec.returns/objects: true, false, or null for "if the method has any".
   if (monitors.has(spec.id))
-    throw new Error(`Monitor ${spec.id} exists already`);
+    throw hermesError('error.monitor.exists', { id: spec.id });
   const info = await engine.prepare(spec.identity);
   if (monitors.has(spec.id))
-    throw new Error(`Monitor ${spec.id} exists already`);
+    throw hermesError('error.monitor.exists', { id: spec.id });
   const hasResults = (info.returns.kind !== T.VOID || info.returns.byref)
     || info.params.some(param => param.type.byref);
   const hasObjects = info.instance || isObject(info.returns)
@@ -940,7 +942,8 @@ function updateUnmapWatch() {
       try {
         onUnmap(start, end);
       } catch (error) {
-        send({ kind: 'agent-error', error: `unmap: ${error}` });
+        send({ kind: 'agent-error', error: hermesMessage('error.monitor.unmap',
+            { error: String(error) }) });
       }
     });
   } else if (watched === 0 && unmapWatch !== null) {
@@ -989,7 +992,7 @@ class ManagedObject {
     const layout = engine.layout(this.klass);
     const field = layout.fields.find(candidate => candidate.name === name && !candidate.static);
     if (field === undefined)
-      throw new Error(`${layout.name} has no field ${name}`);
+      throw hermesError('error.monitor.no_field', { className: layout.name, name });
     return readJs(field.type, this.fieldBase(layout).add(field.offset));
   }
 
@@ -1006,11 +1009,11 @@ class ManagedObject {
     const layout = engine.layout(this.klass);
     const field = layout.fields.find(candidate => candidate.name === name && !candidate.static);
     if (field === undefined)
-      throw new Error(`${layout.name} has no field ${name}`);
+      throw hermesError('error.monitor.no_field', { className: layout.name, name });
     const address = this.fieldBase(layout).add(field.offset);
     const type = field.type;
     if (type.kind === T.VALUETYPE)
-      throw new Error(`the struct field ${name} cannot be set as a whole`);
+      throw hermesError('error.monitor.struct_field_whole', { name });
     let old;
     try {
       old = readJs(type, address);
@@ -1029,7 +1032,7 @@ class ManagedObject {
   get(name) {
     const property = engine.properties(this.klass).find(candidate => candidate.name === name);
     if (property === undefined)
-      throw new Error(`${this.className} has no property ${name}`);
+      throw hermesError('error.monitor.no_property', { className: this.className, name });
     const { result, exception } = engine.getProperty(this.address, property, this.isStruct);
     throwIfException(exception);
     return resultJs(property.type, result);
@@ -1112,7 +1115,7 @@ const shortcuts = {
     try {
       setter = engine.findMethod(target.klass, `set_${key}`, 1, false);
     } catch (_error) {
-      throw new Error(`${layout.name} has no field or property ${key} to set`);
+      throw hermesError('error.monitor.nothing_to_set', { className: layout.name, name: key });
     }
     callMethod(target.isStruct ? setter : engine.virtualMethod(target.address, setter),
                target.address, [value]);
@@ -1197,7 +1200,7 @@ function objectJs(pointer) {
     return null;
   const klass = engine.classOf(pointer);
   if (klass === null)
-    throw new Error(`no object at ${pointer}`);
+    throw hermesError('error.monitor.no_object', { address: pointer });
   return wrap(new ManagedObject(pointer, klass));
 }
 
@@ -1308,7 +1311,7 @@ function writeJs(type, address, value) {
     case T.U8: address.writeU64(uint64(String(Math.trunc(value)))); return;
     case T.R4: address.writeFloat(value); return;
     case T.R8: address.writeDouble(value); return;
-    case T.VALUETYPE: throw new Error(`a struct (${type.name}) cannot be replaced`);
+    case T.VALUETYPE: throw hermesError('error.monitor.struct_replace', { type: type.name });
     default: address.writePointer(pointerOf(type, value));
   }
 }
@@ -1344,7 +1347,8 @@ function invokeMethod(method, self, args) {
       }
     } else if (param.type.kind === T.VALUETYPE) {
       if (!(args[i] instanceof ManagedObject))
-        throw new Error(`argument ${param.name} must be a ${param.type.name}`);
+        throw hermesError('error.monitor.argument_type',
+            { name: param.name, type: param.type.name });
       slot = args[i].address;  // a struct: a pointer to its data
     } else {
       slot = Memory.alloc(8);  // a value: a pointer to it
@@ -1371,7 +1375,7 @@ function invokeWithParms(method, signature, self, args) {
       engine.writeParameter(type, address, value);
     else if (type.kind === T.VALUETYPE) {
       if (!(value instanceof ManagedObject))
-        throw new Error(`argument ${param.name} must be a ${type.name}`);
+        throw hermesError('error.monitor.argument_type', { name: param.name, type: type.name });
       Memory.copy(address, value.address, type.structSize);
     } else if (REFERENCE_KINDS.has(type.kind))
       address.writePointer(pointerOf(type, value));
@@ -1414,7 +1418,7 @@ function staticCall(qualifiedName, ...args) {
   const colon = name.lastIndexOf(':');
   const split = colon >= 0 ? colon : name.lastIndexOf('.');
   if (split <= 0 || split === name.length - 1)
-    throw new Error(`"${qualifiedName}" is no Class.Method or Class:Method`);
+    throw hermesError('error.monitor.not_qualified', { name: qualifiedName });
   const klass = engine.findClass(name.substring(0, split));
   const method = engine.findMethod(klass, name.substring(split + 1), args.length, true);
   return callMethod(method, null, args);
@@ -1425,7 +1429,7 @@ function findObject(className, objectName = null) {
   // Unity), or null; ctx.find("UnityEngine.GameObject", "Player(Clone)"): the
   // one of that name
   if (objectName !== null && typeof objectName !== 'string')
-    throw new Error('ctx.find: the object name must be a string');
+    throw hermesError('error.monitor.find_name');
   const object = engine.findObject(className, objectName);
   return object === null ? null : objectJs(object);
 }
@@ -1435,7 +1439,7 @@ function forEachObject(className, callback) {
   // for every live object ctx.find could give, until it returns false; how
   // many it was called for.
   if (typeof callback !== 'function')
-    throw new Error('ctx.forEach: the second argument must be a function');
+    throw hermesError('error.monitor.for_each_function');
   let count = 0;
   for (const object of engine.findObjects(className)) {
     let wrapped;
@@ -1455,7 +1459,7 @@ function outerName(object) {
   // ctx.outerName(tracker): "AttributeStatsWidget.PointsAvailableTracker",
   // a name ctx.find takes (Unreal)
   if (!(object instanceof ManagedObject) || object.isStruct)
-    throw new Error('ctx.outerName: the argument must be an object');
+    throw hermesError('error.monitor.outer_name_object');
   return engine.outerName(object.address);
 }
 
@@ -1470,12 +1474,12 @@ function displayText(value) {
 function replaceResult(hook, invocation, retval, value) {
   const type = hook.info.returns;
   if (type.kind === T.VOID && !type.byref)
-    throw new Error('the method returns nothing (void)');
+    throw hermesError('error.monitor.void_result');
   if (ABI === 'x86' && (isFloat(type) || is64(type)))
-    throw new Error('32-bit: float and 64-bit results cannot be replaced');
+    throw hermesError('error.monitor.x86_replace');
   if (isFloat(type)) {
     if (typeof value !== 'number' || !Number.isFinite(value))
-      throw new Error(`the result must be a number, not ${displayText(value)}`);
+      throw hermesError('error.monitor.result_number', { value: displayText(value) });
     const buffer = new ArrayBuffer(16);
     const view = new DataView(buffer);
     if (type.kind === T.R4)
@@ -1486,7 +1490,7 @@ function replaceResult(hook, invocation, retval, value) {
     return;
   }
   if (type.kind === T.VALUETYPE && !type.byref)
-    throw new Error(`a struct result (${type.name}) cannot be replaced`);
+    throw hermesError('error.monitor.struct_result', { type: type.name });
   if (type.kind === T.BOOLEAN) {
     retval.replace(ptr(value ? 1 : 0));
     return;
@@ -1496,7 +1500,7 @@ function replaceResult(hook, invocation, retval, value) {
     return;
   }
   if (typeof value !== 'number' || !Number.isFinite(value))
-    throw new Error(`the result must be a number, not ${displayText(value)}`);
+    throw hermesError('error.monitor.result_number', { value: displayText(value) });
   retval.replace(ptr(BigInt.asUintN(8 * Process.pointerSize,
                                     BigInt(Math.trunc(value))).toString()));
 }
@@ -1505,12 +1509,12 @@ function replaceFrameResult(hook, call, value) {
   // Unreal: the result is already where the caller reads it; overwrite it.
   const type = hook.info.returns;
   if (type.kind === T.VOID)
-    throw new Error('the method returns nothing (void)');
+    throw hermesError('error.monitor.void_result');
   if (call.resultAddress === null)
-    throw new Error('the caller takes no result');
+    throw hermesError('error.monitor.no_caller_result');
   const number = type.kind >= T.I1 && type.kind <= T.R8;
   if (number && (typeof value !== 'number' || !Number.isFinite(value)))
-    throw new Error(`the result must be a number, not ${displayText(value)}`);
+    throw hermesError('error.monitor.result_number', { value: displayText(value) });
   writeJs(type, call.resultAddress, value);
 }
 
@@ -1521,18 +1525,18 @@ function writeArgument(context, location, type, value, raw) {
     if (REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING)
       raw.writePointer(pointerOf(inner, value));  // the caller's variable, not a field
     else if (type.kind === T.VALUETYPE)
-      throw new Error(`a struct (${type.name}) cannot be replaced`);
+      throw hermesError('error.monitor.struct_replace', { type: type.name });
     else
       writeJs(inner, raw, value);
     return;
   }
   if (location === null)
-    throw new Error('arguments after a struct cannot be changed');
+    throw hermesError('error.monitor.after_struct');
   if (type.kind === T.VALUETYPE)
-    throw new Error(`a struct (${type.name}) cannot be replaced`);
+    throw hermesError('error.monitor.struct_replace', { type: type.name });
   if (isFloat(type)) {
     if (typeof value !== 'number' || !Number.isFinite(value))
-      throw new Error(`a number is needed, not ${displayText(value)}`);
+      throw hermesError('error.monitor.number_needed', { value: displayText(value) });
     if (location.xmm !== undefined) {
       const buffer = new ArrayBuffer(16);
       const view = new DataView(buffer);
@@ -1560,7 +1564,7 @@ function writeArgument(context, location, type, value, raw) {
   else if (type.kind === T.CHAR && typeof value === 'string')
     pointer = ptr(value.charCodeAt(0));
   else
-    throw new Error(`a number is needed, not ${displayText(value)}`);
+    throw hermesError('error.monitor.number_needed', { value: displayText(value) });
   if (location.reg !== undefined)
     context[location.reg] = pointer;
   else
@@ -1653,11 +1657,10 @@ function hookArguments(hook, invocation) {
         found.refs.push([param.name, param.type, location.address]);
       found.passed.push({ name: param.name, original, write: value => {
         if (location.address === undefined)
-          throw new Error(`${param.name} is a constant in the Blueprint code calling the method`);
+          throw hermesError('error.monitor.blueprint_constant', { name: param.name });
         // From bytecode the address is the caller's own variable
         if (!call.own && !param.type.byref)
-          throw new Error(`${param.name} cannot be changed: Blueprint code calls the method ` +
-                          'with its own variable (only ref arguments can be)');
+          throw hermesError('error.monitor.blueprint_variable', { name: param.name });
         writeJs(type, location.address, value);
       } });
     });
@@ -1880,17 +1883,17 @@ function pushHookDebug(hook, entry) {
 function compileHookTransform(spec) {
   const fn = (0, eval)('(' + spec.source + '\n)');
   if (typeof fn !== 'function')
-    throw new Error(`Transform '${spec.kind}' does not evaluate to a function`);
+    throw hermesError('error.monitor.transform_not_function', { kind: spec.kind });
   return { kind: spec.kind, fn, params: spec.params || {}, state: {} };
 }
 
 async function addMethodHook(spec) {
   if (methodHooks.has(spec.id))
-    throw new Error(`Method hook ${spec.id} exists already`);
+    throw hermesError('error.monitor.hook_exists', { id: spec.id });
   const transform = compileHookTransform(spec.transform);
   const info = await engine.prepare(spec.identity);
   if (methodHooks.has(spec.id))
-    throw new Error(`Method hook ${spec.id} exists already`);
+    throw hermesError('error.monitor.hook_exists', { id: spec.id });
   const hook = {
     id: spec.id, info, layout: info.frame ? null : argumentLayout(info), transform,
     enabled: spec.enabled,
@@ -1963,7 +1966,7 @@ function removeMethodHook(id) {
 function requireMethodHook(id) {
   const hook = methodHooks.get(id);
   if (hook === undefined)
-    throw new Error(`No method hook ${id}`);
+    throw hermesError('error.monitor.no_hook', { id });
   return hook;
 }
 
@@ -2000,7 +2003,7 @@ function compileScript(source) {
 
 function addScript(spec) {
   if (scripts.has(spec.id))
-    throw new Error(`Script ${spec.id} exists already`);
+    throw hermesError('error.monitor.script_exists', { id: spec.id });
   const script = { id: spec.id, fn: compileScript(spec.source), mode: spec.mode,
                    seconds: spec.seconds, enabled: spec.enabled, state: {}, runs: 0,
                    timer: null, running: false, removed: false };
@@ -2031,7 +2034,7 @@ function removeScript(id) {
 function requireScript(id) {
   const script = scripts.get(id);
   if (script === undefined)
-    throw new Error(`Script ${id} does not exist`);
+    throw hermesError('error.monitor.no_script', { id });
   return script;
 }
 
@@ -2088,7 +2091,7 @@ function runScript(script) {
 
 function gasEngine(name) {
   if (engine.id !== 'unreal')
-    throw new Error('GAS attributes exist in Unreal Engine games only');
+    throw hermesError('error.monitor.gas_unreal_only');
   return engine[name];
 }
 
@@ -2119,7 +2122,7 @@ function gasValue(name) {
     if (attribute !== undefined)
       return { base: attribute.base, current: attribute.current };
   }
-  throw new Error(`the player has no attribute ${name}`);
+  throw hermesError('error.monitor.no_attribute', { name });
 }
 
 // ctx.gas in scripts (they run on the game thread)

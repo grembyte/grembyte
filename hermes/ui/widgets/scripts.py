@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 from sqlalchemy.exc import SQLAlchemyError
 
+from hermes.core import messages
 from hermes.features.scripts import MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker
 from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.code_editor import CodeEditor
@@ -576,7 +577,7 @@ class ScriptPanel(QGroupBox):
         if worker is not self._worker or state is None:
             return
         state["runs"] = run.get("runs", state["runs"] + 1)
-        error = run.get("error")
+        error = messages.describe(run["error"]) if run.get("error") else None
         label = state["spec"].label or f"#{script_id}"
         time = datetime.fromtimestamp(run.get("time", 0) / 1000).strftime("%H:%M:%S")
         for line in run.get("logs") or []:

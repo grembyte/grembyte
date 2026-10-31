@@ -13,7 +13,7 @@ import threading
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import logs
+from hermes.core import logs, messages
 from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE
 from hermes.core.frida_attach import attach_session
@@ -49,7 +49,8 @@ def watch_size_for_type(value_type):
     try:
         return VALUE_TYPES[value_type].size
     except KeyError as error:
-        raise ValueError(f"Unsupported watch data type: {value_type}") from error
+        raise messages.LocalizedValueError("error.write_watch.unsupported_type",
+                                          type=value_type) from error
 
 
 def _build_agent_source(address, size, reads=False):
@@ -101,23 +102,19 @@ class WriteWatchWorker(QThread):
             script.load()
 
             if not self._ready_event.wait(5):
-                raise RuntimeError("Timed out while installing hardware watchpoints")
+                raise messages.LocalizedRuntimeError("error.write_watch.install_timeout")
             if self._agent_error:
                 raise RuntimeError(self._agent_error)
             ready = self._ready_payload or {}
             thread_count = ready.get("threadCount", 0)
             if not thread_count:
-                raise RuntimeError(
-                    "No thread accepted the hardware watchpoint. "
-                    "Check address alignment, watchpoint size, and process permissions."
-                )
+                raise messages.LocalizedRuntimeError("error.write_watch.no_thread")
 
             self.monitor_ready.emit(thread_count, "")
             for warning in ready.get("warnings", []):
-                self.monitor_warning.emit(
-                    f"Thread {warning.get('threadId')}: "
-                    f"{warning.get('error', '')}"
-                )
+                self.monitor_warning.emit(messages.text(
+                    "error.write_watch.thread", thread=warning.get("threadId"),
+                    error=warning.get("error", "")))
             while (not self.isInterruptionRequested()
                    and self._detach_reason is None
                    and self._agent_error is None):
@@ -126,12 +123,11 @@ class WriteWatchWorker(QThread):
             if self._agent_error and not self.isInterruptionRequested():
                 raise RuntimeError(self._agent_error)
             if self._detach_reason and not self.isInterruptionRequested():
-                raise RuntimeError(
-                    f"Target process detached: {self._detach_reason}"
-                )
+                raise messages.LocalizedRuntimeError("error.agent.detached",
+                                                     reason=self._detach_reason)
         except FRIDA_ERRORS + (ImportError, OSError, RuntimeError, ValueError) as error:
             if not self.isInterruptionRequested():
-                self.monitor_failed.emit(str(error))
+                self.monitor_failed.emit(messages.describe(error))
         finally:
             if script is not None:
                 try:
@@ -151,7 +147,8 @@ class WriteWatchWorker(QThread):
 
     def _on_message(self, message, _data):
         if message.get("type") == "error":
-            self._agent_error = message.get("stack", "Frida agent failed")
+            self._agent_error = messages.describe(
+                message.get("stack") or messages.text("error.write_watch.agent_failed"))
             self._ready_event.set()
             return
 
@@ -165,9 +162,9 @@ class WriteWatchWorker(QThread):
         elif kind == "hits":
             self.hits_ready.emit(payload.get("hits", []))
         elif kind == "thread-error":
-            self.monitor_warning.emit(
-                f"Thread {payload.get('threadId')}: {payload.get('error', '')}"
-            )
+            self.monitor_warning.emit(messages.text(
+                "error.write_watch.thread", thread=payload.get("threadId"),
+                error=payload.get("error", "")))
 
     def _on_session_detached(self, reason, _crash):
         self._detach_reason = reason

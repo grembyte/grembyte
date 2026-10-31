@@ -47,6 +47,10 @@ def _store_transform(hook, transform):
     hook.transform_params = transform.form_values()
 
 
+class DuplicateTemplateError(ValueError):
+    """A template of that name exists already; the UI words the message."""
+
+
 class HookRepository:
     """Store hooks per program so they can be reinstalled after a restart."""
 
@@ -204,7 +208,7 @@ class HookRepository:
                 )
             ).first()
             if duplicate is not None:
-                raise ValueError(f"A template named {definition.name!r} already exists")
+                raise DuplicateTemplateError(f"A template named {definition.name!r} already exists")
             template = None if template_id is None else session.get(HookTemplate, template_id)
             if template is None:
                 template = HookTemplate()

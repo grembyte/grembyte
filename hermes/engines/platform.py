@@ -29,6 +29,7 @@ API themselves.
     (``VirtualAlloc``, or ``mmap``): for code game threads may still run.
 """
 
+from hermes.core import messages
 from hermes.core.agent_source import load_agent_source
 
-PLATFORM_AGENT_SOURCE = load_agent_source(__file__)
+PLATFORM_AGENT_SOURCE = messages.AGENT_SOURCE + load_agent_source(__file__)

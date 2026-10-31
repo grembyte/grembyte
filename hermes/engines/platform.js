@@ -11,7 +11,7 @@ function spawnThread(start, arg) {
       threadSpawner = (routine, parameter) => {
         const thread = create(NULL, 0, routine, parameter, 0, NULL);
         if (thread.isNull())
-          throw new Error('CreateThread failed');
+          throw hermesError('error.platform.create_thread');
         close(thread);
       };
     } else {
@@ -23,7 +23,7 @@ function spawnThread(start, arg) {
         const handle = Memory.alloc(Process.pointerSize);
         const code = create(handle, NULL, routine, parameter);
         if (code !== 0)
-          throw new Error(`pthread_create failed (${code})`);
+          throw hermesError('error.platform.pthread_create', { code });
         detach(handle.readPointer());
       };
     }
@@ -199,6 +199,6 @@ function allocateCode(size) {
   }
   const memory = codeAllocator(size);
   if (memory.isNull())
-    throw new Error(`cannot allocate ${size} bytes of code`);
+    throw hermesError('error.platform.code_alloc', { size });
   return memory;
 }

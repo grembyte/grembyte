@@ -117,7 +117,7 @@ from dataclasses import dataclass, field
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import logs
+from hermes.core import logs, messages
 from hermes.core import sessions
 from hermes.core import settings
 from hermes.engines.registry import ENGINE_AGENT_SOURCE
@@ -383,7 +383,7 @@ class HookWorker(QThread):
             script.load()
 
             if not self._ready_event.wait(5):
-                raise RuntimeError("Timed out while loading the hook agent")
+                raise messages.LocalizedRuntimeError("error.hooks.load_timeout")
             if self._agent_error:
                 raise RuntimeError(self._agent_error)
             ready = self._ready_payload or {}
@@ -410,12 +410,11 @@ class HookWorker(QThread):
             if self._agent_error and not self.isInterruptionRequested():
                 raise RuntimeError(self._agent_error)
             if self._detach_reason and not self.isInterruptionRequested():
-                raise RuntimeError(
-                    f"Target process detached: {self._detach_reason}"
-                )
+                raise messages.LocalizedRuntimeError("error.agent.detached",
+                                                     reason=self._detach_reason)
         except FRIDA_ERRORS + (ImportError, OSError, RuntimeError, ValueError) as error:
             if not self.isInterruptionRequested():
-                self.worker_failed.emit(str(error))
+                self.worker_failed.emit(messages.describe(error))
         finally:
             settings.unsubscribe(self._on_settings_changed)
             if script is not None:
@@ -474,7 +473,7 @@ class HookWorker(QThread):
             elif action == "profiling":
                 api.set_profiling(argument)
         except frida.RPCException as error:
-            self.hook_failed.emit(hook_id, str(error))
+            self.hook_failed.emit(hook_id, messages.describe(error))
 
     def _on_settings_changed(self, changed):
         if "hook_repatch" in changed:
@@ -484,7 +483,8 @@ class HookWorker(QThread):
 
     def _on_message(self, message, _data):
         if message.get("type") == "error":
-            self._agent_error = message.get("stack", "Frida hook agent failed")
+            self._agent_error = messages.describe(
+                message.get("stack", messages.text("error.hooks.agent_failed")))
             self._ready_event.set()
             return
 
@@ -503,9 +503,10 @@ class HookWorker(QThread):
         elif kind == "trained":
             self.hook_installed.emit(payload.get("hookId", 0), payload.get("info", {}))
         elif kind == "training-failed":
-            self.hook_failed.emit(payload.get("hookId", 0), payload.get("error", ""))
+            self.hook_failed.emit(payload.get("hookId", 0),
+                                  messages.describe(payload.get("error", "")))
         elif kind == "agent-error":
-            self.agent_warning.emit(payload.get("error", ""))
+            self.agent_warning.emit(messages.describe(payload.get("error", "")))
         elif kind == "debug":
             self.hook_debug.emit(
                 payload.get("events", []),
@@ -525,7 +526,8 @@ class HookWorker(QThread):
                 payload.get("hookIds", []), payload.get("method", ""), payload.get("managed")
             )
         elif kind == "managed-failed":
-            self.managed_failed.emit(payload.get("hookId", 0), payload.get("error", ""))
+            self.managed_failed.emit(payload.get("hookId", 0),
+                                     messages.describe(payload.get("error", "")))
         elif kind == "profile":
             sites = payload.get("sites", [])
             for site in sites:
@@ -538,7 +540,7 @@ class HookWorker(QThread):
         elif kind == "site-state":
             self.site_state.emit(
                 payload.get("hookIds", []), payload.get("state", ""),
-                payload.get("reverts", 0), payload.get("error") or "",
+                payload.get("reverts", 0), messages.describe(payload.get("error") or ""),
             )
         elif kind == "callers-ambiguous":
             self.callers_ambiguous.emit(payload.get("hookId", 0))
@@ -546,7 +548,7 @@ class HookWorker(QThread):
             self.callers_dropped.emit(payload.get("hookId", 0), payload.get("count", 0))
         elif kind == "transform-error":
             self.transform_error.emit(
-                payload.get("hookId", 0), payload.get("error", "")
+                payload.get("hookId", 0), messages.describe(payload.get("error", ""))
             )
 
     def _on_log(self, level, text):

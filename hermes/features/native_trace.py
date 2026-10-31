@@ -35,7 +35,7 @@ import threading
 
 import frida
 
-from hermes.core import activity, sessions, settings
+from hermes.core import activity, messages, sessions, settings
 from hermes.platform import is_wine_process, read_mappings
 from hermes.features.trace import AgentWorker
 from hermes.core.agent_source import load_agent_source
@@ -57,7 +57,7 @@ SYMBOL_BUDGET_MS = 3000
 # thread_activity does on Linux.
 WINE_LOAD_SECONDS = 0.5
 
-_AGENT_TEMPLATE = (
+_AGENT_TEMPLATE = messages.AGENT_SOURCE + (
     load_agent_source(__file__)
     .replace("FUNCTION_CAPACITY_VALUE", str(FUNCTION_CAPACITY))
     .replace("SYMBOL_BUDGET_VALUE", str(SYMBOL_BUDGET_MS))
@@ -226,6 +226,7 @@ class NativeTraceWorker(AgentWorker):
     started = pyqtSignal(dict)
 
     agent_name = "native trace"
+    agent_key = "native_trace"
 
     def __init__(self, pid, parent=None):
         super().__init__(pid, parent)

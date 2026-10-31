@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 from sqlalchemy.exc import SQLAlchemyError
 
+from hermes.core import messages
 from hermes.engines.registry import resolve_engine
 from hermes.features.assemblies import missing_assemblies
 from hermes.features.catalog import CatalogWorker
@@ -52,7 +53,7 @@ class AssemblySelectionStore(QObject):
             try:
                 self.selection = frozenset(self.repository.list_assemblies(process_id))
             except SQLAlchemyError as error:
-                self.failed.emit(str(error))
+                self.failed.emit(messages.describe(error))
         self.changed.emit()
 
     def save(self, names):
@@ -62,7 +63,7 @@ class AssemblySelectionStore(QObject):
         try:
             self.repository.save_assemblies(self.process_id, names)
         except SQLAlchemyError as error:
-            self.failed.emit(str(error))
+            self.failed.emit(messages.describe(error))
             return False
         self.selection = frozenset(names)
         self.changed.emit()

@@ -70,7 +70,7 @@ from dataclasses import dataclass
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import logs
+from hermes.core import logs, messages
 from hermes.core import sessions
 from hermes.features.monitor import build_agent_source
 from hermes.core.frida_attach import attach_session
@@ -190,7 +190,7 @@ class MethodHookWorker(QThread):
             script.set_log_handler(self._on_log)
             script.load()
             if not self._ready.wait(5):
-                raise RuntimeError("Timed out while loading the method hook agent")
+                raise messages.LocalizedRuntimeError("error.method_hooks.load_timeout")
             self.session_ready.emit("")
             while (not self.isInterruptionRequested() and self._detach_reason is None
                    and self._agent_error is None):
@@ -202,10 +202,11 @@ class MethodHookWorker(QThread):
             if self._agent_error and not self.isInterruptionRequested():
                 raise RuntimeError(self._agent_error)
             if self._detach_reason and not self.isInterruptionRequested():
-                raise RuntimeError(f"Target process detached: {self._detach_reason}")
+                raise messages.LocalizedRuntimeError("error.agent.detached",
+                                                     reason=self._detach_reason)
         except FRIDA_ERRORS + (OSError, RuntimeError) as error:
             if not self.isInterruptionRequested():
-                self.worker_failed.emit(str(error))
+                self.worker_failed.emit(messages.describe(error))
         finally:
             if script is not None:
                 try:
@@ -245,11 +246,12 @@ class MethodHookWorker(QThread):
                 api.set_method_hook_phase(hook_id, argument)
                 self.hook_updated.emit(hook_id)
         except frida.RPCException as error:
-            self.hook_failed.emit(hook_id, str(error))
+            self.hook_failed.emit(hook_id, messages.describe(error))
 
     def _on_message(self, message, _data):
         if message.get("type") == "error":
-            self._agent_error = message.get("stack", "Method hook agent failed")
+            self._agent_error = messages.describe(
+                message.get("stack", messages.text("error.method_hooks.agent_failed")))
             self._ready.set()
             return
         payload = message.get("payload", {})
@@ -269,11 +271,12 @@ class MethodHookWorker(QThread):
                 {int(hook_id): count for hook_id, count in payload.get("dropped", {}).items()},
             )
         elif kind == "transform-error":
-            self.transform_error.emit(payload.get("hookId", 0), payload.get("error", ""))
+            self.transform_error.emit(payload.get("hookId", 0),
+                                      messages.describe(payload.get("error", "")))
         elif kind == "hook-ended":
             self.hook_ended.emit(payload.get("hookId", 0))
         elif kind == "agent-error":
-            self.agent_warning.emit(payload.get("error", ""))
+            self.agent_warning.emit(messages.describe(payload.get("error", "")))
 
     def _on_log(self, level, text):
         logs.agent_log("method hook agent", level, text)

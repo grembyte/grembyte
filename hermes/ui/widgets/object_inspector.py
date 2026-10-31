@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
+from hermes.core import messages
 from hermes.ui import window_state
 from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import SelectableText
@@ -462,7 +463,7 @@ class ObjectInspectorDialog(QDialog):
     def show_contents(self, contents):
         self._pending = False
         if "error" in contents:
-            self.show_error(contents["error"])
+            self.show_error(messages.describe(contents["error"]))
             return
         fields = contents.get("fields", [])
         title = f"{contents.get('name', '?')} @ {contents.get('address', '')}"
@@ -488,7 +489,7 @@ class ObjectInspectorDialog(QDialog):
             if unread:
                 text = self.translations[_STATIC_KINDS.get(field.get("storage"), "inspector.static")]
             else:
-                text = value.get("text", "")
+                text = messages.describe(value.get("text", ""))
             texts = (
                 field.get("name", ""),
                 field.get("type", ""),
@@ -571,8 +572,9 @@ class ObjectInspectorDialog(QDialog):
                     self.translations["inspector.evaluate"],
                     lambda name=name: self.evaluate_properties([name])))
             return
-        item.setText(value.get("text", ""))
-        item.setToolTip(value.get("text", ""))
+        text = messages.describe(value.get("text", ""))
+        item.setText(text)
+        item.setToolTip(text)
         item.setForeground(_ERROR if value.get("error") else self.properties_table.palette().text())
         if value.get("target"):
             self.properties_table.setCellWidget(row, _P_LINK, link_label(

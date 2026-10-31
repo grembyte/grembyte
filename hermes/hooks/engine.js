@@ -559,14 +559,15 @@ function learnCaller(hook, key, hit) {
 function moduleAddress(spec) {
   const module = Process.findModuleByName(spec.module);
   if (module === null)
-    throw new Error(`Module ${spec.module} is not loaded`);
+    throw hermesError('error.hooks.module_not_loaded', { module: spec.module });
   const address = module.base.add(spec.moduleOffset);
   if (spec.instructionBytes !== null && !sites.has(address.toString())) {
     const found = hexBytes(address.readByteArray(spec.instructionBytes.length / 2));
     if (found !== spec.instructionBytes)
-      throw new Error(
-        `Code at ${spec.module}+0x${spec.moduleOffset.toString(16)} has changed `
-        + `(expected ${spec.instructionBytes}, found ${found}); the program was probably updated`);
+      throw hermesError('error.hooks.code_changed', {
+        module: spec.module, offset: `0x${spec.moduleOffset.toString(16)}`,
+        expected: spec.instructionBytes, found
+      });
   }
   return address;
 }
@@ -601,7 +602,7 @@ function resolveWriteInstruction(trapPc, target, size) {
     });
   }
   if (candidates.length === 0)
-    throw new Error(`No memory-writing instruction ends at ${trapPc}`);
+    throw hermesError('error.hooks.no_write_instruction', { address: trapPc });
   candidates.sort((a, b) =>
     (b.staticMatch - a.staticMatch) || (b.votes - a.votes) || (b.sizeMatch - a.sizeMatch));
   return candidates[0];
@@ -610,13 +611,13 @@ function resolveWriteInstruction(trapPc, target, size) {
 function compileTransform(spec) {
   const fn = (0, eval)('(' + spec.source + '\n)');
   if (typeof fn !== 'function')
-    throw new Error(`Transform '${spec.kind}' does not evaluate to a function`);
+    throw hermesError('error.hooks.transform_not_function', { kind: spec.kind });
   return { kind: spec.kind, fn, params: spec.params || {}, state: {} };
 }
 
 function normalize(value, io) {
   if (typeof value !== 'number' || !Number.isFinite(value))
-    throw new Error(`Transform returned ${value}, expected a finite number`);
+    throw hermesError('error.hooks.transform_not_number', { value: String(value) });
   if (io.limits === null)
     return value;
   return Math.min(io.limits[1], Math.max(io.limits[0], Math.trunc(value)));
@@ -973,7 +974,7 @@ function registerPart(name) {
   const wide = /^e[a-z]{2}$/.test(name) ? 'r' + name.slice(1)
     : /^r\d+d$/.test(name) ? name.slice(0, -1) : null;
   if (wide === null || (REGISTER_SLOTS[wide] === undefined && wide !== 'rsp'))
-    throw new Error(`unsupported address register ${name}`);
+    throw hermesError('error.hooks.unsupported_register', { register: name });
   return { name: wide, low: true };
 }
 
@@ -1785,7 +1786,7 @@ const fast = Process.arch !== 'x64' ? null : (() => {
     .and(ptr(Process.pageSize - 1).not());
   const range = { base: low, size: high.sub(low).toInt32() };
   if (Number(new NativeFunction(cm.fast_frames_size, 'size_t', [], exclusive)()) > FRAMES_TABLE_SIZE)
-    throw new Error('FRAMES_TABLE_SIZE is smaller than the C table');
+    throw hermesError('error.hooks.frames_table');
   new NativeFunction(cm.fast_frames_init, 'void', ['int'], exclusive)(limits === null ? 0 : 1);
   return {
     cm,
@@ -1989,7 +1990,8 @@ function dynamicTarget(hook, write) {
     return { skip: 'caller' };
   const address = write.address();
   if (address === null) {
-    reportError(hook, new Error(`Cannot compute the address written by ${write.site.writeIns}`));
+    reportError(hook, hermesError('error.hooks.no_address',
+                                  { instruction: String(write.site.writeIns) }));
     return { skip: 'no-address' };
   }
   return { target: address };
@@ -2095,7 +2097,8 @@ function onBefore(site, regs, entered, mask) {
       }
     }
   } catch (error) {
-    reportAgentError(`before ${site.writeIns.address}`, error);
+    reportAgentError(hermesMessage('error.hooks.where_before', { address: site.writeIns.address }),
+                     error);
   }
   if (profiling) {
     const profile = profileCall(site, entered, start);
@@ -2125,7 +2128,8 @@ function onAfter(site, entered) {
       }
     }
   } catch (error) {
-    reportAgentError(`after ${site.writeIns.address}`, error);
+    reportAgentError(hermesMessage('error.hooks.where_after', { address: site.writeIns.address }),
+                     error);
   }
   if (profiling)
     profileCall(site, entered, start);
@@ -2144,7 +2148,7 @@ function buildTrampoline(site, needed) {
   while (patchSize < needed) {
     const total = r.readOne();
     if (total === 0)
-      throw new Error(`Unable to relocate code at ${origin.add(patchSize)}`);
+      throw hermesError('error.hooks.relocate', { address: origin.add(patchSize) });
     patchSize = total;
     r.writeOne();
     if (first) {
@@ -2165,9 +2169,8 @@ function buildTrampoline(site, needed) {
     } catch (_error) {
     }
     if (padding === null || (padding.mnemonic !== 'nop' && padding.mnemonic !== 'int3')) {
-      const error = new Error(
-        `Only ${patchSize} bytes of code at ${origin} before it ends, need ${needed}; `
-        + 'hook the caller instead');
+      const error = hermesError('error.hooks.too_short',
+                                { size: patchSize, address: origin, needed });
       error.tooShort = true;
       throw error;
     }
@@ -2246,7 +2249,7 @@ function installSite(writeIns, writeOp, shortJump) {
   if (existing !== undefined)
     return existing;
   if (Process.arch !== 'x64')
-    throw new Error(`Write hooks are only implemented for x64, not ${Process.arch}`);
+    throw hermesError('error.hooks.x64_only', { arch: Process.arch });
 
   const site = { writeIns, writeOp, hooks: new Map(), cave: null, breakpoint: false };
   site.bytes = hexBytes(writeIns.address.readByteArray(writeIns.size));
@@ -2275,13 +2278,13 @@ function installSite(writeIns, writeOp, shortJump) {
     built = buildTrampoline(site, SHORT_JMP_SIZE);
     const found = findCave(origin, built.patchSize, built.code);
     if (found === null)
-      throw new Error(`${error.message}; no int3 padding for a short jump within 128 bytes`);
+      throw hermesError('error.hooks.no_short_jump', { error: error.message });
     site.cave = found.cave;
   }
   const { code, patchSize } = built;
 
   if (!jmpReaches(site.cave === null ? origin : site.cave, code))
-    throw new Error(`Trampoline at ${code} is out of jmp range from ${origin}`);
+    throw hermesError('error.hooks.out_of_range', { trampoline: code, address: origin });
   site.code = code;
   site.patchSize = patchSize;
   site.original = origin.readByteArray(patchSize);
@@ -2355,7 +2358,7 @@ function repatchSite(site) {
     if (cave !== site.cavePatchedHex && cave !== site.caveOriginalHex) {
       const found = findCave(site.writeIns.address, site.patchSize, site.code);
       if (found === null)
-        throw new Error('no int3 padding left for the short jump');
+        throw hermesError('error.hooks.no_padding_left');
       site.cave = found.cave;
       site.caveOriginalHex = readHex(site.cave, JMP_SIZE);
     }
@@ -2457,14 +2460,13 @@ function installBreakpointSite(writeIns, writeOp) {
   if (existing !== undefined)
     return existing;
   if (Process.arch !== 'x64')
-    throw new Error(`Write hooks are only implemented for x64, not ${Process.arch}`);
+    throw hermesError('error.hooks.x64_only', { arch: Process.arch });
   const next = writeIns.next.toString();
   if (breakpointAddresses.has(key) || breakpointAddresses.has(next))
-    throw new Error(`Another breakpoint hook uses the code at ${writeIns.address}`);
+    throw hermesError('error.hooks.breakpoint_in_use', { address: writeIns.address });
   const slot = freeDebugSlot();
   if (slot === null)
-    throw new Error(`No free hardware breakpoint: ${DEBUG_SLOTS.length} at most, `
-      + 'shared with hooks in training');
+    throw hermesError('error.hooks.no_breakpoint_slot', { count: DEBUG_SLOTS.length });
   const site = {
     writeIns, writeOp, hooks: new Map(), cave: null, code: null, patchSize: 0,
     breakpoint: true, slot
@@ -2564,7 +2566,7 @@ function onBreakpointException(details) {
     try {
       thread.unsetHardwareBreakpoint(site.slot);
     } catch (error) {
-      reportAgentError(`breakpoint ${pc}`, error);
+      reportAgentError(hermesMessage('error.hooks.where_breakpoint', { address: pc }), error);
     }
   }
   return true;
@@ -2631,7 +2633,7 @@ async function resolveManaged(spec) {
       best = { address, similarity, distance };
   }
   if (best === null || best.similarity < TRAINING_MIN_SIMILARITY)
-    throw new Error(`the write instruction is not in ${spec.managed.method} any more`);
+    throw hermesError('error.hooks.write_moved', { method: spec.managed.method });
   return best.address;
 }
 
@@ -2653,15 +2655,15 @@ async function addHookResolving(spec) {
 
 function addHook(spec) {
   if (hooks.has(spec.id) || trainings.has(spec.id))
-    throw new Error(`Hook ${spec.id} already exists`);
+    throw hermesError('error.hooks.exists', { id: spec.id });
   if (spec.signature !== null && spec.module === null && spec.writePc === null
       && spec.trapPc === null)
     return startTraining(spec);
   const io = VALUE_IO[spec.valueType];
   if (io === undefined)
-    throw new Error(`Unsupported value type: ${spec.valueType}`);
+    throw hermesError('error.hooks.value_type', { type: spec.valueType });
   if (spec.callerDepth < 0 || spec.callerDepth > MAX_CALLER_DEPTH)
-    throw new Error(`Caller depth must be between 0 and ${MAX_CALLER_DEPTH}`);
+    throw hermesError('error.hooks.caller_depth', { max: MAX_CALLER_DEPTH });
   const target = spec.address === null ? null : ptr(spec.address);
   const transform = compileTransform(spec.transform);
 
@@ -2676,7 +2678,8 @@ function addHook(spec) {
     writeIns = Instruction.parse(writePc);
     writeOp = writeOperand(writeIns);
     if (writeOp === null)
-      throw new Error(`${writeIns} at ${writeIns.address} does not write memory`);
+      throw hermesError('error.hooks.not_a_write',
+                        { instruction: String(writeIns), address: writeIns.address });
   } else {
     const candidate = resolveWriteInstruction(ptr(spec.trapPc), target, io.size);
     writeIns = candidate.ins;
@@ -2687,7 +2690,7 @@ function addHook(spec) {
     : spec.breakpoint === true ? installBreakpointSite(writeIns, writeOp)
       : installSite(writeIns, writeOp, spec.shortJump === true);
   if (site.fast !== undefined && site.hooks.size >= FAST_MAX_HOOKS)
-    throw new Error(`At most ${FAST_MAX_HOOKS} hooks share a write site`);
+    throw hermesError('error.hooks.site_full', { count: FAST_MAX_HOOKS });
   const learned = resolveCallers(spec.callers, writeIns.address);
   const hook = {
     id: spec.id,
@@ -2750,9 +2753,9 @@ function addHook(spec) {
 function startTraining(spec) {
   const io = VALUE_IO[spec.valueType];
   if (io === undefined)
-    throw new Error(`Unsupported value type: ${spec.valueType}`);
+    throw hermesError('error.hooks.value_type', { type: spec.valueType });
   if (spec.pointer === null)
-    throw new Error('Training needs a pointer chain to the target');
+    throw hermesError('error.hooks.training_pointer');
   compileTransform(spec.transform);
   const training = {
     id: spec.id,
@@ -3008,7 +3011,7 @@ function removeHook(id) {
 function requireHook(id) {
   const hook = hooks.get(id);
   if (hook === undefined)
-    throw new Error(`Unknown hook ${id}`);
+    throw hermesError('error.hooks.unknown', { id });
   return hook;
 }
 

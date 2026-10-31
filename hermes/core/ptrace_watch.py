@@ -12,7 +12,7 @@ import time
 
 from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import sessions
+from hermes.core import messages, sessions
 from hermes.core.memory import read_memory
 from hermes.core.ptrace_engine import (
     MAX_INSTRUCTION_SIZE,
@@ -71,11 +71,7 @@ class PtraceWriteWatchWorker(PtraceWatchpointEngine):
         self._load_mappings()
         warnings = self._attach_all()
         if not self._armed:
-            raise OSError(
-                1,
-                "No thread accepted the hardware watchpoint. Check address "
-                "alignment, watchpoint size, and ptrace permissions.",
-            )
+            raise messages.LocalizedOSError("error.ptrace_watch.no_thread", 1)
         self.monitor_ready.emit(len(self._armed), "")
         for message in warnings:
             self.monitor_warning.emit(message)
@@ -89,7 +85,7 @@ class PtraceWriteWatchWorker(PtraceWatchpointEngine):
                 time.sleep(0.002)
         self._flush()
         if self._target_gone:
-            self.monitor_failed.emit("The target process exited.")
+            self.monitor_failed.emit(messages.text("error.ptrace.exited"))
 
     def _handle_trap(self, tid, slot, pc, bits):
         read, write = self._access_of(pc, bits)

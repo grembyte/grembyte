@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QVBoxLayout,
 )
 
+from hermes.core import messages
 from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.table import add_copy_actions, resizable_columns, set_row_height
 
@@ -247,7 +248,7 @@ class HookDebugWindow(QDialog):
         logs = entry.get("logs") or []
         if kind == "error":
             return self.translations["debug.note_error"].format(
-                message=entry["error"].splitlines()[0]
+                message=messages.describe(entry["error"]).splitlines()[0]
             )
         if kind == "skipped":
             return self.translations[f"debug.skipped_{entry['skipped']}"]
@@ -321,7 +322,7 @@ class HookDebugWindow(QDialog):
             lines += ["", self.translations["debug.logs"]]
             lines += [f"  {line}" for line in entry["logs"]]
         if entry.get("error"):
-            lines += ["", entry["error"]]
+            lines += ["", messages.describe(entry["error"])]
         self.details.setPlainText("\n".join(lines))
 
     def _update_count(self):

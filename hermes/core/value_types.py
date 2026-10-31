@@ -8,6 +8,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from hermes.core.messages import LocalizedValueError
+
 
 @dataclass(frozen=True)
 class ValueType:
@@ -45,7 +47,8 @@ class ValueType:
             value = int(text, 0) if self.is_integer else float(text)
             return self.unpack(self.pack(value))
         except (AttributeError, OverflowError, TypeError, ValueError, struct.error) as error:
-            raise ValueError(f"Invalid {self.name} value: {text!r}") from error
+            raise LocalizedValueError("error.value_types.invalid_value", type=self.name,
+                                      text=repr(text)) from error
 
     def pack(self, value):
         return struct.pack(self.struct_format, value)
@@ -82,4 +85,4 @@ def value_type(name):
     try:
         return VALUE_TYPES[name]
     except KeyError as error:
-        raise ValueError(f"Unsupported data type: {name}") from error
+        raise LocalizedValueError("error.value_types.unsupported_type", type=name) from error

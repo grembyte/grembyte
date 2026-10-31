@@ -32,6 +32,7 @@ from capstone import (  # pylint: disable=import-error
 )
 from PyQt6.QtCore import QThread  # pylint: disable=import-error,no-name-in-module
 
+from hermes.core import messages
 from hermes.core.pointer import module_bases
 from hermes.platform import read_mappings
 
@@ -100,7 +101,8 @@ else:
 def _ptrace(request, pid, addr, data):
     """Call ``ptrace`` and raise OSError on failure."""
     if _libc is None:
-        raise OSError(errno.ENOSYS, f"ptrace is only available on Linux, not {sys.platform}")
+        raise messages.LocalizedOSError("error.ptrace.linux_only", errno.ENOSYS,
+                                       platform=sys.platform)
     ctypes.set_errno(0)
     result = _libc.ptrace(request, pid, ctypes.c_void_p(addr), ctypes.c_void_p(data))
     err = ctypes.get_errno()
@@ -112,7 +114,8 @@ def _ptrace(request, pid, addr, data):
 def tgkill(pid, tid, sig):
     """Send ``sig`` to thread ``tid`` of process ``pid`` (tgkill(2))."""
     if _libc is None:
-        raise OSError(errno.ENOSYS, f"ptrace is only available on Linux, not {sys.platform}")
+        raise messages.LocalizedOSError("error.ptrace.linux_only", errno.ENOSYS,
+                                       platform=sys.platform)
     _libc.syscall(SYS_TGKILL, pid, tid, int(sig))
 
 
@@ -146,10 +149,9 @@ def watch_alignment_error(address, size):
     the kernel refuses anything else (EINVAL).
     """
     if size not in _LENGTH_BITS:
-        return f"A hardware watchpoint covers 1, 2, 4 or 8 bytes, not {size}."
+        return messages.text("error.ptrace.watch_size", size=size)
     if address % size:
-        return (f"{address:#x} is not aligned to {size} bytes, which a hardware "
-                "watchpoint needs.")
+        return messages.text("error.ptrace.unaligned", address=f"{address:#x}", size=size)
     return None
 
 
@@ -255,13 +257,9 @@ class PtraceWatchpointEngine(QThread):
     @staticmethod
     def _explain(error):
         if error.errno == 1:  # EPERM
-            return (
-                "ptrace was denied. Set /proc/sys/kernel/yama/ptrace_scope to 0, "
-                "or run with CAP_SYS_PTRACE. Also stop any other debugger "
-                "(including a running Frida session) attached to the process."
-            )
+            return messages.text("error.ptrace.denied")
         if error.errno == 3:  # ESRCH
-            return "The target thread or process is gone."
+            return messages.text("error.ptrace.gone")
         return str(error)
 
     # -- attaching / arming -------------------------------------------------
@@ -277,7 +275,8 @@ class PtraceWatchpointEngine(QThread):
                     self._attach_thread(tid)
                     self._armed.add(tid)
                 except OSError as error:
-                    warnings.append(f"Thread {tid}: {self._explain(error)}")
+                    warnings.append(messages.text("error.ptrace.thread", thread=tid,
+                                                  error=self._explain(error)))
         return warnings
 
     def _list_threads(self):
@@ -292,7 +291,7 @@ class PtraceWatchpointEngine(QThread):
         try:
             _waited, status = os.waitpid(tid, _WALL)
             if not os.WIFSTOPPED(status):
-                raise OSError(errno.ESRCH, "The thread ended while being attached.")
+                raise messages.LocalizedOSError("error.ptrace.thread_ended", errno.ESRCH)
             # The first stop may be the target's own signal: it is delivered
             # when the thread goes on; the attach's SIGSTOP follows later.
             if os.WSTOPSIG(status) != signal.SIGSTOP:

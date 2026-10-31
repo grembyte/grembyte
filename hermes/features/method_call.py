@@ -26,6 +26,7 @@ import re
 import struct
 import uuid
 
+from hermes.core.messages import LocalizedValueError
 from hermes.engines import base as engine_base
 from hermes.engines.registry import engine_by_id
 
@@ -46,16 +47,13 @@ _TRUE = {"true", "1", "ja", "yes", "wahr"}
 _FALSE = {"false", "0", "nein", "no", "falsch"}
 
 
-class ArgumentError(ValueError):
-    """A text that is no value of its parameter's type.
+class ArgumentError(LocalizedValueError):
+    """A text that is no value of its parameter's type."""
 
-    ``key`` names the translation of the message, ``values`` fill it in.
-    """
-
-    def __init__(self, key, **values):
-        super().__init__(key)
-        self.key = key
-        self.values = values
+    @property
+    def values(self):
+        """What fills in the message ``key``."""
+        return self.params
 
 
 def call_capability(method):

@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QWidget,
 )
 
+from hermes.core import messages
 from hermes.engines import base as engine_base
 from hermes.engines.registry import engine_by_id
 from hermes.features.catalog import short_name
@@ -51,7 +52,8 @@ def call_time(call):
 
 def value_text(value):
     """Text of a logged value (``{text, target?, snapshot?}``), '' for none."""
-    return value.get("text", "") if value else ""
+    # A value that could not be read carries the agent's error.
+    return messages.describe(value.get("text", "")) if value else ""
 
 
 def argument_text(arg):

@@ -255,7 +255,7 @@ function resolve(spec) {
   }
   const exported = Module.findGlobalExportByName(spec.name);
   if (exported === null)
-    throw new Error(`no function named ${spec.name}`);
+    throw hermesError('error.native_monitor.no_function', { name: spec.name });
   return exported;
 }
 
@@ -289,15 +289,14 @@ function enclosing(address) {
 function add(spec) {
   // spec: where (see resolve), id, kind, args, dump
   if (monitors.has(spec.id))
-    throw new Error(`monitor ${spec.id} exists already`);
+    throw hermesError('error.native_monitor.exists', { id: spec.id });
   const address = resolve(spec);
   const span = patchSpan(address);
   for (const other of monitors.values()) {
     const overlap = address.compare(other.address.add(other.span)) < 0
       && other.address.compare(address.add(span)) < 0;
     if (overlap && !other.address.equals(address))
-      throw new Error(`${address} is too close to ${other.address}, which is monitored ` +
-                      'already: Frida would patch into its jump');
+      throw hermesError('error.native_monitor.too_close', { address, other: other.address });
   }
   if (modules.find(address) === null)
     modules.update();  // loaded since

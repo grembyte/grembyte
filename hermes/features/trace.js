@@ -116,7 +116,7 @@ function nextTurn() {
 
 async function start(spec) {
   if (trace !== null || starting)
-    throw new Error('a trace is running already');
+    throw hermesError('error.trace.running');
   starting = true;
   cancelled = false;
   try {
@@ -201,7 +201,7 @@ async function attachAll(codes, chosen, cm) {
 
 function requireTrace() {
   if (trace === null)
-    throw new Error('no trace is running');
+    throw hermesError('error.trace.not_running');
   return trace;
 }
 
@@ -213,7 +213,7 @@ function zero(pointer, length) {
 function begin(phase) {
   const t = requireTrace();
   if (PHASES[phase] === undefined)
-    throw new Error(`unknown phase ${phase}`);
+    throw hermesError('error.trace.unknown_phase', { phase });
   t.state.writeS32(0);
   const n = t.methods.length;
   zero(t.counts, 4 * n);
@@ -286,7 +286,7 @@ async function finish() {
   const t = requireTrace();
   const phase = t.phase;
   if (phase === null)
-    throw new Error('nothing is being recorded');
+    throw hermesError('error.trace.not_recording');
   t.state.writeS32(0);
   const duration = Date.now() - t.began;
   const counts = readCounts(t);
@@ -367,7 +367,8 @@ function updateUnmapWatch() {
           send({ kind: 'trace-ended' });
         }
       } catch (error) {
-        send({ kind: 'agent-error', error: `unmap: ${error}` });
+        send({ kind: 'agent-error', error: hermesMessage('error.trace.unmap',
+            { error: String(error) }) });
       }
     });
   } else if (trace === null && unmapWatch !== null) {

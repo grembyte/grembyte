@@ -90,7 +90,7 @@ const unreal = (() => {
         }
       }
     }
-    throw new Error('the name pool (FNamePool) was not found; Unreal Engine before 4.23?');
+    throw hermesError('error.unreal.no_name_pool');
   }
 
   // FChunkedFixedUObjectArray: Objects, PreAllocatedObjects, MaxElements,
@@ -117,7 +117,7 @@ const unreal = (() => {
           return { table, itemSize };
       }
     }
-    throw new Error('the object table (GUObjectArray) was not found');
+    throw hermesError('error.unreal.no_object_array');
   }
 
   function objectItemSize(chunks) {
@@ -222,7 +222,7 @@ const unreal = (() => {
     if (ue !== null && ue.layout !== undefined)
       return ue;
     if (!refresh())
-      throw new Error('no Unreal Engine game in the process');
+      throw hermesError('error.unreal.no_game');
     const ranges = dataRanges();
     ue = { names: findNamePool(ranges), objects: findObjectArray(ranges) };
     ue.layout = findLayout();
@@ -234,7 +234,7 @@ const unreal = (() => {
     const core = s.address.find((address, i) => s.outer[i] === 0
                                 && objectName(s, i) === '/Script/CoreUObject');
     if (core === undefined)
-      throw new Error('package /Script/CoreUObject not found');
+      throw hermesError('error.unreal.no_core_package');
     const inCore = new Map();
     s.address.forEach((address, i) => {
       if (s.outer[i] === core)
@@ -243,11 +243,11 @@ const unreal = (() => {
     const classClass = s.address.find((address, i) =>
       s.outer[i] === core && s.klass[i] === address && objectName(s, i) === 'Class');
     if (classClass === undefined)
-      throw new Error('class Class not found in /Script/CoreUObject');
+      throw hermesError('error.unreal.no_core_class', { name: 'Class' });
     const coreClass = name => {
       const found = inCore.get(`${name}|${classClass}`);
       if (found === undefined)
-        throw new Error(`class ${name} not found in /Script/CoreUObject`);
+        throw hermesError('error.unreal.no_core_class', { name });
       return found;
     };
     const struct = coreClass('Struct'), functionClass = coreClass('Function');
@@ -255,7 +255,7 @@ const unreal = (() => {
     const coreStruct = name => {
       const found = inCore.get(`${name}|${scriptStruct}`);
       if (found === undefined)
-        throw new Error(`struct ${name} not found in /Script/CoreUObject`);
+        throw hermesError('error.unreal.no_core_struct', { name });
       return ptr(found);
     };
     const L = { classClass, functionClass, structClass: struct, scriptStruct, packageClass:
@@ -270,7 +270,7 @@ const unreal = (() => {
           // not there
         }
       }
-      throw new Error(`cannot find ${what} (unknown Unreal Engine layout)`);
+      throw hermesError('error.unreal.unknown_layout', { what });
     };
     L.next = 0x28;  // UField::Next, right after UObjectBase
     L.superStruct = search(0x30, 0x90, 8, at => pointerAt(classClass, at) === struct,
@@ -301,7 +301,7 @@ const unreal = (() => {
       }
     }
     if (L.childProperties === undefined)
-      throw new Error('cannot find UStruct::ChildProperties (unknown Unreal Engine layout)');
+      throw hermesError('error.unreal.unknown_layout', { what: 'UStruct::ChildProperties' });
     const x = vector.add(L.childProperties).readPointer();
     L.fieldNext = search(0x10, L.fieldName, 8,
       at => named(x.add(at).readPointer(), L.fieldName, 'Y'), 'FField::Next');
@@ -329,7 +329,7 @@ const unreal = (() => {
     while (!rotation.isNull() && fieldName(rotation.add(L.fieldName)) !== 'Rotation')
       rotation = rotation.add(L.fieldNext).readPointer();
     if (rotation.isNull())
-      throw new Error('FTransform has no Rotation');
+      throw hermesError('error.unreal.no_rotation');
     L.extra = search((L.offset + 4 + 7) & ~7, L.offset + 0x60, 8,
       at => rotation.add(at).readPointer().equals(quat), 'the end of FProperty');
 
@@ -339,7 +339,7 @@ const unreal = (() => {
     // script interpreter (UObject::ProcessInternal).
     const ubergraph = ptr(objectClass).add(L.children).readPointer();
     if (ubergraph.isNull() || nameOfAddress(Number(ubergraph.toString())) !== 'ExecuteUbergraph')
-      throw new Error('UObject::ExecuteUbergraph not found');
+      throw hermesError('error.unreal.no_execute_ubergraph');
     L.functionFlags = search(L.propertiesSize, 0x180, 4, at =>
       ubergraph.add(at + 4).readU8() === 1 && ubergraph.add(at + 6).readU16() === 4
       && ubergraph.add(at + 8).readU16() === 0xffff, 'UFunction::FunctionFlags');
@@ -552,7 +552,7 @@ const unreal = (() => {
   function groupNamed(assembly) {
     const group = packageIndex().get(assembly);
     if (group === undefined)
-      throw new Error(`package ${assembly} is not loaded`);
+      throw hermesError('error.unreal.package_not_loaded', { package: assembly });
     return group;
   }
 
@@ -755,14 +755,15 @@ const unreal = (() => {
       found = methodsByToken(identity.image, [identity.token]);
     }
     if (found.length === 0)
-      throw new Error(`${identity.method} is not in ${identity.image} (game updated?)`);
+      throw hermesError('error.unreal.method_missing',
+          { method: identity.method, image: identity.image });
     return found[0].method;
   }
 
   function compile(identity) {
     const code = codeOf(resolve(identity));
     if (code === null)
-      throw new Error(`${identity.method} has no code`);
+      throw hermesError('error.unreal.no_code', { method: identity.method });
     return code;
   }
 
@@ -1085,7 +1086,7 @@ const unreal = (() => {
       case 'text': {
         const string = textString(address);
         if (string === null)
-          throw new Error(`the text of this ${type.name} cannot be read`);
+          throw hermesError('error.unreal.text_unreadable', { type: type.name });
         const [data, length] = string;
         return { value: data.isNull() || length === 0 ? '' : data.readUtf16String(length) };
       }
@@ -1096,7 +1097,7 @@ const unreal = (() => {
         return readValue(type, address);
       case 'array': {
         if (type.element === null)
-          throw new Error(`the elements of ${type.name} are unknown`);
+          throw hermesError('error.unreal.elements_unknown', { name: type.name });
         const data = address.readPointer();
         const count = data.isNull() ? 0 : Math.max(0, address.add(Process.pointerSize).readS32());
         const elements = [];
@@ -1105,14 +1106,14 @@ const unreal = (() => {
         return { elements, element: type.element };
       }
       default:
-        throw new Error(`a ${type.name} cannot be read in scripts`);
+        throw hermesError('error.unreal.script_unreadable', { type: type.name });
     }
   }
 
   function writeValue(type, address, value) {
     // Store a script's value as a type with ``engine``: only bools can be.
     if (type.engine !== 'bool')
-      throw new Error(`a ${type.name} cannot be changed in scripts`);
+      throw hermesError('error.unreal.script_unwritable', { type: type.name });
     const at = address.add(type.byteOffset);
     at.writeU8((at.readU8() & ~type.mask & 0xff) | (value ? type.byteMask : 0));
   }
@@ -1167,7 +1168,7 @@ const unreal = (() => {
     const free = address.add(SPARSE_FREE).readS32();
     if (slots < 0 || slots > max || free < 0 || free > slots || numBits < slots
         || maxBits < numBits || (slots > 0 && data.isNull()))
-      throw new Error('unexpected memory layout of a TSet/TMap');
+      throw hermesError('error.unreal.set_layout');
     const bits = maxBits > INLINE_BITS ? address.add(SPARSE_BITS + 16).readPointer()
       : address.add(SPARSE_BITS);
     return {
@@ -1220,12 +1221,12 @@ const unreal = (() => {
     reflection();
     const field = ptr(target.property);
     if (!isProperty(field))
-      throw new Error(`no property at ${field}`);
+      throw hermesError('error.unreal.no_property', { field });
     const type = valueType(field);
     const address = ptr(target.address);
     const name = type.name;
     if (type.element === null || (type.engine === 'map' && type.value === null))
-      throw new Error(`the elements of ${name} are unknown`);
+      throw hermesError('error.unreal.elements_unknown', { name });
     const entries = [];
     if (type.engine === 'array') {
       const data = address.readPointer();
@@ -1237,7 +1238,7 @@ const unreal = (() => {
       return { name, count, entries };
     }
     if (type.engine !== 'map' && type.engine !== 'set')
-      throw new Error(`${name} is no TArray, TMap or TSet`);
+      throw hermesError('error.unreal.not_container', { name });
     const sparse = sparseArray(address);
     const { valueOffset, stride } = slotLayout(type);
     for (let i = 0, shown = 0; i < sparse.slots && entries.length < limit; i++) {
@@ -1359,8 +1360,7 @@ const unreal = (() => {
     const fn = resolve(identity);
     const code = codeOf(fn);
     if (code === null)
-      throw new Error(`${identity.method} has no code: a Blueprint event without a ` +
-                      'Blueprint implementing it, or a delegate signature');
+      throw hermesError('error.unreal.no_code_event', { method: identity.method });
     const { params, returns, instance } = signatureOf(fn);
     return { ...code, frame: true, function: fn, params, returns, instance };
   }
@@ -1654,7 +1654,7 @@ const unreal = (() => {
     const index = s.address.findIndex((_address, i) => s.outer[i] !== 0
       && objectName(s, i) === 'Default__Object');
     if (index < 0)
-      throw new Error('Default__Object not found');
+      throw hermesError('error.unreal.not_found', { name: 'Default__Object' });
     const vtable = ptr(s.address[index]).readPointer();
     const funcOffset = ue.layout.func;
     const found = [];
@@ -1681,7 +1681,7 @@ const unreal = (() => {
       }
     }
     if (found.length !== 1)
-      throw new Error(`UObject::ProcessEvent not found (${found.length} candidates)`);
+      throw hermesError('error.unreal.no_process_event', { count: found.length });
     processEvent = {
       address: found[0],
       call: new NativeFunction(found[0], 'void', ['pointer', 'pointer', 'pointer'])
@@ -1733,7 +1733,7 @@ const unreal = (() => {
         const index = mainQueue.indexOf(job);
         if (index >= 0)
           mainQueue.splice(index, 1);
-        reject(new Error('the game thread did not run game code for 3 s (paused or loading?)'));
+        reject(hermesError('error.unreal.game_thread_timeout'));
       }, MAIN_TIMEOUT);
       mainQueue.push(job);
       if (mainHook === null)
@@ -1749,7 +1749,7 @@ const unreal = (() => {
     // Call a UFunction with its parameter block (see signatureOf); game thread
     // only. A static function is called on its class's default object.
     if (!isGameThread())
-      throw new Error('game code can only be called on the game thread');
+      throw hermesError('error.unreal.not_game_thread');
     let self = object;
     if (self === null || self.isNull())
       self = defaultObject(fn.add(OBJECT_OUTER).readPointer());
@@ -1791,7 +1791,7 @@ const unreal = (() => {
         writeValue(type, address, value);
         return;
       default:
-        throw new Error(`a ${type.name} cannot be passed from scripts`);
+        throw hermesError('error.unreal.script_unpassable', { type: type.name });
     }
   }
 
@@ -1813,7 +1813,7 @@ const unreal = (() => {
         found = [s.name[i], Number(match[2]) + 1];
     }
     if (found === undefined)
-      throw new Error(`the FName "${text}" is unknown (no object has it)`);
+      throw hermesError('error.unreal.unknown_fname', { name: text });
     nameIndexes.set(text, found);
     return found;
   }
@@ -1850,7 +1850,7 @@ const unreal = (() => {
         return klass;
       }
     }
-    throw new Error(`class ${name} not found (not loaded?)`);
+    throw hermesError('error.unreal.no_class', { name });
   }
 
   // Functions found by name: scripts run each run's calls again, and a search
@@ -1884,8 +1884,8 @@ const unreal = (() => {
           return fn.address;
       }
     }
-    throw new Error(`${layout(klass).name} has no ${wantStatic ? 'static ' : ''}function ` +
-                    `${name} with ${argumentCount} argument(s)`);
+    throw hermesError(wantStatic ? 'error.unreal.no_static_function' : 'error.unreal.no_function',
+                      { owner: layout(klass).name, name, count: argumentCount });
   }
 
   function methods(klass) {
@@ -1946,7 +1946,7 @@ const unreal = (() => {
     const i = s.address.findIndex((address, k) => s.klass[k] === Number(klass.toString())
       && objectName(s, k) === wanted);
     if (i < 0)
-      throw new Error(`${wanted} not found`);
+      throw hermesError('error.unreal.not_found', { name: wanted });
     return ptr(s.address[i]);
   }
 
@@ -1959,7 +1959,7 @@ const unreal = (() => {
     // "AttributeStatsWidget.PointsAvailableTracker": the object's name after
     // its outer's; a widget's outer is the WidgetTree of the widget showing it.
     if (!isObject(object))
-      throw new Error(`no object at ${object}`);
+      throw hermesError('error.unreal.no_object', { address: object });
     const name = fieldName(object.add(OBJECT_NAME));
     let outer = object.add(OBJECT_OUTER).readPointer();
     if (!outer.isNull() && isObject(outer)
@@ -2244,7 +2244,7 @@ const unreal = (() => {
       if (field !== undefined)
         return { set, field };
     }
-    throw new Error(`the player has no attribute ${name}`);
+    throw hermesError('error.unreal.no_player_attribute', { name });
   }
 
   function writeGameplayAttribute(type, address, field, keep) {
@@ -2253,7 +2253,7 @@ const unreal = (() => {
     const at = name => {
       const part = parts.find(entry => entry.name === name);
       if (part === undefined)
-        throw new Error(`FGameplayAttribute has no ${name}`);
+        throw hermesError('error.unreal.gameplay_attribute_field', { name });
       return address.add(part.offset);
     };
     const name = field.name;
@@ -2287,18 +2287,18 @@ const unreal = (() => {
     // "Attribute" through the game's setter; game thread only. Gives
     // { base, current } afterwards.
     if (typeof value !== 'number' || !Number.isFinite(value))
-      throw new Error(`the value must be a number, not ${value}`);
+      throw hermesError('error.unreal.not_a_number', { value: String(value) });
     if (!isGameThread())
-      throw new Error('attributes can only be set on the game thread');
+      throw hermesError('error.unreal.attribute_game_thread');
     reflection();
     const parts = currentPlayerParts();
     if (parts === null)
-      throw new Error('no player (yet)');
+      throw hermesError('error.unreal.no_player');
     if (parts.asc.isNull())
-      throw new Error('the player has no ability system component');
+      throw hermesError('error.unreal.no_ability_system');
     const setter = findAttributeSetter();
     if (setter === null)
-      throw new Error('the game has no function to set an attribute\'s base value');
+      throw hermesError('error.unreal.no_base_setter');
     const { set, field } = findAttribute(parts, name);
     const { signature } = setter;
     const parms = Memory.alloc(Math.max(signature.parmsSize, 8));
@@ -2314,7 +2314,7 @@ const unreal = (() => {
     invoke(setter.fn, null, parms);
     if (found !== undefined && found.type.engine === 'bool'
         && (parms.add(found.offset + found.type.byteOffset).readU8() & found.type.byteMask) === 0)
-      throw new Error(`the game did not find the attribute ${name}`);
+      throw hermesError('error.unreal.attribute_not_found', { name });
     const data = layout(field.type.klass).fields;
     const read = entry => set.add(field.offset)
       .add(data.find(part => part.name === entry).offset).readFloat();
@@ -2369,7 +2369,7 @@ const unreal = (() => {
     invoke,
     writeParameter,
     newString: () => {
-      throw new Error('Unreal has no string objects: FString arguments are written in place');
+      throw hermesError('error.unreal.no_string_objects');
     },
     onRuntimeThread: work => new Promise(resolve => resolve(work())),
     // The monitor shows Unity's object names; here the UObject's FName.

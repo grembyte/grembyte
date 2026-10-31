@@ -82,7 +82,7 @@ import threading
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import logs
+from hermes.core import logs, messages
 from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE
 from hermes.core.frida_attach import attach_session
@@ -246,7 +246,7 @@ class MethodMonitorWorker(QThread):
             script.on("message", self._on_message)
             script.load()
             if not self._ready.wait(5):
-                raise RuntimeError("Timed out while loading the method monitor")
+                raise messages.LocalizedRuntimeError("error.method_monitor.load_timeout")
             while (not self.isInterruptionRequested() and self._detach_reason is None
                    and self._agent_error is None):
                 try:
@@ -257,10 +257,11 @@ class MethodMonitorWorker(QThread):
             if self._agent_error and not self.isInterruptionRequested():
                 raise RuntimeError(self._agent_error)
             if self._detach_reason and not self.isInterruptionRequested():
-                raise RuntimeError(f"Target process detached: {self._detach_reason}")
+                raise messages.LocalizedRuntimeError("error.agent.detached",
+                                                     reason=self._detach_reason)
         except FRIDA_ERRORS + (OSError, RuntimeError) as error:
             if not self.isInterruptionRequested():
-                self.worker_failed.emit(str(error))
+                self.worker_failed.emit(messages.describe(error))
         finally:
             if script is not None:
                 try:
@@ -289,53 +290,54 @@ class MethodMonitorWorker(QThread):
                 try:
                     self.inspected.emit(monitor_id, api.inspect(argument))
                 except frida.RPCException as error:
-                    self.inspect_failed.emit(monitor_id, str(error))
+                    self.inspect_failed.emit(monitor_id, messages.describe(error))
             elif action == "evaluate":
                 try:
                     self.evaluated.emit(monitor_id, api.evaluate(*argument))
                 except frida.RPCException as error:
-                    self.evaluate_failed.emit(monitor_id, str(error))
+                    self.evaluate_failed.emit(monitor_id, messages.describe(error))
             elif action == "describe":
                 try:
                     self.call_described.emit(monitor_id, api.describe_call(*argument))
                 except frida.RPCException as error:
-                    self.call_failed.emit(monitor_id, str(error))
+                    self.call_failed.emit(monitor_id, messages.describe(error))
             elif action == "call":
                 try:
                     self.called.emit(monitor_id, api.call_static(*argument))
                 except frida.RPCException as error:
-                    self.call_failed.emit(monitor_id, str(error))
+                    self.call_failed.emit(monitor_id, messages.describe(error))
             elif action == "call_found":
                 try:
                     self.called.emit(monitor_id, api.call_found(*argument))
                 except frida.RPCException as error:
-                    self.call_failed.emit(monitor_id, str(error))
+                    self.call_failed.emit(monitor_id, messages.describe(error))
             elif action == "methods":
                 try:
                     self.methods_listed.emit(monitor_id, api.list_methods(argument))
                 except frida.RPCException as error:
-                    self.methods_failed.emit(monitor_id, str(error))
+                    self.methods_failed.emit(monitor_id, messages.describe(error))
             elif action == "describe_method":
                 try:
                     self.call_described.emit(monitor_id, api.describe_method(argument))
                 except frida.RPCException as error:
-                    self.call_failed.emit(monitor_id, str(error))
+                    self.call_failed.emit(monitor_id, messages.describe(error))
             elif action == "call_on":
                 try:
                     self.called.emit(monitor_id, api.call_on(*argument))
                 except frida.RPCException as error:
-                    self.call_failed.emit(monitor_id, str(error))
+                    self.call_failed.emit(monitor_id, messages.describe(error))
             elif action == "text":
                 try:
                     self.text_fetched.emit(monitor_id, api.full_text(argument))
                 except frida.RPCException as error:
-                    self.text_failed.emit(monitor_id, str(error))
+                    self.text_failed.emit(monitor_id, messages.describe(error))
         except frida.RPCException as error:
-            self.monitor_failed.emit(monitor_id, str(error))
+            self.monitor_failed.emit(monitor_id, messages.describe(error))
 
     def _on_message(self, message, _data):
         if message.get("type") == "error":
-            self._agent_error = message.get("stack", "Method monitor agent failed")
+            self._agent_error = messages.describe(
+                message.get("stack", messages.text("error.method_monitor.agent_failed")))
             self._ready.set()
             return
         payload = message.get("payload", {})
@@ -351,9 +353,10 @@ class MethodMonitorWorker(QThread):
         elif kind == "monitor-ended":
             self.monitor_ended.emit(payload.get("monitorId", 0))
         elif kind == "agent-error":
-            logs.log.error("method monitor agent: %s", payload.get("error", ""))
+            logs.log.error("method monitor agent: %s", messages.describe(payload.get("error", "")))
         elif kind == "monitor-error":
-            self.monitor_failed.emit(payload.get("monitorId", 0), payload.get("error", ""))
+            self.monitor_failed.emit(payload.get("monitorId", 0),
+                                     messages.describe(payload.get("error", "")))
 
     def _on_detached(self, reason, _crash):
         self._detach_reason = reason

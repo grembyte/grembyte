@@ -33,7 +33,7 @@ import time
 
 from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import sessions
+from hermes.core import messages, sessions
 from hermes.core.memory import read_memory, write_process_bytes
 from hermes.core.pointer import resolve_chain
 from hermes.core.ptrace_engine import (
@@ -132,7 +132,7 @@ class PtraceHookWorker(PtraceWatchpointEngine):
             self._load_mappings()
             self._attach_all()
             if not self._armed:
-                raise OSError(1, "No thread could be attached for hooking.")
+                raise messages.LocalizedOSError("error.hooks.no_thread", errno=1)
             self.session_ready.emit("x86-64")
             self._loop()
         except OSError as error:
@@ -155,7 +155,7 @@ class PtraceHookWorker(PtraceWatchpointEngine):
             if not self._pump() and not worked:
                 time.sleep(0.002)
         if self._target_gone:
-            self.worker_failed.emit("The target process exited.")
+            self.worker_failed.emit(messages.text("error.ptrace.exited"))
 
     def _drain_commands(self):
         worked = False
@@ -184,15 +184,12 @@ class PtraceHookWorker(PtraceWatchpointEngine):
 
     def _add_hook(self, hook_id, spec):
         if spec.value_type not in VALUE_TYPES:
-            self.hook_failed.emit(hook_id, f"Unsupported value type: {spec.value_type}")
+            self.hook_failed.emit(hook_id, messages.text("error.hooks.unsupported_type",
+                                                         type=spec.value_type))
             return
         address = self._resolve_address(spec)
         if address is None:
-            self.hook_failed.emit(
-                hook_id,
-                "Could not resolve the target address. The ptrace hook backend "
-                "needs a fixed address or a resolvable pointer.",
-            )
+            self.hook_failed.emit(hook_id, messages.text("error.hooks.unresolved_address"))
             return
         unaligned = watch_alignment_error(address, VALUE_TYPES[spec.value_type].size)
         if unaligned is not None:
@@ -200,10 +197,8 @@ class PtraceHookWorker(PtraceWatchpointEngine):
             return
         slot_info = self._claim_address(address, spec.value_type)
         if slot_info is None:
-            self.hook_failed.emit(
-                hook_id,
-                f"No free hardware watchpoint (the CPU allows {WATCHPOINT_SLOTS}).",
-            )
+            self.hook_failed.emit(hook_id, messages.text("error.hooks.no_watchpoint",
+                                                         slots=WATCHPOINT_SLOTS))
             return
         agent = spec.transform.to_agent()
         self._hooks[hook_id] = {
