@@ -85,3 +85,33 @@ def test_tables_without_a_menu_get_one(qt_app, translations):
     table = _table()
     copy_menu(table, translations)
     assert table.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
+
+
+def test_tables_with_a_remove_function_offer_to_delete_the_clicked_row(
+        qt_app, translations, monkeypatch):
+    # pylint: disable=unused-argument
+    table = QTableWidget(3, 1)
+    for row in range(3):
+        table.setItem(row, 0, QTableWidgetItem(f"row {row}"))
+    table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+    table.resize(400, 300)
+    table.show()
+    deleted = []
+    copy_menu(table, translations, lambda: deleted.append(
+        sorted(index.row() for index in table.selectionModel().selectedRows())))
+    shown = []
+    monkeypatch.setattr(QMenu, "exec", lambda menu, _position=None: shown.append(
+        [action.text() for action in menu.actions() if not action.isSeparator()]) or
+        menu.actions()[0].trigger())
+
+    # The clicked row is selected first; the delete action acts on it.
+    table.customContextMenuRequested.emit(table.visualRect(table.model().index(1, 0)).center())
+    assert shown[-1] == ["Zeile löschen", "Zeile kopieren", "Zelle kopieren"]
+    assert deleted == [[1]]
+
+    # A selection of several rows the click is in stays, and is named.
+    table.selectAll()
+    table.customContextMenuRequested.emit(table.visualRect(table.model().index(2, 0)).center())
+    assert shown[-1][0] == "3 Zeilen löschen"
+    assert deleted[-1] == [0, 1, 2]
+    table.close()

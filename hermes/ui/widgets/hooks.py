@@ -43,7 +43,8 @@ from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.hook_debug import HookDebugWindow
 from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.syntax_hint import SyntaxHint
-from hermes.ui.widgets.table import add_copy_actions, resizable_columns, set_row_height
+from hermes.ui.widgets.table import (
+    add_copy_actions, add_delete_action, resizable_columns, set_row_height)
 
 
 # Upper bound for joining a hook worker from the GUI thread.
@@ -625,6 +626,7 @@ class HookPanel(QGroupBox):
         item = self.table.item(row, 0)
         hook_id = None if item is None else item.data(Qt.ItemDataRole.UserRole)
         menu = self.context_menu(hook_id) or QMenu(self)
+        add_delete_action(menu, self.table, self.translations, self._remove_selected)
         add_copy_actions(menu, self.table, position, self.translations)
         menu.exec(self.table.viewport().mapToGlobal(position))
 

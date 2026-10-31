@@ -213,6 +213,8 @@ class MethodMonitorDialog(QDialog):
         self.methods_table.horizontalHeaderItem(_M_OBJECTS).setToolTip(
             self.translations["monitor.objects_tooltip"])
         self.methods_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        # Removed one at a time (see _remove_selected)
+        self.methods_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.methods_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.methods_table.verticalHeader().setVisible(False)
         set_row_height(self.methods_table)
@@ -222,7 +224,7 @@ class MethodMonitorDialog(QDialog):
                 column, QHeaderView.ResizeMode.Stretch if column == _M_SIGNATURE
                 else QHeaderView.ResizeMode.ResizeToContents)
         resizable_columns(self.methods_table)
-        copy_menu(self.methods_table, self.translations)
+        copy_menu(self.methods_table, self.translations, self._remove_selected)
         self.methods_table.itemSelectionChanged.connect(self._update_buttons)
         top_layout.addWidget(self.methods_table)
         buttons = QHBoxLayout()

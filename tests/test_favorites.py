@@ -135,6 +135,36 @@ def test_star_column_marks_and_unmarks(qt_app, repository, process_id, translati
     assert hidden.isColumnHidden(0)
 
 
+def test_space_marks_the_selected_row(qt_app, repository, process_id, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PyQt6.QtGui import QShortcut  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.features.trace import NEW, TraceRow
+    from hermes.ui.widgets.favorites import FavoriteStore
+    from hermes.ui.widgets.native_trace import NativeRowModel
+    from hermes.ui.widgets.trace import trace_table
+
+    store = FavoriteStore(repository)
+    store.set_process(process_id)
+    model = NativeRowModel(translations)
+    view = trace_table(model, 2, favorites=store, source=NATIVE_TRACE)
+    model.set_items([ROLL, JIT], [TraceRow(0, 3, 1.0, None, NEW, 0),
+                                  TraceRow(1, 7, 2.3, None, NEW, 1)])
+    (space,) = view.findChildren(QShortcut)
+    assert space.key().toString() == "Space"
+    assert space.context() == Qt.ShortcutContext.WidgetShortcut
+
+    view.selectRow(1)
+    space.activated.emit()
+    assert store.is_favorite(JIT) and not store.is_favorite(ROLL)
+    space.activated.emit()
+    assert store.favorites() == []
+    view.selectRow(0)
+    space.activated.emit()
+    assert [favorite.label for favorite in store.favorites()] == ["roll_dice"]
+
+
 def test_favorites_window_annotates_and_monitors(qt_app, repository, process_id, translations):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore

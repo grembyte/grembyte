@@ -163,6 +163,8 @@ class TemplateDialog(QDialog):
             self.translations["templates.column_choices"],
         ])
         self.param_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        # Removed one at a time (see _remove_parameter_row)
+        self.param_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.param_table.verticalHeader().setVisible(False)
         set_row_height(self.param_table)
         self.param_table.setToolTip(self.translations["templates.parameters_hint"])
@@ -180,7 +182,7 @@ class TemplateDialog(QDialog):
         # text + padding, drop-down arrow and cell margins
         self.param_table.setColumnWidth(_KIND, widest + 64)
         resizable_columns(self.param_table)
-        copy_menu(self.param_table, self.translations)
+        copy_menu(self.param_table, self.translations, self._remove_parameter_row)
         self.param_table.setMinimumHeight(140)
         layout.addWidget(self.param_table)
         param_buttons = QHBoxLayout()

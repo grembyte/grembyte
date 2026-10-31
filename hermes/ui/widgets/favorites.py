@@ -7,7 +7,7 @@ lists them, keeps a note for each and hands them to the monitors.
 """
 
 from PyQt6.QtCore import QItemSelectionModel, QObject, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtGui import QGuiApplication, QKeySequence, QShortcut  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QDialog,
@@ -148,7 +148,8 @@ class FavoriteColumn:
 
 
 def set_up_favorite_column(view, model, store, source):
-    """Let a click on the star column of ``view`` mark the row's item as a favorite.
+    """Let a click on the star column of ``view`` mark the row's item as a
+    favorite, and the space key the current row's item.
 
     Hides the column without a ``store``.
     """
@@ -162,6 +163,11 @@ def set_up_favorite_column(view, model, store, source):
     store.changed.connect(model.favorites_changed)
     view.clicked.connect(lambda index: index.column() == FAVORITE_COLUMN and store.toggle(
         model.favorite_item(index.row()), source))
+    # Only while the table has the focus, not in a search field next to it
+    space = QShortcut(QKeySequence(Qt.Key.Key_Space), view)
+    space.setContext(Qt.ShortcutContext.WidgetShortcut)
+    space.activated.connect(lambda: view.currentIndex().isValid() and store.toggle(
+        model.favorite_item(view.currentIndex().row()), source))
 
 
 _KIND, _NAME, _LOCATION, _NOTE, _SOURCE, _ADDED = range(6)
@@ -241,7 +247,7 @@ class FavoritesDialog(QDialog):
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         header.sortIndicatorChanged.connect(lambda _column, _order: self.refresh())
         resizable_columns(self.table)
-        copy_menu(self.table, self.translations)
+        copy_menu(self.table, self.translations, self._remove)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.itemDoubleClicked.connect(self._on_double_click)
         self.table.itemSelectionChanged.connect(self._show_selection)

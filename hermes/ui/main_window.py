@@ -28,7 +28,8 @@ from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.icons import material_icon, set_button_icon
 from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.process_list import ProcessSelectDialog
-from hermes.ui.widgets.table import add_copy_actions, resizable_columns, set_row_height
+from hermes.ui.widgets.table import (
+    add_copy_actions, add_delete_action, resizable_columns, set_row_height)
 from hermes.core.pointer import chain_for_static_address, module_bases, resolve_chain
 from hermes.core.freeze import FreezeWorker, FrozenValue
 from hermes.core.scanner import (
@@ -1967,6 +1968,7 @@ class MainWindow(QMainWindow):
                     self.translations["address_table.pointer_remove"],
                     lambda: self._set_pointer(row, None),
                 )
+            add_delete_action(menu, table, self.translations, self._remove_address)
         add_copy_actions(menu, table, position, self.translations)
         menu.exec(table.viewport().mapToGlobal(position))
 

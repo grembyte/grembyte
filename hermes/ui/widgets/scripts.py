@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QPlainTextEdit,
     QTextBrowser,
     QPushButton,
@@ -30,11 +31,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from hermes.features.scripts import MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker
 from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import material_icon, set_button_icon
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.syntax_hint import SyntaxHint
-from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.table import (
+    add_copy_actions, add_delete_action, resizable_columns, select_clicked_row, set_row_height)
 
 STATUS_COLORS = {
     "starting": "#8b949e",
@@ -225,6 +227,8 @@ class ScriptPanel(QGroupBox):
             resizable_columns(self.table)
         self.table.itemSelectionChanged.connect(self._update_buttons)
         self.table.doubleClicked.connect(self._edit_selected)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
         splitter.addWidget(self.table)
 
         self.log_view = QTextBrowser()
@@ -249,6 +253,23 @@ class ScriptPanel(QGroupBox):
         splitter.setSizes([160, 130])
         layout.addWidget(splitter)
         self._update_buttons()
+
+    def _show_context_menu(self, position):
+        """The buttons' actions for the script under the pointer, and copying."""
+        row = self.table.rowAt(position.y())
+        if row < 0:
+            return
+        select_clicked_row(self.table, row)
+        menu = QMenu(self)
+        state = self._scripts.get(self._selected_id())
+        paused = state is not None and not state["spec"].enabled
+        for button, icon in ((self.btn_edit, "edit"), (self.btn_run, "play_circle"),
+                             (self.btn_toggle, "play_arrow" if paused else "pause")):
+            menu.addAction(material_icon(icon), button.text(), button.click).setEnabled(
+                button.isEnabled())
+        add_delete_action(menu, self.table, self.translations, self._remove_selected)
+        add_copy_actions(menu, self.table, position, self.translations)
+        menu.exec(self.table.viewport().mapToGlobal(position))
 
     def _selected_id(self):
         rows = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []

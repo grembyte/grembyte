@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 
 from hermes.ui import window_state
+from hermes.ui.widgets.icons import material_icon
 
 # Leaves room for the inline editors (line edits, combo boxes) of editable cells.
 TABLE_ROW_HEIGHT = 36
@@ -73,12 +74,47 @@ def add_copy_actions(menu, view, position, translations):
                    lambda: QGuiApplication.clipboard().setText(cell_text(view, row, column)))
 
 
-def copy_menu(view, translations):
-    """Give ``view`` (a table without a context menu of its own) one that copies."""
+def selected_row_count(view):
+    """How many rows of ``view`` are selected."""
+    model = view.selectionModel()
+    return 0 if model is None else len(model.selectedRows())
+
+
+def select_clicked_row(view, row):
+    """Select ``row`` for its context menu, unless it already is (keeping a
+    selection of several rows the menu then acts on)."""
+    model = view.selectionModel()
+    if model is not None and not model.isRowSelected(row):
+        view.selectRow(row)
+
+
+def add_delete_action(menu, view, translations, delete, enabled=True):
+    """Add "Delete row" (or "Delete N rows" for a selection of several),
+    calling ``delete`` (what the panel's remove button does)."""
+    if not menu.isEmpty():
+        menu.addSeparator()
+    count = selected_row_count(view)
+    text = (translations["table.delete_rows"].format(count=count) if count > 1
+            else translations["table.delete_row"])
+    menu.addAction(material_icon("delete"), text, delete).setEnabled(enabled)
+
+
+def copy_menu(view, translations, delete=None, can_delete=None):
+    """Give ``view`` (a table without a context menu of its own) one that copies.
+
+    With ``delete`` (a function removing the selected rows) the menu also
+    offers to delete the clicked row; ``can_delete()`` says whether it may
+    now (e.g. whether the remove button is enabled)."""
     view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
     def show(position):
         menu = QMenu(view)
+        if delete is not None:
+            index = view.indexAt(position)
+            if index.isValid():
+                select_clicked_row(view, index.row())
+                add_delete_action(menu, view, translations, delete,
+                                  can_delete is None or can_delete())
         add_copy_actions(menu, view, position, translations)
         if not menu.isEmpty():
             menu.exec(view.viewport().mapToGlobal(position))

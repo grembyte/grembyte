@@ -178,7 +178,7 @@ class NativeCallModel(QAbstractTableModel):
         return self.calls[row] if 0 <= row < len(self.calls) else None
 
 
-def _table(translations, columns, stretch_column):
+def _table(translations, columns, stretch_column, delete=None):
     table = QTableWidget(0, len(columns))
     table.setHorizontalHeaderLabels([translations[column] for column in columns])
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -192,7 +192,7 @@ def _table(translations, columns, stretch_column):
             column, QHeaderView.ResizeMode.Stretch if column == stretch_column
             else QHeaderView.ResizeMode.ResizeToContents)
     resizable_columns(table)
-    copy_menu(table, translations)
+    copy_menu(table, translations, delete)
     return table
 
 
@@ -290,7 +290,8 @@ class NativeMonitorDialog(QDialog):
         top = QWidget()
         top_layout = QVBoxLayout(top)
         top_layout.setContentsMargins(0, 0, 0, 0)
-        self.functions_table = _table(t, _FUNCTION_COLUMNS, _F_LOCATION)
+        self.functions_table = _table(t, _FUNCTION_COLUMNS, _F_LOCATION,
+                                      delete=self._remove_selected)
         self.functions_table.horizontalHeaderItem(_F_SKIPPED).setToolTip(
             t["native_monitor.skipped_tooltip"])
         set_row_height(self.functions_table)
