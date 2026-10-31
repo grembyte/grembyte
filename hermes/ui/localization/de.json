@@ -62,7 +62,7 @@
   "menu.delete_entries": "Gespeicherte Einträge löschen …",
   "menu.delete_entries_tooltip": "Löscht gewählte Adressen, Pointer-Scans, Hooks, Method-Hooks oder Favoriten gespeicherter Prozesse, oder die Prozesse ganz",
   "delete_entries.title": "Gespeicherte Einträge löschen",
-  "delete_entries.hint": "Zu löschende Einträge pro Prozess anhaken; das Kästchen vorn hakt alle Einträge der Zeile an. Mit Adressen werden auch ihre Pointer-Scans gelöscht. „Prozess entfernen“ löscht den Prozess selbst mit allen Einträgen und seiner Assembly-Auswahl; er wird beim nächsten Anhängen neu angelegt.",
+  "delete_entries.hint": "Zu löschende Einträge pro Prozess anhaken; das Kästchen vorn hakt alle Einträge der Zeile an. Ausgewählte Zeilen (mehrere mit Strg oder Umschalt): Die Leertaste hakt ihre Einträge an, ein zweites Mal auch den Prozess, ein drittes Mal nichts. Mit Adressen werden auch ihre Pointer-Scans gelöscht. „Prozess entfernen“ löscht den Prozess selbst mit allen Einträgen und seiner Assembly-Auswahl; er wird beim nächsten Anhängen neu angelegt.",
   "delete_entries.column_process": "Prozess entfernen",
   "delete_entries.attached": "Der angehängte Prozess kann nicht entfernt werden, nur seine Einträge.",
   "delete_entries.summary": "Ausgewählt: {entries} Einträge in {processes} Prozess(en), davon {removed} Prozess(e) ganz entfernen",

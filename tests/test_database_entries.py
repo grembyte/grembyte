@@ -86,3 +86,58 @@ def test_dialog_ticks_rows_and_deletes(qt_app, translations, sessions, repositor
     assert dialog.deleted[souls] == {"pointer_scans": 1}
     assert dialog.deleted[dialog.processes[other].process_id]["process"] == 1
     assert _count(sessions, PointerScan) == 0 and _count(sessions, Address) == 1
+
+
+def test_space_steps_the_selected_rows(qt_app, translations, sessions, repository):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PyQt6.QtGui import QShortcut  # pylint: disable=import-error,no-name-in-module
+    from hermes.ui.widgets.database_entries import (
+        KIND_COLUMNS,
+        PROCESS_COLUMN,
+        ROW_COLUMN,
+        DeleteEntriesDialog,
+    )
+
+    souls = _process_id(sessions, "DarkSoulsIII.ex", PROTON_GE)
+    other_id = _process_id(sessions, "DarkSoulsIII.ex", PROTON_EXP)
+    dialog = DeleteEntriesDialog(translations, repository, current=souls)
+    rows = {process.process_id: row for row, process in enumerate(dialog.processes)}
+    table = dialog.table
+    (space,) = table.findChildren(QShortcut)
+    assert space.key().toString() == "Space"
+    assert space.context() == Qt.ShortcutContext.WidgetShortcut
+
+    def ticked(row):
+        return [column for column in (ROW_COLUMN, *KIND_COLUMNS.values(), PROCESS_COLUMN)
+                if table.item(row, column).checkState() == Qt.CheckState.Checked]
+
+    entries = [column for column in KIND_COLUMNS.values()
+               if table.item(rows[other_id], column).flags() & Qt.ItemFlag.ItemIsUserCheckable]
+    other = rows[other_id]
+    table.selectRow(other)
+    space.activated.emit()  # the box in front: all entries
+    assert ticked(other) == [ROW_COLUMN, *entries]
+    space.activated.emit()  # the process too
+    assert ticked(other) == [ROW_COLUMN, *entries, PROCESS_COLUMN]
+    assert dialog.selection()[0][2]
+    space.activated.emit()  # nothing
+    assert ticked(other) == [] and dialog.selection() == []
+    assert not dialog.delete_button.isEnabled()
+
+    # The attached process cannot be removed: the second step is left out.
+    attached = rows[souls]
+    table.selectRow(attached)
+    space.activated.emit()
+    assert ROW_COLUMN in ticked(attached) and PROCESS_COLUMN not in ticked(attached)
+    space.activated.emit()
+    assert ticked(attached) == []
+
+    # Several rows go together, by the furthest one.
+    table.selectAll()
+    table.item(other, PROCESS_COLUMN).setCheckState(Qt.CheckState.Checked)
+    space.activated.emit()
+    assert all(ticked(row) == [] for row in range(table.rowCount()))
+    space.activated.emit()
+    assert ROW_COLUMN in ticked(other) and ROW_COLUMN in ticked(attached)
+

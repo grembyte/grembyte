@@ -4,9 +4,13 @@ One row per saved process (name and path). Each count of entries has a
 check box; the box in front of a row ticks all of them. "Remove process"
 deletes the process itself with everything saved for it. Deleting
 addresses deletes their pointer scans as well.
+
+Rows can be selected (several with Ctrl and Shift); the space key steps the
+selected rows through: all their entries, also the process, nothing.
 """
 
 from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtGui import QKeySequence, QShortcut  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QDialog,
@@ -28,6 +32,8 @@ ROW_COLUMN, NAME_COLUMN, PLATFORM_COLUMN, PATH_COLUMN = range(4)
 KIND_COLUMNS = {kind: 4 + index for index, kind in enumerate(DELETABLE)}
 PROCESS_COLUMN = 4 + len(DELETABLE)
 CHECKED, UNCHECKED = Qt.CheckState.Checked, Qt.CheckState.Unchecked
+# What the space key ticks in a row, one step per press
+NOTHING, ENTRIES, PROCESS = range(3)
 
 
 class DeleteEntriesDialog(QDialog):
@@ -58,7 +64,8 @@ class DeleteEntriesDialog(QDialog):
                    + [translations["delete_entries.column_process"]])
         self.table = QTableWidget(0, len(headers))
         self.table.setHorizontalHeaderLabels(headers)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         set_row_height(self.table)
@@ -68,6 +75,10 @@ class DeleteEntriesDialog(QDialog):
         header.setSectionResizeMode(PATH_COLUMN, QHeaderView.ResizeMode.Stretch)
         self._sizer = resizable_columns(self.table)
         self.table.itemChanged.connect(self._on_item_changed)
+        # Instead of the item view's own space key, which ticks the current box only
+        space = QShortcut(QKeySequence(Qt.Key.Key_Space), self.table)
+        space.setContext(Qt.ShortcutContext.WidgetShortcut)
+        space.activated.connect(self.step_selected)
         layout.addWidget(self.table)
 
         self.summary = QLabel()
@@ -160,6 +171,53 @@ class DeleteEntriesDialog(QDialog):
         self.table.item(row, ROW_COLUMN).setCheckState(
             CHECKED if boxes and all(self._checked(row, column) for column in boxes)
             else UNCHECKED)
+
+    def _stage(self, row):
+        """What is ticked in ``row``: NOTHING, ENTRIES or the PROCESS too."""
+        if self._checked(row, PROCESS_COLUMN):
+            return PROCESS
+        if self._checked(row, ROW_COLUMN) or any(
+                self._checked(row, column) for column in KIND_COLUMNS.values()):
+            return ENTRIES
+        return NOTHING
+
+    def _set_stage(self, row, stage):
+        """Tick the row's entries (ENTRIES), its process too (PROCESS), or nothing.
+
+        What cannot be ticked stays as it is: the attached process, counts of 0.
+        """
+        for column in KIND_COLUMNS.values():
+            self._set_checked(row, column, stage != NOTHING)
+        self._set_checked(row, PROCESS_COLUMN, stage == PROCESS)
+        self._sync_row_box(row)
+
+    def selected_rows(self):
+        """The selected rows, else the current one."""
+        rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
+        if not rows and self.table.currentRow() >= 0:
+            rows = [self.table.currentRow()]
+        return rows
+
+    def step_selected(self):
+        """The space key: tick the selected rows' entries, then their process
+        too, then nothing. A step none of the rows can take (no entries, the
+        attached process) is skipped."""
+        rows = self.selected_rows()
+        if not rows:
+            return
+        stage = (max(self._stage(row) for row in rows) + 1) % 3
+        self._updating = True
+        try:
+            # NOTHING can always be reached
+            for _ in range(3):
+                for row in rows:
+                    self._set_stage(row, stage)
+                if any(self._stage(row) == stage for row in rows):
+                    break
+                stage = (stage + 1) % 3
+        finally:
+            self._updating = False
+        self._update_summary()
 
     def selection(self):
         """[(SavedProcess, kinds, remove_process)] of the rows with something ticked."""

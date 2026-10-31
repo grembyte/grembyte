@@ -62,7 +62,7 @@
   "menu.delete_entries": "Delete saved entries …",
   "menu.delete_entries_tooltip": "Deletes chosen addresses, pointer scans, hooks, method hooks or favorites of saved processes, or the processes altogether",
   "delete_entries.title": "Delete saved entries",
-  "delete_entries.hint": "Tick the entries to delete per process; the box in front ticks all entries of the row. Deleting addresses deletes their pointer scans as well. “Remove process” deletes the process itself with all its entries and its assembly selection; it is saved anew when you attach to it again.",
+  "delete_entries.hint": "Tick the entries to delete per process; the box in front ticks all entries of the row. Selected rows (several with Ctrl or Shift): the space key ticks their entries, a second time their process too, a third time nothing. Deleting addresses deletes their pointer scans as well. “Remove process” deletes the process itself with all its entries and its assembly selection; it is saved anew when you attach to it again.",
   "delete_entries.column_process": "Remove process",
   "delete_entries.attached": "The attached process cannot be removed, only its entries.",
   "delete_entries.summary": "Chosen: {entries} entries in {processes} process(es), {removed} of them removed altogether",
