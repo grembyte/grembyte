@@ -2082,6 +2082,9 @@ const unreal = (() => {
   // Avowed's AlabamaAbilitySystemBlueprintLibrary:
   // SetFloatAttributeBaseFromAbilitySystemComponent. GAS then computes the
   // current value with the effects (a +1 bonus stays one, a x1.4 one scales).
+  // Games with AngelscriptGAS (Gothic 1 Remake) have no such function; their
+  // attribute sets set it themselves: AngelscriptAttributeSet:
+  // TrySetAttributeBaseValue(FName, float), called on the set.
 
   // FGameplayAttribute's TFieldPath<FProperty> (Attribute): ResolvedField,
   // ResolvedOwner (a weak pointer to the declaring class), Path (TArray<FName>,
@@ -2089,7 +2092,9 @@ const unreal = (() => {
   const FIELD_PATH_OWNER = 8, FIELD_PATH_PATH = 16;
   // How often a found setter (or none) is looked for again
   const SETTER_SEARCH_AGE = 30000;
-  let attributeSetter;  // { fn, signature, name } or null; undefined: not looked for
+  // { fn, signature, name, setClass } or null; undefined: not looked for.
+  // setClass: the attribute set class whose sets it is called on, else NULL.
+  let attributeSetter;
   let setterSearched = 0;
   let playerParts = null;  // { pawn, owners, sets, asc } found last
 
@@ -2195,9 +2200,10 @@ const unreal = (() => {
   }
 
   function findAttributeSetter() {
-    // The game's static UFunction setting an attribute's base value (see
-    // above), or null; found by its parameters among the UFunctions named
-    // Set...Attribute...Base.
+    // The game's UFunction setting an attribute's base value (see above), or
+    // null; found by its parameters among the UFunctions named
+    // (Try)Set...Attribute...Base: a static one taking the component, else
+    // one of an attribute set taking the attribute's name.
     if (attributeSetter !== undefined
         && (attributeSetter !== null || Date.now() - setterSearched < SETTER_SEARCH_AGE))
       return attributeSetter;
@@ -2205,8 +2211,11 @@ const unreal = (() => {
     attributeSetter = null;
     const s = objects();
     const functionClass = ue.layout.functionClass;
+    const setBase = findClass('AttributeSet');
+    let onSet = null;
     for (let i = 0; i < s.address.length; i++) {
-      if (s.klass[i] !== functionClass || !/^Set\w*Attribute\w*Base/.test(objectName(s, i)))
+      if (s.klass[i] !== functionClass
+          || !/^(Try)?Set\w*Attribute\w*Base/.test(objectName(s, i)))
         continue;
       const fn = ptr(s.address[i]);
       let signature;
@@ -2215,19 +2224,26 @@ const unreal = (() => {
       } catch (_error) {
         continue;
       }
+      const owner = fn.add(OBJECT_OUTER).readPointer();
+      const setter = { fn, signature, setClass: NULL,
+                       name: `${nameOfAddress(Number(owner.toString()))}:${objectName(s, i)}` };
+      const isNumber = parameter => parameter !== undefined
+        && [KIND.R4, KIND.R8].includes(parameter.type.kind);
       const [component, attribute, value] = signature.params;
-      if (signature.instance || value === undefined || component.type.kind !== KIND.CLASS
-          || !/AbilitySystemComponent/.test(component.type.name)
-          || attribute.type.name !== 'FGameplayAttribute' || attribute.type.byref
-          || ![KIND.R4, KIND.R8].includes(value.type.kind))
-        continue;
-      attributeSetter = {
-        fn, signature,
-        name: `${nameOfAddress(Number(fn.add(OBJECT_OUTER).readPointer().toString()))}:` +
-          objectName(s, i)
-      };
-      break;
+      if (!signature.instance && isNumber(value) && component.type.kind === KIND.CLASS
+          && /AbilitySystemComponent/.test(component.type.name)
+          && attribute.type.name === 'FGameplayAttribute' && !attribute.type.byref) {
+        attributeSetter = setter;
+        break;
+      }
+      const [name, number] = signature.params;
+      if (onSet === null && signature.instance && signature.params.length === 2
+          && name.type.engine === 'name' && isNumber(number)
+          && classChain(owner).some(klass => klass.equals(setBase)))
+        onSet = Object.assign(setter, { setClass: owner });
     }
+    if (attributeSetter === null)
+      attributeSetter = onSet;
     return attributeSetter;
   }
 
@@ -2294,26 +2310,45 @@ const unreal = (() => {
     const parts = currentPlayerParts();
     if (parts === null)
       throw hermesError('error.unreal.no_player');
-    if (parts.asc.isNull())
-      throw hermesError('error.unreal.no_ability_system');
     const setter = findAttributeSetter();
+    if (setter !== null && setter.setClass.isNull() && parts.asc.isNull())
+      throw hermesError('error.unreal.no_ability_system');
     if (setter === null)
       throw hermesError('error.unreal.no_base_setter');
     const { set, field } = findAttribute(parts, name);
     const { signature } = setter;
     const parms = Memory.alloc(Math.max(signature.parmsSize, 8));
     parms.writeByteArray(new ArrayBuffer(Math.max(signature.parmsSize, 8)));
-    const [component, attribute, number, found] = signature.params;
-    const keep = [];
-    parms.add(component.offset).writePointer(parts.asc);
-    writeGameplayAttribute(attribute.type, parms.add(attribute.offset), field, keep);
-    if (number.type.kind === KIND.R8)
-      parms.add(number.offset).writeDouble(value);
-    else
-      parms.add(number.offset).writeFloat(value);
-    invoke(setter.fn, null, parms);
-    if (found !== undefined && found.type.engine === 'bool'
-        && (parms.add(found.offset + found.type.byteOffset).readU8() & found.type.byteMask) === 0)
+    const writeNumber = number => {
+      if (number.type.kind === KIND.R8)
+        parms.add(number.offset).writeDouble(value);
+      else
+        parms.add(number.offset).writeFloat(value);
+    };
+    const isFalse = (type, offset) => type.engine === 'bool'
+      && (parms.add(offset + type.byteOffset).readU8() & type.byteMask) === 0;
+    let notFound;
+    if (setter.setClass.isNull()) {
+      const [component, attribute, number, found] = signature.params;
+      const keep = [];
+      parms.add(component.offset).writePointer(parts.asc);
+      writeGameplayAttribute(attribute.type, parms.add(attribute.offset), field, keep);
+      writeNumber(number);
+      invoke(setter.fn, null, parms);
+      notFound = found !== undefined && isFalse(found.type, found.offset);
+    } else {
+      // On the set, by the attribute's name: the FName its property has
+      if (!classChain(set.add(OBJECT_CLASS).readPointer())
+        .some(klass => klass.equals(setter.setClass)))
+        throw hermesError('error.unreal.no_base_setter');
+      const [attribute, number] = signature.params;
+      Memory.copy(parms.add(attribute.offset), field.property.add(ue.layout.fieldName), 8);
+      writeNumber(number);
+      invoke(setter.fn, set, parms);
+      notFound = signature.returnOffset >= 0
+        && isFalse(signature.returns, signature.returnOffset);
+    }
+    if (notFound)
       throw hermesError('error.unreal.attribute_not_found', { name });
     const data = layout(field.type.klass).fields;
     const read = entry => set.add(field.offset)

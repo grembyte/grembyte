@@ -385,6 +385,27 @@ __attribute__((noinline)) void exec_SetFloatAttributeBase(Object *context, Frame
     parms->found = 1;
 }
 
+/* AngelscriptGAS' setter (Gothic 1 Remake): AngelscriptAttributeSet's
+   TrySetAttributeBaseValue(FName, float), called on the set; it finds the
+   attribute by the name of its property. */
+__attribute__((noinline)) void exec_TrySetAttributeBaseValue(Object *context, Frame *stack,
+                                                             void *result) {
+    struct { uint32_t name, number; float value; } *parms = (void *)stack->locals;
+    g_set_calls = g_set_calls + 1;
+    *(uint8_t *)result = 0;
+    if (context != g_hero_set)
+        return;
+    for (Field *field = context->klass->child_properties; field != NULL; field = field->next) {
+        if (field->name != parms->name || field->number != parms->number)
+            continue;
+        float *data = (float *)((char *)context + field->offset + 8);
+        data[0] = parms->value;
+        data[1] = parms->value * 1.5f;
+        *(uint8_t *)result = 1;
+        return;
+    }
+}
+
 /* The script interpreter: Loot's script calls AddGold(Amount), then
    broadcasts a delegate that ticks the hero (through ProcessEvent). */
 __attribute__((noinline)) void ProcessInternal(Object *context, Frame *stack, void *result) {
@@ -634,7 +655,21 @@ int main(void) {
     Object *component_class = object(class_class, "AbilitySystemComponent", abilities);
     component_class->super = object_class;
     Object *hero_set_class = object(class_class, "HeroAttributeSet", game);
+#ifdef ANGELSCRIPT_GAS
+    Object *script_set = object(class_class, "AngelscriptAttributeSet",
+                                object(package_class, "/Script/AngelscriptGAS", NULL));
+    script_set->super = attribute_set;
+    Object *try_set = function(function_class, script_set, "TrySetAttributeBaseValue",
+                               FUNC_NATIVE | FUNC_PUBLIC, exec_TrySetAttributeBaseValue,
+                               3, 16, 12);
+    property(try_set, field_class("NameProperty"), "AttributeName", 8, 0, CPF_PARM, NULL);
+    property(try_set, float_property, "NewBaseValue", 4, 8, CPF_PARM, NULL);
+    property(try_set, bool_property, "ReturnValue", 1, 12, CPF_PARM | CPF_RETURN_PARM,
+             (void *)0xff010001ULL);
+    hero_set_class->super = script_set;
+#else
     hero_set_class->super = attribute_set;
+#endif
     property(hero_set_class, struct_property, "Might", 16, 0x30, 0, attribute_data);
     property(hero_set_class, struct_property, "DamageOutgoingMult", 16, 0x40, 0, attribute_data);
     property(hero_set_class, float_property, "NotAnAttribute", 4, 0x50, 0, NULL);
@@ -643,6 +678,7 @@ int main(void) {
     Object *library = object(class_class, "HeroAbilityLibrary", abilities);
     library->super = object_class;
     object(library, "Default__HeroAbilityLibrary", abilities);
+#ifndef ANGELSCRIPT_GAS
     Object *set_base = function(function_class, library,
                                 "SetFloatAttributeBaseFromAbilitySystemComponent",
                                 FUNC_NATIVE | FUNC_STATIC | FUNC_PUBLIC,
@@ -653,6 +689,7 @@ int main(void) {
     property(set_base, float_property, "Value", 4, 64, CPF_PARM, NULL);
     property(set_base, bool_property, "bSuccessfullyFoundAttribute", 1, 68,
              CPF_PARM | CPF_OUT_PARM, (void *)0xff010001ULL);
+#endif
     Object *controller_class = object(class_class, "PlayerController", engine);
     controller_class->super = actor;
     property(controller_class, object_property, "Pawn", 8, 0x70, 0, hero);
@@ -713,12 +750,13 @@ int main(void) {
 """
 
 
-def _build(tmp_path):
+def _build(tmp_path, *defines):
     (tmp_path / "fake_game.c").write_text(_FAKE_GAME_SOURCE)
     # Where a packaged game keeps it; detection looks for Binaries/<Platform>/.
     binary = tmp_path / "FakeGame" / "Binaries" / "Linux" / "fakegame-Linux-Shipping"
     binary.parent.mkdir(parents=True)
-    subprocess.run(["gcc", "-O0", "-mno-red-zone", "-fPIE", "-pie", str(tmp_path / "fake_game.c"),
+    subprocess.run(["gcc", "-O0", "-mno-red-zone", "-fPIE", "-pie",
+                    *(f"-D{define}" for define in defines), str(tmp_path / "fake_game.c"),
                     "-o", str(binary)], check=True)
     return binary
 
@@ -1222,6 +1260,46 @@ def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app):
             assert runs[0][1]["error"] is None, runs[0][1]["error"]
             assert runs[0][1]["result"] == expected
         assert target.send("attribute", 0) == (90, 135)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_gas_base_values_are_set_through_angelscript_attribute_sets(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.scripts import ScriptWorker
+
+    # As in Gothic 1 Remake: no library setter; the set's own
+    # TrySetAttributeBaseValue(FName, float) sets it.
+    target = _Target(_build(tmp_path, "ANGELSCRIPT_GAS"))
+    worker = ScriptWorker(target.pid)
+    listed, values, failed = [], [], []
+    worker.gas_listed.connect(lambda _request, state: listed.append(state))
+    worker.gas_failed.connect(lambda _request, message: failed.append(message))
+    worker.gas_set.connect(lambda _request, answer: values.append(answer))
+    worker.gas_set_failed.connect(lambda _request, message: failed.append(message))
+
+    def set_base(name, value):
+        values.clear()
+        failed.clear()
+        worker.gas_set_base(name, value)
+        _wait_for(qt_app, lambda: target.send("tick", 0) and (values or failed))
+
+    try:
+        worker.start()
+        worker.gas_attributes()
+        _wait_for(qt_app, lambda: listed or failed)
+        assert not failed, failed
+        assert listed[0]["setter"] == "AngelscriptAttributeSet:TrySetAttributeBaseValue"
+        set_base("HeroAttributeSet.DamageOutgoingMult", 3)
+        assert not failed, failed
+        assert values == [{"base": 3, "current": 4.5}]
+        assert target.send("attribute", 1) == (30, 45)
+        set_base("Might", 7)
+        assert values == [{"base": 7, "current": 10.5}]
+        assert target.send("attribute", 0) == (70, 105)
     finally:
         worker.requestInterruption()
         worker.wait(5000)
