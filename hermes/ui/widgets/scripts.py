@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -232,8 +233,20 @@ class ScriptPanel(QGroupBox):
         self.log_view.document().setMaximumBlockCount(MAX_LOG_LINES)
         self.log_view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.log_view.setPlaceholderText(self.translations["scripts.log_placeholder"])
-        splitter.addWidget(self.log_view)
-        splitter.setSizes([160, 100])
+        log_panel = QWidget()
+        log_layout = QVBoxLayout(log_panel)
+        log_layout.setContentsMargins(0, 0, 0, 0)
+        log_bar = QHBoxLayout()
+        log_bar.addWidget(QLabel(self.translations["scripts.log"]))
+        log_bar.addStretch()
+        clear_button = QPushButton(self.translations["scripts.log_clear"])
+        set_button_icon(clear_button, "clear_all")
+        clear_button.clicked.connect(self._clear_log)
+        log_bar.addWidget(clear_button)
+        log_layout.addLayout(log_bar)
+        log_layout.addWidget(self.log_view)
+        splitter.addWidget(log_panel)
+        splitter.setSizes([160, 130])
         layout.addWidget(splitter)
         self._update_buttons()
 
@@ -298,6 +311,11 @@ class ScriptPanel(QGroupBox):
             self.btn_toggle.setText(self.translations[
                 "scripts.resume" if paused else "scripts.pause"])
             set_button_icon(self.btn_toggle, "play_arrow" if paused else "pause")
+
+    def _clear_log(self):
+        """Empty the log; the objects its links pointed to go with it."""
+        self.log_view.clear()
+        self._results.clear()
 
     def _log(self, text, target=None, name=""):
         """Add a line to the log; with ``target`` (an object) a link that inspects it."""

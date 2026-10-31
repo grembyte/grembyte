@@ -36,6 +36,8 @@ _M_NAME, _M_PARAMS, _M_RETURNS, _M_OWNER, _M_LINK = range(5)
 # Data role of the offset cell: the field's {address, valueType} (see monitor.js)
 _LOCATION_ROLE = Qt.ItemDataRole.UserRole + 1
 _STATIC = QColor("#8b949e")
+# What a static field shows when it has no value to read, by its storage
+_STATIC_KINDS = {"const": "inspector.static_const", "thread": "inspector.static_thread"}
 _ERROR = QColor("#f85149")
 # Qt's default link blue is unreadable on the dark theme.
 LINK_COLOR = "#58a6ff"
@@ -479,11 +481,18 @@ class ObjectInspectorDialog(QDialog):
         for row, field in enumerate(fields):
             value = field.get("value", {})
             static = field.get("static", False)
-            target = None if static else value.get("target")
+            # A static field without a place to read it from: a constant, a
+            # thread static, or the class's static data is not known.
+            unread = static and not field.get("address") and not value.get("text")
+            target = None if unread else value.get("target")
+            if unread:
+                text = self.translations[_STATIC_KINDS.get(field.get("storage"), "inspector.static")]
+            else:
+                text = value.get("text", "")
             texts = (
                 field.get("name", ""),
                 field.get("type", ""),
-                self.translations["inspector.static"] if static else value.get("text", ""),
+                text,
                 f"0x{field.get('offset', 0):x}",
             )
             for column, text in enumerate(texts):
@@ -495,12 +504,14 @@ class ObjectInspectorDialog(QDialog):
             self.table.item(row, _OFFSET).setData(_LOCATION_ROLE, {
                 "address": field.get("address"), "valueType": field.get("valueType")})
             if field.get("address"):
-                self.table.item(row, _OFFSET).setToolTip(field["address"])
+                self.table.item(row, _OFFSET).setToolTip(
+                    self.translations["inspector.static_offset"].format(address=field["address"])
+                    if static else field["address"])
             self.table.removeCellWidget(row, _OPEN)
             if target:
                 self.table.setCellWidget(row, _OPEN, link_label(
                     self.translations["inspector.open"], lambda row=row: self.open_row(row)))
-            elif not static and self._shows_text(value):
+            elif not unread and self._shows_text(value):
                 self.table.setCellWidget(row, _OPEN, self._text_link(value, field.get("name", "")))
         if 0 <= selected < len(fields):
             self.table.selectRow(selected)

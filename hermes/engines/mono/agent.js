@@ -122,6 +122,12 @@ const mono = (() => {
         className: exported('mono_class_get_name', 'pointer', ['pointer']),
         classMethods: blocking('mono_class_get_methods', 'pointer', ['pointer', 'pointer'])
       })),
+      // Only the object inspector needs these: where a class keeps its static
+      // fields. Creating a class's vtable allocates; never runs its .cctor.
+      statics: optional(() => ({
+        classVtable: blocking('mono_class_vtable', 'pointer', ['pointer', 'pointer']),
+        fieldData: exported('mono_vtable_get_static_field_data', 'pointer', ['pointer'])
+      })),
       // Only for passing strings to game code.
       stringNew: optional(() => blocking('mono_string_new', 'pointer', ['pointer', 'pointer'])),
       // Storing a reference in an object tells the garbage collector.
@@ -1089,6 +1095,10 @@ gpointer run_batch (gpointer data) {
   // --- Objects: classes, their fields, arrays -----------------------------
 
   const FIELD_STATIC = 0x10;
+  const FIELD_LITERAL = 0x40;
+  // The offset Mono gives a thread or context static field: it has no place
+  // in the class's static data.
+  const SPECIAL_STATIC_OFFSET = 0xffffffff;
   const layouts = new Map();
   let knownImages = new Set();
 
@@ -1119,6 +1129,9 @@ gpointer run_batch (gpointer data) {
   function layout(klass) {
     // { name, valueType, rank, fields: [{ name, type, offset, static }] }
     // with inherited fields first; for arrays also element type and size.
+    // Static fields also have ``owner`` (the class whose static data holds
+    // them, see staticData) and ``storage``: 'data' there, 'const' (no
+    // storage; the value is in the metadata only) or 'thread' (per thread).
     const key = klass.toString();
     let result = layouts.get(key);
     if (result !== undefined)
@@ -1135,12 +1148,19 @@ gpointer run_batch (gpointer data) {
         const field = t.classFields(current, iterator);
         if (field.isNull())
           break;
-        fields.push({
+        const flags = t.fieldFlags(field);
+        const entry = {
           name: t.fieldName(field).readUtf8String(),
           type: typeInfo(t, t.fieldType(field)),
           offset: t.fieldOffset(field),
-          static: (t.fieldFlags(field) & FIELD_STATIC) !== 0
-        });
+          static: (flags & FIELD_STATIC) !== 0
+        };
+        if (entry.static) {
+          entry.owner = current;
+          entry.storage = (flags & FIELD_LITERAL) !== 0 ? 'const'
+            : entry.offset === SPECIAL_STATIC_OFFSET ? 'thread' : 'data';
+        }
+        fields.push(entry);
       }
     }
     result = {
@@ -1156,6 +1176,32 @@ gpointer run_batch (gpointer data) {
     }
     layouts.set(key, result);
     return result;
+  }
+
+  // domain|class -> the class's static data; Mono allocates it once (fixed,
+  // the garbage collector does not move it).
+  const staticAreas = new Map();
+
+  function staticData(klass) {
+    // Where the static fields of ``klass`` are (their offsets count from
+    // here) in the domain of the calling thread, or null: no such functions,
+    // a thread Mono does not know, or a class that failed to load. Before its
+    // static constructor ran the fields read as zero.
+    if (!refresh() || api.statics === null)
+      return null;
+    const domain = api.currentDomain();
+    if (domain.isNull())
+      return null;
+    const key = `${domain}|${klass}`;
+    let data = staticAreas.get(key);
+    if (data === undefined) {
+      const vtable = api.statics.classVtable(domain, klass);
+      data = vtable.isNull() ? NULL : api.statics.fieldData(vtable);
+      if (staticAreas.size >= MAX_CACHE)
+        staticAreas.clear();
+      staticAreas.set(key, data);
+    }
+    return data.isNull() ? null : data;
   }
 
   // --- Unity object names ----------------------------------------------------
@@ -1774,7 +1820,7 @@ gpointer run_batch (gpointer data) {
     checkAll, compileAll, describeAll, cancelBatches, batchesRunning, prepare,
     // compileAll changes nothing in the game that would need undoing
     releaseCode() {},
-    objectClassName, classOf, layout, onRuntimeThread: onMonoThread, unityName,
+    objectClassName, classOf, layout, staticData, onRuntimeThread: onMonoThread, unityName,
     onMainThread, drainMain, properties, getProperty, methods, signatureOf, findClass,
     findMethod, findObject, findObjects, newString, invoke, classChain, writeReference, resolve: resolveMethod,
     virtualMethod: (object, method) => api.invoke.virtualMethod(object, method)

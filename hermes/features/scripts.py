@@ -37,7 +37,9 @@ The body gets one ``ctx`` object:
     ctx.scriptId
 
 Objects are the wrappers method hooks get (``.call(name, ...args)``,
-``.field(name)``, fields as properties, ``.name``, ``.className``); a value
+``.field(name)``, fields and properties as properties, methods as functions,
+e.g. ``player.GetComponentByName("CharacterStats")``, ``.name``,
+``.className``); a value
 the body returns is shown as its result, an object with a ``target`` the
 object inspector opens (``inspect``, ``evaluate`` and ``full_text`` work as
 the method monitor's). Example (Avowed)::

@@ -362,10 +362,12 @@ function safely(read) {
 // --- Objects --------------------------------------------------------------------
 
 function contents(target) {
-  // { name, address, fields: [{ name, type, offset, static, value, address?,
-  // valueType? }], length? } of an object, array or struct; throws if it is
-  // no object any more. A field's ``address`` is where its value is (not for
-  // static fields), ``valueType`` its value type if it holds a number.
+  // { name, address, fields: [{ name, type, offset, static, storage?, value,
+  // address?, valueType? }], length? } of an object, array or struct; throws
+  // if it is no object any more. A field's ``address`` is where its value is
+  // (a static field's in its class's static data; none for constants and
+  // thread statics, see ``storage``), ``valueType`` its value type if it
+  // holds a number.
   if (target.property)
     return containerContents(target);
   const address = ptr(target.address);
@@ -400,13 +402,31 @@ function contents(target) {
     name: property.name, type: property.type.name, static: property.static,
     setter: property.setter || null
   }));
-  for (const field of layout.fields)
-    result.fields.push({
-      name: field.name, type: field.type.name, offset: field.offset, static: field.static,
-      value: field.static ? { text: '' } : safely(() => readValue(field.type, base.add(field.offset))),
-      address: field.static ? null : base.add(field.offset).toString(),
-      valueType: field.static ? null : valueTypeName(field.type)
-    });
+  for (const field of layout.fields) {
+    const entry = { name: field.name, type: field.type.name, offset: field.offset,
+                    static: field.static, storage: field.storage || null };
+    let at = null;
+    if (!field.static) {
+      at = base.add(field.offset);
+    } else if (field.storage === 'data') {
+      try {
+        const data = engine.staticData(field.owner);
+        at = data === null ? null : data.add(field.offset);
+      } catch (error) {
+        entry.value = { text: `? (${error.message})` };
+      }
+    }
+    if (at === null) {
+      entry.value = entry.value || { text: '' };
+      entry.address = null;
+      entry.valueType = null;
+    } else {
+      entry.value = safely(() => readValue(field.type, at));
+      entry.address = at.toString();
+      entry.valueType = valueTypeName(field.type);
+    }
+    result.fields.push(entry);
+  }
   return result;
 }
 
@@ -987,10 +1007,12 @@ class ManagedObject {
   }
 }
 
-// Scripts may also write object.Health or object.IsPartyMember: names the
-// wrapper does not have are looked up as a field, then as a property
-// (getter). The wrapper's own members (name, className, field(), get() …)
-// come first; .field("name") reads a game field of the same name.
+// Scripts may also write object.Health, object.IsPartyMember or
+// object.GetComponentByName("Stats"): names the wrapper does not have are
+// looked up as a field, then as a property (getter), then as a method (a
+// function calling it, as .call(name, ...args)). The wrapper's own members
+// (name, className, field(), get(), call() …) come first; .field("name")
+// reads a game field of the same name.
 // Assigning works the same way: object.Health = 5 sets the field, else the
 // property's setter (set_Health).
 const shortcuts = {
@@ -1002,7 +1024,14 @@ const shortcuts = {
       return target.field(key);
     if (engine.properties(target.klass).some(property => property.name === key))
       return target.get(key);
-    return undefined;
+    const isStatic = methodNames(target.klass).get(key);
+    if (isStatic === undefined)
+      return undefined;
+    // An overload by the number of arguments, as .call() and ctx.call() pick it
+    if (isStatic)
+      return (...args) => callMethod(
+        engine.findMethod(target.klass, key, args.length, true), null, args);
+    return (...args) => target.call(key, ...args);
   },
   set(target, key, value, receiver) {
     if (typeof key !== 'string' || key in target)
@@ -1024,6 +1053,21 @@ const shortcuts = {
     return true;
   }
 };
+
+// Per class: method name -> whether it is static (an instance overload wins).
+const methodNameCache = new Map();
+
+function methodNames(klass) {
+  const key = klass.toString();
+  let names = methodNameCache.get(key);
+  if (names === undefined) {
+    names = new Map();
+    for (const method of engine.methods(klass))
+      names.set(method.name, (names.get(method.name) ?? true) && method.static);
+    methodNameCache.set(key, names);
+  }
+  return names;
+}
 
 function shortClass(name) {
   return name.substring(name.lastIndexOf('.') + 1);

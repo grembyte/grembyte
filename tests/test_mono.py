@@ -579,6 +579,15 @@ const char *mono_field_get_name(Field *field) { return field->name; }
 void *mono_field_get_type(Field *field) { return field->type; }
 uint32_t mono_field_get_offset(Field *field) { return field->offset; }
 uint32_t mono_field_get_flags(Field *field) { return field->flags; }
+/* Game.Combat's static data: Instances (offset 0) */
+static int32_t combat_statics[1] = { 7 };
+void *mono_class_vtable(void *domain, Class *k) {
+    (void)domain;
+    return k == &classes[3] ? &vt_combat : NULL;
+}
+void *mono_vtable_get_static_field_data(VTable *vtable) {
+    return vtable == &vt_combat ? combat_statics : NULL;
+}
 void *mono_class_get_parent(Class *k) { return k->parent; }
 int mono_class_get_rank(Class *k) { return k->rank; }
 void *mono_class_get_element_class(Class *k) { return k->element; }
@@ -1208,7 +1217,7 @@ def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
             return [(f["name"], f["static"], f["value"]["text"]) for f in snapshot["fields"]]
 
         combat_fields = [("m_CachedPtr", False, "0x0"), ("Health", False, "100"),
-                         ("Instances", True, "")]
+                         ("Instances", True, "7")]
         assert call["self"]["text"].startswith('Game.Combat "Miranda"@0x')
         assert call["self"]["snapshot"]["name"] == "Game.Combat"
         assert fields_of(call["self"]["snapshot"]) == combat_fields
@@ -1249,8 +1258,10 @@ def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
         assert first == int(rolls["address"], 16) + rolls["fields"][0]["offset"]
         owner = inspect(fields["Owner"]["value"]["target"])
         assert [(f["name"], f["static"], f["value"]["text"]) for f in owner["fields"]] == [
-            ("m_CachedPtr", False, "0x0"), ("Health", False, "100"), ("Instances", True, "")]
-        assert owner["fields"][2]["address"] is None  # static
+            ("m_CachedPtr", False, "0x0"), ("Health", False, "100"), ("Instances", True, "7")]
+        # A static field is read from its class's static data
+        assert owner["fields"][2]["address"] is not None
+        assert owner["fields"][2]["valueType"] == "int32"
 
         # An address that holds no object is refused instead of read.
         assert "no object" in inspect({"address": "0x10"})
@@ -1305,7 +1316,11 @@ def test_monitor_window_opens_objects_in_the_inspector(tmp_path, qt_app, transla
         owner = dialog.inspectors[1]
         _wait_for(qt_app, lambda: owner.title_label.text().startswith("Game.Combat"))
         assert owner.windowTitle() == "Objekt-Inspektor - Owner (Game.Combat) (2)"
-        assert owner.table.item(2, 2).text() == "(statisch)"
+        # A static field shows its value; the offset counts in the static data
+        assert owner.table.item(2, 2).text() == "7"
+        assert owner.table.item(2, 3).toolTip().startswith(
+            "Offset in den statischen Daten der Klasse")
+        assert owner.address_entry(2)["label"] == "Combat.Instances"
         assert inspector.title_label.text().startswith("Game.DamageInfo")
         owner.close()
         _wait_for(qt_app, lambda: len(dialog.inspectors) == 1)
