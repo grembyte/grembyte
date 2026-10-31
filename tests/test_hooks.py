@@ -1115,6 +1115,46 @@ def test_hook_panel_installs_and_removes_hooks(tmp_path, qt_app, translations):
 
 
 @requires_target
+def test_hooks_of_an_ended_session_can_be_resumed_in_a_new_one(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.ui.widgets.hooks import HookPanel
+
+    target = _Target(_build_target(tmp_path))
+    panel = HookPanel(translations)
+    try:
+        trap_pcs = _trap_pcs(target)
+        panel.set_process(target.pid)
+        panel.add_hook(
+            HookSpec(target.address, "int32", MultiplyTransform(3),
+                     trap_pc=trap_pcs["add"], label="Gold"),
+            "target+0x580",
+        )
+        status = lambda: panel.table.item(0, 4).text()  # pylint: disable=unnecessary-lambda-assignment
+        _wait_for(qt_app, lambda: status() != "Wird installiert …")
+        assert status() == "Aktiv"
+
+        # Ended in the sessions window: the worker removes its hooks and stops.
+        worker = panel._worker
+        worker.requestInterruption()
+        _wait_for(qt_app, lambda: status() == "Getrennt")
+        assert panel._worker is None
+        assert target.send("add", 10)[0] == 110  # the game's own code again
+        panel.table.selectRow(0)
+        assert panel.btn_toggle.isEnabled() and not panel.btn_edit.isEnabled()
+        assert panel.btn_toggle.text() == "Fortsetzen"
+
+        panel.btn_toggle.click()
+        assert panel._worker not in (None, worker)
+        _wait_for(qt_app, lambda: status() != "Wird installiert …")
+        assert status() == "Aktiv" and panel.table.rowCount() == 1
+        assert panel.table.item(0, 0).text() == "Gold"
+        assert target.send("add", 10)[0] == 110 + 30
+    finally:
+        panel.shutdown(timeout_ms=None)
+        target.close()
+
+
+@requires_target
 def test_write_watch_hits_in_trampolines_count_for_the_hooked_write(
         tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access

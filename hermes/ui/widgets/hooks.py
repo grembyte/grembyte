@@ -719,12 +719,16 @@ class HookPanel(QGroupBox):
         states = [state for state in map(self._hooks.get, self._selected_hook_ids())
                   if state is not None]
         live = bool(states) and all(state["status"] in _LIVE for state in states)
+        # Hooks whose session ended: resuming installs them in a new one
+        disconnected = self._pid is not None and bool(states) and all(
+            state["status"] == "disconnected" for state in states)
         self.btn_edit.setEnabled(live and len(states) == 1)
-        self.btn_toggle.setEnabled(live)
+        self.btn_toggle.setEnabled(live or disconnected)
         self.btn_debug.setEnabled(live)
         self.btn_debug.setChecked(bool(states) and all(state.get("debug") for state in states))
         self.btn_remove.setEnabled(bool(states))
-        paused = bool(states) and all(state["status"] == "paused" for state in states)
+        paused = disconnected or (
+            bool(states) and all(state["status"] == "paused" for state in states))
         self.btn_toggle.setText(self.translations["hooks.resume" if paused else "hooks.pause"])
         set_button_icon(self.btn_toggle, "play_arrow" if paused else "pause")
 
@@ -1546,7 +1550,8 @@ class HookPanel(QGroupBox):
                 continue
             self._set_debug_flag(hook_id, False)
             if state["status"] != "failed":
-                self._set_status(hook_id, "disconnected")
+                self._set_status(hook_id, "disconnected",
+                                 self.translations["hooks.disconnected_tooltip"])
 
     # ------------------------------------------------------------------
     # Actions
@@ -1626,10 +1631,35 @@ class HookPanel(QGroupBox):
         self._worker.remove_hook(hook_id)
         self.add_hook(state["spec"], site, saved_id=saved_id)
 
+    def _reconnect(self, hook_id):
+        """Install a hook whose session ended anew, enabled, in a new session.
+
+        It keeps its saved hook; its row moves to the end of the table.
+        """
+        state = self._hooks[hook_id]
+        site_item = self.table.item(self._row_of(hook_id), 2)
+        site = site_item.text() if site_item is not None else ""
+        spec = dataclasses.replace(state["spec"], enabled=True)
+        method = state.get("kind") == "method"
+        if state["saved_id"] is not None and not state["spec"].enabled:
+            update = (self._repository.update_method_hook if method
+                      else self._repository.update_hook)
+            self._store(update, state["saved_id"], enabled=True)
+        self._drop_row(hook_id)
+        if method:
+            self.add_method_hook(spec, saved_id=state["saved_id"])
+        else:
+            self.add_hook(spec, site, saved_id=state["saved_id"])
+
     def _toggle_selected(self):
         """Pause the selected hooks, or resume them if all are paused."""
         hook_ids = [hook_id for hook_id in self._selected_hook_ids() if hook_id in self._hooks]
         if not hook_ids:
+            return
+        if all(self._hooks[hook_id]["status"] == "disconnected" for hook_id in hook_ids):
+            if self._pid is not None:
+                for hook_id in hook_ids:
+                    self._reconnect(hook_id)
             return
         enable = all(self._hooks[hook_id]["status"] == "paused" for hook_id in hook_ids)
         for hook_id in hook_ids:

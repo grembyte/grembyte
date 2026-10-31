@@ -1,5 +1,6 @@
 """The scripts tab: its dialog and texts (running scripts: see test_unreal)."""
 
+import itertools
 import json
 import os
 from pathlib import Path
@@ -180,6 +181,9 @@ def test_native_tools_ask_first_in_mono_games(qt_app, tmp_path, monkeypatch):
 class _FakeScriptWorker:
     """Stands in for ScriptWorker: records the requests; the test answers."""
 
+    # As ScriptWorker's: unique across workers
+    _ids = itertools.count(1)
+
     def __init__(self, _pid, _parent=None):
         # pylint: disable=import-outside-toplevel
         from PyQt6.QtCore import QObject, pyqtSignal  # pylint: disable=import-error,no-name-in-module
@@ -199,12 +203,13 @@ class _FakeScriptWorker:
             methods_failed = pyqtSignal(int, str)
             text_fetched = pyqtSignal(int, object)
             text_failed = pyqtSignal(int, str)
+            finished = pyqtSignal()
 
         self.signals = Signals()
         for name in ("script_added", "script_updated", "script_removed", "script_failed",
                      "script_ran", "worker_failed", "inspected", "inspect_failed",
                      "evaluated", "evaluate_failed", "methods_listed", "methods_failed",
-                     "text_fetched", "text_failed"):
+                     "text_fetched", "text_failed", "finished"):
             setattr(self, name, getattr(self.signals, name))
         self.requests = []
 
@@ -220,9 +225,15 @@ class _FakeScriptWorker:
     def wait(self, _timeout):
         return True
 
+    def deleteLater(self):  # pylint: disable=invalid-name
+        pass
+
     def add_script(self, spec):
         self.requests.append(("add", spec))
-        return 1
+        return next(self._ids)
+
+    def update_script(self, script_id, spec):
+        self.requests.append(("update", script_id, spec))
 
     def run_now(self, script_id):
         self.requests.append(("run", script_id))
@@ -265,5 +276,39 @@ def test_objects_scripts_return_open_in_the_inspector_from_the_log(qt_app, monke
     finally:
         for inspector in list(panel.inspections.inspectors if panel.inspections else []):
             inspector.close()
+        panel.shutdown()
+        panel.deleteLater()
+
+
+def test_scripts_show_disconnected_when_their_session_ends(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from hermes.ui.widgets import scripts
+
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    panel = scripts.ScriptPanel(load_translations("de"))
+    try:
+        panel.set_process(4242)
+        running = panel.add_script(ScriptSpec("return 1;", label="Läuft"))
+        paused = panel.add_script(ScriptSpec("return 2;", label="Pausiert", enabled=False))
+        worker = panel._worker
+        worker.script_added.emit(running)
+        worker.script_added.emit(paused)
+        assert panel.table.item(0, 2).text() == "Aktiv"
+
+        # The session is ended in the sessions window: the worker just finishes.
+        worker.finished.emit()
+        assert panel._worker is None
+        assert [panel.table.item(row, 2).text() for row in range(2)] == ["Getrennt"] * 2
+        panel.table.selectRow(1)
+        assert not panel.btn_run.isEnabled()
+        assert panel.btn_toggle.text() == "Fortsetzen"
+
+        # Resuming starts it anew in a new session, running.
+        panel.btn_toggle.click()
+        restarted = panel._worker
+        assert restarted is not worker
+        assert restarted.requests[-1][0] == "add" and restarted.requests[-1][1].enabled
+        assert panel.table.item(0, 2).text() == "Getrennt"  # the other one stays
+    finally:
         panel.shutdown()
         panel.deleteLater()

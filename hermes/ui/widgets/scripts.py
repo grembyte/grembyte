@@ -44,7 +44,10 @@ STATUS_COLORS = {
     "running": "#58a6ff",
     "paused": "#d29922",
     "failed": "#f85149",
+    "disconnected": "#8b949e",
 }
+# Statuses of scripts the worker no longer runs: saving an edit starts them anew
+_STOPPED = frozenset({"failed", "disconnected"})
 # Lines the log keeps
 MAX_LOG_LINES = 2000
 # Characters of a result the table shows
@@ -262,7 +265,8 @@ class ScriptPanel(QGroupBox):
         select_clicked_row(self.table, row)
         menu = QMenu(self)
         state = self._scripts.get(self._selected_id())
-        paused = state is not None and not state["spec"].enabled
+        paused = state is not None and (not state["spec"].enabled
+                                        or state["status"] == "disconnected")
         for button, icon in ((self.btn_edit, "edit"), (self.btn_run, "play_circle"),
                              (self.btn_toggle, "play_arrow" if paused else "pause")):
             menu.addAction(material_icon(icon), button.text(), button.click).setEnabled(
@@ -327,8 +331,9 @@ class ScriptPanel(QGroupBox):
         for button in (self.btn_edit, self.btn_run, self.btn_toggle, self.btn_remove):
             button.setEnabled(state is not None)
         if state is not None:
-            self.btn_run.setEnabled(state["status"] not in {"failed", "starting"})
-            paused = not state["spec"].enabled
+            self.btn_run.setEnabled(state["status"] not in _STOPPED | {"starting"})
+            # A disconnected script is resumed: started anew, running
+            paused = not state["spec"].enabled or state["status"] == "disconnected"
             self.btn_toggle.setText(self.translations[
                 "scripts.resume" if paused else "scripts.pause"])
             set_button_icon(self.btn_toggle, "play_arrow" if paused else "pause")
@@ -418,6 +423,7 @@ class ScriptPanel(QGroupBox):
             lambda script_id, message: self._on_failed(worker, script_id, message))
         worker.script_ran.connect(lambda script_id, run: self._on_ran(worker, script_id, run))
         worker.worker_failed.connect(lambda message: self._on_worker_failed(worker, message))
+        worker.finished.connect(lambda: self._on_worker_finished(worker))
         self.inspections = Inspections(self.translations, worker, self.window(),
                                        time=lambda: datetime.now().strftime("%H:%M:%S"))
         self.inspections.address_requested.connect(self.address_requested.emit)
@@ -475,8 +481,9 @@ class ScriptPanel(QGroupBox):
             self._store(self._repository.update_script, state["saved_id"], label=spec.label,
                         source=spec.source, mode=spec.mode, seconds=spec.seconds,
                         enabled=spec.enabled)
-        if state["status"] == "failed":
-            # Its code did not compile: try it as a new script of the worker.
+        if state["status"] in _STOPPED:
+            # Its code did not compile, or its session ended: try it as a new
+            # script of the (new) worker.
             self._drop_row(script_id)
             self.add_script(spec, saved_id=state["saved_id"])
             return
@@ -489,8 +496,9 @@ class ScriptPanel(QGroupBox):
         if state is None:
             return
         spec = state["spec"]
+        enabled = True if state["status"] == "disconnected" else not spec.enabled
         self._replace_spec(script_id, ScriptSpec(spec.source, spec.mode, spec.seconds,
-                                                 not spec.enabled, spec.label))
+                                                 enabled, spec.label))
 
     def _run_selected(self):
         script_id = self._selected_id()
@@ -566,3 +574,17 @@ class ScriptPanel(QGroupBox):
             self._set_status(script_id, "failed", message)
         self.status_label.setText(self.translations["scripts.worker_failed"].format(
             message=message.splitlines()[0] if message else message))
+
+    def _on_worker_finished(self, worker):
+        """The worker ended (e.g. its session was ended in the sessions
+        window): its scripts no longer run."""
+        worker.deleteLater()
+        if worker is not self._worker:
+            return
+        self._worker = None
+        tooltip = self.translations["scripts.disconnected_tooltip"]
+        for script_id, state in self._scripts.items():
+            if state["status"] != "failed":
+                self._set_status(script_id, "disconnected", tooltip)
+        if self._scripts:
+            self.status_label.setText(tooltip)
