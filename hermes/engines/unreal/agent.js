@@ -1916,7 +1916,7 @@ const unreal = (() => {
   function classNameMatches(klass, name) {
     // By its name (BP_Player_C) or C++ name (ABP_Player_C, UAlabamaCheatManager)
     const own = nameOfAddress(Number(klass.toString()));
-    return own === name || cppName(Number(klass.toString())) + own === name;
+    return own === name || cppName(Number(klass.toString())) === name;
   }
 
   const classesByName = new Map();
