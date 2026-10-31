@@ -207,6 +207,8 @@ class _FakeScriptWorker:
             gas_failed = pyqtSignal(int, str)
             gas_set = pyqtSignal(int, object)
             gas_set_failed = pyqtSignal(int, str)
+            options_listed = pyqtSignal(int, list)
+            options_failed = pyqtSignal(int, str)
             finished = pyqtSignal()
 
         self.signals = Signals()
@@ -214,7 +216,7 @@ class _FakeScriptWorker:
                      "script_ran", "worker_failed", "inspected", "inspect_failed",
                      "evaluated", "evaluate_failed", "methods_listed", "methods_failed",
                      "text_fetched", "text_failed", "gas_listed", "gas_failed", "gas_set",
-                     "gas_set_failed", "finished"):
+                     "gas_set_failed", "options_listed", "options_failed", "finished"):
             setattr(self, name, getattr(self.signals, name))
         self.requests = []
 
@@ -243,8 +245,12 @@ class _FakeScriptWorker:
     def remove_script(self, script_id):
         self.requests.append(("remove", script_id))
 
-    def run_now(self, script_id):
-        self.requests.append(("run", script_id))
+    def run_now(self, script_id, args=None):
+        self.requests.append(("run", script_id, args))
+
+    def script_options(self, script_id, name):
+        self.requests.append(("options", script_id, name))
+        return len(self.requests)
 
     def inspect(self, target):
         self.requests.append(("inspect", target))
@@ -325,6 +331,124 @@ def test_scripts_show_disconnected_when_their_session_ends(qt_app, monkeypatch):
         assert restarted is not worker
         assert restarted.requests[-1][0] == "add" and restarted.requests[-1][1].enabled
         assert panel.table.item(0, 2).text() == "Getrennt"  # the other one stays
+    finally:
+        panel.shutdown()
+        panel.deleteLater()
+
+
+def test_the_dialog_defines_parameters_and_their_options(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from hermes.features.scripts import ScriptParam
+    from hermes.ui.widgets.scripts import ScriptDialog
+
+    dialog = ScriptDialog(load_translations("de"))
+    dialog.code_edit.setPlainText("return ctx.args.count;")
+    editor = dialog.param_editor
+    editor.btn_add.click()
+    editor.table.item(0, 0).setText("item")
+    editor.table.item(0, 1).setText("Item")
+    editor.table.cellWidget(0, 2).setCurrentIndex(3)  # a choice: its code shows
+    assert editor.options_edit.isEnabled() and "return" in editor.options_edit.toPlainText()
+    editor.options_edit.setPlainText('return ["ItFo_Apple", "ItFo_Pear"];')
+    editor.btn_add.click()
+    editor.table.item(1, 0).setText("count")
+    editor.table.cellWidget(1, 2).setCurrentIndex(1)
+    editor.table.item(1, 3).setText("x")
+    assert not editor.options_edit.isEnabled()  # a number has no options
+
+    # A default that is no number keeps it open, on the parameters' tab.
+    dialog.tabs.setCurrentIndex(0)
+    dialog._accept()
+    assert dialog.spec is None and "count" in dialog.error_label.text()
+    assert dialog.tabs.currentIndex() == 1
+    editor.table.item(1, 3).setText("20")
+    dialog._accept()
+    assert dialog.spec.params == (
+        ScriptParam("item", "Item", "choice", "", 'return ["ItFo_Apple", "ItFo_Pear"];'),
+        ScriptParam("count", "", "number", "20"))
+
+    # Editing shows them again; removing the choice takes its code along.
+    dialog = ScriptDialog(load_translations("de"), spec=dialog.spec)
+    editor = dialog.param_editor
+    assert editor.table.rowCount() == 2
+    editor.table.selectRow(0)
+    assert editor.options_edit.toPlainText() == 'return ["ItFo_Apple", "ItFo_Pear"];'
+    editor.btn_remove.click()
+    dialog._accept()
+    assert [param.name for param in dialog.spec.params] == ["count"]
+
+
+def test_running_by_hand_asks_for_the_parameters(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from PyQt6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.features.scripts import ScriptParam
+    from hermes.ui.widgets import scripts
+    from hermes.ui.widgets.script_params import ScriptRunDialog
+
+    translations = load_translations("de")
+    spec = ScriptSpec("return 1;", label="Items", params=(
+        ScriptParam("item", "Item", "choice", "ItFo_Apple", "return [];"),
+        ScriptParam("count", "Anzahl", "number", "1"),
+        ScriptParam("all", "Alle", "bool")))
+    worker = _FakeScriptWorker(4242)
+    cache = {}
+
+    # The choice's options come from the game; the last run's values are preselected.
+    dialog = ScriptRunDialog(translations, spec, worker=worker, script_id=7,
+                             options_cache=cache, last={"item": "ItFo_Pear", "count": 5})
+    assert worker.requests == [("options", 7, "item")]
+    combo = dialog._inputs["item"]
+    assert not combo.isEnabled()
+    dialog._accept()
+    assert dialog.args is None and dialog.error_label.text()  # nothing to pick yet
+    worker.options_listed.emit(99, [{"label": "x", "value": "y"}])  # another request's
+    assert not combo.isEnabled()
+    options = [{"label": "Apfel", "value": "ItFo_Apple"}, {"label": "Birne", "value": "ItFo_Pear"},
+               {"label": "ItFo_Plum", "value": "ItFo_Plum"}]
+    worker.options_listed.emit(1, options)
+    assert [combo.itemText(i) for i in range(3)] == [
+        "Apfel  (ItFo_Apple)", "Birne  (ItFo_Pear)", "ItFo_Plum"]
+    assert combo.currentText() == "Birne  (ItFo_Pear)"
+    assert dialog._inputs["count"].text() == "5"
+    dialog._inputs["all"].setChecked(True)
+    dialog._accept()
+    assert dialog.args == {"item": "ItFo_Pear", "count": 5, "all": True}
+
+    # A text that is no option is refused; the options are asked for only once.
+    dialog = ScriptRunDialog(translations, spec, worker=worker, script_id=7, options_cache=cache)
+    assert len(worker.requests) == 1
+    assert dialog._inputs["item"].currentText() == "Apfel  (ItFo_Apple)"  # the default
+    dialog._inputs["item"].setEditText("Bir")
+    dialog._accept()
+    assert dialog.args is None and "Item" in dialog.error_label.text()
+    dialog.close()
+
+    # The panel runs it with the values typed in and keeps them for the next run.
+    shown = []
+
+    class _Accepting:  # pylint: disable=too-few-public-methods
+        def __init__(self, _translations, spec, **kwargs):
+            shown.append((spec, kwargs))
+            self.args = {"item": "ItFo_Plum", "count": 2, "all": False}
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    monkeypatch.setattr(scripts, "ScriptRunDialog", _Accepting)
+    panel = scripts.ScriptPanel(translations)
+    try:
+        panel.set_process(4242)
+        script_id = panel.add_script(spec)
+        panel._worker.script_added.emit(script_id)
+        panel.table.selectRow(0)
+        panel.btn_run.click()
+        assert panel._worker.requests[-1] == ("run", script_id, shown[0][0].default_args()
+                                              | {"item": "ItFo_Plum", "count": 2})
+        panel.btn_run.click()
+        assert shown[1][1]["last"] == {"item": "ItFo_Plum", "count": 2, "all": False}
+        assert shown[1][1]["options_cache"] is shown[0][1]["options_cache"]
     finally:
         panel.shutdown()
         panel.deleteLater()

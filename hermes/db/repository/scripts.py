@@ -20,20 +20,22 @@ class ScriptRepository:
                 .order_by(GameScript.id)
             ))
 
-    def add_script(self, process_id, *, label, source, mode, seconds, enabled=True):
+    def add_script(self, process_id, *, label, source, mode, seconds, enabled=True,
+                   params=None):
         # pylint: disable=too-many-arguments
         """Save a script and return its id."""
         with self._sessions() as session:
             script = GameScript(process_id=process_id, label=label, source=source, mode=mode,
-                                seconds=seconds, enabled=enabled)
+                                seconds=seconds, enabled=enabled, params=params)
             session.add(script)
             session.commit()
             return script.id
 
     def update_script(self, script_id, *, label=None, source=None, mode=None, seconds=None,
-                      enabled=None):
+                      enabled=None, params=None, last_args=None):
         # pylint: disable=too-many-arguments
-        """Change the given fields of a saved script; ``None`` keeps a field."""
+        """Change the given fields of a saved script; ``None`` keeps a field
+        (``params=""`` removes the parameters)."""
         with self._sessions() as session:
             script = session.get(GameScript, script_id)
             if script is None:
@@ -42,6 +44,9 @@ class ScriptRepository:
                                 ("seconds", seconds), ("enabled", enabled)):
                 if value is not None:
                     setattr(script, name, value)
+            for name, value in (("params", params), ("last_args", last_args)):
+                if value is not None:
+                    setattr(script, name, value or None)
             session.commit()
 
     def delete_script(self, script_id):

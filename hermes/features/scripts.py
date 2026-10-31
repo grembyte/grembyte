@@ -38,6 +38,9 @@ The body gets one ``ctx`` object:
                      sets the base value through the game's own code, which
                      applies the active effects to it; ctx.gas.attributes()
                      lists the sets (see ScriptWorker.gas_attributes)
+    ctx.findClass("ClassName")   Unreal: the class itself, e.g. for a
+                     TSubclassOf parameter: ctx.findClass("ItFo_Potion_Health_03")
+    ctx.args         the values of the script's parameters by name (see below)
     ctx.log(...)     output shown in the script log
     ctx.state        per-script object that persists between runs
     ctx.runs         how often it ran before
@@ -54,14 +57,28 @@ the method monitor's). Example (Avowed)::
     const cheats = ctx.find("AlabamaCheatManager");
     cheats.call("GiveHealth", 50);
 
+A script may have parameters (``ScriptParam``): typed in when it is run by
+hand, their defaults when it runs by time. A parameter is text, a number, a
+bool or a choice; a choice's ``options`` is a function body like the
+script's that returns the choices (asked for when they are to be shown, on
+the game thread): values or ``{label, value}``, values being strings,
+numbers or bools. Example (Gothic 1 Remake)::
+
+    return ctx.call("CheatModeHelper:GetAllItems", "").map(item => ({
+        label: String(item.m_Name), value: item.className}));
+
+and the script gives the chosen item (``ctx.findClass(ctx.args.item)``).
+
 Scripts live in the method monitor's agent (``hermes.features.monitor``),
 in a Frida session of their own.
 """
 
 import itertools
+import json
 import queue
+import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
@@ -76,6 +93,93 @@ from hermes.features.monitor import build_agent_source
 MODES = ("once", "repeat", "manual")
 # A repeating script runs at most this often
 MIN_REPEAT_SECONDS = 0.1
+# What a parameter's value is
+PARAM_KINDS = ("text", "number", "bool", "choice")
+_PARAM_NAME = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+_TRUE = {"true", "1", "ja", "yes", "wahr"}
+_FALSE = {"false", "0", "nein", "no", "falsch", ""}
+
+
+@dataclass(frozen=True)
+class ScriptParam:
+    """A parameter of a script: ``ctx.args.<name>``.
+
+    ``default`` is the value as typed in (a choice's: its value as text, or
+    empty for none); ``options`` the function body that gives a choice's
+    choices (see the module's docstring).
+    """
+
+    name: str
+    label: str = ""
+    kind: str = "text"
+    default: str = ""
+    options: str = ""
+
+    def __post_init__(self):
+        if not _PARAM_NAME.match(self.name):
+            raise messages.LocalizedValueError("error.scripts.param_name", name=self.name)
+        if self.kind not in PARAM_KINDS:
+            raise messages.LocalizedValueError("error.scripts.param_kind",
+                                              kinds=", ".join(PARAM_KINDS))
+        if self.kind == "choice" and not self.options.strip():
+            raise messages.LocalizedValueError("error.scripts.param_options", name=self.name)
+        self.value(self.default)  # a default that is no value of its kind
+
+    def value(self, text):
+        """The value of ``text`` typed in for this parameter (not a choice's:
+        its value is the chosen option's); raises LocalizedValueError."""
+        if self.kind == "number":
+            cleaned = text.strip().replace(",", ".")
+            if cleaned == "":
+                return 0
+            try:
+                return int(cleaned)
+            except ValueError:
+                pass
+            try:
+                return float(cleaned)
+            except ValueError:
+                raise messages.LocalizedValueError("error.scripts.param_number",
+                                                  name=self.name, text=text) from None
+        if self.kind == "bool":
+            word = text.strip().lower()
+            if word in _TRUE:
+                return True
+            if word in _FALSE:
+                return False
+            raise messages.LocalizedValueError("error.scripts.param_bool",
+                                              name=self.name, text=text)
+        if self.kind == "choice":
+            return text if text != "" else None
+        return text
+
+    def to_json(self):
+        return {"name": self.name, "label": self.label, "kind": self.kind,
+                "default": self.default, "options": self.options}
+
+    @classmethod
+    def from_json(cls, data):
+        return cls(str(data["name"]), str(data.get("label", "")), str(data.get("kind", "text")),
+                   str(data.get("default", "")), str(data.get("options", "")))
+
+
+def params_to_json(params):
+    """The parameters as the database keeps them: JSON text, or None without any."""
+    return json.dumps([param.to_json() for param in params]) if params else None
+
+
+def params_from_json(text):
+    """The parameters of a saved script (see params_to_json)."""
+    return tuple(ScriptParam.from_json(data) for data in json.loads(text)) if text else ()
+
+
+def choice_matches(value, text):
+    """Whether a choice's option ``value`` is the one saved as ``text``."""
+    if isinstance(value, bool):
+        return str(value).lower() == text.lower()
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value)) == text
+    return str(value) == text
 
 
 @dataclass
@@ -87,6 +191,7 @@ class ScriptSpec:
     seconds: float = 0.0
     enabled: bool = True
     label: str = ""
+    params: tuple = field(default_factory=tuple)
 
     def __post_init__(self):
         if self.mode not in MODES:
@@ -96,6 +201,15 @@ class ScriptSpec:
         if self.mode == "repeat" and self.seconds < MIN_REPEAT_SECONDS:
             raise messages.LocalizedValueError("error.scripts.repeat_minimum",
                                               seconds=MIN_REPEAT_SECONDS)
+        self.params = tuple(self.params)
+        names = [param.name for param in self.params]
+        for name in names:
+            if names.count(name) > 1:
+                raise messages.LocalizedValueError("error.scripts.param_twice", name=name)
+
+    def default_args(self):
+        """``ctx.args`` of a run without asking: each parameter's default."""
+        return {param.name: param.value(param.default) for param in self.params}
 
     def to_agent(self, script_id):
         return {
@@ -104,6 +218,9 @@ class ScriptSpec:
             "mode": self.mode,
             "seconds": self.seconds,
             "enabled": self.enabled,
+            "args": self.default_args(),
+            "options": {param.name: param.options for param in self.params
+                        if param.kind == "choice"},
         }
 
 
@@ -139,6 +256,9 @@ class ScriptWorker(QThread):
     # request id, {base, current} after setting a base value
     gas_set = pyqtSignal(int, object)
     gas_set_failed = pyqtSignal(int, str)
+    # request id, a choice parameter's options [{label, value}] (see script_options)
+    options_listed = pyqtSignal(int, list)
+    options_failed = pyqtSignal(int, str)
     agent_log = pyqtSignal(str, str)
     worker_failed = pyqtSignal(str)
 
@@ -165,8 +285,16 @@ class ScriptWorker(QThread):
     def remove_script(self, script_id):
         self._commands.put(("remove", script_id, None))
 
-    def run_now(self, script_id):
-        self._commands.put(("run", script_id, None))
+    def run_now(self, script_id, args=None):
+        """Run a script now; ``args`` are its ``ctx.args`` (else the defaults)."""
+        self._commands.put(("run", script_id, args))
+
+    def script_options(self, script_id, name):
+        """The options of the choice parameter ``name``, from its code on the
+        game thread; expect options_listed or options_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("options", request_id, (script_id, name)))
+        return request_id
 
     def inspect(self, target):
         """Read an object (a result's ``target``); expect inspected or inspect_failed."""
@@ -278,7 +406,7 @@ class ScriptWorker(QThread):
                 if api.remove_script(script_id):
                     self.script_removed.emit(script_id)
             elif action == "run":
-                api.run_script_now(script_id)
+                api.run_script_now(script_id, argument)
             elif action in self._REQUESTS:
                 self._answer(api, action, script_id, argument)
                 return
@@ -295,6 +423,7 @@ class ScriptWorker(QThread):
         "text": ("full_text", "text_fetched", "text_failed"),
         "gas_attributes": ("gas_attributes", "gas_listed", "gas_failed"),
         "gas_set_base": ("gas_set_base", "gas_set", "gas_set_failed"),
+        "options": ("script_options", "options_listed", "options_failed"),
     }
 
     def _answer(self, api, action, request_id, argument):

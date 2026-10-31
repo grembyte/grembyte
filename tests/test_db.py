@@ -1,5 +1,6 @@
 """Tests for the process and hook repository."""
 
+import json
 import sys
 
 import pytest
@@ -423,7 +424,8 @@ def test_init_db_sets_aside_a_table_of_the_first_versions(tmp_path):
 def test_scripts_are_saved_changed_and_deleted_per_process(tmp_path):
     # pylint: disable=import-outside-toplevel
     from hermes.db.repository.scripts import ScriptRepository
-    from hermes.features.scripts import ScriptSpec
+    from hermes.features.scripts import (
+        ScriptParam, ScriptSpec, params_from_json, params_to_json)
 
     engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
     Base.metadata.create_all(engine)
@@ -443,7 +445,23 @@ def test_scripts_are_saved_changed_and_deleted_per_process(tmp_path):
             "Heal", "ctx.log(1);", "repeat", 30, False)
         spec = ScriptSpec(saved.source, saved.mode, saved.seconds, saved.enabled, saved.label)
         assert spec.to_agent(3) == {"id": 3, "source": "ctx.log(1);", "mode": "repeat",
-                                    "seconds": 30, "enabled": False}
+                                    "seconds": 30, "enabled": False, "args": {}, "options": {}}
+        assert saved.params is None and saved.last_args is None
+
+        # Parameters and the values of the last run are kept as JSON; empty
+        # parameters remove them.
+        params = (ScriptParam("item", "Item", "choice", "ItFo_Apple", 'return ["ItFo_Apple"];'),
+                  ScriptParam("count", "Anzahl", "number", "1,5"))
+        scripts.update_script(heal, params=params_to_json(params),
+                              last_args=json.dumps({"item": "ItFo_Apple", "count": 3}))
+        [saved] = scripts.list_scripts(game)
+        spec = ScriptSpec(saved.source, saved.mode, saved.seconds, saved.enabled, saved.label,
+                          params_from_json(saved.params))
+        assert spec.params == params and json.loads(saved.last_args)["count"] == 3
+        assert spec.to_agent(3)["args"] == {"item": "ItFo_Apple", "count": 1.5}
+        assert spec.to_agent(3)["options"] == {"item": 'return ["ItFo_Apple"];'}
+        scripts.update_script(heal, params="")
+        assert scripts.list_scripts(game)[0].params is None
 
         scripts.delete_script(heal)
         assert scripts.list_scripts(game) == []
@@ -463,3 +481,25 @@ def test_script_spec_rejects_unknown_modes_and_busy_loops():
     with pytest.raises(ValueError):
         ScriptSpec("return 1;", "once", -1)
     assert ScriptSpec("return 1;", "once", 0).mode == "once"
+
+
+def test_script_params_are_checked_and_typed():
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.scripts import ScriptParam, ScriptSpec, choice_matches
+
+    for bad in (dict(name="2nd"), dict(name="a b"), dict(name="x", kind="date"),
+                dict(name="x", kind="choice"), dict(name="x", kind="number", default="viel"),
+                dict(name="x", kind="bool", default="vielleicht")):
+        with pytest.raises(ValueError):
+            ScriptParam(**bad)
+    with pytest.raises(ValueError):
+        ScriptSpec("return 1;", params=(ScriptParam("x"), ScriptParam("x", kind="number")))
+    number = ScriptParam("count", kind="number")
+    assert (number.value("20"), number.value(" 2,5 "), number.value("")) == (20, 2.5, 0)
+    flag = ScriptParam("all", kind="bool", default="ja")
+    assert (flag.value(flag.default), flag.value("")) == (True, False)
+    choice = ScriptParam("item", kind="choice", options="return [];")
+    assert choice.value("") is None and choice.value("ItFo_Apple") == "ItFo_Apple"
+    # Options come back from JavaScript: 3 as 3.0, true as True
+    assert choice_matches(3.0, "3") and choice_matches(True, "true")
+    assert not choice_matches("ItFo_Apple", "ItFo_Pear")

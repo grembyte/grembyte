@@ -16,6 +16,7 @@ _ACCEPT_ICONS = {
     "hooks.create": "webhook",
     "process.attach": "link",
     "scripts.create": "add",
+    "scripts.run_button": "play_circle",
 }
 
 

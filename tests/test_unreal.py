@@ -1115,7 +1115,7 @@ def test_the_call_dialog_calls_ufunctions_static_and_on_found_objects(tmp_path, 
 def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
     from hermes.core import messages
-    from hermes.features.scripts import ScriptSpec, ScriptWorker
+    from hermes.features.scripts import ScriptParam, ScriptSpec, ScriptWorker
 
     target = _Target(_build(tmp_path))
     worker = ScriptWorker(target.pid)
@@ -1244,6 +1244,41 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         assert run["logs"] == ["3 /Game/Maps/Start.BP_Hero_C_0=75 BP_Hero_C_0.Sidekick=12"
                                " /Game/Maps/Start.BP_Hero_C_1=30"]
         assert run["result"] == "112"
+
+        # Parameters: ctx.args holds the defaults, or what a run by hand
+        # passes; a choice's options come from its code on the game thread.
+        # ctx.findClass gives a class itself (for TSubclassOf parameters).
+        chosen = worker.add_script(ScriptSpec(
+            'const hero = ctx.find("BP_Hero_C").className;'
+            ' return `${ctx.args.hero}+${ctx.args.n}:${ctx.findClass("BP_Hero_C").name}'
+            ':${hero}=${ctx.findClass(hero).name}`;',
+            params=(ScriptParam("hero", kind="choice", default="75", options="""
+                        const heroes = [];
+                        ctx.forEach("BP_Hero_C", hero => {
+                            heroes.push({ label: ctx.outerName(hero), value: hero.Health });
+                        });
+                        return heroes;"""),
+                    ScriptParam("n", kind="number", default="4"))))
+        _wait_for(qt_app, lambda: chosen in added)
+        first = run_on_game_thread(chosen)
+        assert first["error"] is None, first["error"]
+        assert first["result"] == '"75+4:BP_Hero_C:ABP_Hero_C=BP_Hero_C"'
+        listed, refused = [], []
+        worker.options_listed.connect(lambda _request, options: listed.append(options))
+        worker.options_failed.connect(lambda _request, message: refused.append(message))
+        worker.script_options(chosen, "hero")
+        _wait_for(qt_app, lambda: target.send("tick", 0) and (listed or refused))
+        assert not refused, refused
+        assert listed[0] == [{"label": "/Game/Maps/Start.BP_Hero_C_0", "value": 75},
+                             {"label": "BP_Hero_C_0.Sidekick", "value": 12},
+                             {"label": "/Game/Maps/Start.BP_Hero_C_1", "value": 30}]
+        runs.clear()
+        worker.run_now(chosen, {"hero": 30, "n": 1})
+        _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+        assert runs[0][1]["result"] == '"30+1:BP_Hero_C:ABP_Hero_C=BP_Hero_C"'
+        worker.script_options(chosen, "n")  # no choice
+        _wait_for(qt_app, lambda: refused)
+        assert "no choice parameter n" in messages.describe(refused[0])
 
         # Unknown functions and classes are reported as the script's error.
         typo = worker.add_script(ScriptSpec('ctx.find("BP_Hero_C").call("Jump");'))

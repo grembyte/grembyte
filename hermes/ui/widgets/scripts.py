@@ -1,6 +1,8 @@
 """The scripts tab: JavaScript that calls game code by time (see hermes.features.scripts)."""
 
+import dataclasses
 import html
+import json
 from datetime import datetime
 
 from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
@@ -21,6 +23,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QTextBrowser,
     QPushButton,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -29,13 +32,15 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy.exc import SQLAlchemyError
 
 from hermes.core import messages
-from hermes.features.scripts import MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker
+from hermes.features.scripts import (
+    MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker, params_from_json, params_to_json)
 from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.icons import material_icon, set_button_icon
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.labels import WrappedLabel
+from hermes.ui.widgets.script_params import ParamEditor, ScriptRunDialog
 from hermes.ui.widgets.syntax_hint import SyntaxHint
 from hermes.ui.widgets.table import (
     add_copy_actions, add_delete_action, resizable_columns, select_clicked_row, set_row_height)
@@ -71,14 +76,14 @@ def timing_text(translations, spec):
 
 
 class ScriptDialog(QDialog):
-    """Create or edit a script: description, when it runs, its code."""
+    """Create or edit a script: description, when it runs, its code and parameters."""
 
     def __init__(self, translations, parent=None, spec=None):
         super().__init__(parent)
         self.translations = translations
         self.spec = None
         self.setWindowTitle(translations["scripts.dialog_edit" if spec else "scripts.dialog_new"])
-        self.resize(640, 520)
+        self.resize(700, 600)
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
@@ -102,18 +107,27 @@ class ScriptDialog(QDialog):
         self.mode_combo.currentIndexChanged.connect(self._update_seconds)
         self._update_seconds()
 
+        layout.addLayout(form)
+
+        # The code and the parameters take the height the window grows by
+        self.tabs = QTabWidget()
+        code_page = QWidget()
+        code_layout = QVBoxLayout(code_page)
+        code_layout.setContentsMargins(0, 6, 0, 0)
         self.code_edit = CodeEditor(spec.source if spec else EXAMPLE)
         self.code_edit.setMinimumHeight(200)
-        form.addRow(translations["scripts.code"], self.code_edit)
+        code_layout.addWidget(self.code_edit, 1)
         self.syntax_hint = SyntaxHint(translations, self.code_edit, BODY)
-        form.addRow("", self.syntax_hint)
-        # The code takes the height the window grows by
-        layout.addLayout(form, 1)
-
+        code_layout.addWidget(self.syntax_hint)
         help_label = WrappedLabel(translations["scripts.code_help"])
         help_label.setStyleSheet("color:#8b949e;")
         help_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(help_label)
+        code_layout.addWidget(help_label)
+        self.tabs.addTab(code_page, translations["scripts.code"])
+        self.param_editor = ParamEditor(translations, spec.params if spec else ())
+        self.tabs.addTab(self.param_editor, translations["scripts.params"])
+        layout.addWidget(self.tabs, 1)
+
         self.error_label = WrappedLabel("")
         self.error_label.setStyleSheet("color:#f85149;")
         layout.addWidget(self.error_label)
@@ -131,7 +145,14 @@ class ScriptDialog(QDialog):
             return
         problem = self.syntax_hint.problem()
         if problem is not None:
+            self.tabs.setCurrentIndex(0)
             self.error_label.setText(problem)
+            return
+        try:
+            params = self.param_editor.params()
+        except ValueError as error:
+            self.tabs.setCurrentIndex(1)
+            self.error_label.setText(messages.describe(error))
             return
         mode = self.mode_combo.currentData()
         seconds = self.seconds_spin.value() if mode != "manual" else 0.0
@@ -139,8 +160,13 @@ class ScriptDialog(QDialog):
             self.error_label.setText(
                 self.translations["scripts.error_interval"].format(seconds=MIN_REPEAT_SECONDS))
             return
-        self.spec = ScriptSpec(source, mode, seconds, self._enabled,
-                               self.label_edit.text().strip())
+        try:
+            self.spec = ScriptSpec(source, mode, seconds, self._enabled,
+                                   self.label_edit.text().strip(), params)
+        except ValueError as error:
+            self.tabs.setCurrentIndex(1)
+            self.error_label.setText(messages.describe(error))
+            return
         self.accept()
 
 
@@ -176,7 +202,9 @@ class ScriptPanel(QGroupBox):
         self.inspections = None
         # objects scripts returned, by their number in the log's links
         self._results = []
-        # script id -> {spec, saved_id, status, runs, last}
+        # script id -> {spec, saved_id, status, runs, last, last_args, options}
+        # (last_args: the values typed in for its last run; options: its
+        # choices' options by parameter name, while the worker runs)
         self._scripts = {}
         self._build_ui()
 
@@ -402,12 +430,13 @@ class ScriptPanel(QGroupBox):
         for saved in saved_scripts:
             try:
                 spec = ScriptSpec(saved.source, saved.mode, saved.seconds, saved.enabled,
-                                  saved.label)
-            except ValueError as error:
+                                  saved.label, params_from_json(saved.params))
+                last_args = json.loads(saved.last_args) if saved.last_args else {}
+            except (ValueError, KeyError, TypeError) as error:
                 self.status_label.setText(self.translations["scripts.restore_failed"].format(
-                    label=saved.label or saved.id, message=error))
+                    label=saved.label or saved.id, message=messages.describe(error)))
                 continue
-            self.add_script(spec, saved_id=saved.id)
+            self.add_script(spec, saved_id=saved.id, last_args=last_args)
         if saved_scripts:
             self.status_label.setText(
                 self.translations["scripts.restored"].format(count=len(saved_scripts)))
@@ -435,17 +464,19 @@ class ScriptPanel(QGroupBox):
     # ------------------------------------------------------------------
     # Scripts
     # ------------------------------------------------------------------
-    def add_script(self, spec, saved_id=None):
+    def add_script(self, spec, saved_id=None, last_args=None):
         """Start a script (ScriptSpec); saved unless it is a restored one."""
         if self._pid is None:
             return None
         if saved_id is None and self._process_id is not None:
             saved_id = self._store(self._repository.add_script, self._process_id,
                                    label=spec.label, source=spec.source, mode=spec.mode,
-                                   seconds=spec.seconds, enabled=spec.enabled)
+                                   seconds=spec.seconds, enabled=spec.enabled,
+                                   params=params_to_json(spec.params))
         script_id = self._ensure_worker().add_script(spec)
         self._scripts[script_id] = {"spec": spec, "saved_id": saved_id, "status": "starting",
-                                    "runs": 0, "last": ""}
+                                    "runs": 0, "last": "", "last_args": last_args or {},
+                                    "options": {}}
         row = self.table.rowCount()
         self.table.insertRow(row)
         item = QTableWidgetItem()
@@ -477,16 +508,18 @@ class ScriptPanel(QGroupBox):
 
     def _replace_spec(self, script_id, spec):
         state = self._scripts[script_id]
+        if state["spec"].params != spec.params:
+            state["options"] = {}  # their code may have changed
         state["spec"] = spec
         if state["saved_id"] is not None:
             self._store(self._repository.update_script, state["saved_id"], label=spec.label,
                         source=spec.source, mode=spec.mode, seconds=spec.seconds,
-                        enabled=spec.enabled)
+                        enabled=spec.enabled, params=params_to_json(spec.params) or "")
         if state["status"] in _STOPPED:
             # Its code did not compile, or its session ended: try it as a new
             # script of the (new) worker.
             self._drop_row(script_id)
-            self.add_script(spec, saved_id=state["saved_id"])
+            self.add_script(spec, saved_id=state["saved_id"], last_args=state["last_args"])
             return
         self._ensure_worker().update_script(script_id, spec)
         self._show(script_id)
@@ -498,14 +531,30 @@ class ScriptPanel(QGroupBox):
             return
         spec = state["spec"]
         enabled = True if state["status"] == "disconnected" else not spec.enabled
-        self._replace_spec(script_id, ScriptSpec(spec.source, spec.mode, spec.seconds,
-                                                 enabled, spec.label))
+        self._replace_spec(script_id, dataclasses.replace(spec, enabled=enabled))
 
     def _run_selected(self):
         script_id = self._selected_id()
-        if script_id in self._scripts and self._worker is not None:
-            self._set_status(script_id, "running")
-            self._worker.run_now(script_id)
+        state = self._scripts.get(script_id)
+        if state is None or self._worker is None:
+            return
+        args = None
+        if state["spec"].params:
+            # Ask for its parameters; the choices' options come from the game
+            dialog = ScriptRunDialog(self.translations, state["spec"], worker=self._worker,
+                                     script_id=script_id, options_cache=state["options"],
+                                     last=state["last_args"], parent=self)
+            if dialog.exec() != QDialog.DialogCode.Accepted or dialog.args is None:
+                return
+            if self._scripts.get(script_id) is not state or self._worker is None:
+                return  # the game exited meanwhile
+            args = dialog.args
+            state["last_args"] = args
+            if state["saved_id"] is not None:
+                self._store(self._repository.update_script, state["saved_id"],
+                            last_args=json.dumps(args))
+        self._set_status(script_id, "running")
+        self._worker.run_now(script_id, args)
 
     def _remove_selected(self):
         self.remove_script(self._selected_id())

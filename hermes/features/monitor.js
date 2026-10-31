@@ -1999,7 +1999,9 @@ function flushHooks() {
 // A script is a function body run with ``ctx`` on the game thread (see
 // engine.onMainThread): once some seconds after it is added, every some
 // seconds, or only when asked (``mode``: once, repeat, manual). A repeating
-// script waits for its run to end before the next is timed.
+// script waits for its run to end before the next is timed. ``args`` are
+// ctx.args of the timed runs (its parameters' defaults), ``options`` the
+// function bodies that give its choice parameters' options.
 
 const scripts = new Map();
 
@@ -2007,11 +2009,18 @@ function compileScript(source) {
   return new Function('ctx', source);
 }
 
+function compiledSpec(spec) {
+  const options = new Map();
+  for (const [name, source] of Object.entries(spec.options || {}))
+    options.set(name, compileScript(source));
+  return { fn: compileScript(spec.source), mode: spec.mode, seconds: spec.seconds,
+           enabled: spec.enabled, args: spec.args || {}, options };
+}
+
 function addScript(spec) {
   if (scripts.has(spec.id))
     throw hermesError('error.monitor.script_exists', { id: spec.id });
-  const script = { id: spec.id, fn: compileScript(spec.source), mode: spec.mode,
-                   seconds: spec.seconds, enabled: spec.enabled, state: {}, runs: 0,
+  const script = { id: spec.id, ...compiledSpec(spec), state: {}, runs: 0,
                    timer: null, running: false, removed: false };
   scripts.set(spec.id, script);
   timeScript(script);
@@ -2021,8 +2030,7 @@ function addScript(spec) {
 function updateScript(id, spec) {
   // New code or timing; the script's ctx.state stays.
   const script = requireScript(id);
-  const fn = compileScript(spec.source);
-  Object.assign(script, { fn, mode: spec.mode, seconds: spec.seconds, enabled: spec.enabled });
+  Object.assign(script, compiledSpec(spec));
   timeScript(script);
   return true;
 }
@@ -2057,23 +2065,38 @@ function timeScript(script) {
   }, Math.max(0, script.seconds * 1000));
 }
 
-function runScript(script) {
-  // Run it on the game thread; reports 'script-run'.
-  if (script.running)
-    return false;
-  script.running = true;
-  const logs = [];
-  const ctx = {
+function scriptContext(script, logs, args) {
+  return {
     find: findObject,
     forEach: forEachObject,
     outerName,
+    findClass: scriptClass,
     call: staticCall,
     gas: scriptGas,
+    args,
     log: (...items) => { logs.push(formatLog(items)); },
     state: script.state,
     runs: script.runs,
     scriptId: script.id
   };
+}
+
+function scriptClass(name) {
+  // ctx.findClass("ItFo_Potion_Health_03"): an Unreal class as an object,
+  // e.g. for a TSubclassOf parameter
+  if (engine.id !== 'unreal')
+    throw hermesError('error.monitor.find_class_unreal_only');
+  return objectJs(engine.findClass(String(name)));
+}
+
+function runScript(script, args = null) {
+  // Run it on the game thread with ``args`` as ctx.args (else the
+  // defaults); reports 'script-run'.
+  if (script.running)
+    return false;
+  script.running = true;
+  const logs = [];
+  const ctx = scriptContext(script, logs, args === null ? { ...script.args } : args);
   const started = Date.now();
   const report = (result, error) => {
     script.running = false;
@@ -2089,6 +2112,29 @@ function runScript(script) {
   engine.onMainThread(() => scriptResult(script.fn(ctx))).then(
     result => report(result, null), error => report(undefined, error));
   return true;
+}
+
+function scriptOptions(id, name) {
+  // The options of a script's choice parameter: [{ label, value }], from its
+  // code on the game thread (values: strings, numbers or bools)
+  const script = requireScript(id);
+  const fn = script.options.get(name);
+  if (fn === undefined)
+    throw hermesError('error.monitor.no_options', { name });
+  return engine.onMainThread(() => {
+    const list = fn(scriptContext(script, [], { ...script.args }));
+    if (!Array.isArray(list))
+      throw hermesError('error.monitor.options_array', { name });
+    return list.map(option => {
+      const plain = option === null || typeof option !== 'object';
+      const value = plain ? option : option.value;
+      if (!['string', 'number', 'boolean'].includes(typeof value))
+        throw hermesError('error.monitor.option_value', { name, option: displayText(option) });
+      const label = plain || option.label === undefined || option.label === null
+        ? String(value) : String(option.label);
+      return { label, value };
+    });
+  });
 }
 
 // --- Gameplay Ability System (Unreal): the player's attributes ------------------------
@@ -2213,7 +2259,8 @@ rpc.exports = {
   addScript,
   updateScript,
   removeScript,
-  runScriptNow: id => runScript(requireScript(id)),
+  runScriptNow: (id, args) => runScript(requireScript(id), args === undefined ? null : args),
+  scriptOptions,
   dispose() {
     clearInterval(flushTimer);
     for (const id of Array.from(scripts.keys()))
