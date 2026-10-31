@@ -1259,9 +1259,10 @@ const unreal = (() => {
   const layouts = new Map();
 
   function layout(klass) {
-    // { name, valueType, rank, headerSize, fields: [{ name, type, offset, static }] }
-    // of a class or struct, inherited fields first. Offsets count from the
-    // object's or struct's start (no header).
+    // { name, valueType, rank, headerSize, fields: [{ name, type, offset, static,
+    // property, owner }] } of a class or struct, inherited fields first.
+    // Offsets count from the object's or struct's start (no header);
+    // ``property`` is the FProperty, ``owner`` the class or struct declaring it.
     const key = klass.toString();
     let result = layouts.get(key);
     if (result !== undefined)
@@ -1282,7 +1283,9 @@ const unreal = (() => {
           name: fieldName(field.add(L.fieldName)) + (count > 1 ? `[${count}]` : ''),
           type: valueType(field),
           offset: field.add(L.offset).readS32(),
-          static: false
+          static: false,
+          property: field,
+          owner: ptr(current)
         });
       }
     }
@@ -2065,6 +2068,257 @@ const unreal = (() => {
     return searchObjects(klass, named, Number.MAX_SAFE_INTEGER);
   }
 
+  // --- Gameplay Ability System: the player's attributes -----------------------------
+  // GAS games keep attributes (Health, Might, DamageOutgoingMult ...) as
+  // FGameplayAttributeData (vtable, BaseValue, CurrentValue) in UAttributeSet
+  // subobjects of the actor owning the UAbilitySystemComponent: the player's
+  // pawn or player state. CurrentValue is BaseValue with the active effects
+  // applied, and GAS computes it anew; damage calculations read attributes
+  // through GAS too. So a value written to memory does not last: the base
+  // value is set through the game's own code instead, a static UFunction
+  // taking (UAbilitySystemComponent*, FGameplayAttribute, float), e.g.
+  // Avowed's AlabamaAbilitySystemBlueprintLibrary:
+  // SetFloatAttributeBaseFromAbilitySystemComponent. GAS then computes the
+  // current value with the effects (a +1 bonus stays one, a x1.4 one scales).
+
+  // FGameplayAttribute's TFieldPath<FProperty> (Attribute): ResolvedField,
+  // ResolvedOwner (a weak pointer to the declaring class), Path (TArray<FName>,
+  // the game keeps the attribute's name only).
+  const FIELD_PATH_OWNER = 8, FIELD_PATH_PATH = 16;
+  // How often a found setter (or none) is looked for again
+  const SETTER_SEARCH_AGE = 30000;
+  let attributeSetter;  // { fn, signature, name } or null; undefined: not looked for
+  let setterSearched = 0;
+  let playerParts = null;  // { pawn, owners, sets, asc } found last
+
+  function isAttributeData(type) {
+    if (type.kind !== KIND.VALUETYPE || type.klass === undefined)
+      return false;
+    const names = layout(type.klass).fields.map(field => field.name);
+    return names.includes('BaseValue') && names.includes('CurrentValue');
+  }
+
+  function attributeFields(klass) {
+    return layout(klass).fields.filter(field => isAttributeData(field.type));
+  }
+
+  function propertyOf(klass, name) {
+    // The field (see layout) of an object's property, or undefined
+    return layout(klass).fields.find(field => field.name === name);
+  }
+
+  function pointerProperty(object, name) {
+    const field = propertyOf(object.add(OBJECT_CLASS).readPointer(), name);
+    if (field === undefined)
+      return NULL;
+    const value = object.add(field.offset).readPointer();
+    return !value.isNull() && isObject(value) ? value : NULL;
+  }
+
+  function searchPlayerParts() {
+    // The attribute sets and the ability system component of the first local
+    // player: owned by its pawn or player state.
+    const controller = findObject('PlayerController');
+    if (controller === null)
+      return null;
+    const pawn = pointerProperty(controller, 'Pawn');
+    if (pawn.isNull())
+      return null;
+    const owners = [pawn, pointerProperty(controller, 'PlayerState')].filter(o => !o.isNull());
+    const owned = object => owners.some(owner => object.add(OBJECT_OUTER).readPointer()
+      .equals(owner));
+    // One read of the object table for both (findObjects reads it anew)
+    snapshot = null;
+    const all = name => searchObjects(Number(findClass(name).toString()), null,
+                                      Number.MAX_SAFE_INTEGER);
+    const sets = all('AttributeSet').filter(owned);
+    const components = all('AbilitySystemComponent').filter(owned);
+    // The component of the owner with the sets
+    const asc = components.find(component => sets.some(set =>
+      set.add(OBJECT_OUTER).readPointer().equals(component.add(OBJECT_OUTER).readPointer())))
+      || components[0] || NULL;
+    return { pawn, owners, sets, asc };
+  }
+
+  function currentPlayerParts() {
+    // The player's parts found last while still current, else searched anew
+    // (a search reads every object: not on every refresh).
+    const parts = playerParts;
+    if (parts !== null) {
+      try {
+        const controller = findObject('PlayerController');
+        const current = controller === null ? NULL : pointerProperty(controller, 'Pawn');
+        if (current.equals(parts.pawn) && parts.sets.every(set => isObject(set)
+            && parts.owners.some(owner => set.add(OBJECT_OUTER).readPointer().equals(owner)))
+            && (parts.asc.isNull() || isObject(parts.asc)))
+          return parts;
+      } catch (_error) {
+        // freed meanwhile: search again
+      }
+    }
+    playerParts = searchPlayerParts();
+    return playerParts;
+  }
+
+  function setName(set) {
+    return fieldName(set.add(OBJECT_NAME));
+  }
+
+  function gasAttributes() {
+    // { owner, setter, sets: [{ name, className, attributes: [{ name, base,
+    // current }] }] } of the player, or null without one (e.g. in the menu).
+    reflection();
+    const parts = currentPlayerParts();
+    if (parts === null)
+      return null;
+    const setter = findAttributeSetter();
+    return {
+      owner: fieldName(parts.pawn.add(OBJECT_NAME)),
+      setter: setter === null ? null : setter.name,
+      component: !parts.asc.isNull(),
+      sets: parts.sets.map(set => {
+        const klass = set.add(OBJECT_CLASS).readPointer();
+        return {
+          name: setName(set),
+          className: layout(klass).name,
+          attributes: attributeFields(klass).map(field => {
+            const data = layout(field.type.klass).fields;
+            const at = name => set.add(field.offset)
+              .add(data.find(entry => entry.name === name).offset).readFloat();
+            return { name: field.name, base: at('BaseValue'), current: at('CurrentValue') };
+          })
+        };
+      })
+    };
+  }
+
+  function findAttributeSetter() {
+    // The game's static UFunction setting an attribute's base value (see
+    // above), or null; found by its parameters among the UFunctions named
+    // Set...Attribute...Base.
+    if (attributeSetter !== undefined
+        && (attributeSetter !== null || Date.now() - setterSearched < SETTER_SEARCH_AGE))
+      return attributeSetter;
+    setterSearched = Date.now();
+    attributeSetter = null;
+    const s = objects();
+    const functionClass = ue.layout.functionClass;
+    for (let i = 0; i < s.address.length; i++) {
+      if (s.klass[i] !== functionClass || !/^Set\w*Attribute\w*Base/.test(objectName(s, i)))
+        continue;
+      const fn = ptr(s.address[i]);
+      let signature;
+      try {
+        signature = signatureOf(fn);
+      } catch (_error) {
+        continue;
+      }
+      const [component, attribute, value] = signature.params;
+      if (signature.instance || value === undefined || component.type.kind !== KIND.CLASS
+          || !/AbilitySystemComponent/.test(component.type.name)
+          || attribute.type.name !== 'FGameplayAttribute' || attribute.type.byref
+          || ![KIND.R4, KIND.R8].includes(value.type.kind))
+        continue;
+      attributeSetter = {
+        fn, signature,
+        name: `${nameOfAddress(Number(fn.add(OBJECT_OUTER).readPointer().toString()))}:` +
+          objectName(s, i)
+      };
+      break;
+    }
+    return attributeSetter;
+  }
+
+  function findAttribute(parts, name) {
+    // The set and field of "Set.Attribute" or "Attribute" (the first set with it)
+    const dot = name.indexOf('.');
+    const wantedSet = dot < 0 ? null : name.substring(0, dot);
+    const attribute = dot < 0 ? name : name.substring(dot + 1);
+    for (const set of parts.sets) {
+      if (wantedSet !== null && setName(set) !== wantedSet)
+        continue;
+      const field = attributeFields(set.add(OBJECT_CLASS).readPointer())
+        .find(entry => entry.name === attribute);
+      if (field !== undefined)
+        return { set, field };
+    }
+    throw new Error(`the player has no attribute ${name}`);
+  }
+
+  function writeGameplayAttribute(type, address, field, keep) {
+    // An FGameplayAttribute naming ``field`` as the game makes one
+    const parts = layout(type.klass).fields;
+    const at = name => {
+      const part = parts.find(entry => entry.name === name);
+      if (part === undefined)
+        throw new Error(`FGameplayAttribute has no ${name}`);
+      return address.add(part.offset);
+    };
+    const name = field.name;
+    const text = Memory.alloc(2 * (name.length + 1));
+    text.writeUtf16String(name);
+    const path = Memory.alloc(8);
+    Memory.copy(path, field.property.add(ue.layout.fieldName), 8);
+    keep.push(text, path);
+    const nameAt = at('AttributeName');
+    nameAt.writePointer(text);
+    nameAt.add(Process.pointerSize).writeS32(name.length + 1);
+    nameAt.add(Process.pointerSize + 4).writeS32(name.length + 1);
+    const owner = field.owner;
+    const index = owner.add(OBJECT_INDEX).readS32();
+    const item = ue.objects.table.readPointer().add(8 * Math.floor(index / CHUNK)).readPointer()
+      .add((index % CHUNK) * ue.objects.itemSize);
+    const fieldPath = at('Attribute');
+    fieldPath.writePointer(field.property);
+    // FWeakObjectPtr: object index and serial number (none yet: resolved by the path)
+    const serial = item.add(Process.pointerSize + 8).readS32();
+    fieldPath.add(FIELD_PATH_OWNER).writeS32(serial === 0 ? -1 : index);
+    fieldPath.add(FIELD_PATH_OWNER + 4).writeS32(serial);
+    fieldPath.add(FIELD_PATH_PATH).writePointer(path);
+    fieldPath.add(FIELD_PATH_PATH + Process.pointerSize).writeS32(1);
+    fieldPath.add(FIELD_PATH_PATH + Process.pointerSize + 4).writeS32(1);
+    at('AttributeOwner').writePointer(owner);
+  }
+
+  function gasSetBase(name, value) {
+    // Set the base value of the player's attribute "Set.Attribute" or
+    // "Attribute" through the game's setter; game thread only. Gives
+    // { base, current } afterwards.
+    if (typeof value !== 'number' || !Number.isFinite(value))
+      throw new Error(`the value must be a number, not ${value}`);
+    if (!isGameThread())
+      throw new Error('attributes can only be set on the game thread');
+    reflection();
+    const parts = currentPlayerParts();
+    if (parts === null)
+      throw new Error('no player (yet)');
+    if (parts.asc.isNull())
+      throw new Error('the player has no ability system component');
+    const setter = findAttributeSetter();
+    if (setter === null)
+      throw new Error('the game has no function to set an attribute\'s base value');
+    const { set, field } = findAttribute(parts, name);
+    const { signature } = setter;
+    const parms = Memory.alloc(Math.max(signature.parmsSize, 8));
+    parms.writeByteArray(new ArrayBuffer(Math.max(signature.parmsSize, 8)));
+    const [component, attribute, number, found] = signature.params;
+    const keep = [];
+    parms.add(component.offset).writePointer(parts.asc);
+    writeGameplayAttribute(attribute.type, parms.add(attribute.offset), field, keep);
+    if (number.type.kind === KIND.R8)
+      parms.add(number.offset).writeDouble(value);
+    else
+      parms.add(number.offset).writeFloat(value);
+    invoke(setter.fn, null, parms);
+    if (found !== undefined && found.type.engine === 'bool'
+        && (parms.add(found.offset + found.type.byteOffset).readU8() & found.type.byteMask) === 0)
+      throw new Error(`the game did not find the attribute ${name}`);
+    const data = layout(field.type.klass).fields;
+    const read = entry => set.add(field.offset)
+      .add(data.find(part => part.name === entry).offset).readFloat();
+    return { base: read('BaseValue'), current: read('CurrentValue') };
+  }
+
   return {
     id: 'unreal',
     refresh,
@@ -2103,6 +2357,8 @@ const unreal = (() => {
     findObject,
     findObjects,
     outerName,
+    gasAttributes,
+    gasSetBase,
     classChain,
     objectClassName: object => layout(classOf(object)).name,
     virtualMethod,

@@ -157,6 +157,7 @@ struct {
 #define FUNC_PUBLIC 0x20000
 #define FUNC_BLUEPRINT_EVENT 0x8000000
 #define CPF_PARM 0x80
+#define CPF_OUT_PARM 0x100
 #define CPF_RETURN_PARM 0x400
 #define FILLERS 5000
 
@@ -312,6 +313,63 @@ __attribute__((noinline)) void exec_Rename(Object *context, Frame *stack, void *
     (void)result;
     g_loud = stack->locals[16];
     g_name_length = ((String *)stack->locals)->num;
+}
+
+/* The Gameplay Ability System: FGameplayAttribute names an attribute by
+   its name, a TFieldPath (the FProperty, a weak pointer to its class, the
+   path: the property's name) and its class. */
+typedef struct {
+    String attribute_name;
+    Field *resolved_field;
+    int32_t owner_index, owner_serial;
+    uint32_t *path;
+    int32_t path_num, path_max;
+    Object *attribute_owner;
+} GameplayAttribute;
+_Static_assert(sizeof(GameplayAttribute) == 56, "FGameplayAttribute");
+
+static Object *g_hero_set, *g_component;
+static volatile int32_t g_set_calls;
+
+static int name_is(uint32_t index, const String *text) {
+    /* Whether FName ``index`` reads as the FString ``text`` */
+    const uint8_t *entry = g_name_pool.blocks[0] + index * 2;
+    uint16_t header;
+    memcpy(&header, entry, 2);
+    int length = header >> 6;
+    if (text->num != length + 1)
+        return 0;
+    for (int i = 0; i < length; i++)
+        if (text->data[i] != entry[2 + i])
+            return 0;
+    return 1;
+}
+
+/* The game's setter of an attribute's base value (Avowed's
+   SetFloatAttributeBaseFromAbilitySystemComponent): GAS applies the hero's
+   x1.5 effect to the current value. It finds the attribute only by a
+   complete FGameplayAttribute. */
+__attribute__((noinline)) void exec_SetFloatAttributeBase(Object *context, Frame *stack,
+                                                          void *result) {
+    struct { Object *component; GameplayAttribute attribute; float value; uint8_t found; }
+        *parms = (void *)stack->locals;
+    const GameplayAttribute *attribute = &parms->attribute;
+    const Field *field = attribute->resolved_field;
+    (void)context;
+    (void)result;
+    g_set_calls = g_set_calls + 1;
+    parms->found = 0;
+    if (parms->component != g_component || field == NULL || attribute->owner_index < 0)
+        return;
+    const Item *owner = &g_uobject_array.objects[0][attribute->owner_index];
+    if (owner->object != field->owner || owner->serial != attribute->owner_serial
+        || attribute->attribute_owner != field->owner || attribute->path_num != 1
+        || attribute->path[0] != field->name || !name_is(field->name, &attribute->attribute_name))
+        return;
+    float *data = (float *)((char *)g_hero_set + field->offset + 8);
+    data[0] = parms->value;
+    data[1] = parms->value * 1.5f;
+    parms->found = 1;
 }
 
 /* The script interpreter: Loot's script calls AddGold(Amount), then
@@ -540,6 +598,59 @@ int main(void) {
     /* A second hero: scripts find it by its name */
     Object *rival = object(bp_hero, "BP_Hero_C_1", level);
     *(int32_t *)((char *)rival + 0x70) = 30;
+    /* The Gameplay Ability System: the player's attribute set and ability
+       system component (their outer: the player's pawn), the PlayerController
+       naming the pawn, FGameplayAttributeData (vtable, BaseValue,
+       CurrentValue), and the setter in a library class. */
+    Object *abilities = object(package_class, "/Script/GameplayAbilities", NULL);
+    Object *attribute_data = object(script_struct, "GameplayAttributeData", abilities);
+    attribute_data->properties_size = 16;
+    property(attribute_data, float_property, "BaseValue", 4, 8, 0, NULL);
+    property(attribute_data, float_property, "CurrentValue", 4, 12, 0, NULL);
+    Object *gameplay_attribute = object(script_struct, "GameplayAttribute", abilities);
+    gameplay_attribute->properties_size = 56;
+    property(gameplay_attribute, str_property, "AttributeName", 16, 0, 0, NULL);
+    property(gameplay_attribute, field_class("FieldPathProperty"), "Attribute", 32, 16, 0, NULL);
+    property(gameplay_attribute, object_property, "AttributeOwner", 8, 48, 0, struct_class);
+    Object *attribute_set = object(class_class, "AttributeSet", abilities);
+    attribute_set->super = object_class;
+    Object *component_class = object(class_class, "AbilitySystemComponent", abilities);
+    component_class->super = object_class;
+    Object *hero_set_class = object(class_class, "HeroAttributeSet", game);
+    hero_set_class->super = attribute_set;
+    property(hero_set_class, struct_property, "Might", 16, 0x30, 0, attribute_data);
+    property(hero_set_class, struct_property, "DamageOutgoingMult", 16, 0x40, 0, attribute_data);
+    property(hero_set_class, float_property, "NotAnAttribute", 4, 0x50, 0, NULL);
+    /* Something has a weak pointer to the class: it has a serial number */
+    g_uobject_array.objects[0][hero_set_class->index].serial = 77;
+    Object *library = object(class_class, "HeroAbilityLibrary", abilities);
+    library->super = object_class;
+    object(library, "Default__HeroAbilityLibrary", abilities);
+    Object *set_base = function(function_class, library,
+                                "SetFloatAttributeBaseFromAbilitySystemComponent",
+                                FUNC_NATIVE | FUNC_STATIC | FUNC_PUBLIC,
+                                exec_SetFloatAttributeBase, 4, 72, 0xffff);
+    property(set_base, object_property, "AbilitySystemComponent", 8, 0, CPF_PARM,
+             component_class);
+    property(set_base, struct_property, "Attribute", 56, 8, CPF_PARM, gameplay_attribute);
+    property(set_base, float_property, "Value", 4, 64, CPF_PARM, NULL);
+    property(set_base, bool_property, "bSuccessfullyFoundAttribute", 1, 68,
+             CPF_PARM | CPF_OUT_PARM, (void *)0xff010001ULL);
+    Object *controller_class = object(class_class, "PlayerController", engine);
+    controller_class->super = actor;
+    property(controller_class, object_property, "Pawn", 8, 0x70, 0, hero);
+    Object *controller = object(controller_class, "PlayerController_0", level);
+    *(Object **)((char *)controller + 0x70) = player;
+    g_hero_set = object(hero_set_class, "HeroAttributeSet", player);
+    float *might = (float *)((char *)g_hero_set + 0x38);
+    might[0] = 4;
+    might[1] = 5;
+    float *damage = (float *)((char *)g_hero_set + 0x48);
+    damage[0] = 1;
+    damage[1] = 1.5f;
+    g_component = object(component_class, "AbilitySystemComponent", player);
+    /* The rival's set: not the player's */
+    object(hero_set_class, "HeroAttributeSet", rival);
     for (int i = 0; i < FILLERS; i++)
         object(object_class, "Filler", game);
 
@@ -562,6 +673,12 @@ int main(void) {
                 wide[i] = (uint16_t)text[i];
             struct { String name; uint8_t loud; } parms = {{wide, length + 1, length + 1}, 1};
             UObject_ProcessEvent(player, g_rename, &parms);
+        } else if (strcmp(cmd, "attribute") == 0) {
+            /* Base and current value (in tenths) of Might (0) or DamageOutgoingMult (1) */
+            const float *data = (float *)((char *)g_hero_set + (value ? 0x48 : 0x38));
+            printf("%d %d\n", (int)(data[0] * 10 + 0.5f), (int)(data[1] * 10 + 0.5f));
+            fflush(stdout);
+            continue;
         } else if (strcmp(cmd, "renamed") == 0) {
             printf("%d %d\n", g_name_length, g_loud);
             fflush(stdout);
@@ -611,7 +728,8 @@ def test_catalog_lists_packages_classes_and_ufunctions(tmp_path, qt_app):
         found = _run(qt_app, worker, worker.assemblies_found)[0][0]
         # Packages with functions; Blueprints grouped by their first folder
         assert [(a["name"], a["classes"]) for a in found] == [
-            ("/Script/CoreUObject", 8), ("/Script/FakeGame", 1), ("/Game/Blueprints", 1)]
+            ("/Script/CoreUObject", 8), ("/Script/FakeGame", 2), ("/Game/Blueprints", 1),
+            ("/Script/GameplayAbilities", 3)]
         assert all(a["mvid"] for a in found)
         assert engine.is_framework_assembly("/Script/CoreUObject")
         # The framework is left out unless asked for.
@@ -939,6 +1057,73 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         _wait_for(qt_app, lambda: target.send("tick", 0)
                   and len([r for r in runs if r[0] == repeating]) >= 3)
         assert [r[1]["result"] for r in runs if r[0] == repeating][:3] == ["1", "2", "3"]
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.scripts import ScriptWorker
+    from hermes.ui.widgets.gas_attributes import hold_spec
+
+    target = _Target(_build(tmp_path))
+    worker = ScriptWorker(target.pid)
+    listed, values, failed = [], [], []
+    worker.gas_listed.connect(lambda _request, state: listed.append(state))
+    worker.gas_failed.connect(lambda _request, message: failed.append(message))
+    worker.gas_set.connect(lambda _request, answer: values.append(answer))
+    worker.gas_set_failed.connect(lambda _request, message: failed.append(message))
+    added, runs = [], []
+    worker.script_added.connect(added.append)
+    worker.script_ran.connect(lambda script_id, run: runs.append((script_id, run)))
+
+    def set_base(name, value):
+        values.clear()
+        failed.clear()
+        worker.gas_set_base(name, value)
+        # On the game thread: when it next enters ProcessEvent
+        _wait_for(qt_app, lambda: target.send("tick", 0) and (values or failed))
+
+    try:
+        worker.start()
+        # The player's set (not the rival's), its attributes (not other
+        # fields), the component and the game's setter, found by its parameters
+        worker.gas_attributes()
+        _wait_for(qt_app, lambda: listed or failed)
+        assert not failed, failed
+        state = listed[0]
+        assert state["owner"] == "BP_Hero_C_0"
+        assert state["setter"] == ("HeroAbilityLibrary:"
+                                   "SetFloatAttributeBaseFromAbilitySystemComponent")
+        assert state["component"]
+        assert state["sets"] == [{
+            "name": "HeroAttributeSet", "className": "UHeroAttributeSet",
+            "attributes": [{"name": "Might", "base": 4, "current": 5},
+                           {"name": "DamageOutgoingMult", "base": 1, "current": 1.5}]}]
+
+        # Set through the game, with an FGameplayAttribute as the game makes
+        # one: the game applies its effects to the current value.
+        set_base("HeroAttributeSet.DamageOutgoingMult", 3)
+        assert not failed, failed
+        assert values == [{"base": 3, "current": 4.5}]
+        assert target.send("attribute", 1) == (30, 45)
+        set_base("Nope", 1)
+        assert "the player has no attribute Nope" in failed[0]
+
+        # ctx.gas in scripts: the hold script of the GAS window sets the value
+        # again only when the game changed it.
+        hold = worker.add_script(hold_spec("Might", 9))
+        _wait_for(qt_app, lambda: hold in added)
+        for expected in ('"Might = 9"', ""):
+            runs.clear()
+            worker.run_now(hold)
+            _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+            assert runs[0][1]["error"] is None, runs[0][1]["error"]
+            assert runs[0][1]["result"] == expected
+        assert target.send("attribute", 0) == (90, 135)
     finally:
         worker.requestInterruption()
         worker.wait(5000)

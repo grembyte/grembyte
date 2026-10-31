@@ -1990,6 +1990,7 @@ function runScript(script) {
     forEach: forEachObject,
     outerName,
     call: staticCall,
+    gas: scriptGas,
     log: (...items) => { logs.push(formatLog(items)); },
     state: script.state,
     runs: script.runs,
@@ -2011,6 +2012,57 @@ function runScript(script) {
     result => report(result, null), error => report(undefined, error));
   return true;
 }
+
+// --- Gameplay Ability System (Unreal): the player's attributes ------------------------
+// See the Unreal adapter (gasAttributes, gasSetBase). Names are "Attribute"
+// or "Set.Attribute", e.g. "AttributeSetCore.DamageOutgoingMult".
+
+function gasEngine(name) {
+  if (engine.id !== 'unreal')
+    throw new Error('GAS attributes exist in Unreal Engine games only');
+  return engine[name];
+}
+
+function gasAttributes() {
+  // The player's attribute sets, or null without a player. Memory reads
+  // only: on the agent's thread, also while the game is paused.
+  return gasEngine('gasAttributes')();
+}
+
+function gasSetBase(name, value) {
+  // Set an attribute's base value through the game, on the game thread
+  return engine.onMainThread(() => gasEngine('gasSetBase')(name, value));
+}
+
+function gasValue(name) {
+  // ctx.gas.get(name): { base, current } of the player's attribute, or null
+  // without a player
+  const state = gasAttributes();
+  if (state === null)
+    return null;
+  const dot = name.indexOf('.');
+  const wantedSet = dot < 0 ? null : name.substring(0, dot);
+  const wanted = dot < 0 ? name : name.substring(dot + 1);
+  for (const set of state.sets) {
+    if (wantedSet !== null && set.name !== wantedSet)
+      continue;
+    const attribute = set.attributes.find(entry => entry.name === wanted);
+    if (attribute !== undefined)
+      return { base: attribute.base, current: attribute.current };
+  }
+  throw new Error(`the player has no attribute ${name}`);
+}
+
+// ctx.gas in scripts (they run on the game thread)
+const scriptGas = {
+  attributes: gasAttributes,
+  get: gasValue,
+  setBase(name, value) {
+    const result = gasEngine('gasSetBase')(name, value);
+    noteChange(name, value);
+    return result;
+  }
+};
 
 function scriptResult(value) {
   // What a script returned: { text, target? } (target: an object or struct
@@ -2077,6 +2129,8 @@ rpc.exports = {
     requireMethodHook(id).debug = enabled;
     return true;
   },
+  gasAttributes,
+  gasSetBase,
   addScript,
   updateScript,
   removeScript,

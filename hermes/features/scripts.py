@@ -31,6 +31,13 @@ The body gets one ``ctx`` object:
                             widget's outer is the widget showing it)
     ctx.call("Namespace.Class.Method", ...args)   call a static game method
                      (also "Namespace.Class:Method", as the catalog names it)
+    ctx.gas          Unreal games with the Gameplay Ability System: the
+                     player's attributes. ctx.gas.get("Might") or
+                     ctx.gas.get("AttributeSetCore.Might"): {base, current}
+                     (null without a player); ctx.gas.setBase(name, value)
+                     sets the base value through the game's own code, which
+                     applies the active effects to it; ctx.gas.attributes()
+                     lists the sets (see ScriptWorker.gas_attributes)
     ctx.log(...)     output shown in the script log
     ctx.state        per-script object that persists between runs
     ctx.runs         how often it ran before
@@ -125,6 +132,12 @@ class ScriptWorker(QThread):
     call_failed = pyqtSignal(int, str)
     text_fetched = pyqtSignal(int, object)
     text_failed = pyqtSignal(int, str)
+    # request id, the player's GAS attributes (see gas_attributes) or None
+    gas_listed = pyqtSignal(int, object)
+    gas_failed = pyqtSignal(int, str)
+    # request id, {base, current} after setting a base value
+    gas_set = pyqtSignal(int, object)
+    gas_set_failed = pyqtSignal(int, str)
     agent_log = pyqtSignal(str, str)
     worker_failed = pyqtSignal(str)
 
@@ -182,6 +195,23 @@ class ScriptWorker(QThread):
         """Call an instance method on an object (see MethodMonitorWorker)."""
         request_id = next(self._requests)
         self._commands.put(("call_on", request_id, (target, method, list(arguments))))
+        return request_id
+
+    def gas_attributes(self):
+        """Read the player's GAS attribute sets (Unreal); expect gas_listed or gas_failed.
+
+        The answer is ``{owner, setter, component, sets: [{name, className,
+        attributes: [{name, base, current}]}]}``, or None without a player.
+        """
+        request_id = next(self._requests)
+        self._commands.put(("gas_attributes", request_id, ()))
+        return request_id
+
+    def gas_set_base(self, name, value):
+        """Set the base value of the player's attribute ``name`` ("Set.Attribute")
+        through the game; expect gas_set or gas_set_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("gas_set_base", request_id, (name, float(value))))
         return request_id
 
     def full_text(self, text_id):
@@ -261,6 +291,8 @@ class ScriptWorker(QThread):
         "describe_method": ("describe_method", "call_described", "call_failed"),
         "call_on": ("call_on", "called", "call_failed"),
         "text": ("full_text", "text_fetched", "text_failed"),
+        "gas_attributes": ("gas_attributes", "gas_listed", "gas_failed"),
+        "gas_set_base": ("gas_set_base", "gas_set", "gas_set_failed"),
     }
 
     def _answer(self, api, action, request_id, argument):

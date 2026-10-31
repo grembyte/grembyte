@@ -112,6 +112,8 @@ MONITOR = "monitor"
 METHOD_HOOKS = "method_hooks"
 CALL_GRAPH = "call_graph"
 CALL = "call"
+# The player's Gameplay Ability System attributes (see the Unreal adapter)
+GAS = "gas"
 
 
 class EngineAdapter:

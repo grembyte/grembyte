@@ -203,13 +203,18 @@ class _FakeScriptWorker:
             methods_failed = pyqtSignal(int, str)
             text_fetched = pyqtSignal(int, object)
             text_failed = pyqtSignal(int, str)
+            gas_listed = pyqtSignal(int, object)
+            gas_failed = pyqtSignal(int, str)
+            gas_set = pyqtSignal(int, object)
+            gas_set_failed = pyqtSignal(int, str)
             finished = pyqtSignal()
 
         self.signals = Signals()
         for name in ("script_added", "script_updated", "script_removed", "script_failed",
                      "script_ran", "worker_failed", "inspected", "inspect_failed",
                      "evaluated", "evaluate_failed", "methods_listed", "methods_failed",
-                     "text_fetched", "text_failed", "finished"):
+                     "text_fetched", "text_failed", "gas_listed", "gas_failed", "gas_set",
+                     "gas_set_failed", "finished"):
             setattr(self, name, getattr(self.signals, name))
         self.requests = []
 
@@ -235,11 +240,22 @@ class _FakeScriptWorker:
     def update_script(self, script_id, spec):
         self.requests.append(("update", script_id, spec))
 
+    def remove_script(self, script_id):
+        self.requests.append(("remove", script_id))
+
     def run_now(self, script_id):
         self.requests.append(("run", script_id))
 
     def inspect(self, target):
         self.requests.append(("inspect", target))
+        return len(self.requests)
+
+    def gas_attributes(self):
+        self.requests.append(("gas_attributes",))
+        return len(self.requests)
+
+    def gas_set_base(self, name, value):
+        self.requests.append(("gas_set_base", name, value))
         return len(self.requests)
 
 

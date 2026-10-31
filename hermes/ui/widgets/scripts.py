@@ -507,7 +507,33 @@ class ScriptPanel(QGroupBox):
             self._worker.run_now(script_id)
 
     def _remove_selected(self):
-        script_id = self._selected_id()
+        self.remove_script(self._selected_id())
+
+    # ------------------------------------------------------------------
+    # For other windows (e.g. the GAS attributes window)
+    # ------------------------------------------------------------------
+    def worker(self):
+        """The script worker of the attached game, started if needed; None if detached."""
+        if self._pid is None:
+            return None
+        return self._ensure_worker()
+
+    def scripts_labelled(self, prefix):
+        """``{script id: ScriptSpec}`` of the scripts whose label starts with ``prefix``."""
+        return {script_id: state["spec"] for script_id, state in self._scripts.items()
+                if state["spec"].label.startswith(prefix)}
+
+    def put_script(self, spec, prefix):
+        """Replace the script whose label starts with ``prefix`` by ``spec``,
+        or add ``spec`` if there is none; its id (None when detached)."""
+        for script_id in self.scripts_labelled(prefix):
+            self._replace_spec(script_id, spec)
+            # A replaced stopped script was dropped and added anew
+            return next(iter(self.scripts_labelled(prefix)), None)
+        return self.add_script(spec)
+
+    def remove_script(self, script_id):
+        """Stop and delete a script, also from the saved ones."""
         state = self._scripts.get(script_id)
         if state is None:
             return
