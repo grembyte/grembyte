@@ -301,6 +301,8 @@ class ScriptPanel(QGroupBox):
                              (self.btn_toggle, "play_arrow" if paused else "pause")):
             menu.addAction(material_icon(icon), button.text(), button.click).setEnabled(
                 button.isEnabled())
+        menu.addAction(material_icon("content_copy"), self.translations["scripts.copy"],
+                   self._copy_selected).setEnabled(state is not None)
         add_delete_action(menu, self.table, self.translations, self._remove_selected)
         add_copy_actions(menu, self.table, position, self.translations)
         menu.exec(self.table.viewport().mapToGlobal(position))
@@ -506,6 +508,17 @@ class ScriptPanel(QGroupBox):
         if script_id not in self._scripts:  # the game exited meanwhile
             return
         self._replace_spec(script_id, dialog.spec)
+
+    def _copy_selected(self):
+        script_id = self._selected_id()
+        state = self._scripts.get(script_id)
+        if state is None:
+            return
+        label = state["spec"].label or self.translations["scripts.unnamed"]
+        spec = dataclasses.replace(
+            state["spec"], label=f"{label} {self.translations['scripts.copy_suffix']}"
+        )
+        self.add_script(spec)
 
     def _replace_spec(self, script_id, spec):
         state = self._scripts[script_id]

@@ -1062,6 +1062,8 @@
   "scripts.hint": "Skripte rufen Spielcode zeitgesteuert auf, z. B. einen Cheat jede Minute. Mit „Neu …“ anlegen.",
   "scripts.new": "Neu …",
   "scripts.edit": "Bearbeiten",
+  "scripts.copy": "Als Kopie anlegen",
+  "scripts.copy_suffix": "(Kopie)",
   "scripts.run": "Jetzt ausführen",
   "scripts.run_tooltip": "Das gewählte Skript jetzt einmal ausführen, unabhängig vom Zeitplan",
   "scripts.pause": "Pausieren",

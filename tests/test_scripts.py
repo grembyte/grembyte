@@ -308,6 +308,73 @@ def test_objects_scripts_return_open_in_the_inspector_from_the_log(qt_app, monke
         panel.deleteLater()
 
 
+@pytest.mark.parametrize("language, suffix", [("en", "(copy)"), ("de", "(Kopie)")])
+def test_context_menu_creates_a_localized_script_copy(qt_app, monkeypatch, language, suffix):
+    # pylint: disable=import-outside-toplevel,protected-access,unused-argument
+    from PyQt6.QtCore import QPoint  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.features.scripts import ScriptParam
+    from hermes.ui.widgets import scripts
+
+    class FakeAction:
+        def __init__(self, label, callback):
+            self.label = label
+            self.callback = callback
+            self.enabled = True
+
+        def setEnabled(self, enabled):
+            self.enabled = enabled
+
+    class FakeMenu:
+        instances = []
+
+        def __init__(self, _parent):
+            self.actions = []
+            self.instances.append(self)
+
+        def addAction(self, _icon, label, callback):
+            action = FakeAction(label, callback)
+            self.actions.append(action)
+            return action
+
+        def exec(self, _position):
+            pass
+
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    monkeypatch.setattr(scripts, "QMenu", FakeMenu)
+    monkeypatch.setattr(scripts, "add_delete_action", lambda *_args: None)
+    monkeypatch.setattr(scripts, "add_copy_actions", lambda *_args: None)
+    translations = load_translations(language)
+    panel = scripts.ScriptPanel(translations, language=language)
+    spec = ScriptSpec("return ctx.lang;", "repeat", 3, True, "Language", (
+        ScriptParam("choice", "Choice", "choice", "en", 'return ["en", "de"];'),
+    ))
+    try:
+        panel.set_process(4242)
+        original_id = panel.add_script(spec)
+        worker = panel._worker
+        position = panel.table.visualItemRect(panel.table.item(0, 0)).center()
+        panel._show_context_menu(QPoint(position))
+
+        menu = FakeMenu.instances[-1]
+        assert [action.label for action in menu.actions] == [
+            translations["scripts.edit"], translations["scripts.run"],
+            translations["scripts.pause"], translations["scripts.copy"],
+        ]
+        menu.actions[-1].callback()
+
+        copied_id = panel._selected_id()
+        copied = panel._scripts[copied_id]
+        assert copied_id != original_id
+        assert copied["spec"] == ScriptSpec(
+            spec.source, spec.mode, spec.seconds, spec.enabled, f"Language {suffix}", spec.params)
+        assert copied["runs"] == 0 and copied["last"] == "" and copied["options"] == {}
+        assert worker.requests[-1] == ("add", copied["spec"])
+    finally:
+        panel.shutdown()
+        panel.deleteLater()
+
+
 def test_scripts_show_disconnected_when_their_session_ends(qt_app, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from hermes.ui.widgets import scripts

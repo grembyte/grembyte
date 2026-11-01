@@ -1062,6 +1062,8 @@
   "scripts.hint": "Scripts call game code by time, e.g. a cheat every minute. Create one with “New …”.",
   "scripts.new": "New …",
   "scripts.edit": "Edit",
+  "scripts.copy": "Create copy",
+  "scripts.copy_suffix": "(copy)",
   "scripts.run": "Run now",
   "scripts.run_tooltip": "Run the selected script once now, whatever its timing",
   "scripts.pause": "Pause",
