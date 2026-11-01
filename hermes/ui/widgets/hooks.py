@@ -3,7 +3,7 @@
 import dataclasses
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import QThread, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QColor, QFontDatabase  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy.exc import SQLAlchemyError
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
@@ -494,7 +494,7 @@ class HookPanel(QGroupBox):
         self._process_id = None
         self._backend = BACKEND_FRIDA
         self._debug_window = None
-        self._worker = None
+        self._worker: QThread | None = None
         self._method_worker = None
         self._hooks = {}
         # Hook trampolines of this process, also of removed hooks:

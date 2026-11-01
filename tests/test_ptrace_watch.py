@@ -109,7 +109,7 @@ requires_ptrace_target = pytest.mark.skipif(
 def test_ptrace_watch_sees_writes_and_leaves_target_running(tmp_path):
     # pylint: disable=import-outside-toplevel
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtWidgets import QApplication  # pylint: disable=no-name-in-module
 
     from hermes.core.ptrace_watch import PtraceWriteWatchWorker
 
@@ -209,7 +209,7 @@ def test_ptrace_watch_keeps_signals_and_new_threads_of_the_target(tmp_path):
     import signal
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtWidgets import QApplication  # pylint: disable=no-name-in-module
 
     from hermes.core.ptrace_watch import PtraceWriteWatchWorker
 

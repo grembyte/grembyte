@@ -122,21 +122,24 @@ class _Recorder:
     def __init__(self, qt_app, worker):
         self.app = qt_app
         self.worker = worker
-        self.inventory = None
+        self.inventory: tuple = ([], [], "")
+        self.inventory_ready = False
         self.started = []
         self.began = []
         self.recorded = []
         self.stopped = []
         self.failed = []
-        worker.inventory_found.connect(
-            lambda threads, modules, platform: setattr(self, "inventory",
-                                                       (threads, modules, platform)))
+        worker.inventory_found.connect(self._on_inventory)
         worker.started.connect(self.started.append)
         worker.began.connect(self.began.append)
         worker.recorded.connect(self.recorded.append)
         worker.stopped.connect(lambda: self.stopped.append(True))
         worker.command_failed.connect(lambda action, message: self.failed.append((action, message)))
         worker.worker_failed.connect(lambda message: self.failed.append(("worker", message)))
+
+    def _on_inventory(self, threads, modules, platform):
+        self.inventory = (threads, modules, platform)
+        self.inventory_ready = True
 
     def wait(self, predicate):
         _wait_for(self.app, lambda: predicate() or self.failed)
@@ -166,7 +169,7 @@ def test_native_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
     try:
         worker.start()
         worker.inventory()
-        recorder.wait(lambda: recorder.inventory is not None)
+        recorder.wait(lambda: recorder.inventory_ready)
         threads, modules, platform = recorder.inventory
         assert platform == "linux"
         assert {thread.id for thread in threads} >= {target.pid}
@@ -246,7 +249,7 @@ def test_native_trace_survives_a_crowded_address_space(tmp_path, qt_app, monkeyp
     try:
         worker.start()
         worker.inventory()
-        recorder.wait(lambda: recorder.inventory is not None)
+        recorder.wait(lambda: recorder.inventory_ready)
         threads, _modules, _platform = recorder.inventory
         worker.trace([thread.id for thread in threads], ["game"])
         recorder.wait(lambda: recorder.started)

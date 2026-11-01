@@ -224,12 +224,27 @@ class _FakeScriptWorker:
             finished = pyqtSignal()
 
         self.signals = Signals()
-        for name in ("script_added", "script_updated", "script_removed", "script_failed",
-                     "script_ran", "worker_failed", "inspected", "inspect_failed",
-                     "evaluated", "evaluate_failed", "methods_listed", "methods_failed",
-                     "text_fetched", "text_failed", "gas_listed", "gas_failed", "gas_set",
-                     "gas_set_failed", "options_listed", "options_failed", "finished"):
-            setattr(self, name, getattr(self.signals, name))
+        self.script_added = self.signals.script_added
+        self.script_updated = self.signals.script_updated
+        self.script_removed = self.signals.script_removed
+        self.script_failed = self.signals.script_failed
+        self.script_ran = self.signals.script_ran
+        self.worker_failed = self.signals.worker_failed
+        self.inspected = self.signals.inspected
+        self.inspect_failed = self.signals.inspect_failed
+        self.evaluated = self.signals.evaluated
+        self.evaluate_failed = self.signals.evaluate_failed
+        self.methods_listed = self.signals.methods_listed
+        self.methods_failed = self.signals.methods_failed
+        self.text_fetched = self.signals.text_fetched
+        self.text_failed = self.signals.text_failed
+        self.gas_listed = self.signals.gas_listed
+        self.gas_failed = self.signals.gas_failed
+        self.gas_set = self.signals.gas_set
+        self.gas_set_failed = self.signals.gas_set_failed
+        self.options_listed = self.signals.options_listed
+        self.options_failed = self.signals.options_failed
+        self.finished = self.signals.finished
         self.requests = []
 
     def start(self):

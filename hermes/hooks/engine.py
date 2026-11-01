@@ -259,7 +259,7 @@ def build_agent_source():
     return ENGINE_AGENT_SOURCE + _AGENT_SOURCE
 
 
-def create_hook_worker(backend, pid, parent=None):
+def create_hook_worker(backend, pid, parent=None) -> QThread:
     """Build the hook worker for ``backend`` (``frida`` or ``ptrace``).
 
     Both workers share the same signals and public methods, so the panel treats

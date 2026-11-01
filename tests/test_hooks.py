@@ -1117,7 +1117,10 @@ def test_hook_panel_installs_and_removes_hooks(tmp_path, qt_app, translations):
 @requires_target
 def test_hooks_of_an_ended_session_can_be_resumed_in_a_new_one(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
+    from typing import cast
+
     from hermes.ui.widgets.hooks import HookPanel
+    from hermes.hooks.engine import HookWorker
 
     target = _Target(_build_target(tmp_path))
     panel = HookPanel(translations)
@@ -1134,8 +1137,8 @@ def test_hooks_of_an_ended_session_can_be_resumed_in_a_new_one(tmp_path, qt_app,
         assert status() == "Aktiv"
 
         # Ended in the sessions window: the worker removes its hooks and stops.
-        worker = panel._worker
-        worker.requestInterruption()
+        worker = cast(HookWorker, panel._worker)
+        worker.requestInterruption()  # pylint: disable=no-member
         _wait_for(qt_app, lambda: status() == "Getrennt")
         assert panel._worker is None
         assert target.send("add", 10)[0] == 110  # the game's own code again

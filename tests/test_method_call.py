@@ -74,7 +74,7 @@ def test_enum_names_are_the_hint_of_an_empty_argument(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from hermes.ui.widgets.method_call import MethodCallDialog
 
-    dialog = MethodCallDialog.__new__(MethodCallDialog)
+    dialog = MethodCallDialog.__new__(MethodCallDialog)  # pylint: disable=no-value-for-parameter
     dialog.translations, dialog._editors = translations, []  # pylint: disable=protected-access
     values = {"0": "Might", "1": "Constitution", "2": "Dexterity", "3": "Perception",
               "4": "Intellect"}
@@ -190,10 +190,18 @@ class _FakeWorker:
             text_failed = pyqtSignal(int, str)
 
         self.signals = Signals()
-        for name in ("call_described", "called", "call_failed", "worker_failed", "inspected",
-                     "inspect_failed", "evaluated", "evaluate_failed", "methods_listed",
-                     "methods_failed", "text_fetched", "text_failed"):
-            setattr(self, name, getattr(self.signals, name))
+        self.call_described = self.signals.call_described
+        self.called = self.signals.called
+        self.call_failed = self.signals.call_failed
+        self.worker_failed = self.signals.worker_failed
+        self.inspected = self.signals.inspected
+        self.inspect_failed = self.signals.inspect_failed
+        self.evaluated = self.signals.evaluated
+        self.evaluate_failed = self.signals.evaluate_failed
+        self.methods_listed = self.signals.methods_listed
+        self.methods_failed = self.signals.methods_failed
+        self.text_fetched = self.signals.text_fetched
+        self.text_failed = self.signals.text_failed
         self.requests = []
 
     def start(self):
