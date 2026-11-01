@@ -191,9 +191,10 @@ class ScriptPanel(QGroupBox):
         "scripts.column_last",
     )
 
-    def __init__(self, translations, parent=None, *, repository=None):
+    def __init__(self, translations, parent=None, *, repository=None, language="en"):
         super().__init__(translations["scripts.title"], parent)
         self.translations = translations
+        self.language = language
         self._repository = repository
         self._pid = None
         self._process_id = None
@@ -445,7 +446,7 @@ class ScriptPanel(QGroupBox):
         worker = self._worker
         if worker is not None and worker.isRunning():
             return worker
-        worker = ScriptWorker(self._pid, self)
+        worker = ScriptWorker(self._pid, self, self.language)
         worker.script_added.connect(lambda script_id: self._on_added(worker, script_id))
         worker.script_updated.connect(lambda script_id: self._on_added(worker, script_id))
         worker.script_removed.connect(lambda script_id: self._on_removed(worker, script_id))

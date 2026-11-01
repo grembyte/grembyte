@@ -41,6 +41,7 @@ The body gets one ``ctx`` object:
     ctx.findClass("ClassName")   Unreal: the class itself, e.g. for a
                      TSubclassOf parameter: ctx.findClass("ItFo_Potion_Health_03")
     ctx.args         the values of the script's parameters by name (see below)
+    ctx.lang         the app language ("de" or "en")
     ctx.log(...)     output shown in the script log
     ctx.state        per-script object that persists between runs
     ctx.runs         how often it ran before
@@ -265,9 +266,10 @@ class ScriptWorker(QThread):
     _ids = itertools.count(1)
     _requests = itertools.count(1)
 
-    def __init__(self, pid, parent=None):
+    def __init__(self, pid, parent=None, language="en"):
         super().__init__(parent)
         self.pid = pid
+        self.language = language
         self._commands = queue.Queue()
         self._ready = threading.Event()
         self._agent_error = None
@@ -357,7 +359,7 @@ class ScriptWorker(QThread):
             session = attach_session(self.pid)
             sessions.SESSIONS.set_frida_session(self, session)
             session.on("detached", self._on_detached)
-            script = session.create_script(build_agent_source())
+            script = session.create_script(build_agent_source(self.language))
             script.on("message", self._on_message)
             script.set_log_handler(self._on_log)
             script.load()

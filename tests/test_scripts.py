@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from hermes.features.scripts import ScriptSpec
-from hermes.ui.localization import load_translations
+from hermes.ui.localization import language_code, load_translations
 
 
 @pytest.fixture(name="qt_app", scope="module")
@@ -25,6 +25,12 @@ def test_both_languages_name_the_same_script_texts():
                        if key.startswith("scripts.")}
             for language in ("en", "de")}
     assert keys["en"] == keys["de"]
+
+
+@pytest.mark.parametrize("language, expected", [("de-DE", "de"), ("en_US", "en"),
+                                                  ("fr", "en")])
+def test_language_code_resolves_supported_script_languages(language, expected):
+    assert language_code(language) == expected
 
 
 @pytest.mark.parametrize("language", ["en", "de"])
@@ -184,7 +190,7 @@ class _FakeScriptWorker:
     # As ScriptWorker's: unique across workers
     _ids = itertools.count(1)
 
-    def __init__(self, _pid, _parent=None):
+    def __init__(self, _pid, _parent=None, _language="en"):
         # pylint: disable=import-outside-toplevel
         from PyQt6.QtCore import QObject, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 

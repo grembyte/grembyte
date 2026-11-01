@@ -76,6 +76,7 @@ hermes/features/method_call.py for the arguments).
 """
 
 import itertools
+import json
 import queue
 import threading
 
@@ -93,8 +94,8 @@ from hermes.core.agent_source import load_agent_source
 _AGENT_SOURCE = ENGINE_AGENT_SOURCE + load_agent_source(__file__)
 
 
-def build_agent_source():
-    return _AGENT_SOURCE
+def build_agent_source(language="en"):
+    return f"const HERMES_LANGUAGE = {json.dumps(language)};\n" + _AGENT_SOURCE
 
 
 class MethodMonitorWorker(QThread):

@@ -2073,6 +2073,7 @@ function scriptContext(script, logs, args) {
     findClass: scriptClass,
     call: staticCall,
     gas: scriptGas,
+    lang: HERMES_LANGUAGE,
     args,
     log: (...items) => { logs.push(formatLog(items)); },
     state: script.state,

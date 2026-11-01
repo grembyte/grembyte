@@ -1118,7 +1118,7 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
     from hermes.features.scripts import ScriptParam, ScriptSpec, ScriptWorker
 
     target = _Target(_build(tmp_path))
-    worker = ScriptWorker(target.pid)
+    worker = ScriptWorker(target.pid, language="de")
     added, failed, runs = [], {}, []
     worker.script_added.connect(added.append)
     worker.script_failed.connect(failed.__setitem__)
@@ -1150,6 +1150,12 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         assert run["logs"] == ["BP_Hero_C_0 75 Attribute"]
         assert run["result"] == "107"
         assert target.send("renamed", 0) == (4, 1)  # "Bob" and its terminating 0
+
+        language_script = worker.add_script(ScriptSpec("return ctx.lang;"))
+        _wait_for(qt_app, lambda: language_script in added)
+        run = run_on_game_thread(language_script)
+        assert run["error"] is None, run["error"]
+        assert run["result"] == '"de"'
 
         # An object it returns comes with a target the inspector reads.
         inspected = []

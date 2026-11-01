@@ -22,7 +22,7 @@ from PyQt6.QtCore import Qt, QSize, QTimer, QSettings  # pylint: disable=import-
 from PyQt6.QtGui import QColor, QActionGroup, QIcon  # pylint: disable=import-error,no-name-in-module
 
 from hermes import __version__
-from hermes.ui.localization import load_translations
+from hermes.ui.localization import language_code, load_translations
 from hermes.ui.styles.styles import STYLE
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.icons import material_icon, set_button_icon
@@ -329,7 +329,8 @@ class MainWindow(QMainWindow):
     def __init__(self, language: str | None = None):
         """Initialize the main window and construct its interface."""
         super().__init__()
-        self.translations = load_translations(language)
+        self.language = language_code(language)
+        self.translations = load_translations(self.language)
         messages.use(self.translations)
         self.setWindowTitle(self.translations["app.window_title"])
         self.setMinimumSize(1100, 700)
@@ -813,7 +814,7 @@ class MainWindow(QMainWindow):
         self.bottom_tabs.addTab(self.hook_panel, self.translations["hooks.title"])
 
         self.script_panel = ScriptPanel(
-            self.translations, self, repository=self._script_repository
+            self.translations, self, repository=self._script_repository, language=self.language
         )
         self.script_panel.setTitle("")
         self.script_panel.setObjectName("tab_page")
