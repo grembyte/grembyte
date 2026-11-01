@@ -97,6 +97,12 @@ def test_the_address_search_folds_away_and_stays_so(qt_app, tmp_path, monkeypatc
 
     try:
         window = open_window()
+        file_menu = window.menuBar().actions()[0].menu()
+        file_actions = file_menu.actions()
+        assert file_actions[-2].isSeparator()
+        assert file_actions[-1] == window.act_check_gadget
+        assert window.act_check_gadget.isEnabled() == (main_window.sys.platform != "win32")
+        assert not window.act_check_gadget.icon().isNull()
         assert not window._scan_area.isHidden() and window.act_scan_area.isChecked()
         window.btn_scan_area.click()
         assert window._scan_area.isHidden() and not window.act_scan_area.isChecked()

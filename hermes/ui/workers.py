@@ -7,9 +7,31 @@ Workers of windows that close are kept here until then.
 """
 
 from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtCore import QThread  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+
+from hermes.core.wine_gadget import ensure_gadget
 
 _workers = set()
+
+
+class GadgetDownloadWorker(QThread):
+    """Download a Wine gadget without blocking the GUI thread."""
+
+    progress = pyqtSignal(int, int)
+    completed = pyqtSignal()
+
+    def __init__(self, bits, parent=None):
+        super().__init__(parent)
+        self.bits = bits
+        self.path = None
+        self.error = None
+
+    def run(self):
+        try:
+            self.path = ensure_gadget(self.bits, progress=self.progress.emit)
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            self.error = str(error)
+        self.completed.emit()
 
 
 def keep_until_finished(worker):

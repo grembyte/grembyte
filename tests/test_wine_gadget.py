@@ -48,6 +48,183 @@ def test_a_checked_gadget_is_written_whole(monkeypatch, tmp_path):
     assert not list((tmp_path / "hermes-hook" / "gadget").glob("*.part"))
 
 
+def test_download_reports_progress(monkeypatch):
+    _serve(monkeypatch, _pe(0x8664))
+    progress = []
+    ensure_gadget(64, version="1.2.3", progress=lambda received, total:
+                  progress.append((received, total)))
+    assert progress[0] == (0, -1)
+    assert progress[-1][0] > 0
+    assert all(total == -1 for _received, total in progress)
+
+
+@pytest.mark.parametrize("allowed", [False, True])
+def test_connect_uses_the_download_setting(monkeypatch, allowed):
+    from hermes.core import settings
+
+    calls = []
+    monkeypatch.setattr(settings, "get", lambda _key: allowed)
+    monkeypatch.setattr(wine_gadget, "gadget_port", lambda _pid: None)
+
+    def load(_pid, download):
+        calls.append(download)
+        raise GadgetError("error.gadget.not_present", path="missing")
+
+    monkeypatch.setattr(wine_gadget, "load_gadget", load)
+    with pytest.raises(GadgetError):
+        wine_gadget.connect(1234)
+    assert calls == [allowed]
+
+
+@pytest.mark.parametrize(
+    ("allowed", "answer", "expected"),
+    [
+        (False, "no", (True, False)),
+        (False, "yes", (True, True)),
+        (True, "unused", (True, True)),
+    ],
+)
+def test_preparing_a_missing_gadget_respects_consent(
+        monkeypatch, tmp_path, allowed, answer, expected):
+    from hermes.ui import main_window
+
+    QMessageBox = main_window.QMessageBox
+
+    class FakeMessageBox:
+        StandardButton = QMessageBox.StandardButton
+
+        @staticmethod
+        def question(*_args):
+            button = QMessageBox.StandardButton.No
+            if answer == "yes":
+                button = QMessageBox.StandardButton.Yes
+            return button
+
+    class Harness:
+        translations = {
+            "gadget.download_title": "Download",
+            "gadget.download_prompt": "Missing at {path}",
+        }
+        _current_pid = None
+
+        def _download_wine_gadget(self, bits):
+            downloads.append(bits)
+            return True
+
+    saved, applied, downloads = [], [], []
+
+    class Repository:
+        def save(self, values):
+            saved.append(values)
+
+    monkeypatch.setattr(main_window, "QMessageBox", FakeMessageBox)
+    monkeypatch.setattr(main_window, "is_wine_process", lambda _pid: True)
+    monkeypatch.setattr(main_window, "wine_bits", lambda _pid: 64)
+    monkeypatch.setattr(main_window, "gadget_path", lambda _bits: tmp_path / "missing.dll")
+    monkeypatch.setattr(main_window.app_settings, "get", lambda _key: allowed)
+    monkeypatch.setattr(main_window.app_settings, "apply", applied.append)
+    monkeypatch.setattr(main_window, "SettingsRepository", Repository)
+
+    prepare = getattr(main_window.MainWindow, "_prepare_wine_gadget")
+    result = prepare(Harness(), 1234)
+
+    assert result == expected
+    assert downloads == ([64] if expected[1] else [])
+    assert saved == ([{"wine_gadget_download": True}] if not allowed and answer == "yes" else [])
+    assert applied == saved
+
+
+@pytest.mark.parametrize("current_bits, expected", [(64, [64]), (None, [32, 64])])
+def test_gadget_check_offers_missing_compatible_architectures(
+        monkeypatch, tmp_path, current_bits, expected):
+    from hermes.ui import main_window
+
+    class FakeMessageBox:
+        StandardButton = main_window.QMessageBox.StandardButton
+
+        @staticmethod
+        def question(*_args):
+            return FakeMessageBox.StandardButton.Yes
+
+    class Harness:
+        _current_pid = 1234 if current_bits else None
+        translations = {
+            "gadget.check_title": "Check",
+            "gadget.check_prompt": "Missing: {paths}",
+            "gadget.check_current": "Current",
+        }
+
+        def __init__(self):
+            self.downloads = []
+            self.restarts = 0
+            self.status_updates = 0
+
+        def _download_wine_gadget(self, bits):
+            self.downloads.append(bits)
+            return True
+
+        def _restart_current_frida_workers(self):
+            self.restarts += 1
+
+        def _update_backend_label(self):
+            self.status_updates += 1
+
+    window = Harness()
+    monkeypatch.setattr(main_window, "QMessageBox", FakeMessageBox)
+    monkeypatch.setattr(
+        main_window, "is_wine_process", lambda _pid: current_bits is not None)
+    monkeypatch.setattr(main_window, "wine_bits", lambda _pid: current_bits)
+    monkeypatch.setattr(
+        main_window, "gadget_path",
+        lambda bits: tmp_path / f"frida-gadget-current-{bits}.dll",
+    )
+
+    check = getattr(main_window.MainWindow, "_check_wine_gadgets")
+    check(window)
+
+    assert window.downloads == expected
+    assert window.restarts == (1 if current_bits == 64 else 0)
+    assert window.status_updates == 1
+
+
+def test_gadget_check_is_inert_on_windows(monkeypatch):
+    from types import SimpleNamespace
+    from hermes.ui import main_window
+
+    class Harness:
+        _current_pid = None
+
+    monkeypatch.setattr(main_window, "sys", SimpleNamespace(platform="win32"))
+    check = getattr(main_window.MainWindow, "_check_wine_gadgets")
+    check(Harness())
+
+
+@pytest.mark.parametrize("present, expected", [(False, " (Update available)"), (True, "")])
+def test_gadget_status_marks_a_missing_current_version(
+        monkeypatch, tmp_path, present, expected):
+    from hermes.ui import main_window
+
+    path = tmp_path / "frida-gadget-current-64.dll"
+    if present:
+        path.touch()
+
+    class Harness:
+        _current_pid = 1234
+        translations = {
+            "status.gadget": "  •  Frida via Wine gadget",
+            "status.gadget_update": " (Update available)",
+        }
+
+    monkeypatch.setattr(main_window, "is_wine_process", lambda _pid: True)
+    monkeypatch.setattr(main_window, "gadget_port", lambda _pid: 27100)
+    monkeypatch.setattr(main_window, "gadget_loader", lambda _pid: None)
+    monkeypatch.setattr(main_window, "wine_bits", lambda _pid: 64)
+    monkeypatch.setattr(main_window, "gadget_path", lambda _bits: path)
+
+    gadget_note = getattr(main_window.MainWindow, "_gadget_note")
+    assert gadget_note(Harness()).endswith(expected)
+
+
 def test_a_gadget_that_does_not_match_its_digest_is_not_used(monkeypatch):
     _serve(monkeypatch, _pe(0x8664), digest="sha256:" + "0" * 64)
     with pytest.raises(GadgetError, match="SHA-256"):

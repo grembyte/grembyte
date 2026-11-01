@@ -16,9 +16,11 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QHeaderView, QStatusBar, QToolBar, QDialog,
     QAbstractItemView, QFormLayout,
     QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox, QTabWidget, QSizePolicy,
-    QInputDialog, QApplication,
+    QInputDialog, QApplication, QProgressDialog,
 )
-from PyQt6.QtCore import Qt, QSize, QTimer, QSettings  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtCore import (  # pylint: disable=import-error,no-name-in-module
+    Qt, QSize, QTimer, QSettings, pyqtSlot,
+)
 from PyQt6.QtGui import QColor, QActionGroup, QIcon  # pylint: disable=import-error,no-name-in-module
 
 from hermes import __version__
@@ -51,7 +53,7 @@ from hermes.features.catalog import (
     with_type_arguments,
 )
 from hermes.features.method_call import call_capability
-from hermes.core.wine_gadget import gadget_loader, gadget_port, wine_bits
+from hermes.core.wine_gadget import gadget_loader, gadget_path, gadget_port, wine_bits
 from hermes.platform import (
     ProcessMemory, is_wine_process, process_start_time, program_bits, read_mappings,
 )
@@ -120,6 +122,18 @@ RESULT_DISPLAY_LIMIT = 1000
 ICON_PATH = Path(__file__).parent / "resources" / "favicon.svg"
 # Its size next to the name in the toolbar
 BRAND_ICON_SIZE = 22
+
+
+class GadgetProgressDialog(QProgressDialog):
+    """Progress dialog updated by the gadget download worker."""
+
+    @pyqtSlot(int, int)
+    def set_download_progress(self, received, total):
+        if total <= 0:
+            self.setRange(0, 0)
+            return
+        self.setRange(0, total)
+        self.setValue(min(received, total))
 
 
 def _platform_text():
@@ -458,6 +472,11 @@ class MainWindow(QMainWindow):
             material_icon("compress"), self.translations["menu.vacuum"])
         self.act_vacuum.setToolTip(self.translations["menu.vacuum_tooltip"])
         self.act_vacuum.triggered.connect(self._vacuum_database)
+        file_menu.addSeparator()
+        self.act_check_gadget = file_menu.addAction(
+            material_icon("refresh"), self.translations["menu.check_gadget"])
+        self.act_check_gadget.setEnabled(sys.platform != "win32")
+        self.act_check_gadget.triggered.connect(self._check_wine_gadgets)
 
         settings_menu = menu_bar.addMenu(self.translations["menu.settings"])
         settings_menu.setToolTipsVisible(True)
@@ -632,6 +651,10 @@ class MainWindow(QMainWindow):
     def _apply_settings(self, changed):
         if "refresh_interval_ms" in changed:
             self._refresh_timer.setInterval(changed["refresh_interval_ms"])
+        if changed.get("wine_gadget_download") and self._current_pid is not None:
+            ready, downloaded = self._prepare_wine_gadget(self._current_pid)
+            if ready and downloaded:
+                self._restart_current_frida_workers()
 
     def _set_watch_backend(self, backend):
         """Apply a backend the user picked by hand and remember it."""
@@ -684,7 +707,12 @@ class MainWindow(QMainWindow):
         if pid is None or not is_wine_process(pid) or gadget_port(pid) is None:
             return ""
         loader = gadget_loader(pid)
-        return self.translations[f"status.gadget_{loader}" if loader else "status.gadget"]
+        note = self.translations[
+            f"status.gadget_{loader}" if loader else "status.gadget"]
+        bits = wine_bits(pid)
+        if bits in (32, 64) and not gadget_path(bits).is_file():
+            note += self.translations["status.gadget_update"]
+        return note
 
     # ------------------------------------------------------------------
     # Toolbar
@@ -2258,10 +2286,17 @@ class MainWindow(QMainWindow):
         """Open process selection and update the attached-process state."""
         dlg = ProcessSelectDialog(self, self.translations)
         if dlg.exec() == QDialog.DialogCode.Accepted:
+            if dlg.selected_pid is None:
+                return
+            ready, downloaded = self._prepare_wine_gadget(dlg.selected_pid)
+            if not ready:
+                return
             changed = dlg.selected_pid != self._current_pid
             activity.record("process_selected", name=dlg.selected_name, changed=changed,
                             **activity.describe_process(dlg.selected_pid))
             process_id = self._known_process_id(dlg) if changed else self._process_id
+            if downloaded and not changed:
+                self._restart_current_frida_workers()
             if changed:
                 self._stop_scan_and_refresh()
                 self._stop_write_monitor()
@@ -2296,6 +2331,109 @@ class MainWindow(QMainWindow):
                 self.btn_first_scan.setEnabled(True)
             self._update_catalog_button()
             self._show_attached()
+
+    def _prepare_wine_gadget(self, pid):
+        """Ask permission and fetch a missing Wine gadget before workers attach."""
+        if not is_wine_process(pid):
+            return True, False
+        if pid == self._current_pid and gadget_port(pid) is not None:
+            return True, False
+        bits = wine_bits(pid)
+        if bits not in (32, 64):
+            return True, False
+        path = gadget_path(bits)
+        if path.is_file():
+            return True, False
+        if not app_settings.get("wine_gadget_download"):
+            answer = QMessageBox.question(
+                self, self.translations["gadget.download_title"],
+                self.translations["gadget.download_prompt"].format(path=path),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return True, False
+            try:
+                SettingsRepository().save({"wine_gadget_download": True})
+            except SQLAlchemyError as error:
+                QMessageBox.warning(
+                    self, self.translations["gadget.download_title"], str(error))
+                return False, False
+            app_settings.apply({"wine_gadget_download": True})
+        downloaded = self._download_wine_gadget(bits)
+        return downloaded, downloaded
+
+    def _download_wine_gadget(self, bits):
+        """Show a modal progress dialog while the download runs in a worker."""
+        dialog = GadgetProgressDialog(
+            self.translations["gadget.download_progress"], None, 0, 100, self)
+        dialog.setWindowTitle(self.translations["gadget.download_title"])
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setCancelButton(None)
+        dialog.setRange(0, 0)
+        worker = workers.GadgetDownloadWorker(bits, self)
+        worker.progress.connect(dialog.set_download_progress)
+        worker.completed.connect(dialog.accept)
+        QTimer.singleShot(0, worker.start)
+        dialog.exec()
+        worker.wait()
+        dialog.deleteLater()
+        if worker.error:
+            QMessageBox.warning(
+                self, self.translations["gadget.download_title"],
+                worker.error)
+            return False
+        return worker.path is not None
+
+    def _restart_current_frida_workers(self):
+        """Restart workers after a newly downloaded gadget becomes available."""
+        for panel in (self.hook_panel, self.script_panel):
+            if panel is not None:
+                panel.set_process(None)
+                panel.set_process(self._current_pid, self._process_id)
+
+    def _check_wine_gadgets(self):
+        """Check cached gadgets for this Frida version and offer missing ones."""
+        if sys.platform == "win32":
+            return
+        bits = None
+        if self._current_pid is not None and is_wine_process(self._current_pid):
+            bits = wine_bits(self._current_pid)
+        architectures = (bits,) if bits in (32, 64) else (32, 64)
+        missing = []
+        for architecture in architectures:
+            path = gadget_path(architecture)
+            if not path.is_file():
+                missing.append((architecture, path))
+        if not missing:
+            self._update_backend_label()
+            QMessageBox.information(
+                self, self.translations["gadget.check_title"],
+                self.translations["gadget.check_current"],
+            )
+            return
+        paths = "\n".join(str(path) for _bits, path in missing)
+        answer = QMessageBox.question(
+            self, self.translations["gadget.check_title"],
+            self.translations["gadget.check_prompt"].format(paths=paths),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        downloaded = []
+        for architecture, _path in missing:
+            if not self._download_wine_gadget(architecture):
+                return
+            downloaded.append(architecture)
+        if (self._current_pid is not None
+                and is_wine_process(self._current_pid)
+                and wine_bits(self._current_pid) in downloaded):
+            self._restart_current_frida_workers()
+        self._update_backend_label()
 
     def _check_process_alive(self):
         """Reset the window if the attached process has exited; return whether it runs."""

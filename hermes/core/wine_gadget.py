@@ -35,7 +35,7 @@ from pathlib import Path
 
 import frida
 
-from hermes.core import activity, wine_helper
+from hermes.core import activity, settings, wine_helper
 from hermes.core.messages import LocalizedError
 from hermes.platform import process_start_time
 from hermes.core.ptrace_engine import (
@@ -246,15 +246,24 @@ def gadget_dir():
     return path
 
 
-def ensure_gadget(bits, version=None, download=True):
+def gadget_path(bits, version=None):
+    """The expected gadget DLL for this Frida version and process bitness."""
+    version = version or frida.__version__
+    arch = "x86" if bits == 32 else "x86_64"
+    return gadget_dir() / f"frida-gadget-{version}-windows-{arch}.dll"
+
+
+def ensure_gadget(bits, version=None, download=True, progress=None):
     """Return the path to the Windows gadget DLL for ``bits``, fetching it once.
 
     The DLL is named for the Frida version so an upgrade pulls a matching one.
     ``download=False`` returns an existing file or raises, never reaching out.
+    ``progress`` receives (downloaded bytes, total bytes), with -1 for an
+    unknown total.
     """
     version = version or frida.__version__
     arch = "x86" if bits == 32 else "x86_64"
-    target = gadget_dir() / f"frida-gadget-{version}-windows-{arch}.dll"
+    target = gadget_path(bits, version)
     if target.exists():
         return target
     if not download:
@@ -262,8 +271,22 @@ def ensure_gadget(bits, version=None, download=True):
     url = _GADGET_URL.format(version=version, arch=arch)
     try:
         digest = _published_digest(version, url.rsplit("/", 1)[1])
+        chunks = []
+        received = 0
         with urllib.request.urlopen(url, timeout=60) as response:
-            compressed = response.read()
+            headers = getattr(response, "headers", None)
+            total = int(headers.get("Content-Length", 0)) if headers else 0
+            if progress is not None:
+                progress(0, total or -1)
+            while True:
+                chunk = response.read(64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                received += len(chunk)
+                if progress is not None:
+                    progress(received, total or -1)
+        compressed = b"".join(chunks)
         if digest is not None and hashlib.sha256(compressed).hexdigest() != digest:
             raise GadgetError("error.gadget.digest", url=url, digest=digest)
         dll = lzma.decompress(compressed)
@@ -872,7 +895,7 @@ def _device(url, fresh=False):
     return _DEVICES[url]
 
 
-def connect(pid, download=True):
+def connect(pid, download=None):
     """Return a Frida session on Wine process ``pid`` through the gadget.
 
     The gadget is loaded on first use and reused afterwards, by every worker
@@ -883,6 +906,8 @@ def connect(pid, download=True):
         if port is None:
             began = time.monotonic()
             try:
+                if download is None:
+                    download = settings.get("wine_gadget_download")
                 load_gadget(pid, download=download)
                 port = _wait_listening(pid)
             except (OSError, GadgetError) as error:

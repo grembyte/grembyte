@@ -57,6 +57,7 @@ SETTINGS = (
     Setting("hook_repatch", BOOL, False),
     Setting("hook_profiling", BOOL, False),
     Setting("trace_sequence", INT, 100_000, minimum=1000, maximum=500_000, step=10_000),
+    Setting("wine_gadget_download", BOOL, False),
     Setting("language", CHOICE, "system", choices=("system", "de", "en"), restart=True),
 )
 BY_KEY = {setting.key: setting for setting in SETTINGS}
