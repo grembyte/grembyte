@@ -36,7 +36,34 @@ Hermes Hook is a desktop application built with Python and PyQt6 for inspecting 
   - **GAS attributes** (**View → GAS attributes …**, games with Unreal's Gameplay Ability System): the player's attribute sets with base and current value, live. A base value set there goes through the game's own setter (found by its parameters, in Avowed `AlabamaAbilitySystemBlueprintLibrary:SetFloatAttributeBaseFromAbilitySystemComponent`), so the active effects keep counting: in Avowed `DamageOutgoingMult` 3 with a +40 % bonus deals 4.2 times the damage. Writing such values into memory does not last, as GAS computes the current value anew. **Hold** keeps a value against the game resetting it (loading, levelling up) by a script in the **Scripts** tab; scripts can do the same with `ctx.gas.get("Might")` and `ctx.gas.setBase("AttributeSetCore.Might", 14)`.
   - **Call method** runs a UFunction through `ProcessEvent` on the game thread: a static one on its class default object, an instance one (from the catalog or favorites) on a live object of its class – the first one found, or the one whose name or address you type in, e.g. `AlabamaCheatManager:GiveHealth` in Avowed. FString and FName are typed as text, bools as a checkbox, enums by name, structs of numbers such as FVector as `1 2 3` or `X=1; Z=3`; outputs need no input and are shown after the call. Not possible: TArray, TMap, TSet, FText and delegates as arguments.
   - Not yet: the call graph.
-- **Scripts** (tab next to **Hooks**): JavaScript that calls game code by time, once after a delay, every N seconds or by hand, stored per program and started again when it is attached. Example for Avowed, whose `AlabamaCheatManager` has working cheats in the shipping build: `ctx.find("AlabamaCheatManager").call("GiveHealth", 50)` every minute. Unity games can call static methods with `ctx.call("Namespace.Class.Method", ...)` or, as the catalog names them, `ctx.call("Namespace.Class:Method", ...)`. `ctx.find("ClassName", "ObjectName")` gives the object of that name, e.g. `ctx.find("UnityEngine.GameObject", "Player(Clone)")` in Unity games (active objects only, on the main thread) or `ctx.find("BP_Hero_C", "BP_Hero_C_1")` in Unreal games. Unreal objects can also be named in their outer, as `ctx.outerName(obj)` gives it: `ctx.find("WBP_AbilityPointsTracker_C", "AttributeStatsWidget.PointsAvailableTracker")`; templates (the widgets of a Widget Blueprint) are never found. `ctx.forEach("ClassName", obj => ...)` calls a function for every object of a class. A script can have **parameters** (text, number, yes/no or a choice), asked for when it is run by hand and read as `ctx.args.name`; a choice offers what a short piece of code returns in the game, values or `{label, value}`, in a list that filters as you type. In Gothic 1 Remake, for example, a choice lists all items by name (`CheatModeHelper:GetAllItems`), and the script gives the chosen one with `ctx.call("CheatModeHelper:AddItemsToInventory", ctx.find("PlayerCharacterBP_C"), ctx.findClass(ctx.args.item), ctx.args.count)`; `ctx.findClass("ClassName")` gives an Unreal class, as a `TSubclassOf` parameter takes it.
+- **Scripts** (tab next to **Hooks**): JavaScript that calls game code on a schedule or by hand; scripts are stored per program and restored when it is attached. See [Scripts](#scripts).
+
+### Scripts
+
+Scripts are JavaScript function bodies that run on the game's main thread and can call its methods. Each script is stored per program and restored when that program is attached. Choose when it runs:
+
+- **Once**: after the configured delay, each time the script starts.
+- **Repeat**: every configured interval; the next interval starts after the previous run finishes, so runs do not overlap.
+- **Manual**: only when you click **Run**.
+
+Scripts can have **parameters** (text, number, yes/no or choice). A manual run asks for their values; scheduled runs use their defaults. A choice parameter gets its options from a short JavaScript function evaluated in the game, returning values or `{label, value}` objects. The list filters as you type.
+
+The Scripts tab's `ctx` is separate from the value-hook `ctx` described under [Hook templates](#hook-templates-and-manipulations-of-your-own):
+
+| Field | Meaning |
+| --- | --- |
+| `ctx.find(className[, objectName])` | Find a live object in Unity or Unreal. Unreal also accepts the object's name within its outer; class default objects and Widget Blueprint templates are not returned. |
+| `ctx.findClass(className)` | Unreal: get a class object, for example for a `TSubclassOf` parameter. |
+| `ctx.forEach(className, callback)` | Call `callback` for each live object of the class; stop early by returning `false`. |
+| `ctx.outerName(object)` | Unreal: get an object's name including its outer, useful with `ctx.find`. |
+| `ctx.call(method, ...args)` | Call a static game method, using a dotted name or the `Namespace.Class:Method` form shown in catalogs. |
+| `ctx.gas` | Unreal games with Gameplay Ability System: `attributes()` lists sets; `get(name)` returns `{base, current}` or `null` if there is no player; `setBase(name, value)` changes the base through the game's code, preserving active effects. |
+| `ctx.args` | Values of the script's parameters, by name. |
+| `ctx.lang` | Current app language: `"de"` or `"en"`. |
+| `ctx.log(...)` | Write to the script log. |
+| `ctx.state`, `ctx.runs`, `ctx.scriptId` | Per-script state kept between runs, the number of earlier runs, and the script's ID. |
+
+Objects returned by `ctx.find` are wrappers: call instance methods with `.call(name, ...args)`, access fields and properties as properties, and use `.field(name)` when needed. A returned object is shown as a result and can be opened in the object inspector. For example, Avowed's `AlabamaCheatManager` can restore 50 health with `ctx.find("AlabamaCheatManager").call("GiveHealth", 50)`.
 
 ### Freeze or hook?
 
