@@ -1,6 +1,7 @@
 """Dialogs and panel for creating and managing value hooks and method hooks."""
 
 import dataclasses
+import html
 from datetime import datetime
 
 from PyQt6.QtCore import QThread, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
@@ -17,13 +18,13 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QLabel,
     QLineEdit,
     QMenu,
-    QPlainTextEdit,
     QSplitter,
     QPushButton,
     QSpinBox,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -562,9 +563,9 @@ class HookPanel(QGroupBox):
 
         # What the hooks' scripts log (ctx.log, console.log) and their errors,
         # also outside debug mode; the debug window has every call.
-        self.log_view = QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setMaximumBlockCount(MAX_LOG_LINES)
+        self.log_view = QTextBrowser()
+        self.log_view.setOpenLinks(False)
+        self.log_view.document().setMaximumBlockCount(MAX_LOG_LINES)
         self.log_view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.log_view.setPlaceholderText(self.translations["hooks.log_placeholder"])
         log_panel = QWidget()
@@ -582,14 +583,15 @@ class HookPanel(QGroupBox):
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self.table)
         splitter.addWidget(log_panel)
-        splitter.setSizes([200, 100])
+        splitter.setSizes([160, 130])
         layout.addWidget(splitter)
         self._update_buttons()
 
     def _log(self, text, time=None):
         """Add a line to the log below the table; ``time`` in ms (else now)."""
         moment = datetime.now() if time is None else datetime.fromtimestamp(time / 1000)
-        self.log_view.appendPlainText(f"{moment.strftime('%H:%M:%S')} {text}")
+        line = html.escape(f"{moment.strftime('%H:%M:%S')} {text}")
+        self.log_view.append(f'<span style="white-space: pre-wrap">{line}</span>')
 
     def _on_hook_logs(self, worker, lines, dropped):
         if not self._is_current(worker):

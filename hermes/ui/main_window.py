@@ -3268,7 +3268,7 @@ class MainWindow(QMainWindow):
         # Prevent bold header text for columns containing selected cells
         header.setHighlightSections(False)
         header.setDefaultAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
         )
 
     def _set_primary(self, button, primary):

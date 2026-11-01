@@ -457,6 +457,25 @@ def _delete_window(window):
     sip.delete(window)
 
 
+def test_main_window_table_headers_are_centered(qt_app, sessions, monkeypatch):
+    # pylint: disable=import-outside-toplevel
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui import main_window
+
+    monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
+    monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
+    window = main_window.MainWindow("de")
+    expected = (main_window.Qt.AlignmentFlag.AlignHCenter
+                | main_window.Qt.AlignmentFlag.AlignVCenter)
+    try:
+        qt_app.processEvents()
+        assert window.addr_table.horizontalHeader().defaultAlignment() == expected
+        assert window.result_table.horizontalHeader().defaultAlignment() == expected
+    finally:
+        _delete_window(window)
+
+
 @requires_target
 def test_address_list_survives_restart(binary, qt_app, sessions, monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access
