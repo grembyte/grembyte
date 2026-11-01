@@ -2,7 +2,7 @@
 
 A collection of extensions that would help find addresses and hook entry points, and of
 open points from the Wine/Proton and Unity work.
-As of October 2026.
+As of November 2026.
 
 ## Starting point
 
@@ -14,11 +14,13 @@ Available independent of any engine:
 - Write watch: which instruction writes an address, optionally also which reads it
 - Hooks on write instructions, with caller learning
 - Memory view, freezing
+- Native call diff trace and native function monitor
 
 For Unity games with Mono there are also the catalog, the trace (with preselection
-filters), the method monitor and method hooks, through the engine adapter layer
+filters), the method monitor, method hooks and game scripts, through the engine adapter layer
 (`hermes/engines/`). For Unreal Engine games there are the catalog, the trace, the method
-monitor, method hooks, calling UFunctions (dialog and scripts) and the GAS attributes window.
+monitor, method hooks, calling UFunctions (dialog and scripts), game scripts and the GAS
+attributes window.
 
 Methods and functions found in the catalog, the trace or the native trace can be marked
 with ★ (first table column). Favorites are saved per program at once, so they survive a
@@ -29,24 +31,23 @@ View → "Assemblies…" lists the assemblies a Mono game has loaded; the ticked
 saved per program and limit the catalog and the Mono trace to them. Without a selection
 both use all game assemblies, as before.
 
-## Proposals, independent of any engine
+## Proposals and active work, independent of any engine
 
-Sorted by benefit relative to effort.
+Upcoming proposals are sorted by benefit relative to effort. Implemented work remains here
+with its follow-ups.
 
-### 1. Native call diff trace
+### 1. Native call diff trace (implemented; follow-ups open)
 
-The native counterpart of the Mono trace and the biggest lever. Frida's **Stalker** records
-which functions or basic blocks a thread executes. With the same logic as the Mono trace
-(baseline against scenario) one finds the function that only runs when paying or taking
-damage.
+The engine-independent native counterpart of the Mono trace. Frida's **Stalker** records which
+functions or basic blocks a thread executes. Comparing a baseline with a scenario finds the
+functions called newly or more often when, for example, paying or taking damage.
 
 - Works without metadata, so for C++ games, own engines, Unreal, Godot, Source
 - Reusable: trace dialog, `analyze`, the "new/more often" verdicts
-- Only the agent would be new (Stalker instead of Mono hooks)
 - Model: Cheat Engine's "Code Filter" / "Ultimap"
-- Open: check how Stalker behaves under Wine with the Windows gadget
+- Verified with the test game under Proton and Baldur's Gate under Proton; see the findings below.
 
-**Status (prototype, 2026-10-19):** View → "Native trace…", independent of any engine.
+**Status (implemented, 2026-10-19 onward):** View → "Native trace…", independent of any engine.
 `hermes/features/native_trace.py` (`NativeTraceWorker`) and `native_trace.js` (agent),
 `hermes/ui/widgets/native_trace.py` (window). Session logic shared with the Mono trace in
 `AgentWorker` (`hermes/features/trace.py`); `analyze` and the verdicts are the same.
@@ -131,9 +132,9 @@ Next steps:
   32-bit games (Mono trace in Shadowrun Returns).
 - Callers: the sequence shows the call site of the first call per thread. A list of all
   callers per function (a count per call site and target) is still missing
-- Connection to existing tools: a function can be shown in the memory viewer and handed to
-  the native function monitor. Still missing: a disassembler view of the function, a hook on
-  the function, later a byte signature (point 5)
+- Connection to existing tools: selecting a function opens it in the memory viewer or hands it
+  to the native function monitor. Still missing: a disassembler view and a hook on the function;
+  update-proof byte signatures are covered in point 5.
 - **Done (2026-10-19):** results sortable and filterable (name, call count, `%3`). Native
   function monitor (`hermes/features/native_monitor.py`): an Interceptor on a function from
   the trace or by address/module+offset/symbol; logs arguments, result and caller, and
@@ -188,7 +189,7 @@ subpackage with an `EngineAdapter` subclass and an agent part that registers its
 
 | Engine | Approach | Result |
 |---|---|---|
-| **Unreal** | Reflection through GNames/GObjects | **catalog, trace, method monitor, hooks and calls done (2026-10-30/31)**, see below |
+| **Unreal** | Reflection through GNames/GObjects | **catalog, trace, method monitor/hooks, UFunction calls, scripts and GAS attributes done (2026-10-30/31)**; Blueprint call graph open, see below |
 | **IL2CPP** (Unity without Mono) | `global-metadata.dat` + the `il2cpp_*` API | like Mono, but compiled ahead of time; shares the .NET model of the JS contract |
 | **Godot** | ClassDB / object properties | scene tree and variables |
 | **Lua engines** | hook the `lua_*` API | tables and variables of the script state |
@@ -268,7 +269,12 @@ Next steps:
   named or at an address (checked against the class). Not typed in: TArray, TMap, TSet,
   FText, delegates, structs of structs.
 - **Done (2026-10-31):** GAS attributes window (View → "GAS attributes …"): the player's
-  attribute sets, base values set through the game's own setter, held by a script.
+  attribute sets, base values set through the game's own setter, held by a script. Setter
+  discovery supports the standard AbilitySystemComponent/FGameplayAttribute pattern and
+  AngelscriptGAS's `TrySetAttributeBaseValue(FName, float)` pattern (Gothic 1 Remake).
+- Possible extension: a trusted Unreal code-plugin interface for games with non-standard GAS
+  setters. The current agent has no external plugin loader; a setter with a genuinely different
+  signature or call sequence needs code, not just another method name in configuration.
 - Call graph from Blueprint bytecode (`UStruct::Script`)
 - UE4 before 4.23 (`TNameEntryArray` instead of `FNamePool`) and 32-bit games are not
   supported
@@ -386,19 +392,26 @@ switched off in the settings.
 - Open: the ptrace backends (watch, hooks) only report the start and end of the session, no
   single steps.
 
-## Settings (implemented 2026-10-22)
+## Settings
 
 `hermes/core/settings.py` (definitions, values in this process), table `settings` in
 `hermes.db` (`hermes/db/repository/settings.py`), window `hermes/ui/widgets/settings_dialog.py`
 under Settings → General …: activity log, the trace's method limit under Wine/Proton
 (`wine_trace_limit`, formerly the constant `WINE_TRACE_LIMIT`), from how many methods the trace
-asks first, entries in the traces' call sequence, the refresh interval of tracked addresses,
-the language, and since 2026-10-26/27 the hook options `hook_short_jump`, `hook_repatch` and
-`hook_profiling` (see above). The watch backend stays in the menu and in `QSettings`, since it is chosen
-automatically on attach.
+asks first (`large_trace`), entries in the traces' call sequence (`trace_sequence`), the refresh
+interval of tracked addresses, automatic Wine/Proton gadget downloads (off by default), the
+language, and since 2026-10-26/27 the hook options `hook_short_jump`, `hook_repatch` and
+`hook_profiling` (see above). The watch backend stays in the menu and in `QSettings`, since it is
+chosen automatically on attach.
 
 ## Open points from the Wine/Proton work
 
+- **Gadget downloads and version check (implemented):** the matching Windows gadget
+  is cached per Frida version and architecture. Automatic downloads are opt-in and off by
+  default; selecting a Wine/Proton process with a missing gadget asks once and saves approval.
+  On Linux, File → "Check Frida Gadget Version …" checks the installed Frida version locally
+  and offers a one-time download; it does not check GitHub for a newer Frida release. The
+  status bar marks a missing matching gadget while Frida is using the Wine gadget.
 - **Method monitor and method hooks under Wine:** `hermes/features/monitor.py` now assigns
   arguments by the platform's convention: System V (Linux x86-64), Win64 (rcx, rdx, r8, r9 or
   xmm0–3 by position, 32 bytes of shadow space) and x86 (everything on the stack). Under
@@ -440,7 +453,7 @@ automatically on attach.
   frequently called Windows function (message pump, timing). Games that call none of these
   functions need `hot_points` of their own; `load_gadget` takes them, but neither the UI nor
   the settings can set them yet.
-- **Test suite:** runs aborted now and then with a core dump. Cause (found 2026-10-29): the
-  windows released a finished worker in a slot of its `finished` signal, which Qt emits before
-  the thread has ended; destroying a QThread that still runs aborts the process. Workers are
-  now kept until their thread has ended (`hermes/ui/workers.py`).
+- **Resolved (2026-10-29, test-suite core dumps):** a window released a worker in its
+  `finished` signal, which Qt emits before the thread has ended; destroying a running QThread
+  aborted the process. Workers are now kept until their thread has ended
+  (`hermes/ui/workers.py`).
