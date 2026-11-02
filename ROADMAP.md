@@ -404,6 +404,28 @@ language, and since 2026-10-26/27 the hook options `hook_short_jump`, `hook_repa
 `hook_profiling` (see above). The watch backend stays in the menu and in `QSettings`, since it is
 chosen automatically on attach.
 
+## Binary distribution (PyInstaller) and licenses
+
+Open, nothing is built yet. Hermes Hook is GPL-3.0-or-later; a frozen bundle contains
+third-party code whose licenses add duties that a source release through pip does not have:
+
+- **Qt (LGPL-3.0):** users must be able to replace the bundled Qt libraries with their own
+  build. Build in one-folder mode (`--onedir`), not `--onefile`, so the Qt shared libraries
+  stay separate, replaceable files. Ship the LGPL text and point to the source of the exact Qt
+  version (`download.qt.io`), or offer it in writing.
+- **PyQt6 (GPL-3.0-only):** the bundle as a whole is under the GPL v3. Each release needs the
+  corresponding source: a Git tag per release and its link in the download notes.
+- **License files in the bundle:** PyInstaller does not collect `LICENSE`, `LICENSES/` and
+  `THIRD_PARTY_NOTICES`; add them as data files, next to the executable.
+- **Inventory the bundle:** PyInstaller pulls in more than `requirements.txt` lists — the Python
+  runtime (PSF-2.0), OpenSSL (Apache-2.0), libffi, zlib, Qt plugins, ICU and others. List
+  what the finished bundle contains and extend `THIRD_PARTY_NOTICES` and `LICENSES/`.
+- **Smaller inventory:** exclude Qt modules and plugins Hermes does not use (e.g. QtWebEngine,
+  QtMultimedia, QML). That is not required by the licenses, but each excluded module is one
+  license fewer to check and makes the bundle smaller.
+- **Frida gadgets:** they are downloaded at runtime and not part of the bundle. If a bundle
+  ever ships them, their wxWindows licence text must be in it as well (`LICENSES/Frida.txt`).
+
 ## Open points from the Wine/Proton work
 
 - **Gadget downloads and version check (implemented):** the matching Windows gadget
