@@ -9,7 +9,7 @@ from pathlib import Path
 from PyQt6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from hermes.db.base import Base
 
@@ -46,6 +46,94 @@ def _enable_foreign_keys(dbapi_connection, _connection_record):
 
 engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
 SESSION_LOCAL = sessionmaker(bind=engine)
+
+_PENDING_CHANGES = "_hermes_db_pending_changes"
+
+
+@event.listens_for(Session, "before_flush")
+def _collect_database_changes(session, _flush_context, _instances):
+    """Remember inserted, updated and deleted rows until the transaction commits."""
+    changes = session.info.setdefault(_PENDING_CHANGES, {})
+    new_objects = {id(instance) for instance in session.new}
+    for instance in session.new:
+        changes[id(instance)] = {
+            "table": inspect(instance).mapper.local_table.name,
+            "operation": "created",
+            "fields": set(),
+        }
+    for instance in session.dirty:
+        if id(instance) in new_objects or instance in session.deleted:
+            continue
+        state = inspect(instance)
+        fields = {
+            attribute.key for attribute in state.mapper.column_attrs
+            if state.attrs[attribute.key].history.has_changes()
+        }
+        if not fields:
+            continue
+        change = changes.get(id(instance))
+        if change is not None and change["operation"] == "created":
+            continue
+        if change is None:
+            change = {
+                "table": state.mapper.local_table.name,
+                "operation": "updated",
+                "fields": set(),
+            }
+            changes[id(instance)] = change
+        change["fields"].update(fields)
+    for instance in session.deleted:
+        changes[id(instance)] = {
+            "table": inspect(instance).mapper.local_table.name,
+            "operation": "deleted",
+            "fields": set(),
+        }
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _collect_bulk_deletes(orm_execute_state):
+    """Remember rows removed by ORM-enabled bulk DELETE statements."""
+    if not orm_execute_state.is_delete:
+        return None
+    result = orm_execute_state.invoke_statement()
+    count = getattr(result, "rowcount", 0)
+    if count > 0:
+        table = orm_execute_state.statement.table.name
+        changes = orm_execute_state.session.info.setdefault(_PENDING_CHANGES, {})
+        key = ("bulk-delete", table)
+        change = changes.get(key)
+        if change is None:
+            changes[key] = {
+                "table": table,
+                "operation": "bulk-deleted",
+                "count": count,
+            }
+        else:
+            change["count"] += count
+    return result
+
+
+@event.listens_for(Session, "after_commit")
+def _log_database_changes(session):
+    """Log database changes only after their transaction succeeds."""
+    changes = session.info.pop(_PENDING_CHANGES, {})
+    for change in changes.values():
+        table = change["table"]
+        if change["operation"] == "created":
+            log.info("database record created: %s", table)
+        elif change["operation"] == "updated":
+            fields = ", ".join(sorted(change["fields"]))
+            log.info("database record updated: %s (fields: %s)", table, fields)
+        elif change["operation"] == "deleted":
+            log.info("database record deleted: %s", table)
+        else:
+            log.info("database records deleted: %s (count: %d)", table, change["count"])
+
+
+@event.listens_for(Session, "after_rollback")
+def _discard_database_changes(session):
+    """Do not report flushed rows from a transaction that was rolled back."""
+    session.info.pop(_PENDING_CHANGES, None)
 
 
 def init_db(db_engine=engine):

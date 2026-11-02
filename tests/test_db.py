@@ -1,6 +1,7 @@
 """Tests for the process and hook repository."""
 
 import json
+import logging
 import sys
 
 import pytest
@@ -264,6 +265,108 @@ def test_legacy_db_is_copied_once(tmp_path):
     assert not adopt_legacy_db(path, legacy)
     assert path.read_bytes() == b"new"
     assert not adopt_legacy_db(tmp_path / "data" / "other.db", tmp_path / "missing.db")
+
+
+def test_database_inserts_and_updates_are_logged_after_commit(caplog, tmp_path):
+    # pylint: disable=import-outside-toplevel
+    from hermes.db.models import SettingRecord
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'logged.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+
+    with caplog.at_level(logging.INFO, logger="hermes.db"):
+        with sessions() as session:
+            session.add(SettingRecord(key="refresh_interval_ms", value=100))
+            session.commit()
+        with sessions() as session:
+            record = session.get(SettingRecord, "refresh_interval_ms")
+            record.value = 200
+            session.commit()
+
+    messages = [record.getMessage() for record in caplog.records
+                if record.name == "hermes.db"]
+    assert messages == [
+        "database record created: settings",
+        "database record updated: settings (fields: value)",
+    ]
+    engine.dispose()
+
+
+def test_rolled_back_database_changes_are_not_logged(caplog, tmp_path):
+    # pylint: disable=import-outside-toplevel
+    from hermes.db.models import SettingRecord
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'rollback.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+
+    with caplog.at_level(logging.INFO, logger="hermes.db"):
+        with sessions() as session:
+            session.add(SettingRecord(key="refresh_interval_ms", value=100))
+            session.flush()
+            session.rollback()
+
+    assert not [record for record in caplog.records
+                if record.name == "hermes.db" and record.levelno == logging.INFO]
+    engine.dispose()
+
+
+def test_orm_and_bulk_deletes_are_logged_after_commit(caplog, tmp_path):
+    # pylint: disable=import-outside-toplevel
+    from sqlalchemy import delete
+
+    from hermes.db.models import SettingRecord
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'deletes.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+    with sessions() as session:
+        session.add_all([
+            SettingRecord(key="orm_delete", value=True),
+            SettingRecord(key="bulk_delete", value=True),
+        ])
+        session.commit()
+
+    with caplog.at_level(logging.INFO, logger="hermes.db"):
+        with sessions() as session:
+            session.delete(session.get(SettingRecord, "orm_delete"))
+            session.commit()
+        with sessions() as session:
+            session.execute(delete(SettingRecord).where(
+                SettingRecord.key == "bulk_delete"))
+            session.commit()
+
+    messages = [record.getMessage() for record in caplog.records
+                if record.name == "hermes.db"]
+    assert messages == [
+        "database record deleted: settings",
+        "database records deleted: settings (count: 1)",
+    ]
+    engine.dispose()
+
+
+def test_rolled_back_deletes_are_not_logged(caplog, tmp_path):
+    # pylint: disable=import-outside-toplevel
+    from sqlalchemy import delete
+
+    from hermes.db.models import SettingRecord
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'rollback-delete.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+    with sessions() as session:
+        session.add(SettingRecord(key="to_keep", value=True))
+        session.commit()
+
+    with caplog.at_level(logging.INFO, logger="hermes.db"):
+        with sessions() as session:
+            session.execute(delete(SettingRecord).where(SettingRecord.key == "to_keep"))
+            session.rollback()
+
+    assert not [record for record in caplog.records
+                if record.name == "hermes.db" and record.levelno == logging.INFO]
+    engine.dispose()
 
 
 def test_vacuum_frees_the_space_of_deleted_rows(tmp_path):
