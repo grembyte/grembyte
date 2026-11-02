@@ -27,8 +27,7 @@ from hermes import __version__
 from hermes.ui.localization import language_code, load_translations
 from hermes.ui.styles.themes import ThemeManager
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
-from hermes.ui.widgets.icons import material_icon, set_button_icon
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import apply_icon_theme, material_icon, set_button_icon
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.ui.widgets.table import (
     add_copy_actions, add_delete_action, resizable_columns, set_row_height)
@@ -354,6 +353,7 @@ class MainWindow(QMainWindow):
         self._settings = QSettings("hermes-hook", "hermes-hook")
         self._theme_manager = ThemeManager(settings=self._settings)
         QApplication.instance().setStyleSheet(self._theme_manager.stylesheet())
+        apply_icon_theme(self._theme_manager.load_theme()["colors"])
 
         self._current_pid = None
         self._process_start_time = None

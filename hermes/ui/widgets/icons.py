@@ -7,6 +7,7 @@ import re
 from PyQt6.QtCore import QByteArray, QEvent, QObject, QRectF, Qt  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QGuiApplication, QIcon, QPainter, QPixmap  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtSvg import QSvgRenderer  # pylint: disable=import-error,no-name-in-module
+from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
 ICONS_DIR = Path(__file__).resolve().parent.parent / "resources" / "icons"
 
@@ -18,6 +19,7 @@ _BUTTON_COLORS = {
     "btn_danger": ("#f85149", "#ffffff", "#6e3a37"),
     "btn_primary": ("#ffffff", "#ffffff", "#6e7f99"),
 }
+_MENU_ICON_NAMES = {}
 
 
 def _render(name, color, size, ratio):
@@ -50,7 +52,9 @@ def _icon(name, normal, active, disabled, size):
 
 def material_icon(name, size=16):
     """Return the icon ``name`` (e.g. "edit") coloured like menu items."""
-    return _icon(name, *_MENU, size)
+    icon = _icon(name, *_MENU, size)
+    _MENU_ICON_NAMES[icon.cacheKey()] = name
+    return icon
 
 
 class _ButtonIcon(QObject):
@@ -59,6 +63,8 @@ class _ButtonIcon(QObject):
     def __init__(self, button):
         super().__init__(button)
         self.normal = self.hover = None
+        self.name = None
+        self.size = 16
         button.installEventFilter(self)
 
     def show(self, button, normal, hover):
@@ -83,6 +89,8 @@ def set_button_icon(button, name, size=16):
     holder = button.findChild(_ButtonIcon, options=Qt.FindChildOption.FindDirectChildrenOnly)
     if holder is None:
         holder = _ButtonIcon(button)
+    holder.name = name
+    holder.size = size
     if name is None:
         holder.show(button, QIcon(), QIcon())
         return
@@ -90,3 +98,30 @@ def set_button_icon(button, name, size=16):
     # Focus shows QIcon.Mode.Active: in the normal colour like the text.
     holder.show(button, _icon(name, normal, normal, disabled, size),
                 _icon(name, hover, hover, disabled, size))
+
+
+def apply_icon_theme(colors):
+    """Tint menu and button icons to match a theme, updating existing widgets."""
+    global _MENU, _BUTTON_COLORS  # pylint: disable=global-statement
+    previous_menu_icons = dict(_MENU_ICON_NAMES)
+    _MENU = (colors["text"], colors["white"], colors["disabled_text"])
+    _BUTTON_COLORS = {
+        "": (colors["text"], colors["accent"], colors["disabled_text"]),
+        "btn_danger": (colors["danger"], colors["white"], colors["danger_disabled_text"]),
+        "btn_primary": (colors["white"], colors["white"], colors["accent_disabled_text"]),
+    }
+    _icon.cache_clear()
+    _MENU_ICON_NAMES.clear()
+
+    application = QApplication.instance()
+    if application is None:
+        return
+    for widget in application.allWidgets():
+        for action in widget.actions():
+            name = previous_menu_icons.get(action.icon().cacheKey())
+            if name is not None:
+                action.setIcon(material_icon(name))
+        holder = widget.findChild(
+            _ButtonIcon, options=Qt.FindChildOption.FindDirectChildrenOnly)
+        if holder is not None:
+            set_button_icon(widget, holder.name, holder.size)

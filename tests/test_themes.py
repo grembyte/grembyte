@@ -67,3 +67,34 @@ def test_solarized_themes_are_bundled():
 
     assert manager.load_theme("Solarized-Dark")["colors"]["background"] == "#002b36"
     assert manager.load_theme("Solarized-Light")["colors"]["background"] == "#fdf6e3"
+
+
+def test_existing_menu_icons_follow_theme(monkeypatch):
+    # pylint: disable=import-outside-toplevel
+    from PyQt6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
+    from PyQt6.QtWidgets import QApplication, QMenu  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.ui.widgets.icons import apply_icon_theme, material_icon
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    application = QApplication.instance() or QApplication([])
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
+    default_colors = manager.load_theme("Default")["colors"]
+    apply_icon_theme(default_colors)
+    menu = QMenu()
+    action = menu.addAction(material_icon("track_changes"), "Trace")
+
+    try:
+        apply_icon_theme(manager.load_theme("Solarized-Light")["colors"])
+        image = action.icon().pixmap(16, 16, QIcon.Mode.Normal).toImage()
+        colors = {
+            image.pixelColor(x, y).name()
+            for x in range(image.width())
+            for y in range(image.height())
+            if image.pixelColor(x, y).alpha()
+        }
+        assert "#657b83" in colors
+    finally:
+        apply_icon_theme(default_colors)
+        menu.deleteLater()
+        application.processEvents()
