@@ -96,6 +96,13 @@ def test_solarized_themes_are_bundled():
     assert manager.load_theme("Solarized-Light")["colors"]["background"] == "#fdf6e3"
 
 
+def test_github_themes_are_bundled():
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
+
+    assert manager.load_theme("Github-Dark")["colors"]["background"] == "#0d1117"
+    assert manager.load_theme("Github-Light")["colors"]["background"] == "#ffffff"
+
+
 def test_existing_menu_icons_follow_theme(monkeypatch):
     # pylint: disable=import-outside-toplevel
     from PyQt6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
