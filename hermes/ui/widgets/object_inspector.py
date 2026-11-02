@@ -275,8 +275,9 @@ class ObjectInspectorDialog(QDialog):
         header.setSectionResizeMode(_TYPE, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(_VALUE, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(_OFFSET, QHeaderView.ResizeMode.ResizeToContents)
-        # Fixed: the size of cell widgets does not count for ResizeToContents.
-        header.setSectionResizeMode(_OPEN, QHeaderView.ResizeMode.Fixed)
+        # Cell widgets do not count for ResizeToContents; keep a measured start width,
+        # but let the user adjust it like the other columns.
+        header.setSectionResizeMode(_OPEN, QHeaderView.ResizeMode.Interactive)
         header.resizeSection(_OPEN, link_width(self.table, [
             self.translations["inspector.open"], self.translations["inspector.text"]]))
         header.resizeSection(_TYPE, 200)
@@ -311,8 +312,8 @@ class ObjectInspectorDialog(QDialog):
         properties_header.setSectionResizeMode(_P_NAME, QHeaderView.ResizeMode.ResizeToContents)
         properties_header.setSectionResizeMode(_P_TYPE, QHeaderView.ResizeMode.Interactive)
         properties_header.setSectionResizeMode(_P_VALUE, QHeaderView.ResizeMode.Stretch)
-        properties_header.setSectionResizeMode(_P_LINK, QHeaderView.ResizeMode.Fixed)
-        properties_header.setSectionResizeMode(_P_SET, QHeaderView.ResizeMode.Fixed)
+        properties_header.setSectionResizeMode(_P_LINK, QHeaderView.ResizeMode.Interactive)
+        properties_header.setSectionResizeMode(_P_SET, QHeaderView.ResizeMode.Interactive)
         properties_header.resizeSection(_P_TYPE, 200)
         properties_header.resizeSection(_P_LINK, link_width(self.properties_table, [
             self.translations["inspector.open"], self.translations["inspector.evaluate"],
@@ -348,7 +349,7 @@ class ObjectInspectorDialog(QDialog):
         header.setSectionResizeMode(_M_PARAMS, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(_M_RETURNS, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(_M_OWNER, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(_M_LINK, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(_M_LINK, QHeaderView.ResizeMode.Interactive)
         header.resizeSection(_M_NAME, 200)
         header.resizeSection(_M_RETURNS, 140)
         header.resizeSection(_M_OWNER, 160)

@@ -1417,6 +1417,32 @@ def test_inspector_puts_number_fields_on_the_address_list(qt_app, translations):
         dialog.close()
 
 
+def test_inspector_action_columns_can_be_resized(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PyQt6.QtWidgets import QHeaderView  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
+
+    dialog = ObjectInspectorDialog(
+        translations, lambda *_: None,
+        contents={"name": "Game.Player", "address": "0x1000", "fields": []})
+    try:
+        action_columns = (
+            (dialog.table, 4),
+            (dialog.properties_table, 3),
+            (dialog.properties_table, 4),
+            (dialog.methods_table, 4),
+        )
+        for table, column in action_columns:
+            header = table.horizontalHeader()
+            assert header.sectionResizeMode(column) == QHeaderView.ResizeMode.Interactive
+            width = header.sectionSize(column)
+            header.resizeSection(column, width + 24)
+            assert header.sectionSize(column) == width + 24
+    finally:
+        dialog.close()
+
+
 def test_inspector_links_string_fields_to_the_text_viewer(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
