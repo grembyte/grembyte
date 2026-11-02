@@ -1011,9 +1011,21 @@ def test_catalog_dialog_searches_methods(tmp_path, qt_app, translations):
         dialog.search_input.setText("loot TAKE")
         dialog._apply_filter()
         assert dialog.model.rowCount() == 1
+        hooks = []
+        dialog.hook_requested.connect(hooks.append)
         dialog.view.selectRow(0)
         assert dialog.selected_method().signature == "Game.Loot:Take (int&,int)"
         assert "statisch" in dialog.details_label.text()
+        assert [button.text() for button in (
+            dialog.monitor_button, dialog.hook_button, dialog.call_button,
+            dialog.calls_button, dialog.copy_button,
+        )] == [translations[key] for key in (
+            "catalog.monitor", "monitor.create_hook", "catalog.call", "catalog.calls",
+            "catalog.copy",
+        )]
+        assert dialog.hook_button.isEnabled()
+        dialog.hook_button.click()
+        assert hooks == [dialog.selected_method()]
 
         dialog.search_input.setText("tostring")
         dialog._apply_filter()
@@ -1239,6 +1251,7 @@ def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
 
         contents = inspect(after["target"])
         assert contents["name"] == "Game.DamageInfo"
+        assert contents["instanceName"] is None
         fields = {field["name"]: field for field in contents["fields"]}
         assert list(fields) == ["Damage", "Type", "Name", "Owner", "Rolls"]
         assert fields["Damage"]["value"]["text"] == "12.5"
@@ -1257,6 +1270,7 @@ def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
         assert second - first == 4 and rolls["fields"][0]["valueType"] == "int32"
         assert first == int(rolls["address"], 16) + rolls["fields"][0]["offset"]
         owner = inspect(fields["Owner"]["value"]["target"])
+        assert owner["instanceName"] == "Miranda"
         assert [(f["name"], f["static"], f["value"]["text"]) for f in owner["fields"]] == [
             ("m_CachedPtr", False, "0x0"), ("Health", False, "100"), ("Instances", True, "7")]
         # A static field is read from its class's static data
@@ -1451,7 +1465,8 @@ def test_inspector_shows_recorded_fields_without_reading_again(qt_app, translati
     from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
 
     opened = []
-    contents = {"name": "Game.DamageInfo", "address": "0x1000", "fields": [
+    contents = {"name": "Game.DamageInfo", "instanceName": "Player_New_Game(Clone)_1",
+                "address": "0x1000", "fields": [
         {"name": "Damage", "type": "System.Single", "offset": 0x10, "static": False,
          "value": {"text": "12.5"}},
         {"name": "Owner", "type": "Game.Combat", "offset": 0x20, "static": False,
@@ -1461,6 +1476,8 @@ def test_inspector_shows_recorded_fields_without_reading_again(qt_app, translati
         translations, lambda target, origin, name: opened.append((target, name)),
         contents=contents, captured="09:47:10.738", name="damage")
     try:
+        assert dialog.title_label.text().startswith(
+            'Game.DamageInfo "Player_New_Game(Clone)_1"@0x1000')
         assert "beim Aufruf um 09:47:10.738" in dialog.title_label.text()
         assert not dialog.live_check.isVisibleTo(dialog)
         assert dialog.table.cellWidget(0, 4) is None
@@ -1831,6 +1848,22 @@ def test_hook_dialog_offers_method_templates_for_methods(qt_app, translations):
     dialog.label_input.setText("Schaden")
     dialog._accept()  # pylint: disable=protected-access
     assert dialog.transform.params == {"factor": 2} and dialog.label == "Schaden"
+
+
+def test_method_hook_signature_shows_argument_names():
+    from hermes.features.catalog import catalog_methods
+
+    signature = "Health:DoDamage (DamageInfo,UnityEngine.GameObject)"
+    classes = [["Health", [[
+        "DoDamage", "(DamageInfo,UnityEngine.GameObject)", "System.Void", False,
+        1, signature, 0, 0, ["damage", "attacker"],
+    ]]]]
+
+    method = catalog_methods("Assembly-CSharp", classes)[0]
+
+    assert method.display_signature == (
+        "Health:DoDamage (DamageInfo damage,UnityEngine.GameObject attacker)"
+    )
 
 
 def test_method_script_with_a_syntax_error_is_refused(qt_app, translations):
@@ -2438,6 +2471,7 @@ def test_agent_answers_while_mono_works_on_a_thread_of_its_own(tmp_path, qt_app)
 @requires_target
 def test_hook_panel_logs_scripts_and_acts_on_several_hooks(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
+    from PyQt6.QtCore import QUrl  # pylint: disable=import-error,no-name-in-module
     from hermes.features.method_hooks import MethodHookSpec
     from hermes.ui.widgets.hooks import HookPanel
 
@@ -2446,15 +2480,25 @@ def test_hook_panel_logs_scripts_and_acts_on_several_hooks(tmp_path, qt_app, tra
     try:
         panel.set_process(target.pid)
         logger = panel.add_method_hook(MethodHookSpec(_ROLL_DAMAGE, _method_transform(
-            "function (ctx) { ctx.log('rolled', ctx.result); }"), label="Logger"))
+            "function (ctx) { ctx.log('rolled', ctx.result); ctx.log(ctx.this); }"),
+            label="Logger"))
         doubler = panel.add_method_hook(MethodHookSpec(_ROLL_DAMAGE, _method_transform(
             "function (ctx) { return ctx.result * 2; }"), label="Doppelt"))
         _wait_for(qt_app, lambda: status(0) == status(1) == "Aktiv")
+        assert panel._hooks[logger]["display_signature"] == (
+            "Game.Combat:RollDamage (System.Int32 min,System.Single scale,System.String name,"
+            "System.Boolean crit,Game.DamageType type,System.Int32& roll)"
+        )
 
         # What a script logs shows below the table without debug mode.
         assert target.send("roll", 5) == (30, 42)
-        _wait_for(qt_app, lambda: f"#{logger} Logger: rolled 15" in panel.log_view.toPlainText())
+        _wait_for(qt_app, lambda: (f"#{logger} Logger: rolled 15" in panel.log_view.toPlainText()
+                       and "Inspizieren" in panel.log_view.toPlainText()))
         assert panel._debug_window is None
+        panel.log_view.anchorClicked.emit(QUrl("inspect:0"))
+        inspector = panel._method_inspections.inspectors[-1]
+        _wait_for(qt_app, lambda: not inspector._pending and inspector.table.rowCount() > 0)
+        assert inspector._type_name == "Game.Combat"
 
         # Both selected: Edit is for one hook only; debug, pause and remove act on both.
         panel.table.selectAll()

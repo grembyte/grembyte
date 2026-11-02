@@ -96,10 +96,29 @@ def test_repository_keeps_favorites_and_their_notes(repository, process_id, sess
     assert gold.method() == GOLD and roll.function() == ROLL
     assert [favorite.key for favorite in repository.list_favorites(other_id)] == [
         favorite_key(JIT)]
-
     repository.delete_favorite(process_id, gold.key)
     assert [favorite.label for favorite in repository.list_favorites(process_id)] == [
         "roll_dice"]
+
+
+def test_favorite_store_backfills_argument_names(repository, process_id):
+    from hermes.ui.widgets.favorites import FavoriteStore
+
+    legacy = favorite_from_method(GOLD)
+    legacy.data.pop("argument_names")
+    repository.add_favorite(process_id, legacy)
+    store = FavoriteStore(repository)
+    store.set_process(process_id)
+    named = CatalogMethod(
+        GOLD.assembly, GOLD.class_name, GOLD.name, GOLD.parameters, GOLD.return_type,
+        GOLD.static, GOLD.token, GOLD.signature, GOLD.engine, ("amount",),
+    )
+
+    store.enrich_methods([named])
+
+    assert store.favorites()[0].method().display_signature == (
+        "Game.PlayerInventory:AddCurrency (int amount)"
+    )
 
 
 def test_star_column_marks_and_unmarks(qt_app, repository, process_id, translations):
@@ -174,9 +193,11 @@ def test_favorites_window_annotates_and_monitors(qt_app, repository, process_id,
     store.toggle(GOLD, CATALOG)
     store.toggle(ROLL, NATIVE_TRACE)
     dialog = FavoritesDialog(translations, store)
-    methods, functions = [], []
+    methods, functions, hooked, calls = [], [], [], []
     dialog.method_monitor_requested.connect(methods.extend)
     dialog.native_monitor_requested.connect(functions.extend)
+    dialog.method_hook_requested.connect(hooked.append)
+    dialog.calls_requested.connect(calls.append)
 
     assert dialog.table.rowCount() == 2
     dialog.table.selectRow(1)
@@ -185,13 +206,27 @@ def test_favorites_window_annotates_and_monitors(qt_app, repository, process_id,
     dialog.monitor_button.click()
     assert functions == [ROLL]
 
-    dialog.table.item(0, 3).setText("Gold nach Verkauf")
+    dialog.table.item(0, 4).setText("Gold nach Verkauf")
     assert repository.list_favorites(process_id)[0].note == "Gold nach Verkauf"
     dialog.search_input.setText("verkauf")
     assert dialog.table.rowCount() == 1
     dialog.table.selectRow(0)
     dialog.monitor_button.click()
     assert methods == [GOLD]
+    assert dialog.hook_button.isEnabled()
+    dialog.hook_button.click()
+    assert hooked == [GOLD]
+    assert dialog.calls_button.isEnabled()
+    dialog.calls_button.click()
+    assert calls == [GOLD]
+    assert dialog.copy_button.text() == translations["catalog.copy"]
+    assert [button.text() for button in (
+        dialog.monitor_button, dialog.hook_button, dialog.call_button,
+        dialog.calls_button, dialog.copy_button, dialog.remove_button,
+    )] == [translations[key] for key in (
+        "catalog.monitor", "monitor.create_hook", "catalog.call", "catalog.calls",
+        "catalog.copy", "favorites.remove",
+    )]
 
     dialog.remove_button.click()
     assert [favorite.label for favorite in store.favorites()] == ["roll_dice"]
@@ -226,7 +261,7 @@ def test_favorites_window_handles_several_at_once(qt_app, repository, process_id
     assert QGuiApplication.clipboard().text().splitlines() == [GOLD.signature, "game+0x1000"]
 
     # A refresh, e.g. after a note was edited, keeps both selected.
-    dialog.table.item(0, 3).setText("Gold")
+    dialog.table.item(0, 4).setText("Gold")
     assert len(dialog.selected_favorites()) == 2
 
     # Removing several asks first.
@@ -258,19 +293,35 @@ def test_favorites_window_sorts_by_column(qt_app, repository, process_id, transl
     store.toggle(ROLL, NATIVE_TRACE)
     dialog = FavoritesDialog(translations, store)
     header = dialog.table.horizontalHeader()
-    names = lambda: [dialog.table.item(row, 1).text()  # noqa: E731
+    names = lambda: [dialog.table.item(row, 2).text()  # noqa: E731
                      for row in range(dialog.table.rowCount())]
 
     assert names() == ["PlayerInventory:AddCurrency", "roll_dice"]  # the order added in
     dialog.table.selectRow(1)
-    header.setSortIndicator(1, Qt.SortOrder.DescendingOrder)
+    header.setSortIndicator(2, Qt.SortOrder.DescendingOrder)
     assert names() == ["roll_dice", "PlayerInventory:AddCurrency"]
     # The selection stays with its favorite, the rows with theirs.
     assert dialog.selected_favorite().label == "roll_dice"
-    dialog.table.item(1, 3).setText("Gold")
+    dialog.table.item(1, 4).setText("Gold")
     assert repository.list_favorites(process_id)[0].note == "Gold"
     header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
     assert names() == ["PlayerInventory:AddCurrency", "roll_dice"]
+
+
+def test_favorites_show_static_methods(qt_app, repository, process_id, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
+
+    store = FavoriteStore(repository)
+    store.set_process(process_id)
+    store.toggle(GOLD, CATALOG)
+    static = CatalogMethod("Assembly-CSharp", "Game.PlayerInventory", "GetCurrency", "()",
+                           "int", True, 0x06001235,
+                           "Game.PlayerInventory:GetCurrency ()")
+    store.toggle(static, CATALOG)
+    dialog = FavoritesDialog(translations, store)
+
+    assert [dialog.table.item(row, 1).text() for row in range(2)] == ["", "✓"]
 
 
 def test_catalog_sorts_by_column_and_keeps_the_selection(qt_app, translations):

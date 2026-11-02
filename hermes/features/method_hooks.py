@@ -63,6 +63,7 @@ an exception passing through the hooked method can crash the game; hooks
 before the call do not.
 """
 
+import itertools
 import queue
 import threading
 from dataclasses import dataclass
@@ -126,6 +127,8 @@ class MethodHookWorker(QThread):
     hook ids come from the same counter, so both kinds share one table.
     """
 
+    _requests = itertools.count(1)
+
     session_ready = pyqtSignal(str)
     hook_installed = pyqtSignal(int, dict)
     hook_failed = pyqtSignal(int, str)
@@ -133,9 +136,19 @@ class MethodHookWorker(QThread):
     hook_updated = pyqtSignal(int)
     # [{hookId, count, last: {old, result, kept, error}}]
     hook_events = pyqtSignal(list)
-    # ctx.log lines of scripts (also outside debug mode): [{hookId, time, text}],
-    # lines dropped per hook id (more than the agent sends at once)
+    # ctx.log lines: {hookId, time, text, targets?}; lines dropped per hook id
     hook_logs = pyqtSignal(list, dict)
+    inspected = pyqtSignal(int, dict)
+    inspect_failed = pyqtSignal(int, str)
+    evaluated = pyqtSignal(int, list)
+    evaluate_failed = pyqtSignal(int, str)
+    methods_listed = pyqtSignal(int, list)
+    methods_failed = pyqtSignal(int, str)
+    call_described = pyqtSignal(int, dict)
+    called = pyqtSignal(int, dict)
+    call_failed = pyqtSignal(int, str)
+    text_fetched = pyqtSignal(int, object)
+    text_failed = pyqtSignal(int, str)
     transform_error = pyqtSignal(int, str)
     hook_debug = pyqtSignal(list, dict)
     # hook id: the game freed the method's code (e.g. while exiting)
@@ -176,6 +189,42 @@ class MethodHookWorker(QThread):
         if phase not in PHASES:
             raise ValueError(f"phase must be one of {', '.join(PHASES)}")
         self._commands.put(("phase", hook_id, phase))
+
+    def inspect(self, target):
+        """Read an object for the Inspector; expect inspected or inspect_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("inspect", request_id, target))
+        return request_id
+
+    def evaluate(self, target, names):
+        """Evaluate the Inspector's properties on the game's main thread."""
+        request_id = next(self._requests)
+        self._commands.put(("evaluate", request_id, (target, list(names))))
+        return request_id
+
+    def list_methods(self, target):
+        """List the Inspector's callable instance methods."""
+        request_id = next(self._requests)
+        self._commands.put(("methods", request_id, target))
+        return request_id
+
+    def describe_method(self, method):
+        """Read the parameters of an Inspector method entry."""
+        request_id = next(self._requests)
+        self._commands.put(("describe_method", request_id, method))
+        return request_id
+
+    def call_on(self, target, method, arguments):
+        """Call an Inspector method on the game's main thread."""
+        request_id = next(self._requests)
+        self._commands.put(("call_on", request_id, (target, method, list(arguments))))
+        return request_id
+
+    def full_text(self, text_id):
+        """Fetch the whole text of a long string shown in the Inspector."""
+        request_id = next(self._requests)
+        self._commands.put(("text", request_id, text_id))
+        return request_id
 
     @sessions.tracked(sessions.METHOD_HOOKS)
     def run(self):
@@ -245,6 +294,36 @@ class MethodHookWorker(QThread):
             elif action == "phase":
                 api.set_method_hook_phase(hook_id, argument)
                 self.hook_updated.emit(hook_id)
+            elif action == "inspect":
+                try:
+                    self.inspected.emit(hook_id, api.inspect(argument))
+                except frida.RPCException as error:
+                    self.inspect_failed.emit(hook_id, messages.describe(error))
+            elif action == "evaluate":
+                try:
+                    self.evaluated.emit(hook_id, api.evaluate(*argument))
+                except frida.RPCException as error:
+                    self.evaluate_failed.emit(hook_id, messages.describe(error))
+            elif action == "methods":
+                try:
+                    self.methods_listed.emit(hook_id, api.list_methods(argument))
+                except frida.RPCException as error:
+                    self.methods_failed.emit(hook_id, messages.describe(error))
+            elif action == "describe_method":
+                try:
+                    self.call_described.emit(hook_id, api.describe_method(argument))
+                except frida.RPCException as error:
+                    self.call_failed.emit(hook_id, messages.describe(error))
+            elif action == "call_on":
+                try:
+                    self.called.emit(hook_id, api.call_on(*argument))
+                except frida.RPCException as error:
+                    self.call_failed.emit(hook_id, messages.describe(error))
+            elif action == "text":
+                try:
+                    self.text_fetched.emit(hook_id, api.full_text(argument))
+                except frida.RPCException as error:
+                    self.text_failed.emit(hook_id, messages.describe(error))
         except frida.RPCException as error:
             self.hook_failed.emit(hook_id, messages.describe(error))
 

@@ -9,7 +9,7 @@ are large and rarely what one looks for.
 
 import re
 import threading
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import frida
 from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
@@ -42,6 +42,22 @@ class CatalogMethod:
     # ``Namespace.Class:Method (int,single)`` as the runtime names it
     signature: str
     engine: str = "mono"
+    argument_names: tuple = field(default=(), compare=False)
+
+    @property
+    def display_signature(self):
+        """The method signature with parameter names, for UI display."""
+        if not self.argument_names:
+            return self.signature
+        head, separator, parameters = self.signature.partition(" (")
+        if not separator or not parameters.endswith(")"):
+            return self.signature
+        types = split_type_arguments(parameters[:-1])
+        named = [
+            f"{type_name} {self.argument_names[index] if index < len(self.argument_names) else f'arg{index}'}"
+            for index, type_name in enumerate(types)
+        ]
+        return f"{head} ({','.join(named)})"
 
     def identity(self):
         """What finds the method in the running game (see HookSpec.managed)."""
@@ -120,13 +136,22 @@ def catalog_method_from_identity(identity):
 
 def catalog_methods(assembly, classes, engine="mono"):
     """Turn the agent's ``classes`` answer for ``assembly`` into CatalogMethods."""
-    return [
-        CatalogMethod(assembly, class_name, name, parameters, return_type, bool(static), token,
-                      signature, engine)
-        for class_name, methods in classes
-        # the flags after the signature are for the trace
-        for name, parameters, return_type, static, token, signature, *_flags in methods
-    ]
+    result = []
+    for class_name, methods in classes:
+        for entry in methods:
+            name, parameters, return_type, static, token, signature, *metadata = entry
+            # Mono adds parameter names after the trace flags; older cache entries
+            # and other engines have no such field.
+            argument_names = (
+                tuple(metadata[-1])
+                if engine == "mono" and len(metadata) >= 3
+                and isinstance(metadata[-1], list) else ()
+            )
+            result.append(CatalogMethod(
+                assembly, class_name, name, parameters, return_type, bool(static), token,
+                signature, engine, argument_names,
+            ))
+    return result
 
 
 class CatalogWorker(QThread):

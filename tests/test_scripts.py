@@ -308,7 +308,9 @@ def test_objects_scripts_return_open_in_the_inspector_from_the_log(qt_app, monke
         worker.script_added.emit(script_id)
         target = {"address": "0x7f82508577e0"}
         player = {"runs": 1, "time": 0, "result": 'Player "Player_New_Game(Clone)_1"@0x7f82508577e0',
-                  "target": target, "logs": [], "error": None}
+                  "target": target, "logs": [{
+                      "text": 'Player "Player_New_Game(Clone)_1"@0x7f82508577e0',
+                      "targets": [target]}], "error": None}
 
         # Neither a timed run nor one by hand opens a window: the log links it.
         worker.script_ran.emit(script_id, player)
@@ -316,10 +318,13 @@ def test_objects_scripts_return_open_in_the_inspector_from_the_log(qt_app, monke
         panel.btn_run.click()
         worker.script_ran.emit(script_id, {**player, "runs": 2})
         assert not panel.inspections.inspectors
-        assert panel.log_view.toPlainText().count("Inspizieren") == 2
+        assert panel.log_view.toPlainText().count("Inspizieren") == 4
 
-        panel.log_view.anchorClicked.emit(QUrl("inspect:1"))
+        panel.log_view.anchorClicked.emit(QUrl("inspect:0"))
         assert len(panel.inspections.inspectors) == 1
+        assert worker.requests[-1] == ("inspect", target)
+        panel.log_view.anchorClicked.emit(QUrl("inspect:1"))
+        assert len(panel.inspections.inspectors) == 2
         assert worker.requests[-1] == ("inspect", target)
         assert panel.table.item(0, 4).text().startswith("Player")
     finally:

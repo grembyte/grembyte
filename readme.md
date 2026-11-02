@@ -248,6 +248,7 @@ A manipulation is a JavaScript function that runs in the target process after ev
 | `ctx.old`, `ctx.new`, `ctx.delta` | Value before and after the write, difference |
 | `ctx.params` | The template's parameters with the hook's values |
 | `ctx.state` | Object kept between calls (e.g. for counters) |
+| `ctx.this` | Method hooks only: the instance the method runs on; `null` for static methods |
 | `ctx.valueType`, `ctx.address`, `ctx.writePc`, `ctx.threadId`, `ctx.hookId` | Context of the write |
 | `ctx.log(…)` | Output in the debug window; no effect outside debug mode |
 

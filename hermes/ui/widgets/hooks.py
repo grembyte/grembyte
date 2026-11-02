@@ -44,6 +44,7 @@ from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.hook_debug import HookDebugWindow
 from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.syntax_hint import SyntaxHint
 from hermes.ui.widgets.table import (
     add_copy_actions, add_delete_action, resizable_columns, set_row_height)
@@ -431,6 +432,12 @@ def method_name(signature):
     return f"{class_name.rsplit('.', 1)[-1]}:{method}"
 
 
+def method_display_signature(signature, parameters):
+    """Use the runtime's named parameters for a method's display signature."""
+    head, separator, _ = signature.partition(" (")
+    return f"{head} ({','.join(parameters)})" if separator and parameters else signature
+
+
 def spec_from_saved(saved):
     """Build the HookSpec that reinstalls a hook saved in the database.
 
@@ -497,6 +504,8 @@ class HookPanel(QGroupBox):
         self._debug_window = None
         self._worker: QThread | None = None
         self._method_worker = None
+        self._method_inspections = None
+        self._log_targets = []
         self._hooks = {}
         # Hook trampolines of this process, also of removed hooks:
         # start address -> (trap pc, site) of the hooked write instruction.
@@ -565,6 +574,7 @@ class HookPanel(QGroupBox):
         # also outside debug mode; the debug window has every call.
         self.log_view = QTextBrowser()
         self.log_view.setOpenLinks(False)
+        self.log_view.anchorClicked.connect(self._on_log_link)
         self.log_view.document().setMaximumBlockCount(MAX_LOG_LINES)
         self.log_view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.log_view.setPlaceholderText(self.translations["hooks.log_placeholder"])
@@ -576,7 +586,7 @@ class HookPanel(QGroupBox):
         log_bar.addStretch()
         clear_button = QPushButton(self.translations["hooks.log_clear"])
         set_button_icon(clear_button, "clear_all")
-        clear_button.clicked.connect(self.log_view.clear)
+        clear_button.clicked.connect(self._clear_log)
         log_bar.addWidget(clear_button)
         log_layout.addLayout(log_bar)
         log_layout.addWidget(self.log_view)
@@ -587,18 +597,43 @@ class HookPanel(QGroupBox):
         layout.addWidget(splitter)
         self._update_buttons()
 
-    def _log(self, text, time=None):
+    def _log(self, text, time=None, targets=None, name=""):
         """Add a line to the log below the table; ``time`` in ms (else now)."""
         moment = datetime.now() if time is None else datetime.fromtimestamp(time / 1000)
         line = html.escape(f"{moment.strftime('%H:%M:%S')} {text}")
-        self.log_view.append(f'<span style="white-space: pre-wrap">{line}</span>')
+        line = f'<span style="white-space: pre-wrap">{line}</span>'
+        if targets and self._method_inspections is not None:
+            for target in targets:
+                self._log_targets.append((self._method_worker, self._method_inspections,
+                                          target, name))
+                line += (f'  <a href="inspect:{len(self._log_targets) - 1}">'
+                         f'{html.escape(self.translations["scripts.inspect"])}</a>')
+        self.log_view.append(line)
+
+    def _clear_log(self):
+        self.log_view.clear()
+        self._log_targets.clear()
+
+    def _on_log_link(self, url):
+        kind, _, number = url.toString().partition(":")
+        if kind != "inspect" or not number.isdigit() or int(number) >= len(self._log_targets):
+            return
+        worker, inspections, target, name = self._log_targets[int(number)]
+        if worker is self._method_worker and inspections is self._method_inspections:
+            inspections.inspect(target, name=name)
+
+    def _on_inspector_address_requested(self, entry):
+        self.address_requested.emit(entry["address"], entry["value_type"], entry["label"])
 
     def _on_hook_logs(self, worker, lines, dropped):
         if not self._is_current(worker):
             return
         for line in lines:
-            self._log(f"{self._hook_name(line.get('hookId'))}: {line.get('text', '')}",
-                      line.get("time"))
+            hook_name = self._hook_name(line.get('hookId'))
+            targets = (line.get("targets", [])
+                       if worker is self._method_worker else [])
+            self._log(f"{hook_name}: {line.get('text', '')}", line.get("time"),
+                      targets=targets, name=hook_name)
         for hook_id, count in dropped.items():
             self._log(self.translations["hooks.log_dropped"].format(
                 hook=self._hook_name(hook_id), count=count))
@@ -793,7 +828,7 @@ class HookPanel(QGroupBox):
             return None
         dialog = HookDialog(
             self.translations, "", "", "", templates=self.templates(),
-            method=method.signature, parent=self,
+            method=method.display_signature, parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
@@ -850,6 +885,8 @@ class HookPanel(QGroupBox):
             lambda lines, dropped: self._on_hook_logs(worker, lines, dropped))
         worker.hook_ended.connect(lambda hook_id: self._on_method_ended(worker, hook_id))
         worker.agent_log.connect(lambda level, text: self._on_agent_log(worker, level, text))
+        self._method_inspections = Inspections(self.translations, worker, self.window())
+        self._method_inspections.address_requested.connect(self._on_inspector_address_requested)
         worker.transform_error.connect(
             lambda hook_id, message: self._on_transform_error(worker, hook_id, message))
         worker.agent_warning.connect(
@@ -866,6 +903,8 @@ class HookPanel(QGroupBox):
         if not self._is_current(worker) or state is None:
             return
         spec = state["spec"]
+        state["display_signature"] = method_display_signature(
+            spec.signature, info.get("params", []))
         self._set_cell(hook_id, 2, method_name(spec.signature),
                        tooltip=self.translations["hooks.method_site_tooltip"].format(
                            method=spec.signature, address=info.get("address", ""),
@@ -887,7 +926,8 @@ class HookPanel(QGroupBox):
         spec = state["spec"]
         dialog = HookDialog(
             self.translations, "", "", "", transform=spec.transform, label=spec.label,
-            templates=self.templates(), method=spec.signature, phase=spec.phase, parent=self,
+            templates=self.templates(),
+            method=state.get("display_signature", spec.signature), phase=spec.phase, parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -914,6 +954,7 @@ class HookPanel(QGroupBox):
         A ``timeout_ms`` of ``None`` waits until the worker has finished;
         otherwise it finishes in the background after the bounded wait.
         """
+        self._close_method_inspections()
         workers = [worker for worker in (self._worker, self._method_worker)
                    if worker is not None]
         if not workers:
@@ -1546,6 +1587,7 @@ class HookPanel(QGroupBox):
         method = worker is self._method_worker
         if method:
             self._method_worker = None
+            self._close_method_inspections()
         else:
             self._worker = None
         for hook_id, state in self._hooks.items():
@@ -1555,6 +1597,15 @@ class HookPanel(QGroupBox):
             if state["status"] != "failed":
                 self._set_status(hook_id, "disconnected",
                                  self.translations["hooks.disconnected_tooltip"])
+
+    def _close_method_inspections(self):
+        inspections = self._method_inspections
+        self._method_inspections = None
+        self._log_targets.clear()
+        if inspections is not None:
+            for inspector in list(inspections.inspectors):
+                inspector.close()
+            inspections.deleteLater()
 
     # ------------------------------------------------------------------
     # Actions

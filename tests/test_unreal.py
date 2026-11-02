@@ -1139,7 +1139,9 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         # and a bool.
         calls = worker.add_script(ScriptSpec("""
             const hero = ctx.find("BP_Hero_C");
+            ctx.log(hero);
             ctx.log(hero.name, hero.Health, hero.Title);
+            ctx.log("hero = " + hero);
             hero.call("Rename", "Bob", true);
             return ctx.call("Hero.AddGold", 7);
         """))
@@ -1147,7 +1149,12 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         assert not failed
         run = run_on_game_thread(calls)
         assert run["error"] is None, run["error"]
-        assert run["logs"] == ["BP_Hero_C_0 75 Attribute"]
+        logged_object = run["logs"][0]
+        assert logged_object["text"].startswith('ABP_Hero_C "BP_Hero_C_0"@0x')
+        assert logged_object["targets"] == [{
+            "address": logged_object["text"].partition("@")[2]}]
+        assert run["logs"][1] == "BP_Hero_C_0 75 Attribute"
+        assert run["logs"][2] == f"hero = {logged_object['text']}"
         assert run["result"] == "107"
         assert target.send("renamed", 0) == (4, 1)  # "Bob" and its terminating 0
 

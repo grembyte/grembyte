@@ -6,6 +6,8 @@ program (see hermes.features.favorites) or removes it. The favorites window
 lists them, keeps a note for each and hands them to the monitors.
 """
 
+from dataclasses import asdict
+
 from PyQt6.QtCore import QItemSelectionModel, QObject, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QGuiApplication, QKeySequence, QShortcut  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
@@ -23,6 +25,8 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 )
 from sqlalchemy.exc import SQLAlchemyError
 
+from hermes.engines import base as engine_base
+from hermes.engines.registry import engine_by_id
 from hermes.features.favorites import METHOD, favorite_key, favorite_of
 from hermes.features.method_call import can_call
 from hermes.ui.widgets.icons import set_button_icon
@@ -77,6 +81,30 @@ class FavoriteStore(QObject):
     def is_favorite(self, item):
         """Whether a CatalogMethod or NativeFunction is a favorite."""
         return item is not None and favorite_key(item) in self._keys
+
+    def enrich_methods(self, methods):
+        """Update saved method metadata when a newer catalog knows more about it."""
+        if self.process_id is None:
+            return
+        named = {favorite_key(method): method for method in methods
+                 if method.argument_names}
+        if not named:
+            return
+        favorites = {favorite.key: favorite for favorite in self.favorites()}
+        updated = False
+        for key, method in named.items():
+            favorite = favorites.get(key)
+            if favorite is None or favorite.data.get("argument_names"):
+                continue
+            favorite.data = asdict(method)
+            try:
+                self.repository.add_favorite(self.process_id, favorite)
+            except SQLAlchemyError as error:
+                self.failed.emit(str(error))
+                return
+            updated = True
+        if updated:
+            self.changed.emit()
 
     def toggle(self, item, source=""):
         """Save a CatalogMethod or NativeFunction as a favorite, or remove it; the new state."""
@@ -171,9 +199,10 @@ def set_up_favorite_column(view, model, store, source):
         model.favorite_item(view.currentIndex().row()), source))
 
 
-_KIND, _NAME, _LOCATION, _NOTE, _SOURCE, _ADDED = range(6)
+_KIND, _STATIC, _NAME, _LOCATION, _NOTE, _SOURCE, _ADDED = range(7)
 _COLUMNS = (
-    "favorites.column_kind", "favorites.column_name", "favorites.column_location",
+    "favorites.column_kind", "favorites.column_static", "favorites.column_name",
+    "favorites.column_location",
     "favorites.column_note", "favorites.column_source", "favorites.column_added",
 )
 
@@ -193,6 +222,10 @@ class FavoritesDialog(QDialog):
     native_monitor_requested = pyqtSignal(list)
     # CatalogMethod to call ("Call …"), see _callable_method
     call_requested = pyqtSignal(object)
+    # CatalogMethod to create a method hook for
+    method_hook_requested = pyqtSignal(object)
+    # CatalogMethod to show in the call graph
+    calls_requested = pyqtSignal(object)
 
     def __init__(self, translations, store, parent=None):
         super().__init__(parent)
@@ -237,6 +270,8 @@ class FavoritesDialog(QDialog):
                 column, QHeaderView.ResizeMode.Stretch if column in (_NAME, _NOTE)
                 else QHeaderView.ResizeMode.Interactive)
         header.resizeSection(_KIND, 70)
+        header.setSectionResizeMode(_STATIC, QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(_STATIC, 70)
         header.resizeSection(_LOCATION, 220)
         header.resizeSection(_SOURCE, 120)
         header.resizeSection(_ADDED, 140)
@@ -257,17 +292,27 @@ class FavoritesDialog(QDialog):
         actions = QHBoxLayout()
         self.selection_label = SelectableText()
         actions.addWidget(self.selection_label, 1)
-        self.monitor_button = QPushButton(t["favorites.monitor"])
+        self.monitor_button = QPushButton(t["catalog.monitor"])
         self.monitor_button.setObjectName("btn_primary")
         set_button_icon(self.monitor_button, "visibility")
         self.monitor_button.setToolTip(t["favorites.monitor_tooltip"])
         self.monitor_button.clicked.connect(self._request_monitor)
         actions.addWidget(self.monitor_button)
-        self.call_button = QPushButton(t["favorites.call"])
+        self.hook_button = QPushButton(t["monitor.create_hook"])
+        set_button_icon(self.hook_button, "webhook")
+        self.hook_button.setToolTip(t["monitor.create_hook_tooltip"])
+        self.hook_button.clicked.connect(self._request_hook)
+        actions.addWidget(self.hook_button)
+        self.call_button = QPushButton(t["catalog.call"])
         set_button_icon(self.call_button, "call_made")
         self.call_button.clicked.connect(self._request_call)
         actions.addWidget(self.call_button)
-        self.copy_button = QPushButton(t["favorites.copy"])
+        self.calls_button = QPushButton(t["catalog.calls"])
+        set_button_icon(self.calls_button, "account_tree")
+        self.calls_button.setToolTip(t["catalog.calls_tooltip"])
+        self.calls_button.clicked.connect(self._request_calls)
+        actions.addWidget(self.calls_button)
+        self.copy_button = QPushButton(t["catalog.copy"])
         set_button_icon(self.copy_button, "content_copy")
         self.copy_button.setToolTip(t["favorites.copy_tooltip"])
         self.copy_button.clicked.connect(self._copy)
@@ -300,6 +345,7 @@ class FavoritesDialog(QDialog):
         self.table.setRowCount(len(self._shown))
         for row, favorite in enumerate(self._shown):
             kind = t["favorites.kind_method" if favorite.kind == METHOD else "favorites.kind_native"]
+            method = favorite.method() if favorite.kind == METHOD else None
             location = favorite.location
             location_tip = location
             if not favorite.lasting:
@@ -308,6 +354,7 @@ class FavoritesDialog(QDialog):
             added = favorite.created_at.strftime("%Y-%m-%d %H:%M") if favorite.created_at else ""
             for column, text, tooltip in (
                     (_KIND, kind, None),
+                    (_STATIC, "✓" if method is not None and method.static else "", None),
                     (_NAME, favorite.label, favorite.signature),
                     (_LOCATION, location, location_tip),
                     (_NOTE, favorite.note, t["favorites.note_tooltip"]),
@@ -336,6 +383,7 @@ class FavoritesDialog(QDialog):
         t = self.translations
         keys = {
             _KIND: lambda favorite: favorite.kind,
+            _STATIC: lambda favorite: favorite.kind == METHOD and favorite.method().static,
             _NAME: lambda favorite: favorite.label.lower(),
             _LOCATION: lambda favorite: favorite.location.lower(),
             _NOTE: lambda favorite: (not favorite.note, favorite.note.lower()),
@@ -377,12 +425,20 @@ class FavoritesDialog(QDialog):
         self.monitor_button.setEnabled(bool(favorites) and self.attached)
         self.monitor_button.setToolTip(self.translations[
             "favorites.monitor_tooltip" if self.attached else "favorites.not_attached"])
+        hookable_method = self._hookable_method(favorites)
+        self.hook_button.setEnabled(hookable_method is not None and self.attached)
+        self.hook_button.setToolTip(self.translations[
+            "monitor.create_hook_tooltip" if self.attached else "favorites.not_attached"])
         callable_method = self._callable_method(favorites)
         self.call_button.setEnabled(callable_method is not None and self.attached)
         self.call_button.setToolTip(self.translations[
             "favorites.not_attached" if not self.attached
             else "favorites.call_tooltip" if callable_method is not None
             else "favorites.call_static_only"])
+        graphable_method = self._graphable_method(favorites)
+        self.calls_button.setEnabled(graphable_method is not None and self.attached)
+        self.calls_button.setToolTip(self.translations[
+            "favorites.not_attached" if not self.attached else "catalog.calls_tooltip"])
         self.copy_button.setEnabled(bool(favorites))
         self.remove_button.setEnabled(bool(favorites))
         if len(favorites) == 1:
@@ -429,6 +485,36 @@ class FavoritesDialog(QDialog):
         method = self._callable_method(self.selected_favorites())
         if method is not None and self.attached:
             self.call_requested.emit(method)
+
+    def _request_calls(self):
+        method = self._graphable_method(self.selected_favorites())
+        if method is not None and self.attached:
+            self.calls_requested.emit(method)
+
+    @staticmethod
+    def _graphable_method(favorites):
+        """The only selected favorite if its engine supports call graphs."""
+        if len(favorites) != 1 or favorites[0].kind != METHOD:
+            return None
+        method = favorites[0].method()
+        engine = engine_by_id(method.engine)
+        return (method if engine is not None
+                and engine.supports(engine_base.CALL_GRAPH) else None)
+
+    def _request_hook(self):
+        method = self._hookable_method(self.selected_favorites())
+        if method is not None and self.attached:
+            self.method_hook_requested.emit(method)
+
+    @staticmethod
+    def _hookable_method(favorites):
+        """The only selected favorite if it is a method supported by its engine."""
+        if len(favorites) != 1 or favorites[0].kind != METHOD:
+            return None
+        method = favorites[0].method()
+        engine = engine_by_id(method.engine)
+        return (method if engine is not None
+                and engine.supports(engine_base.METHOD_HOOKS) else None)
 
     def _copy(self):
         favorites = self.selected_favorites()

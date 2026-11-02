@@ -895,6 +895,7 @@
   "favorites.hint": "Methods and functions of this program marked with ★ in the catalog, the trace and the native trace. Hermes finds C# methods again by assembly and signature, native functions by module and offset, also after a restart of the game. Double-click a note to edit it.",
   "favorites.search_placeholder": "Search name, location or note",
   "favorites.column_kind": "Kind",
+  "favorites.column_static": "Static",
   "favorites.column_name": "Name",
   "favorites.column_location": "Location",
   "favorites.column_note": "Note",

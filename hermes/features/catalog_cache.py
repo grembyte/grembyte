@@ -30,9 +30,9 @@ from hermes.core import logs
 CLASSES, CALLS = "classes", "calls"
 
 # Raise when what is stored changes its shape; older files are then ignored.
-# classes 2: the methods' flags, for the trace
+# classes 3: the methods' flags and parameter names
 # calls 2: the builds of the assemblies it refers to
-FORMATS = {CLASSES: 2, CALLS: 2}
+FORMATS = {CLASSES: 3, CALLS: 2}
 
 # Characters kept in a file or directory name; others become "_".
 _UNSAFE = re.compile(r"[^\w.-]")

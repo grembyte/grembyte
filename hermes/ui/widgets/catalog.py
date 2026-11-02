@@ -231,6 +231,8 @@ class CatalogDialog(QDialog):
     monitor_requested = pyqtSignal(object)
     # static CatalogMethod to call ("Call …")
     call_requested = pyqtSignal(object)
+    # CatalogMethod to create a method hook for
+    hook_requested = pyqtSignal(object)
 
     def __init__(self, translations, pid, parent=None, engine=None, favorites=None,
                  assembly_selection=None, game=None):
@@ -325,25 +327,6 @@ class CatalogDialog(QDialog):
         self.details_label.setWordWrap(True)
         self.details_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         details.addWidget(self.details_label, 1)
-        self.copy_button = QPushButton(self.translations["catalog.copy"])
-        set_button_icon(self.copy_button, "content_copy")
-        self.copy_button.setToolTip(self.translations["catalog.copy_tooltip"])
-        self.copy_button.setEnabled(False)
-        self.copy_button.clicked.connect(self._copy_signature)
-        details.addWidget(self.copy_button)
-        self.calls_button = QPushButton(self.translations["catalog.calls"])
-        set_button_icon(self.calls_button, "account_tree")
-        self.calls_button.setToolTip(self.translations["catalog.calls_tooltip"])
-        self.calls_button.setEnabled(False)
-        self.calls_button.clicked.connect(self._show_calls)
-        details.addWidget(self.calls_button)
-        self.call_button = QPushButton(self.translations["catalog.call"])
-        set_button_icon(self.call_button, "call_made")
-        self.call_button.setToolTip(self.translations[
-            "catalog.offline_no_call" if self.game is not None else "catalog.call_tooltip"])
-        self.call_button.setEnabled(False)
-        self.call_button.clicked.connect(self._request_call)
-        details.addWidget(self.call_button)
         self.monitor_button = QPushButton(self.translations["catalog.monitor"])
         self.monitor_button.setObjectName("btn_primary")
         set_button_icon(self.monitor_button, "visibility")
@@ -352,13 +335,39 @@ class CatalogDialog(QDialog):
         self.monitor_button.setEnabled(False)
         self.monitor_button.clicked.connect(self._request_monitor)
         details.addWidget(self.monitor_button)
+        self.hook_button = QPushButton(self.translations["monitor.create_hook"])
+        set_button_icon(self.hook_button, "webhook")
+        self.hook_button.setToolTip(self.translations["monitor.create_hook_tooltip"])
+        self.hook_button.setEnabled(False)
+        self.hook_button.clicked.connect(self._request_hook)
+        details.addWidget(self.hook_button)
+        self.call_button = QPushButton(self.translations["catalog.call"])
+        set_button_icon(self.call_button, "call_made")
+        self.call_button.setToolTip(self.translations[
+            "catalog.offline_no_call" if self.game is not None else "catalog.call_tooltip"])
+        self.call_button.setEnabled(False)
+        self.call_button.clicked.connect(self._request_call)
+        details.addWidget(self.call_button)
+        self.calls_button = QPushButton(self.translations["catalog.calls"])
+        set_button_icon(self.calls_button, "account_tree")
+        self.calls_button.setToolTip(self.translations["catalog.calls_tooltip"])
+        self.calls_button.setEnabled(False)
+        self.calls_button.clicked.connect(self._show_calls)
+        details.addWidget(self.calls_button)
+        self.copy_button = QPushButton(self.translations["catalog.copy"])
+        set_button_icon(self.copy_button, "content_copy")
+        self.copy_button.setToolTip(self.translations["catalog.copy_tooltip"])
+        self.copy_button.setEnabled(False)
+        self.copy_button.clicked.connect(self._copy_signature)
+        details.addWidget(self.copy_button)
         layout.addLayout(details)
         # What the engine's adapter cannot do yet says so instead.
         unsupported = self.translations["engine.unsupported"].format(
             engine=self.engine.display_name)
         for button, capability in ((self.calls_button, engine_base.CALL_GRAPH),
                                    (self.call_button, engine_base.CALL),
-                                   (self.monitor_button, engine_base.MONITOR)):
+                                   (self.monitor_button, engine_base.MONITOR),
+                                   (self.hook_button, engine_base.METHOD_HOOKS)):
             if not self.engine.supports(capability):
                 button.setToolTip(unsupported)
 
@@ -425,6 +434,8 @@ class CatalogDialog(QDialog):
     def _on_assembly_loaded(self, assembly, methods):
         self._loaded.add(assembly)
         self.model.add(methods)
+        if self._favorites is not None:
+            self._favorites.enrich_methods(methods)
         self._show_progress()
 
     def _on_assembly_failed(self, assembly, message):
@@ -508,6 +519,8 @@ class CatalogDialog(QDialog):
                                      and self.engine.supports(engine_base.CALL_GRAPH))
         self.monitor_button.setEnabled(method is not None
                                        and self._can_run(method, engine_base.MONITOR))
+        self.hook_button.setEnabled(method is not None
+                        and self._can_run(method, engine_base.METHOD_HOOKS))
         self.call_button.setEnabled(method is not None
                                     and self._can_run(method, call_capability(method)))
         if method is None:
@@ -530,6 +543,11 @@ class CatalogDialog(QDialog):
         method = self.selected_method()
         if method is not None and self._can_run(method, engine_base.MONITOR):
             self.monitor_requested.emit(method)
+
+    def _request_hook(self):
+        method = self.selected_method()
+        if method is not None and self._can_run(method, engine_base.METHOD_HOOKS):
+            self.hook_requested.emit(method)
 
     def _request_call(self):
         method = self.selected_method()

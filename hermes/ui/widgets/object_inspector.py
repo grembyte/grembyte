@@ -1,5 +1,6 @@
 """Object inspector: the fields of a managed object in a Mono game."""
 
+import json
 from datetime import datetime
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal  # pylint: disable=import-error,no-name-in-module
@@ -466,7 +467,11 @@ class ObjectInspectorDialog(QDialog):
             self.show_error(messages.describe(contents["error"]))
             return
         fields = contents.get("fields", [])
-        title = f"{contents.get('name', '?')} @ {contents.get('address', '')}"
+        class_name = contents.get("name", "?")
+        address = contents.get("address", "")
+        instance_name = contents.get("instanceName")
+        title = (f"{class_name} {json.dumps(instance_name, ensure_ascii=False)}@{address}"
+                 if instance_name is not None else f"{class_name} @ {address}")
         if "length" in contents:
             title += "  ·  " + self.translations["inspector.length"].format(
                 length=contents["length"])

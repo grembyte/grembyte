@@ -78,6 +78,7 @@ from hermes.hooks.engine import HookSpec
 from hermes.hooks.transforms import example_templates
 from hermes.ui.widgets.assemblies import AssemblyDialog, AssemblySelectionStore
 from hermes.ui.widgets.catalog import CatalogDialog
+from hermes.ui.widgets.call_graph import CallGraphDialog
 from hermes.ui.widgets.known_games import KnownGamesDialog
 from hermes.ui.widgets.database_entries import DeleteEntriesDialog
 from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
@@ -1597,6 +1598,7 @@ class MainWindow(QMainWindow):
                                     assembly_selection=self._assembly_selection)
             catalog.finished.connect(lambda _result: setattr(self, "_catalog", None))
             catalog.monitor_requested.connect(self._monitor_method)
+            catalog.hook_requested.connect(self._hook_method)
             catalog.call_requested.connect(self._call_method)
             catalog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._catalog = catalog
@@ -1614,6 +1616,7 @@ class MainWindow(QMainWindow):
                                 engine=engine_by_id(game.engine), favorites=self._favorite_store,
                                 game=game)
         catalog.monitor_requested.connect(self._monitor_method)
+        catalog.hook_requested.connect(self._hook_method)
         catalog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         catalog.show()
 
@@ -1747,6 +1750,8 @@ class MainWindow(QMainWindow):
             dialog = FavoritesDialog(self.translations, self._favorite_store, parent=self)
             dialog.method_monitor_requested.connect(self._monitor_methods)
             dialog.native_monitor_requested.connect(self._monitor_native_functions)
+            dialog.method_hook_requested.connect(self._hook_method)
+            dialog.calls_requested.connect(self._show_method_calls)
             dialog.call_requested.connect(self._call_method)
             dialog.finished.connect(lambda _result: setattr(self, "_favorites_dialog", None))
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -1805,6 +1810,34 @@ class MainWindow(QMainWindow):
             engine=engine.display_name if engine is not None else method.engine))
         return False
 
+    def _hook_method(self, method):
+        """Create a method hook for a method chosen in the catalog or favorites."""
+        if self._current_pid is None or self.hook_panel is None:
+            return
+        if not self._engine_can(method, engine_base.METHOD_HOOKS,
+                               self.translations["monitor.create_hook"]):
+            return
+        parameters = generic_parameters(method)
+        if parameters:
+            method = self._ask_type_arguments(method, parameters)
+            if method is None:
+                return
+        self.hook_panel.create_method_hook(method)
+
+    def _show_method_calls(self, method):
+        """Show a method's call graph from the favorites dialog."""
+        if self._current_pid is None:
+            return
+        if not self._engine_can(method, engine_base.CALL_GRAPH,
+                               self.translations["catalog.calls"]):
+            return
+        selection = (self._assembly_selection.selection
+                     if self._assembly_selection is not None else ())
+        graph = CallGraphDialog(self.translations, self._current_pid, method, parent=self,
+                                engine=self._engine, selection=selection)
+        graph.monitor_requested.connect(self._monitor_method)
+        graph.show()
+
     def _monitor_method(self, method):
         """Log the calls of a C# method chosen in the catalog."""
         if self._current_pid is None:
@@ -1819,8 +1852,7 @@ class MainWindow(QMainWindow):
         monitor = self._method_monitor
         if monitor is None:
             monitor = MethodMonitorDialog(self.translations, self._current_pid, parent=self)
-            if self.hook_panel is not None:
-                monitor.hook_requested.connect(self.hook_panel.create_method_hook)
+            monitor.hook_requested.connect(self._hook_method)
             monitor.address_requested.connect(self._add_inspected_address)
             monitor.finished.connect(lambda _result: setattr(self, "_method_monitor", None))
             monitor.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)

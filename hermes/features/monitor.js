@@ -362,7 +362,7 @@ function safely(read) {
 // --- Objects --------------------------------------------------------------------
 
 function contents(target) {
-  // { name, address, fields: [{ name, type, offset, static, storage?, value,
+  // { name, instanceName?, address, fields: [{ name, type, offset, static, storage?, value,
   // address?, valueType? }], length? } of an object, array or struct; throws
   // if it is no object any more. A field's ``address`` is where its value is
   // (a static field's in its class's static data; none for constants and
@@ -383,7 +383,11 @@ function contents(target) {
   // Mono's struct field offsets count an object header; Unreal's do not.
   const header = layout.headerSize === undefined ? OBJECT_HEADER : layout.headerSize;
   const base = target.klass ? address.sub(header) : address;
-  const result = { name: layout.name, address: address.toString(), fields: [] };
+  const result = {
+    name: layout.name,
+    instanceName: target.klass ? null : unityNameOf(address, false),
+    address: address.toString(), fields: []
+  };
   if (layout.rank > 0) {
     const length = address.add(ARRAY_LENGTH).readU32();
     result.length = length;
@@ -1712,7 +1716,7 @@ function hookBefore(hook, invocation) {
     find: findObject,
     forEach: forEachObject,
     outerName,
-    log: (...items) => { logs.push(formatLog(items)); }
+    log: (...items) => { logs.push(formatHookLog(items)); }
   };
   let error = null;
   const changed = beginChanges();
@@ -1810,7 +1814,7 @@ function hookLeave(hook, invocation, retval) {
     find: findObject,
     forEach: forEachObject,
     outerName,
-    log: (...items) => { logs.push(formatLog(items)); }
+    log: (...items) => { logs.push(formatHookLog(items)); }
   };
   let returned;
   let error = null;
@@ -1866,13 +1870,45 @@ function formatLog(items) {
   }).join(' ');
 }
 
+function formatHookLog(items) {
+  const targets = [];
+  const text = items.map(item => {
+    if (!(item instanceof ManagedObject))
+      return formatLog([item]);
+    const target = { address: item.address.toString() };
+    if (item.isStruct)
+      target.klass = item.klass.toString();
+    targets.push(target);
+    return item.toString();
+  }).join(' ');
+  return targets.length === 0 ? text : { text, targets };
+}
+
+function formatScriptLog(items) {
+  const targets = [];
+  const text = items.map(item => {
+    if (!(item instanceof ManagedObject))
+      return formatLog([item]);
+    const target = { address: item.address.toString() };
+    if (item.isStruct)
+      target.klass = item.klass.toString();
+    targets.push(target);
+    const name = item.isStruct ? null : item.name;
+    if (name !== null)
+      return `${item.className} ${JSON.stringify(name)}@${item.address}`;
+    return item.toString();
+  }).join(' ');
+  return targets.length === 0 ? text : { text, targets };
+}
+
 function pushHookLogs(hook, lines) {
   const time = Date.now();
-  for (const text of lines) {
+  for (const entry of lines) {
     if (hookLogs.length >= MAX_HOOK_LOGS)
       hookLogsDropped.set(hook.id, (hookLogsDropped.get(hook.id) || 0) + 1);
     else
-      hookLogs.push({ hookId: hook.id, time, text });
+      hookLogs.push({ hookId: hook.id, time,
+                      ...(typeof entry === 'string' ? { text: entry } : entry) });
   }
 }
 
@@ -2075,7 +2111,7 @@ function scriptContext(script, logs, args) {
     gas: scriptGas,
     lang: HERMES_LANGUAGE,
     args,
-    log: (...items) => { logs.push(formatLog(items)); },
+    log: (...items) => { logs.push(formatScriptLog(items)); },
     state: script.state,
     runs: script.runs,
     scriptId: script.id

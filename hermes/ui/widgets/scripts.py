@@ -379,9 +379,11 @@ class ScriptPanel(QGroupBox):
         """Add a line to the log; with ``target`` (an object) a link that inspects it."""
         line = f'<span style="white-space: pre-wrap">{html.escape(text)}</span>'
         if target and self.inspections is not None:
-            self._results.append((self.inspections, target, name))
-            line += (f'  <a href="inspect:{len(self._results) - 1}">'
-                     f'{html.escape(self.translations["scripts.inspect"])}</a>')
+            targets = target if isinstance(target, (list, tuple)) else [target]
+            for inspect_target in targets:
+                self._results.append((self.inspections, inspect_target, name))
+                line += (f'  <a href="inspect:{len(self._results) - 1}">'
+                         f'{html.escape(self.translations["scripts.inspect"])}</a>')
         self.log_view.append(line)
 
     def _on_link(self, url):
@@ -643,8 +645,12 @@ class ScriptPanel(QGroupBox):
         error = messages.describe(run["error"]) if run.get("error") else None
         label = state["spec"].label or f"#{script_id}"
         time = datetime.fromtimestamp(run.get("time", 0) / 1000).strftime("%H:%M:%S")
-        for line in run.get("logs") or []:
-            self._log(f"{time} {label}: {line}")
+        for entry in run.get("logs") or []:
+            if isinstance(entry, dict):
+                self._log(f"{time} {label}: {entry.get('text', '')}",
+                          entry.get("targets"), label)
+            else:
+                self._log(f"{time} {label}: {entry}")
         if error:
             state["last"] = error.splitlines()[0]
             self._log(f"{time} {label}: {self.translations['scripts.log_error']} {error}")

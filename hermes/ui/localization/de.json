@@ -895,6 +895,7 @@
   "favorites.hint": "Mit ★ in Katalog, Trace und nativem Trace gemerkte Methoden und Funktionen dieses Programms. C#-Methoden findet Hermes über Assembly und Signatur wieder, native Funktionen über Modul und Offset – auch nach einem Neustart des Spiels. Die Notiz lässt sich per Doppelklick bearbeiten.",
   "favorites.search_placeholder": "Name, Ort oder Notiz suchen",
   "favorites.column_kind": "Art",
+  "favorites.column_static": "Statisch",
   "favorites.column_name": "Name",
   "favorites.column_location": "Ort",
   "favorites.column_note": "Notiz",

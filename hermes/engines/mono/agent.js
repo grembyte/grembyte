@@ -1674,6 +1674,22 @@ gpointer run_batch (gpointer data) {
     ];
   }
 
+  function parameterNames(method) {
+    const t = api.types;
+    if (t === null)
+      return [];
+    const signature = t.methodSignature(method);
+    if (signature.isNull())
+      return [];
+    const count = t.paramCount(signature);
+    const names = Memory.alloc(Process.pointerSize * Math.max(count, 1));
+    t.paramNames(method, names);
+    return Array.from({ length: count }, (_, index) => {
+      const name = names.add(index * Process.pointerSize).readPointer();
+      return name.isNull() ? `arg${index}` : name.readUtf8String();
+    });
+  }
+
   function flagsOf(c, method, implFlags) {
     // [flags, implementation flags] as Mono has them; implFlags: 4 bytes.
     implFlags.writeU32(0);
@@ -1720,7 +1736,8 @@ gpointer run_batch (gpointer data) {
       const implFlags = Memory.alloc(4);
       eachClass(c, assembly, (className, methods) => {
         result.push([className, methods.map(
-          method => [...methodEntry(c, method), ...flagsOf(c, method, implFlags)])]);
+          method => [...methodEntry(c, method), ...flagsOf(c, method, implFlags),
+                     parameterNames(method)])]);
       });
       return result;
     });
