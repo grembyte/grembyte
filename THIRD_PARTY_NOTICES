@@ -1,0 +1,103 @@
+Third-Party Notices
+===================
+
+Hermes Hook
+Copyright (C) 2026 Frank Hoogen
+
+Hermes Hook is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See LICENSE for the full text. Hermes Hook is distributed WITHOUT ANY
+WARRANTY.
+
+Hermes Hook uses the third-party components listed below. Each keeps its own
+license; the full license texts are in the LICENSES directory. Versions are
+those pinned in requirements.txt and may differ in other installations.
+
+Hermes Hook does not ship these packages in its source tree: pip installs
+them. Whoever builds and distributes a binary bundle (installer, frozen
+executable) must inventory that exact bundle, include the license texts of
+everything it contains and, for Qt (LGPL v3), allow users to replace the Qt
+libraries and offer the corresponding source.
+
+Runtime components
+------------------
+
+Frida 17.24.3
+  License: wxWindows Library Licence, Version 3.1
+  Project: https://frida.re/
+  License text: LICENSES/Frida.txt
+
+Capstone 5.0.9
+  License: BSD-3-Clause
+  Copyright (c) 2013, COSEINC. All rights reserved.
+  Project: https://www.capstone-engine.org/
+  License text: LICENSES/Capstone.txt
+
+psutil 7.2.2
+  License: BSD-3-Clause
+  Copyright (c) 2009, Jay Loden, Dave Daeschler, Giampaolo Rodola
+  Project: https://github.com/giampaolo/psutil
+  License text: LICENSES/psutil.txt
+
+NumPy 2.5.4
+  License: BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0
+  Copyright (c) 2005-2025, NumPy Developers.
+  Project: https://numpy.org/
+  License text: LICENSES/NumPy.txt (includes the licenses of the components
+  bundled with NumPy)
+
+PyQt6 6.11.0
+  License: GPL-3.0-only (or a commercial license from Riverbank Computing)
+  Copyright (c) Riverbank Computing Limited
+  Project: https://riverbankcomputing.com/software/pyqt/
+  License text: LICENSE (GNU General Public License, version 3)
+
+PyQt6-Qt6 6.11.2 (Qt 6 libraries)
+  License: LGPL-3.0-only
+  Copyright (C) The Qt Company Ltd. and other contributors
+  Project: https://www.qt.io/
+  Source: https://download.qt.io/official_releases/qt/
+  License text: LICENSES/LGPL-3.0.txt, together with LICENSE (the LGPL v3
+  supplements the GPL v3)
+
+PyQt6-sip 13.13.0
+  License: BSD-2-Clause
+  Copyright (c) 2025 Phil Thompson <phil@riverbankcomputing.com>
+  Project: https://pypi.org/project/PyQt6-sip/
+  License text: LICENSES/PyQt6-sip.txt
+
+SQLAlchemy 2.1.6
+  License: MIT
+  Copyright 2005-2026 SQLAlchemy authors and contributors
+  Project: https://www.sqlalchemy.org/
+  License text: LICENSES/SQLAlchemy.txt (includes the AUTHORS file)
+
+typing-extensions 4.16.0 (required by SQLAlchemy)
+  License: PSF-2.0
+  Copyright (c) Python Software Foundation
+  Project: https://github.com/python/typing_extensions
+  License text: LICENSES/typing-extensions.txt
+
+greenlet 3.5.6 (in requirements.txt; optional for SQLAlchemy)
+  License: MIT AND PSF-2.0
+  Copyright (c) Armin Rigo, Christian Tismer and contributors
+  Project: https://github.com/python-greenlet/greenlet
+  License text: LICENSES/greenlet.txt
+
+Bundled assets
+--------------
+
+Material Icons, style Outlined, by Google
+  License: Apache-2.0
+  Copyright Google LLC
+  Source: https://fonts.google.com/icons
+  License text: LICENSES/Apache-2.0.txt
+  The SVG files in hermes/ui/resources/icons are unmodified; see
+  hermes/ui/resources/icons/README.md.
+
+Not listed
+----------
+
+Packages used only for tests or development (pytest, iniconfig, packaging,
+pluggy, Pygments) are not distributed with Hermes Hook and are not listed.

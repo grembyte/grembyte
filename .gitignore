@@ -32,3 +32,5 @@ dist/
 *.so
 *.a
 *.dll
+# Game data extracted from games (not ours to publish)
+game_assets/

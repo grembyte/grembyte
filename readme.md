@@ -287,3 +287,11 @@ pytest comes with the `test` extra:
 ```
 
 Many tests compile a small C program and attach to it with Frida (hooks, watch, native trace and monitor, the Mono features against a stand-in Mono runtime, the Unreal features against a stand-in Unreal game). They are skipped if `gcc` is missing, `kernel.yama.ptrace_scope` is not `0` or the machine is not x86-64. Tests of the Windows helper need MinGW, some need Linux.
+
+## License
+
+Copyright (C) 2026 Frank Hoogen
+
+Hermes Hook is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed without any warranty; see [LICENSE](LICENSE).
+
+The third-party components and their licenses are listed in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES); the full license texts are in [LICENSES](LICENSES/).

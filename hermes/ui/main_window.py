@@ -28,6 +28,7 @@ from hermes.ui.localization import language_code, load_translations
 from hermes.ui.styles.themes import ThemeManager
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.code_editor import apply_code_theme
+from hermes.ui.widgets.about_dialog import AboutDialog
 from hermes.ui.widgets.icons import apply_icon_theme, material_icon, set_button_icon
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.ui.widgets.table import (
@@ -572,6 +573,16 @@ class MainWindow(QMainWindow):
         self.act_favorites.setToolTip(self.translations["favorites.button_tooltip"])
         self.act_favorites.triggered.connect(self._open_favorites)
         self._update_catalog_button()
+
+        help_menu = menu_bar.addMenu(self.translations["menu.help"])
+        help_menu.setToolTipsVisible(True)
+        self.act_about = help_menu.addAction(
+            material_icon("article"), self.translations["menu.about"])
+        self.act_about.triggered.connect(self._open_about)
+
+    def _open_about(self):
+        """Show application and third-party component credits."""
+        AboutDialog(self.translations, parent=self).exec()
 
     def _open_export(self):
         """Export what is saved for a game as JSON; the attached one comes first."""
