@@ -30,3 +30,29 @@ def _english_messages():
 
     yield
     messages.use(None)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_garbage_collection_in_other_threads():
+    """Collect garbage in the main thread only, as the app does (see hermes.ui.garbage).
+
+    Collected in a hook or Frida thread, Qt objects in reference cycles are
+    deleted by PySide6 later in the GUI thread, and widgets can crash the
+    interpreter then.
+    """
+    # pylint: disable=import-outside-toplevel
+    import gc
+
+    gc.disable()
+    yield
+    gc.enable()
+
+
+@pytest.fixture(autouse=True)
+def _collect_garbage_after_each_test():
+    """Free what a test leaves in reference cycles (see the fixture above)."""
+    # pylint: disable=import-outside-toplevel
+    import gc
+
+    yield
+    gc.collect()

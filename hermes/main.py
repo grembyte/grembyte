@@ -14,6 +14,7 @@ from hermes.db.engine import init_db
 from hermes.db.repository.settings import SettingsRepository
 from hermes.ui.main_window import ICON_PATH, MainWindow
 from hermes.ui.activity_recorder import UiRecorder
+from hermes.ui.garbage import GarbageCollector
 from hermes.ui.window_buttons import add_window_buttons
 from hermes.ui.window_state import keep_window_state
 
@@ -71,6 +72,8 @@ def main() -> int:
 
     _set_windows_app_id()
     app = QApplication(sys.argv)
+    garbage_collector = GarbageCollector(app)
+    garbage_collector.start()
     add_window_buttons(app)
     keep_window_state(app)
     app.setStyle("Fusion")
@@ -103,6 +106,7 @@ def main() -> int:
     finally:
         recorder.stop()
         signal_check_timer.stop()
+        garbage_collector.stop()
         signal.signal(signal.SIGINT, previous_sigint_handler)
     logs.log.info("Hermes exits (code %s)", code)
     hanging = SESSIONS.sessions()
