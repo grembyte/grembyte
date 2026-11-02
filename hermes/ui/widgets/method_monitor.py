@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
@@ -25,7 +26,7 @@ from hermes.engines import base as engine_base
 from hermes.engines.registry import engine_by_id
 from hermes.features.catalog import short_name
 from hermes.features.monitor import MethodMonitorWorker
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.object_inspector import link_label, link_width
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
@@ -68,6 +69,12 @@ def arguments_text(args):
     return ", ".join(argument_text(arg) for arg in args)
 
 
+def signature_text(method):
+    """``(parameters) → result``, after ``static`` for a static method (no ``this``)."""
+    text = f"{method.parameters} → {method.return_type}"
+    return f"static {text}" if method.static else text
+
+
 def call_values(call, translations):
     """(label, value) of everything a call logged, for the details."""
     values = []
@@ -96,6 +103,8 @@ class CallLogModel(QAbstractTableModel):
         self.translations = translations
         self.calls = []
         self.names = {}
+        # Monitors of static methods: their calls have no ``this``.
+        self.static = set()
 
     def rowCount(self, parent=QModelIndex()):  # pylint: disable=invalid-name
         return 0 if parent.isValid() else len(self.calls)
@@ -109,11 +118,18 @@ class CallLogModel(QAbstractTableModel):
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or role not in (Qt.ItemDataRole.DisplayRole,
-                                               Qt.ItemDataRole.ToolTipRole):
+        if not index.isValid():
             return None
         call = self.calls[index.row()]
         column = index.column()
+        no_self = (column == _C_SELF and not call.get("self")
+                   and call.get("monitorId") in self.static)
+        if role == Qt.ItemDataRole.ForegroundRole:
+            return QColor(theme_color("muted")) if no_self else None
+        if role not in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
+            return None
+        if no_self:
+            return self.translations["inspector.static"]
         if column == _C_TIME:
             return call_time(call)
         if column == _C_THREAD:
@@ -346,8 +362,7 @@ class MethodMonitorDialog(QDialog):
         self.methods_table.setItem(row, _M_METHOD, name)
         for column in (_M_SIGNATURE, _M_CALLS, _M_STATUS):
             self.methods_table.setItem(row, column, QTableWidgetItem(""))
-        self.methods_table.item(row, _M_SIGNATURE).setText(
-            f"{method.parameters} → {method.return_type}")
+        self.methods_table.item(row, _M_SIGNATURE).setText(signature_text(method))
         self.methods_table.item(row, _M_CALLS).setText("0")
         state = {"method": method, "returns": returns, "objects": objects,
                  "calls": 0, "dropped": 0}
@@ -365,6 +380,8 @@ class MethodMonitorDialog(QDialog):
             state["method"].identity(), state["returns"], state["objects"])
         self._monitors[monitor_id] = state
         self.log.names[monitor_id] = short_name(state["method"].signature)
+        if state["method"].static:
+            self.log.static.add(monitor_id)
         self._set_status(state, self.translations["monitor.status_starting"])
 
     def _set_option(self, state, option, enabled):

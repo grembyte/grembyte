@@ -2576,3 +2576,26 @@ def test_hook_panel_logs_scripts_and_acts_on_several_hooks(tmp_path, qt_app, tra
             panel._debug_window.close()
         panel.shutdown(timeout_ms=None)
         target.close()
+
+
+def test_monitor_marks_static_methods(qt_app, translations):  # pylint: disable=unused-argument
+    # pylint: disable=import-outside-toplevel
+    import dataclasses
+
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from hermes.features.catalog import CatalogMethod
+    from hermes.ui.widgets.method_monitor import CallLogModel, signature_text
+
+    count = CatalogMethod("Assembly-CSharp", "Game.Combat", "get_Count", "()", "System.Int32",
+                          True, 0x06000009, "Game.Combat:get_Count ()")
+    assert signature_text(count) == "static () → System.Int32"
+    assert signature_text(dataclasses.replace(count, static=False)) == "() → System.Int32"
+
+    # A static method's calls say why "this" is empty; an instance method's stay empty.
+    model = CallLogModel(translations)
+    model.static.add(1)
+    model.append([{"monitorId": 1, "args": []}, {"monitorId": 2, "args": []}])
+    assert model.data(model.index(0, 3)) == "(statisch)"
+    assert model.data(model.index(0, 3), Qt.ItemDataRole.ForegroundRole) is not None
+    assert model.data(model.index(1, 3)) == ""
+    assert model.data(model.index(1, 3), Qt.ItemDataRole.ForegroundRole) is None
