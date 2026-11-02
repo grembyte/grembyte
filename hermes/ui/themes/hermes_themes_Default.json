@@ -21,6 +21,10 @@
     "danger_disabled_text": "#6e3a37",
     "handle": "#6e7681",
     "success": "#3fb950",
-    "warning": "#f0883e"
+    "warning": "#f0883e",
+    "code_text": "#c9d1d9",
+    "code_keyword": "#ff7b72",
+    "code_string": "#a5d6ff",
+    "code_number": "#79c0ff"
   }
 }

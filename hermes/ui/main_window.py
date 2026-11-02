@@ -27,6 +27,7 @@ from hermes import __version__
 from hermes.ui.localization import language_code, load_translations
 from hermes.ui.styles.themes import ThemeManager
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.widgets.code_editor import apply_code_theme
 from hermes.ui.widgets.icons import apply_icon_theme, material_icon, set_button_icon
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.ui.widgets.table import (
@@ -354,6 +355,7 @@ class MainWindow(QMainWindow):
         self._theme_manager = ThemeManager(settings=self._settings)
         QApplication.instance().setStyleSheet(self._theme_manager.stylesheet())
         apply_icon_theme(self._theme_manager.load_theme()["colors"])
+        apply_code_theme(self._theme_manager.load_theme()["colors"])
 
         self._current_pid = None
         self._process_start_time = None

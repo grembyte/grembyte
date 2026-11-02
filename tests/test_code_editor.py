@@ -58,3 +58,53 @@ def test_the_code_takes_the_height_the_window_grows_by(qt_app, translations):
     qt_app.processEvents()
     assert dialog.code_edit.height() >= small + 250
     dialog.close()
+
+
+def test_javascript_tokens_use_theme_colors(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.styles.themes import ThemeManager
+    from hermes.ui.widgets.code_editor import CodeEditor
+
+    manager = ThemeManager(user_theme_dir="/tmp/no-hermes-themes")
+    colors = manager.load_theme("Solarized-Light")["colors"]
+    editor = CodeEditor("const player = 'Hero';\nconst health = 42;")
+    editor.highlighter.set_colors(colors)
+    try:
+        block = editor.document().firstBlock()
+        formats = block.layout().formats()
+
+        def color_at(position):
+            return next(format_range.format.foreground().color().name()
+                        for format_range in formats
+                        if format_range.start <= position
+                        < format_range.start + format_range.length)
+
+        assert color_at(0) == colors["code_keyword"]
+        assert color_at(block.text().index("'Hero'")) == colors["code_string"]
+        assert color_at(len(block.text()) - 1) == colors["code_text"]
+        editor.highlighter.rehighlight()
+        number_block = editor.document().findBlockByNumber(1)
+        number_range = next(format_range for format_range in number_block.layout().formats()
+                            if format_range.start <= number_block.text().index("42")
+                            < format_range.start + format_range.length)
+        assert number_range.format.foreground().color().name() == colors["code_number"]
+    finally:
+        editor.close()
+
+
+def test_existing_code_editor_rehighlights_after_theme_change(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.styles.themes import ThemeManager
+    from hermes.ui.widgets.code_editor import CodeEditor, apply_code_theme
+
+    manager = ThemeManager(user_theme_dir="/tmp/no-hermes-themes")
+    editor = CodeEditor("return 12;")
+    try:
+        apply_code_theme(manager.load_theme("Solarized-Dark")["colors"])
+        block = editor.document().firstBlock()
+        keyword = next(format_range for format_range in block.layout().formats()
+                       if format_range.start == 0)
+        assert keyword.format.foreground().color().name() == "#cb4b16"
+    finally:
+        apply_code_theme(manager.load_theme("Default")["colors"])
+        editor.close()

@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 
 from hermes.ui.styles.styles import build_stylesheet
 from hermes.ui.styles.themes import COLOR_KEYS
+from hermes.ui.widgets.code_editor import apply_code_theme
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.icons import apply_icon_theme
 
@@ -92,6 +93,7 @@ class ThemeDialog(QDialog):
     def _preview(self):
         self.application.setStyleSheet(build_stylesheet(self.colors))
         apply_icon_theme(self.colors)
+        apply_code_theme(self.colors)
 
     def _save_theme(self):
         name = self.theme_combo.currentText().strip()
@@ -104,9 +106,11 @@ class ThemeDialog(QDialog):
             return
         self.application.setStyleSheet(self.manager.stylesheet(name))
         apply_icon_theme(self.colors)
+        apply_code_theme(self.colors)
         self.accept()
 
     def reject(self):
         self.application.setStyleSheet(self.original_stylesheet)
         apply_icon_theme(self.original_theme["colors"])
+        apply_code_theme(self.original_theme["colors"])
         super().reject()

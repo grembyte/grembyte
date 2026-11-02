@@ -12,7 +12,8 @@ from hermes.ui.styles.styles import _STYLE_COLOR_KEYS, build_stylesheet
 THEME_PREFIX = "hermes_themes_"
 DEFAULT_THEME = "Default"
 THEME_DIRECTORY = Path(__file__).parents[1] / "themes"
-COLOR_KEYS = tuple(dict.fromkeys(_STYLE_COLOR_KEYS.values()))
+CODE_COLOR_KEYS = ("code_text", "code_keyword", "code_string", "code_number")
+COLOR_KEYS = tuple(dict.fromkeys((*_STYLE_COLOR_KEYS.values(), *CODE_COLOR_KEYS)))
 _THEME_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 _COLOR = re.compile(
     r"(?:#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?|"
@@ -51,7 +52,7 @@ class ThemeManager:
                 continue
             for path in directory.glob(f"{THEME_PREFIX}*.json"):
                 try:
-                    theme = self._read_theme(path)
+                    theme = self._read_theme(path, themes)
                 except (OSError, ValueError, json.JSONDecodeError):
                     continue
                 themes[theme["name"]] = theme
@@ -89,7 +90,7 @@ class ThemeManager:
         return path
 
     @staticmethod
-    def _read_theme(path):
+    def _read_theme(path, fallback_themes=None):
         with path.open(encoding="utf-8") as theme_file:
             theme = json.load(theme_file)
         if not isinstance(theme, dict):
@@ -97,8 +98,19 @@ class ThemeManager:
         name = theme.get("name")
         colors = theme.get("colors")
         if (not isinstance(name, str) or not _THEME_NAME.fullmatch(name)
-                or not isinstance(colors, dict) or set(colors) != set(COLOR_KEYS)
-                or any(not isinstance(value, str) or not _valid_color(value)
-                       for value in colors.values())):
+                or not isinstance(colors, dict) or set(colors) - set(COLOR_KEYS)):
+            raise ValueError(f"Invalid theme: {path}")
+        missing = set(COLOR_KEYS) - set(colors)
+        if missing - set(CODE_COLOR_KEYS):
+            raise ValueError(f"Invalid theme: {path}")
+        if missing:
+            fallbacks = fallback_themes or {}
+            fallback = fallbacks.get(name, fallbacks.get(DEFAULT_THEME, {}))
+            fallback_colors = fallback.get("colors", {})
+            if missing - set(fallback_colors):
+                raise ValueError(f"Invalid theme: {path}")
+            colors = {**fallback_colors, **colors}
+        if any(not isinstance(value, str) or not _valid_color(value)
+               for value in colors.values()):
             raise ValueError(f"Invalid theme: {path}")
         return {"name": name, "colors": colors}

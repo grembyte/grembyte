@@ -1,6 +1,7 @@
 """Tests for JSON UI theme loading and persistence."""
 
 from hermes.ui.styles.styles import STYLE, build_stylesheet
+from hermes.ui.localization import load_translations
 from hermes.ui.styles.themes import COLOR_KEYS, ThemeManager
 from PyQt6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
 
@@ -55,11 +56,37 @@ def test_stylesheet_replaces_each_palette_color():
     assert "#0d1117" not in build_stylesheet(colors)
 
 
+def test_all_theme_colors_have_english_and_german_labels():
+    for language in ("en", "de"):
+        translations = load_translations(language)
+
+        assert all(f"theme.color.{key}" in translations for key in COLOR_KEYS)
+
+
 def test_malformed_theme_is_ignored(tmp_path):
     (tmp_path / "hermes_themes_Broken.json").write_text('{"colors": {}}', encoding="utf-8")
     manager = ThemeManager(settings=MemorySettings(), user_theme_dir=tmp_path)
 
     assert "Broken" not in manager.available_themes()
+
+
+def test_older_user_theme_inherits_syntax_colors(tmp_path):
+    import json
+
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir=tmp_path)
+    colors = manager.load_theme("Default")["colors"]
+    for key in ("code_text", "code_keyword", "code_string", "code_number"):
+        colors.pop(key)
+    colors["background"] = "#102030"
+    (tmp_path / "hermes_themes_Old_Custom.json").write_text(
+        json.dumps({"name": "Old_Custom", "colors": colors}), encoding="utf-8")
+
+    loaded = manager.load_theme("Old_Custom")["colors"]
+    defaults = manager.load_theme("Default")["colors"]
+
+    assert loaded["background"] == "#102030"
+    assert all(loaded[key] == defaults[key]
+               for key in ("code_text", "code_keyword", "code_string", "code_number"))
 
 
 def test_solarized_themes_are_bundled():
