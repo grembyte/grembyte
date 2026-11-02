@@ -127,7 +127,7 @@ def test_existing_menu_icons_follow_theme(monkeypatch):
             for y in range(image.height())
             if image.pixelColor(x, y).alpha()
         }
-        assert "#657b83" in colors
+        assert "#30525c" in colors
     finally:
         apply_icon_theme(default_colors)
         menu.deleteLater()
