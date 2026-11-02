@@ -79,11 +79,14 @@ def test_agent_errors_are_rendered_in_the_users_language():
         with pytest.raises(frida.RPCException) as raised:
             script.exports_sync.fail()
         assert messages.describe(raised.value) == (
-            "Could not load the Frida gadget into the game: Gadget not present: 0x1234")
+            "Could not load the Frida gadget into the game: Gadget not present: 0x1234. "
+            "Enable automatic Wine/Proton gadget downloads in Settings and select the "
+            "process again.")
         messages.use(load_translations("de"))
         assert messages.describe(raised.value) == (
             "Das Frida-Gadget konnte nicht ins Spiel geladen werden: "
-            "Gadget nicht vorhanden: 0x1234")
+            "Gadget nicht vorhanden: 0x1234. Aktiviere automatische Wine-/Proton-Gadget-"
+            "Downloads in den Einstellungen und wähle den Prozess erneut aus.")
         with pytest.raises(frida.RPCException) as raised:
             script.exports_sync.plain()
         assert messages.describe(raised.value) == "plain ⟧ text"

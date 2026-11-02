@@ -182,6 +182,8 @@ def teardown():
     for handler in list(log.handlers):
         log.removeHandler(handler)
         handler.close()
+    log.setLevel(logging.NOTSET)
+    log.propagate = True
     if _crash_file is not None:
         faulthandler.disable()
         _crash_file.close()
