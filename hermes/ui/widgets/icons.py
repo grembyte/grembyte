@@ -20,6 +20,14 @@ _BUTTON_COLORS = {
     "btn_primary": ("#ffffff", "#ffffff", "#6e7f99"),
 }
 _MENU_ICON_NAMES = {}
+# The colours of the theme last applied; until then those of Default.
+_DEFAULT_COLORS = {"muted": "#8b949e", "warning": "#f0883e"}
+_theme_colors = dict(_DEFAULT_COLORS)
+
+
+def theme_color(key):
+    """Return the colour ``key`` (e.g. "muted") of the current theme."""
+    return _theme_colors.get(key, _DEFAULT_COLORS.get(key, "#808080"))
 
 
 def _render(name, color, size, ratio):
@@ -100,9 +108,34 @@ def set_button_icon(button, name, size=16):
                 _icon(name, hover, hover, disabled, size))
 
 
+class _LabelIcon(QObject):
+    """Remembers which icon a label shows, to tint it anew with the theme."""
+
+    def __init__(self, label):
+        super().__init__(label)
+        self.name = None
+        self.color_key = None
+        self.size = 16
+
+
+def set_label_icon(label, name, color_key, size=16):
+    """Show the icon ``name`` on ``label`` in the theme colour ``color_key``.
+
+    For a label of its own beside a text label, e.g. in the text's colour.
+    """
+    holder = label.findChild(_LabelIcon, options=Qt.FindChildOption.FindDirectChildrenOnly)
+    if holder is None:
+        holder = _LabelIcon(label)
+    holder.name, holder.color_key, holder.size = name, color_key, size
+    label.setPixmap(_render(name, theme_color(color_key), size, label.devicePixelRatioF()))
+
+
 def apply_icon_theme(colors):
-    """Tint menu and button icons to match a theme, updating existing widgets."""
+    """Tint menu, button and label icons to match a theme, updating existing
+    widgets; theme_color gives its colours from now on."""
     global _MENU, _BUTTON_COLORS  # pylint: disable=global-statement
+    _theme_colors.clear()
+    _theme_colors.update(colors)
     previous_menu_icons = dict(_MENU_ICON_NAMES)
     _MENU = (colors["text"], colors["white"], colors["disabled_text"])
     _BUTTON_COLORS = {
@@ -125,3 +158,7 @@ def apply_icon_theme(colors):
             _ButtonIcon, options=Qt.FindChildOption.FindDirectChildrenOnly)
         if holder is not None:
             set_button_icon(widget, holder.name, holder.size)
+        label_icon = widget.findChild(
+            _LabelIcon, options=Qt.FindChildOption.FindDirectChildrenOnly)
+        if label_icon is not None:
+            set_label_icon(widget, label_icon.name, label_icon.color_key, label_icon.size)

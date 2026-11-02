@@ -29,7 +29,8 @@ from hermes.ui.styles.themes import ThemeManager
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.code_editor import apply_code_theme
 from hermes.ui.widgets.about_dialog import AboutDialog
-from hermes.ui.widgets.icons import apply_icon_theme, material_icon, set_button_icon
+from hermes.ui.widgets.icons import (
+    apply_icon_theme, material_icon, set_button_icon, set_label_icon)
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.ui.widgets.table import (
     add_copy_actions, add_delete_action, resizable_columns, set_row_height)
@@ -774,6 +775,13 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
+        # Shown while a process is attached, in the colour of its name.
+        self.lbl_proc_icon = QLabel()
+        self.lbl_proc_icon.setContentsMargins(8, 0, 0, 0)
+        set_label_icon(self.lbl_proc_icon, "memory", "warning")
+        # A toolbar shows and hides its widgets by their actions.
+        self._proc_icon_action = tb.addWidget(self.lbl_proc_icon)
+        self._proc_icon_action.setVisible(False)
         self.lbl_proc_info = QLabel(f"  {self._current_proc}")
         self.lbl_proc_info.setObjectName("lbl_process")
         tb.addWidget(self.lbl_proc_info)
@@ -2388,7 +2396,8 @@ class MainWindow(QMainWindow):
                 name=dlg.selected_name, pid=dlg.selected_pid
             )
             self._current_name = dlg.selected_name
-            self.lbl_proc_info.setText(f"  ⬢  {self._current_proc}")
+            self.lbl_proc_info.setText(f" {self._current_proc}")
+            self._proc_icon_action.setVisible(True)
             if self.btn_first_scan is not None:
                 self.btn_first_scan.setEnabled(True)
             self._update_catalog_button()
@@ -2561,6 +2570,7 @@ class MainWindow(QMainWindow):
             self.addr_table.setRowCount(0)
         self._current_proc = self.translations["app.no_process"]
         self.lbl_proc_info.setText(f"  {self._current_proc}")
+        self._proc_icon_action.setVisible(False)
         self._update_backend_label()
 
     def _stop_scan_and_refresh(self):

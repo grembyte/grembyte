@@ -132,3 +132,34 @@ def test_existing_menu_icons_follow_theme(monkeypatch):
         apply_icon_theme(default_colors)
         menu.deleteLater()
         application.processEvents()
+
+def test_theme_colors_and_label_icons_follow_theme(monkeypatch):
+    # pylint: disable=import-outside-toplevel
+    from PySide6.QtWidgets import QApplication, QLabel  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.ui.widgets.icons import apply_icon_theme, set_label_icon, theme_color
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    application = QApplication.instance() or QApplication([])
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
+    default_colors = manager.load_theme("Default")["colors"]
+    apply_icon_theme(default_colors)
+    label = QLabel()
+    set_label_icon(label, "memory", "warning")
+
+    try:
+        light = manager.load_theme("Solarized-Light")["colors"]
+        apply_icon_theme(light)
+        assert theme_color("muted") == light["muted"]
+        image = label.pixmap().toImage()
+        colors = {
+            image.pixelColor(x, y).name()
+            for x in range(image.width())
+            for y in range(image.height())
+            if image.pixelColor(x, y).alpha() == 255
+        }
+        assert colors == {light["warning"]}
+    finally:
+        apply_icon_theme(default_colors)
+        label.deleteLater()
+        application.processEvents()

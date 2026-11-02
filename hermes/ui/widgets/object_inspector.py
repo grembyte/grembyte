@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 
 from hermes.core import messages
 from hermes.ui import window_state
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.table import add_copy_actions, copy_menu, resizable_columns, set_row_height
 
@@ -37,7 +37,6 @@ _P_NAME, _P_TYPE, _P_VALUE, _P_LINK, _P_SET = range(5)
 _M_NAME, _M_PARAMS, _M_RETURNS, _M_OWNER, _M_LINK = range(5)
 # Data role of the offset cell: the field's {address, valueType} (see monitor.js)
 _LOCATION_ROLE = Qt.ItemDataRole.UserRole + 1
-_STATIC = QColor("#8b949e")
 # What a static field shows when it has no value to read, by its storage
 _STATIC_KINDS = {"const": "inspector.static_const", "thread": "inspector.static_thread"}
 _ERROR = QColor("#f85149")
@@ -507,7 +506,7 @@ class ObjectInspectorDialog(QDialog):
             for column, text in enumerate(texts):
                 item = QTableWidgetItem(text)
                 if static:
-                    item.setForeground(_STATIC)
+                    item.setForeground(QColor(theme_color("muted")))
                 self.table.setItem(row, column, item)
             self.table.item(row, _FIELD).setData(Qt.ItemDataRole.UserRole, target)
             self.table.item(row, _OFFSET).setData(_LOCATION_ROLE, {
