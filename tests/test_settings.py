@@ -28,7 +28,7 @@ def fixture_repository(tmp_path):
 
 
 def test_values_start_at_their_defaults():
-    assert settings.get("activity_log") is True
+    assert settings.get("activity_log") is False
     assert settings.get("wine_trace_limit") == 5000
     assert settings.get("trace_sequence") == 100_000
     assert settings.get("hook_short_jump") is False
@@ -40,7 +40,7 @@ def test_values_start_at_their_defaults():
 def test_stored_values_that_do_not_fit_fall_back_or_are_clamped():
     settings.load({"activity_log": "yes", "wine_trace_limit": 10**9, "refresh_interval_ms": 5,
                    "language": "fr", "gone": 1, "large_trace": 7000.0})
-    assert settings.get("activity_log") is True        # not a bool: the default
+    assert settings.get("activity_log") is False       # not a bool: the default
     assert settings.get("wine_trace_limit") == 100_000  # clamped to the maximum
     assert settings.get("refresh_interval_ms") == 100   # and to the minimum
     assert settings.get("language") == "system"
@@ -50,9 +50,11 @@ def test_stored_values_that_do_not_fit_fall_back_or_are_clamped():
 def test_apply_tells_only_what_changed():
     heard = []
     settings.subscribe(heard.append)
-    assert settings.apply({"activity_log": True, "wine_trace_limit": 0}) == {"wine_trace_limit": 0}
+    assert settings.apply({"activity_log": True, "wine_trace_limit": 0}) == {
+        "activity_log": True, "wine_trace_limit": 0,
+    }
     assert settings.apply({"wine_trace_limit": 0}) == {}
-    assert heard == [{"wine_trace_limit": 0}]
+    assert heard == [{"activity_log": True, "wine_trace_limit": 0}]
     assert settings.get("wine_trace_limit") == 0
 
 
@@ -65,20 +67,26 @@ def test_settings_are_stored_and_read_back(repository):
 
 def test_the_window_saves_applies_and_resets(repository, qt_app, translations):
     # pylint: disable=unused-argument
-    from hermes.ui.widgets.settings_dialog import SettingsDialog  # pylint: disable=import-outside-toplevel
+    from hermes.ui.widgets.settings_dialog import (  # pylint: disable=import-outside-toplevel
+        SettingsDialog,
+        _SETTING_CATEGORIES,
+    )
 
     settings.load({"refresh_interval_ms": 2500})
     dialog = SettingsDialog(translations, repository)
     assert dialog.editors["refresh_interval_ms"].value() == 2500
+    assert not dialog.editors["activity_log"].isChecked()
     assert dialog.editors["wine_trace_limit"].specialValueText() == "kein Limit"
-    dialog.editors["activity_log"].setChecked(False)
+    assert {key for _, keys in _SETTING_CATEGORIES for key in keys} == set(settings.BY_KEY)
+    assert "‼" in translations["settings.hook_repatch_warning"]
+    dialog.editors["activity_log"].setChecked(True)
     language = dialog.editors["language"]
     assert not dialog.restart_label.isVisibleTo(dialog)
     language.setCurrentIndex(language.findData("en"))
     assert dialog.restart_label.isVisibleTo(dialog)  # only after a restart
     dialog._save()  # pylint: disable=protected-access
-    assert dialog.changed == {"activity_log": False, "language": "en"}
-    assert repository.load()["activity_log"] is False
+    assert dialog.changed == {"activity_log": True, "language": "en"}
+    assert repository.load()["activity_log"] is True
     assert settings.get("language") == "en" and settings.language() == "en"
 
     dialog = SettingsDialog(translations, repository)
@@ -109,12 +117,10 @@ def test_the_activity_log_follows_its_setting(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_LOG_DIR", str(tmp_path))
     settings.subscribe(main._follow_activity_setting)
     try:
-        settings.apply({"activity_log": False})
-        main.start_activity_log()
-        assert activity.enabled()
-        settings.apply({"activity_log": False})  # unchanged: nothing happens
-        assert activity.enabled()
         settings.apply({"activity_log": True})
+        assert activity.enabled()
+        settings.apply({"activity_log": True})  # unchanged: nothing happens
+        assert activity.enabled()
         settings.apply({"activity_log": False})
         assert not activity.enabled()
         events = [entry["event"] for entry in activity.read_entries(tmp_path / "activity.jsonl")]

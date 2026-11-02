@@ -49,7 +49,7 @@ class Setting:
 
 
 SETTINGS = (
-    Setting("activity_log", BOOL, True),
+    Setting("activity_log", BOOL, False),
     Setting("refresh_interval_ms", INT, 1000, minimum=100, maximum=10_000, step=100),
     Setting("wine_trace_limit", INT, 5000, minimum=0, maximum=100_000, step=500),
     Setting("large_trace", INT, 5000, minimum=100, maximum=100_000, step=500),

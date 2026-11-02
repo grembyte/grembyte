@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QComboBox,
     QDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -15,6 +16,14 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
 from hermes.core import settings
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.icons import set_button_icon
+
+
+_SETTING_CATEGORIES = (
+    ("general", ("activity_log", "refresh_interval_ms", "language")),
+    ("trace", ("wine_trace_limit", "large_trace", "trace_sequence")),
+    ("hooks", ("hook_short_jump", "hook_repatch", "hook_profiling")),
+    ("wine", ("wine_gadget_download",)),
+)
 
 
 class SettingsDialog(QDialog):
@@ -35,16 +44,26 @@ class SettingsDialog(QDialog):
         self.setWindowTitle(translations["settings.title"])
         self.setMinimumWidth(520)
         layout = QVBoxLayout(self)
-        form = QFormLayout()
-        for setting in settings.SETTINGS:
-            editor = self._editor(setting)
-            self.editors[setting.key] = editor
-            label = QLabel(translations[f"settings.{setting.key}"])
-            tooltip = translations[f"settings.{setting.key}_tooltip"]
-            label.setToolTip(tooltip)
-            editor.setToolTip(tooltip)
-            form.addRow(label, editor)
-        layout.addLayout(form)
+        for category, keys in _SETTING_CATEGORIES:
+            group = QGroupBox(translations[f"settings.category.{category}"])
+            group.setObjectName(f"settings_category_{category}")
+            form = QFormLayout(group)
+            for key in keys:
+                setting = settings.BY_KEY[key]
+                if key == "hook_repatch":
+                    warning = QLabel(translations["settings.hook_repatch_warning"])
+                    warning.setObjectName("settings_hook_repatch_warning")
+                    warning.setWordWrap(True)
+                    warning.setStyleSheet("color: #d29922; font-weight: bold;")
+                    form.addRow(warning)
+                editor = self._editor(setting)
+                self.editors[setting.key] = editor
+                label = QLabel(translations[f"settings.{setting.key}"])
+                tooltip = translations[f"settings.{setting.key}_tooltip"]
+                label.setToolTip(tooltip)
+                editor.setToolTip(tooltip)
+                form.addRow(label, editor)
+            layout.addWidget(group)
         self.restart_label = QLabel(translations["settings.restart"])
         self.restart_label.setStyleSheet("color: #d29922;")
         self.restart_label.setVisible(False)
