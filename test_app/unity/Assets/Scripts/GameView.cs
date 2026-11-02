@@ -90,8 +90,8 @@ namespace HermesTestRpg
             terminal.Print(PanelX, y++, string.Format("DEX {0}", stats.Dexterity), Text);
             terminal.Print(PanelX, y++, string.Format("INT {0}", stats.Intelligence), Text);
             y++;
-            terminal.Print(PanelX, y++, string.Format("Dmg out x{0:0.##}", player.DamageOutgoingMultiplier), Text);
-            terminal.Print(PanelX, y++, string.Format("Dmg in  x{0:0.##}", player.DamageIncomingMultiplier), Text);
+            terminal.Print(PanelX, y++, string.Format("Dmg out  x{0:0.##}", player.DamageOutgoingMultiplier), Text);
+            terminal.Print(PanelX, y++, string.Format("Dmg in   x{0:0.##}", player.DamageIncomingMultiplier), Text);
             y++;
             terminal.Print(PanelX, y++, string.Format("Turn {0}", game.Turn), Dim);
             terminal.Print(PanelX, y++, string.Format("Enemies {0}", game.Enemies.Count), Dim);

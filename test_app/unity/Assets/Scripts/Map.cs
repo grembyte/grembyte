@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace HermesTestRpg
@@ -15,6 +16,8 @@ namespace HermesTestRpg
         public const char Water = '~';
 
         public readonly char[,] Tiles = new char[Width, Height];
+        public int StartX;
+        public int StartY;
 
         public bool InBounds(int x, int y)
         {
@@ -72,7 +75,75 @@ namespace HermesTestRpg
                 map.Tiles[0, y] = Wall;
                 map.Tiles[Width - 1, y] = Wall;
             }
+
+            map.FindWalkableNear(Width / 2, Height / 2, out map.StartX, out map.StartY);
+            map.ConnectAll();
             return map;
+        }
+
+        // Ruins, trees and lakes can close off an area, and the player or an
+        // enemy spawned there could not get out. Breaks a straight way from
+        // each such area to the part reachable from the start.
+        void ConnectAll()
+        {
+            while (true)
+            {
+                bool[,] reached = Reachable(StartX, StartY);
+                int x, y;
+                if (!FindUnreached(reached, out x, out y))
+                    return;
+                // Horizontally first, then vertically, until the reached part.
+                while (!reached[x, y])
+                {
+                    if (x != StartX)
+                        x += Math.Sign(StartX - x);
+                    else
+                        y += Math.Sign(StartY - y);
+                    if (!IsWalkable(x, y))
+                        Tiles[x, y] = Floor;
+                }
+            }
+        }
+
+        // Flood fill with the four straight steps, as the arrow keys move.
+        bool[,] Reachable(int startX, int startY)
+        {
+            var reached = new bool[Width, Height];
+            var open = new Stack<int>();
+            reached[startX, startY] = true;
+            open.Push(startY * Width + startX);
+            while (open.Count > 0)
+            {
+                int cell = open.Pop();
+                int cx = cell % Width;
+                int cy = cell / Width;
+                for (int i = 0; i < 4; i++)
+                {
+                    int nx = cx + (i == 0 ? 1 : i == 1 ? -1 : 0);
+                    int ny = cy + (i == 2 ? 1 : i == 3 ? -1 : 0);
+                    if (IsWalkable(nx, ny) && !reached[nx, ny])
+                    {
+                        reached[nx, ny] = true;
+                        open.Push(ny * Width + nx);
+                    }
+                }
+            }
+            return reached;
+        }
+
+        bool FindUnreached(bool[,] reached, out int foundX, out int foundY)
+        {
+            for (int x = 0; x < Width; x++)
+                for (int y = 0; y < Height; y++)
+                    if (IsWalkable(x, y) && !reached[x, y])
+                    {
+                        foundX = x;
+                        foundY = y;
+                        return true;
+                    }
+            foundX = 0;
+            foundY = 0;
+            return false;
         }
 
         void AddLake(System.Random rng)

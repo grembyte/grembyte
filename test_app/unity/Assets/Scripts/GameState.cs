@@ -30,10 +30,8 @@ namespace HermesTestRpg
             Rng = new System.Random(seed);
             Map = Map.Generate(Rng);
             Player = Character.CreatePlayer(nextId++);
-            int x, y;
-            Map.FindWalkableNear(Map.Width / 2, Map.Height / 2, out x, out y);
-            Player.X = x;
-            Player.Y = y;
+            Player.X = Map.StartX;
+            Player.Y = Map.StartY;
         }
 
         public static GameState NewGame(int seed)
