@@ -56,3 +56,32 @@ def _collect_garbage_after_each_test():
 
     yield
     gc.collect()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _end_qt_before_python():
+    """Stop workers and delete the windows tests leave, before Python ends.
+
+    Otherwise PySide6 deletes what is left while the interpreter shuts down,
+    in an order that crashes (a running QThread aborts, a widget is deleted
+    twice), and every test run leaves a core dump.
+    """
+    yield
+    # pylint: disable=import-outside-toplevel
+    import gc
+
+    from PySide6.QtCore import QCoreApplication, QEvent  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.ui import workers
+
+    application = QApplication.instance()
+    if application is None:
+        return
+    workers.stop_workers(5000)
+    for widget in application.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    application.processEvents()
+    gc.collect()

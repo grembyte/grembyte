@@ -97,8 +97,13 @@ def test_qt_messages_go_to_the_log(log_file):
 
 def test_a_crash_leaves_python_stacks_and_is_reported_next_time(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_LOG_DIR", str(tmp_path))
+    # Not dumpable (prctl PR_SET_DUMPABLE): the crash leaves no core dump
+    # and no crash report of the desktop at every test run.
+    no_core_dump = ("import ctypes; ctypes.CDLL(None).prctl(4, 0); "
+                    if sys.platform == "linux" else "")
     crash = subprocess.run(
-        [sys.executable, "-c", "import os; from hermes.core import logs; logs.setup(); os.abort()"],
+        [sys.executable, "-c",
+         no_core_dump + "import os; from hermes.core import logs; logs.setup(); os.abort()"],
         capture_output=True, text=True, check=False)
     assert crash.returncode != 0
     stacks = (tmp_path / "crash.log").read_text(encoding="utf-8")

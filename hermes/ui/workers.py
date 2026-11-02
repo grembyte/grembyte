@@ -48,9 +48,12 @@ def _release(worker):
 
 def running_workers():
     """The workers kept right now."""
-    # One deleted by Qt (e.g. never started, with its parent gone) runs no more.
+    # One deleted by Qt (e.g. never started, with its parent gone) runs no
+    # more; nor does one never started or whose thread ended before its
+    # ``finished`` slot ran (no event loop ran since).
     _workers.difference_update([worker for worker in _workers
-                                if not getattr(shiboken6, "isValid")(worker)])
+                                if not getattr(shiboken6, "isValid")(worker)
+                                or not worker.isRunning()])
     return set(_workers)
 
 
