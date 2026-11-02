@@ -348,6 +348,10 @@ STYLE = """
         color: #f0883e;
         font-size: 12px;
     }
+    /* The scan options scroll inside their group box, on its background */
+    QScrollArea#scan_options, QScrollArea#scan_options > QWidget > QWidget {
+        background: transparent;
+    }
     /* Group boxes used as tab pages: the tab pane already draws the frame */
     QGroupBox#tab_page {
         border: none;

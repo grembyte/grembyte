@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QHeaderView, QStatusBar, QToolBar, QDialog,
     QAbstractItemView, QFormLayout,
     QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox, QTabWidget, QSizePolicy,
-    QInputDialog, QApplication, QProgressDialog,
+    QInputDialog, QApplication, QProgressDialog, QScrollArea,
 )
 from PySide6.QtCore import (  # pylint: disable=import-error,no-name-in-module
     Qt, QSize, QTimer, QSettings, Slot,
@@ -1010,8 +1010,22 @@ class MainWindow(QMainWindow):
 
         self._build_scan_buttons(layout)
 
+        # The options scroll instead of being squeezed when the window is low;
+        # the scan buttons above stay in view.
+        scroll = QScrollArea()
+        scroll.setObjectName("scan_options")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        options = QWidget()
+        options_layout = QVBoxLayout(options)
+        options_layout.setContentsMargins(0, 0, 6, 0)  # room beside the scroll bar
+        options_layout.setSpacing(10)
+        scroll.setWidget(options)
+        layout.addWidget(scroll, 1)
+
         # Data type selector
-        layout.addWidget(QLabel(self.translations["search.datatype"]))
+        options_layout.addWidget(QLabel(self.translations["search.datatype"]))
         self.combo_type = QComboBox()
         for value_type in VALUE_TYPES:
             self.combo_type.addItem(value_type, value_type)
@@ -1024,10 +1038,10 @@ class MainWindow(QMainWindow):
             Qt.ItemDataRole.ToolTipRole,
         )
         self.combo_type.setCurrentIndex(self.combo_type.findData(DEFAULT_VALUE_TYPE))
-        layout.addWidget(self.combo_type)
+        options_layout.addWidget(self.combo_type)
 
         # Scan mode
-        layout.addWidget(QLabel(self.translations["search.scan_type"]))
+        options_layout.addWidget(QLabel(self.translations["search.scan_type"]))
         self.combo_scan_type = QComboBox()
         scan_modes = [
             ("search.exact", "exact"),
@@ -1045,42 +1059,42 @@ class MainWindow(QMainWindow):
         ]
         for text_key, mode in scan_modes:
             self.combo_scan_type.addItem(self.translations[text_key], mode)
-        layout.addWidget(self.combo_scan_type)
+        options_layout.addWidget(self.combo_scan_type)
 
         # Only addresses that are a multiple of the value size (first scan)
         self.chk_aligned = QCheckBox(self.translations["search.aligned"])
         self.chk_aligned.setToolTip(self.translations["search.aligned_tooltip"])
         self.chk_aligned.setChecked(True)
-        layout.addWidget(self.chk_aligned)
+        options_layout.addWidget(self.chk_aligned)
 
         # Value input
-        layout.addWidget(QLabel(self.translations["search.value"]))
+        options_layout.addWidget(QLabel(self.translations["search.value"]))
         self.input_value = QLineEdit()
         self.input_value.setPlaceholderText(self.translations["search.value_placeholder"])
-        layout.addWidget(self.input_value)
+        options_layout.addWidget(self.input_value)
 
         # Second value (for "between" range scan)
         self.lbl_value2 = QLabel(self.translations["search.upper_bound"])
         self.lbl_value2.setVisible(False)
-        layout.addWidget(self.lbl_value2)
+        options_layout.addWidget(self.lbl_value2)
         self.input_value2 = QLineEdit()
         self.input_value2.setPlaceholderText(
             self.translations["search.upper_bound_placeholder"]
         )
         self.input_value2.setVisible(False)
-        layout.addWidget(self.input_value2)
+        options_layout.addWidget(self.input_value2)
 
         # Tolerance and float comparison (for exact and "changed by" scans)
         self.lbl_tolerance = QLabel(self.translations["search.tolerance"])
-        layout.addWidget(self.lbl_tolerance)
+        options_layout.addWidget(self.lbl_tolerance)
         self.input_tolerance = QLineEdit()
         self.input_tolerance.setPlaceholderText(
             self.translations["search.tolerance_placeholder"]
         )
         self.input_tolerance.setToolTip(self.translations["search.tolerance_tooltip"])
-        layout.addWidget(self.input_tolerance)
+        options_layout.addWidget(self.input_tolerance)
         self.lbl_float_rounding = QLabel(self.translations["search.float_rounding"])
-        layout.addWidget(self.lbl_float_rounding)
+        options_layout.addWidget(self.lbl_float_rounding)
         self.combo_float_rounding = QComboBox()
         for mode in FLOAT_ROUNDING_MODES:
             self.combo_float_rounding.addItem(
@@ -1092,7 +1106,7 @@ class MainWindow(QMainWindow):
         self.combo_float_rounding.setCurrentIndex(
             self.combo_float_rounding.findData("rounded")
         )
-        layout.addWidget(self.combo_float_rounding)
+        options_layout.addWidget(self.combo_float_rounding)
 
         self.combo_scan_type.currentIndexChanged.connect(self._update_value_inputs)
         self.combo_type.currentIndexChanged.connect(self._update_value_inputs)
@@ -1102,7 +1116,7 @@ class MainWindow(QMainWindow):
         for field in (self.input_value, self.input_value2, self.input_tolerance):
             field.returnPressed.connect(self._start_default_scan)
 
-        self._build_scan_progress(layout)
+        self._build_scan_progress(options_layout)
 
         return box
 
