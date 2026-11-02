@@ -1581,6 +1581,10 @@ class HookPanel(QGroupBox):
         self.status_label.setText(self.translations[key].format(message=message))
 
     def _on_worker_finished(self, worker):
+        # Not our child any more: deleting the worker releases its slots, and
+        # with them maybe the last reference to this panel; a panel without
+        # a parent would then delete the worker a second time (PySide6).
+        worker.setParent(None)
         worker.deleteLater()
         if not self._is_current(worker):
             return

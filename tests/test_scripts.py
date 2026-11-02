@@ -259,6 +259,9 @@ class _FakeScriptWorker:
     def wait(self, _timeout):
         return True
 
+    def setParent(self, _parent):  # pylint: disable=invalid-name
+        pass
+
     def deleteLater(self):  # pylint: disable=invalid-name
         pass
 

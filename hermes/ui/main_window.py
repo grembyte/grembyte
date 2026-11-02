@@ -148,13 +148,21 @@ def _platform_text():
     return f"{system} {machine}"
 
 
-def _disconnect(*signals):
-    """Disconnect every slot of ``signals``; those without any are left as they are."""
-    for signal in signals:
-        try:
-            signal.disconnect()
-        except TypeError:
-            pass  # disconnected before
+def _unless_dropped(worker, slot):
+    """``slot``, but deaf to ``worker`` once ``_drop`` let it go.
+
+    Disconnecting is not enough: PySide6 still delivers the signals a worker
+    queued before.
+    """
+    def call(*args):
+        if not getattr(worker, "hermes_dropped", False):
+            slot(*args)
+    return call
+
+
+def _drop(worker):
+    """Let the slots connected through ``_unless_dropped`` ignore ``worker``."""
+    worker.hermes_dropped = True
 
 
 @dataclass(frozen=True)
@@ -2564,13 +2572,12 @@ class MainWindow(QMainWindow):
         self._refresh_timer.stop()
         scan_worker = self._scan_worker
         if scan_worker is not None:
-            _disconnect(scan_worker.results_ready, scan_worker.scan_failed)
+            _drop(scan_worker)
             scan_worker.requestInterruption()
             scan_worker.wait()
         refresh_worker = self._refresh_worker
         if refresh_worker is not None:
-            _disconnect(refresh_worker.addresses_resolved, refresh_worker.values_ready,
-                        refresh_worker.refresh_failed)
+            _drop(refresh_worker)
             refresh_worker.requestInterruption()
             refresh_worker.wait()
         self._reset_scan()
@@ -2726,8 +2733,10 @@ class MainWindow(QMainWindow):
             float_rounding=request.float_rounding,
             parent=self,
         )
-        self._scan_worker.results_ready.connect(self._on_scan_results)
-        self._scan_worker.scan_failed.connect(self._on_scan_failed)
+        self._scan_worker.results_ready.connect(
+            _unless_dropped(self._scan_worker, self._on_scan_results))
+        self._scan_worker.scan_failed.connect(
+            _unless_dropped(self._scan_worker, self._on_scan_failed))
         self._scan_worker.scan_cancelled.connect(self._on_scan_cancelled)
         self._scan_worker.progress_changed.connect(self.progress_scan.setValue)
         self._scan_worker.finished.connect(self._on_scan_worker_finished)
@@ -2862,9 +2871,11 @@ class MainWindow(QMainWindow):
             list(entries.values()),
             self,
         )
-        self._refresh_worker.addresses_resolved.connect(self._on_addresses_resolved)
-        self._refresh_worker.values_ready.connect(self._on_refreshed_values)
-        self._refresh_worker.refresh_failed.connect(self._on_refresh_failed)
+        for signal, slot in (
+                (self._refresh_worker.addresses_resolved, self._on_addresses_resolved),
+                (self._refresh_worker.values_ready, self._on_refreshed_values),
+                (self._refresh_worker.refresh_failed, self._on_refresh_failed)):
+            signal.connect(_unless_dropped(self._refresh_worker, slot))
         self._refresh_worker.finished.connect(self._on_refresh_worker_finished)
         self._refresh_worker.start()
 

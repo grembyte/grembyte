@@ -674,6 +674,10 @@ class ScriptPanel(QGroupBox):
     def _on_worker_finished(self, worker):
         """The worker ended (e.g. its session was ended in the sessions
         window): its scripts no longer run."""
+        # Not our child any more: deleting the worker releases its slots, and
+        # with them maybe the last reference to this panel; a panel without
+        # a parent would then delete the worker a second time (PySide6).
+        worker.setParent(None)
         worker.deleteLater()
         if worker is not self._worker:
             return

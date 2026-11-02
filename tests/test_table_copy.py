@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QWidget,
 )
 
+from hermes.ui.widgets import table as table_module
 from hermes.ui.widgets.table import add_copy_actions, cell_text, copy_menu, row_text
 
 from tests.test_hooks import fixture_qt_app, fixture_translations  # pylint: disable=unused-import
@@ -100,9 +101,19 @@ def test_tables_with_a_remove_function_offer_to_delete_the_clicked_row(
     copy_menu(table, translations, lambda: deleted.append(
         sorted(index.row() for index in table.selectionModel().selectedRows())))
     shown = []
-    monkeypatch.setattr(QMenu, "exec", lambda menu, _position=None: shown.append(
-        [action.text() for action in menu.actions() if not action.isSeparator()]) or
-        menu.actions()[0].trigger())
+
+    class Menu(QMenu):
+        """Picks its first action instead of waiting for the user."""
+
+        def exec(self, *_args, **_kwargs):
+            shown.append([action.text() for action in self.actions()
+                          if not action.isSeparator()])
+            chosen = self.actions()[0]
+            chosen.trigger()
+            return chosen
+
+    # PySide6 ignores methods patched onto QMenu itself; a subclass is used.
+    monkeypatch.setattr(table_module, "QMenu", Menu)
 
     # The clicked row is selected first; the delete action acts on it.
     table.customContextMenuRequested.emit(table.visualRect(table.model().index(1, 0)).center())
