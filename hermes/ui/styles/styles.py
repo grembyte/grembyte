@@ -386,3 +386,36 @@ STYLE = """
         max-height: 1px;
     }
 """.replace("__MONO__", MONO)
+
+
+_STYLE_COLOR_KEYS = {
+    "#0d1117": "background",
+    "#c9d1d9": "text",
+    "#21262d": "border_subtle",
+    "#8b949e": "muted",
+    "rgba(31, 111, 235, 0.28)": "selection",
+    "#ffffff": "white",
+    "#11161d": "alternate",
+    "#161b22": "surface",
+    "#30363d": "border",
+    "#58a6ff": "accent",
+    "#1f6feb": "accent_pressed",
+    "#484f58": "disabled_text",
+    "#388bfd": "accent_hover",
+    "#12315f": "accent_disabled_background",
+    "#6e7f99": "accent_disabled_text",
+    "#f85149": "danger",
+    "#4a2523": "danger_disabled_border",
+    "#6e3a37": "danger_disabled_text",
+    "#6e7681": "handle",
+    "#3fb950": "success",
+    "#f0883e": "warning",
+}
+
+
+def build_stylesheet(colors):
+    """Build the application stylesheet with the supplied theme colors."""
+    stylesheet = STYLE
+    for original, key in _STYLE_COLOR_KEYS.items():
+        stylesheet = stylesheet.replace(original, colors[key])
+    return stylesheet

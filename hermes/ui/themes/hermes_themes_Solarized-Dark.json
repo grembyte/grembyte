@@ -1,0 +1,26 @@
+{
+  "name": "Solarized-Dark",
+  "colors": {
+    "background": "#002b36",
+    "text": "#839496",
+    "border_subtle": "#073642",
+    "muted": "#586e75",
+    "selection": "rgba(38, 139, 210, 0.28)",
+    "white": "#fdf6e3",
+    "alternate": "#073642",
+    "surface": "#073642",
+    "border": "#586e75",
+    "accent": "#268bd2",
+    "accent_pressed": "#268bd2",
+    "disabled_text": "#586e75",
+    "accent_hover": "#2aa198",
+    "accent_disabled_background": "#073642",
+    "accent_disabled_text": "#586e75",
+    "danger": "#dc322f",
+    "danger_disabled_border": "#073642",
+    "danger_disabled_text": "#586e75",
+    "handle": "#586e75",
+    "success": "#859900",
+    "warning": "#b58900"
+  }
+}

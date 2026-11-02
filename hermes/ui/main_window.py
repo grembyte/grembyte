@@ -25,7 +25,7 @@ from PyQt6.QtGui import QColor, QActionGroup, QIcon  # pylint: disable=import-er
 
 from hermes import __version__
 from hermes.ui.localization import language_code, load_translations
-from hermes.ui.styles.styles import STYLE
+from hermes.ui.styles.themes import ThemeManager
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.icons import material_icon, set_button_icon
 from hermes.ui.widgets.icons import set_button_icon
@@ -88,6 +88,7 @@ from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.scripts import ScriptPanel
 from hermes.ui.widgets.memory_view import MemoryViewerDialog
 from hermes.ui.widgets.settings_dialog import SettingsDialog
+from hermes.ui.widgets.theme_dialog import ThemeDialog
 from hermes.core import activity, logs, messages, sessions
 from hermes.core import settings as app_settings
 from hermes.ui import workers
@@ -350,7 +351,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(self.translations["app.window_title"])
         self.setMinimumSize(1100, 700)
         self.resize(1280, 800)
-        self.setStyleSheet(STYLE)
+        self._settings = QSettings("hermes-hook", "hermes-hook")
+        self._theme_manager = ThemeManager(settings=self._settings)
+        QApplication.instance().setStyleSheet(self._theme_manager.stylesheet())
 
         self._current_pid = None
         self._process_start_time = None
@@ -404,7 +407,6 @@ class MainWindow(QMainWindow):
         self._write_watch_stopping = False
         # time.monotonic() when debug registers were last seen in use
         self._debug_registers_used = None
-        self._settings = QSettings("hermes-hook", "hermes-hook")
         self._watch_backend = self._settings.value("watch_backend", BACKEND_FRIDA)
         if self._watch_backend not in WATCH_BACKENDS:
             self._watch_backend = BACKEND_FRIDA
@@ -485,6 +487,9 @@ class MainWindow(QMainWindow):
             material_icon("settings"), self.translations["menu.general_settings"])
         self.act_settings.setToolTip(self.translations["menu.general_settings_tooltip"])
         self.act_settings.triggered.connect(self._open_settings)
+        self.act_theme = settings_menu.addAction(
+            material_icon("palette"), self.translations["menu.theme"])
+        self.act_theme.triggered.connect(self._open_theme)
         settings_menu.addSeparator()
         # "&&" keeps Qt from reading the "&" as a mnemonic marker.
         backend_menu = settings_menu.addMenu(
@@ -648,6 +653,10 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self.translations, SettingsRepository(), parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._apply_settings(dialog.changed)
+
+    def _open_theme(self):
+        """Show the theme editor and preview changes until it is closed."""
+        ThemeDialog(self.translations, self._theme_manager, parent=self).exec()
 
     def _apply_settings(self, changed):
         if "refresh_interval_ms" in changed:

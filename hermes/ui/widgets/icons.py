@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+import re
 
 from PyQt6.QtCore import QByteArray, QEvent, QObject, QRectF, Qt  # pylint: disable=import-error,no-name-in-module
 from PyQt6.QtGui import QGuiApplication, QIcon, QPainter, QPixmap  # pylint: disable=import-error,no-name-in-module
@@ -22,6 +23,7 @@ _BUTTON_COLORS = {
 def _render(name, color, size, ratio):
     """Paint the icon ``name`` in ``color`` on a square pixmap."""
     svg = (ICONS_DIR / f"{name}.svg").read_text(encoding="utf-8")
+    svg = re.sub(r'(<svg\b[^>]*?)\s+fill=(["\']).*?\2', r"\1", svg, count=1)
     renderer = QSvgRenderer(QByteArray(svg.replace("<svg ", f'<svg fill="{color}" ', 1).encode()))
     pixmap = QPixmap(round(size * ratio), round(size * ratio))
     pixmap.setDevicePixelRatio(ratio)

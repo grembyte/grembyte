@@ -1,0 +1,26 @@
+{
+  "name": "Default",
+  "colors": {
+    "background": "#0d1117",
+    "text": "#c9d1d9",
+    "border_subtle": "#21262d",
+    "muted": "#8b949e",
+    "selection": "rgba(31, 111, 235, 0.28)",
+    "white": "#ffffff",
+    "alternate": "#11161d",
+    "surface": "#161b22",
+    "border": "#30363d",
+    "accent": "#58a6ff",
+    "accent_pressed": "#1f6feb",
+    "disabled_text": "#484f58",
+    "accent_hover": "#388bfd",
+    "accent_disabled_background": "#12315f",
+    "accent_disabled_text": "#6e7f99",
+    "danger": "#f85149",
+    "danger_disabled_border": "#4a2523",
+    "danger_disabled_text": "#6e3a37",
+    "handle": "#6e7681",
+    "success": "#3fb950",
+    "warning": "#f0883e"
+  }
+}
