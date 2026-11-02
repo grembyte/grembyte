@@ -197,18 +197,6 @@ class CodeEditor(QPlainTextEdit):
             block = block.next()
         cursor.endEditBlock()
 
-
-def apply_code_theme(colors):
-    """Apply syntax colors to current and future code editors."""
-    _CODE_COLORS.update({key: colors[key] for key in (
-        "code_text", "code_keyword", "code_string", "code_number", "muted")})
-    application = QApplication.instance()
-    if application is None:
-        return
-    for widget in application.allWidgets():
-        if isinstance(widget, CodeEditor):
-            widget.highlighter.set_colors(_CODE_COLORS)
-
     def outdent(self):
         """Shift+Tab: remove an indent (or a tab) from the start of the selected lines."""
         cursor = self.textCursor()
@@ -228,3 +216,15 @@ def apply_code_theme(colors):
                 line.removeSelectedText()
             block = block.next()
         cursor.endEditBlock()
+
+
+def apply_code_theme(colors):
+    """Apply syntax colors to current and future code editors."""
+    _CODE_COLORS.update({key: colors[key] for key in (
+        "code_text", "code_keyword", "code_string", "code_number", "muted")})
+    application = QApplication.instance()
+    if application is None:
+        return
+    for widget in application.allWidgets():
+        if isinstance(widget, CodeEditor):
+            widget.highlighter.set_colors(_CODE_COLORS)
