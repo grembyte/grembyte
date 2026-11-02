@@ -2,7 +2,7 @@ using System;
 using System.Globalization;
 using UnityEngine;
 
-namespace HermesTestRpg
+namespace HermesQuest
 {
     // The only MonoBehaviour: real-time mana regeneration in Update, keyboard
     // input and drawing in OnGUI. Input comes from IMGUI events, so the game
@@ -24,7 +24,7 @@ namespace HermesTestRpg
             Application.targetFrameRate = 60;
             fixedSeed = ReadSeedArgument();
             StartNewGame();
-            Debug.Log(string.Format("Hermes Test RPG, PID {0}",
+            Debug.Log(string.Format("HermesQuest, PID {0}",
                                     System.Diagnostics.Process.GetCurrentProcess().Id));
         }
 

@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace HermesTestRpg
+namespace HermesQuest
 {
     // The last few messages on screen; every message also goes to Player.log.
     public class MessageLog

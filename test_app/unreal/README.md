@@ -1,4 +1,4 @@
-# Hermes Test RPG (Unreal) — planned
+# HermesQuest (Unreal) — planned
 
 The Unreal counterpart of [the Unity game](../unity/README.md): same map, keys and
 enemies, so the documentation can show the same steps for both engines.

@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using UnityEngine;
 
-namespace HermesTestRpg
+namespace HermesQuest
 {
     // Player and enemies share this class, as in many games: a hook on
     // TakeDamage hits both and has to tell them apart by IsPlayer.

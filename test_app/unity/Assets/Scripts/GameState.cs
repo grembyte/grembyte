@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace HermesTestRpg
+namespace HermesQuest
 {
     // One running game. "New game" builds a new GameState, so the player and
     // its stats move to new heap addresses, as after loading a save in a real game.

@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using UnityEngine;
 
-namespace HermesTestRpg
+namespace HermesQuest
 {
     public enum ViewMode
     {

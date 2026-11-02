@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace HermesTestRpg
+namespace HermesQuest
 {
     // A grid of character cells drawn with IMGUI, so the game needs no assets.
     // Put places single glyphs, one per cell, so the map lines up without a

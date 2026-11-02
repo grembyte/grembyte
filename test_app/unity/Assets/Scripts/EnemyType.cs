@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace HermesTestRpg
+namespace HermesQuest
 {
     // Template for an enemy; Spawn keys 1-5 pick All[0] .. All[4].
     public class EnemyType

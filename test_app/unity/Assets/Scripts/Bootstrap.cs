@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace HermesTestRpg
+namespace HermesQuest
 {
     // Starts the game from code, so the scene can stay empty and the project
     // needs no hand-made assets.

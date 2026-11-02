@@ -1,4 +1,4 @@
-# Hermes Test RPG (Unity)
+# HermesQuest (Unity)
 
 A small top-down ASCII role-playing game as a test target for the Mono adapter
 and as the running example of the documentation. It has a character sheet, enemies
@@ -15,8 +15,8 @@ character grid with IMGUI and reads the keyboard from IMGUI events.
 2. Open `test_app/unity` in Unity Hub (*Add project from disk*). On the first start,
    Unity creates `ProjectSettings/` and the `.meta` files; commit them.
 3. Press Play in the editor, or build:
-   - menu *Hermes Test → Build Linux / Build Windows / Build All*, or
-   - `Unity -batchmode -quit -projectPath test_app/unity -executeMethod HermesTestRpg.Editor.BuildScript.BuildAll`
+   - menu *HermesQuest → Build Linux / Build Windows / Build All*, or
+   - `Unity -batchmode -quit -projectPath test_app/unity -executeMethod HermesQuest.Editor.BuildScript.BuildAll`
 
 The builds land in `test_app/unity/Build/Linux` and `Build/Windows`, as release builds
 with the Mono backend. The Windows build is for testing under Proton.

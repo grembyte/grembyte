@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using UnityEngine;
 
-namespace HermesTestRpg
+namespace HermesQuest
 {
     // What the last call of ApplyDamage did; shown in the log and the debug view.
     // The multipliers are read from the characters, Calculated is what

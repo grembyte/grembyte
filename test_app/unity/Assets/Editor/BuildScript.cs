@@ -5,30 +5,30 @@ using UnityEditor.Build.Reporting;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 
-namespace HermesTestRpg.Editor
+namespace HermesQuest.Editor
 {
     // Release builds with the Mono backend, like a shipped game: no development
     // build, no script debugging. From the command line:
     //     Unity -batchmode -quit -projectPath test_app/unity \
-    //           -executeMethod HermesTestRpg.Editor.BuildScript.BuildAll
+    //           -executeMethod HermesQuest.Editor.BuildScript.BuildAll
     public static class BuildScript
     {
         const string ScenePath = "Assets/Scenes/Main.unity";
-        const string ProductName = "HermesTestRpg";
+        const string ProductName = "HermesQuest";
 
-        [MenuItem("Hermes Test/Build Linux")]
+        [MenuItem("HermesQuest/Build Linux")]
         public static void BuildLinux()
         {
             Build(BuildTarget.StandaloneLinux64, "Build/Linux/" + ProductName + ".x86_64");
         }
 
-        [MenuItem("Hermes Test/Build Windows")]
+        [MenuItem("HermesQuest/Build Windows")]
         public static void BuildWindows()
         {
             Build(BuildTarget.StandaloneWindows64, "Build/Windows/" + ProductName + ".exe");
         }
 
-        [MenuItem("Hermes Test/Build All")]
+        [MenuItem("HermesQuest/Build All")]
         public static void BuildAll()
         {
             BuildLinux();
