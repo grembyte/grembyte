@@ -133,7 +133,8 @@ def select_methods(classes_of, words, engine="mono"):
     for assembly, classes in classes_of.items():
         for class_name, methods in classes:
             for entry in methods:
-                name, parameters, return_type, static, token, signature, flags, impl_flags = entry
+                (name, parameters, return_type, static, token, signature, flags, impl_flags,
+                 *names) = entry
                 text = f"{class_name}:{name} {assembly}".lower()
                 if not all(word in text for word in words):
                     continue
@@ -141,9 +142,10 @@ def select_methods(classes_of, words, engine="mono"):
                 if reason is not None:
                     skipped[reason] += 1
                 else:
+                    # Mono adds parameter names; older cache entries have none
                     chosen.append(CatalogMethod(assembly, class_name, name, parameters,
                                                 return_type, bool(static), token, signature,
-                                                engine))
+                                                engine, tuple(names[0]) if names else ()))
     return chosen, skipped
 
 
