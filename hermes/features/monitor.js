@@ -1434,6 +1434,29 @@ function staticCall(qualifiedName, ...args) {
   return callMethod(method, null, args);
 }
 
+function staticField(qualifiedName) {
+  // ctx.static("Namespace.Class.Field"), also "Namespace.Class:Field": the
+  // value of a static field, e.g. a singleton's Instance that is no Unity
+  // object (Mono)
+  if (engine.staticData === undefined)
+    throw hermesError('error.monitor.static_mono_only');
+  const name = String(qualifiedName).trim();
+  const colon = name.lastIndexOf(':');
+  const split = colon >= 0 ? colon : name.lastIndexOf('.');
+  if (split <= 0 || split === name.length - 1)
+    throw hermesError('error.monitor.not_qualified_field', { name: qualifiedName });
+  const layout = engine.layout(engine.findClass(name.substring(0, split)));
+  const fieldName = name.substring(split + 1);
+  const field = layout.fields.find(candidate => candidate.name === fieldName && candidate.static);
+  if (field === undefined)
+    throw hermesError('error.monitor.no_static_field', { className: layout.name, name: fieldName });
+  // Constants have no storage, thread statics none of the class's.
+  const data = field.storage === 'data' ? engine.staticData(field.owner) : null;
+  if (data === null)
+    throw hermesError('error.monitor.static_unreadable', { name: `${layout.name}.${fieldName}` });
+  return readJs(field.type, data.add(field.offset));
+}
+
 function findObject(className, objectName = null) {
   // ctx.find("AlabamaCheatManager"): a live object of that class (Unreal,
   // Unity), or null; ctx.find("UnityEngine.GameObject", "Player(Clone)"): the
@@ -1713,6 +1736,7 @@ function hookBefore(hook, invocation) {
     hookId: hook.id,
     threadId: invocation.threadId,
     call: staticCall,
+    static: staticField,
     find: findObject,
     forEach: forEachObject,
     outerName,
@@ -1811,6 +1835,7 @@ function hookLeave(hook, invocation, retval) {
     hookId: hook.id,
     threadId: invocation.threadId,
     call: staticCall,
+    static: staticField,
     find: findObject,
     forEach: forEachObject,
     outerName,
@@ -2108,6 +2133,7 @@ function scriptContext(script, logs, args) {
     outerName,
     findClass: scriptClass,
     call: staticCall,
+    static: staticField,
     gas: scriptGas,
     lang: HERMES_LANGUAGE,
     args,

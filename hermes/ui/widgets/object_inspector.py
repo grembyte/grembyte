@@ -498,7 +498,9 @@ class ObjectInspectorDialog(QDialog):
                 text = messages.describe(value.get("text", ""))
             texts = (
                 field.get("name", ""),
-                field.get("type", ""),
+                # Marked as in the properties table
+                field.get("type", "") + (
+                    f"  {self.translations['inspector.static']}" if static else ""),
                 text,
                 f"0x{field.get('offset', 0):x}",
             )

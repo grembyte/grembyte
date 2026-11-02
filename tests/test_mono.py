@@ -1852,6 +1852,20 @@ def test_method_hook_replaces_the_result(tmp_path, qt_app):
         time.sleep(0.2)
         assert target.send("roll", 5) == (111, 42)
 
+        # Static fields, also named Class:Field: Instances (7) times 10 plus 7.
+        worker.set_transform(hook_id, _method_transform(
+            'function (ctx) { return ctx.static("Game.Combat.Instances") * 10'
+            ' + ctx.static("Game.Combat:Instances"); }'))
+        time.sleep(0.2)
+        assert target.send("roll", 5) == (77, 42)
+
+        # An instance field is no static one.
+        worker.set_transform(hook_id, _method_transform(
+            'function (ctx) { return ctx.static("Game.Combat.Health"); }'))
+        time.sleep(0.2)
+        assert target.send("roll", 5) == (15, 42)
+        _wait_for(qt_app, lambda: "no static field Health" in errors.get(hook_id, ""))
+
         removed = []
         worker.hook_removed.connect(removed.append)
         worker.remove_hook(hook_id)
