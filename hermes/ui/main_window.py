@@ -577,7 +577,7 @@ class MainWindow(QMainWindow):
         help_menu = menu_bar.addMenu(self.translations["menu.help"])
         help_menu.setToolTipsVisible(True)
         self.act_about = help_menu.addAction(
-            material_icon("article"), self.translations["menu.about"])
+            material_icon("info"), self.translations["menu.about"])
         self.act_about.triggered.connect(self._open_about)
 
     def _open_about(self):
