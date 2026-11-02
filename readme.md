@@ -1,6 +1,6 @@
 # Hermes Hook
 
-Hermes Hook is a desktop application built with Python and PyQt6 for inspecting and manipulating the memory of running processes such as games. It runs on Linux, including Windows games under Wine/Proton, and on Windows. The project is under development.
+Hermes Hook is a desktop application built with Python and PySide6 for inspecting and manipulating the memory of running processes such as games. It runs on Linux, including Windows games under Wine/Proton, and on Windows. The project is under development.
 
 ## Disclaimer
 This tool is intended solely for educational, research, and single-player game modding purposes. It is not designed or intended to bypass anti-cheat mechanisms or be used in online multiplayer games. The developer assumes no responsibility or liability for any account bans, suspensions, or damages resulting from the use or misuse of this software.
@@ -89,7 +89,7 @@ sudo apt update
 sudo apt install python3 python3-venv python3-pip
 ```
 
-The Python dependencies, including PyQt6, are then installed with `pip` from `pyproject.toml`. If Qt reports a missing platform plugin at start, the distribution's Qt/XCB runtime packages have to be added.
+The Python dependencies, including PySide6, are then installed with `pip` from `pyproject.toml`. If Qt reports a missing platform plugin at start, the distribution's Qt/XCB runtime packages have to be added.
 
 ## Installation
 
@@ -297,6 +297,6 @@ Many tests compile a small C program and attach to it with Frida (hooks, watch, 
 
 Copyright (C) 2026 Frank Hoogen
 
-Hermes Hook is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed without any warranty; see [LICENSE](LICENSE).
+Hermes Hook is distributed under the MIT License. It is provided without any warranty; see [LICENSE](LICENSE).
 
 The third-party components and their licenses are listed in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES); the full license texts are in [LICENSES](LICENSES/).

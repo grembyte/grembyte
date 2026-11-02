@@ -4,7 +4,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs
 from hermes.core.pointer import PointerChain, module_bases, resolve_chain
@@ -30,7 +30,7 @@ class FreezeWorker(QThread):
     once via ``write_failed`` and retried silently.
     """
 
-    write_failed = pyqtSignal(str)
+    write_failed = Signal(str)
 
     INTERVAL_MS = 100
     MAPPINGS_INTERVAL = 1.0

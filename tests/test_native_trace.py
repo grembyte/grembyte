@@ -270,7 +270,7 @@ def test_native_trace_survives_a_crowded_address_space(tmp_path, qt_app, monkeyp
 @requires_target
 def test_native_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui.widgets.native_trace import NativeTraceDialog
 
@@ -397,7 +397,7 @@ def test_calls_filter_reads_counts_ranges_bounds_and_multiples():
 
 def test_rows_sort_by_column_and_filter_by_name_and_calls(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
 
     from hermes.features.trace import NEW, SAME, TraceRow
     from hermes.ui.widgets.native_trace import NativeRowModel

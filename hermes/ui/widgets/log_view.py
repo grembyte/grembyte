@@ -3,9 +3,9 @@
 import time
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QUrl, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QDesktopServices, QFontDatabase, QGuiApplication, QTextCursor  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QObject, QUrl, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QDesktopServices, QFontDatabase, QGuiApplication, QTextCursor  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QCheckBox,
     QComboBox,
     QDialog,
@@ -165,7 +165,7 @@ class ErrorReporter(QObject):
     one is shown, further ones are only counted (they are in the log).
     """
 
-    unhandled = pyqtSignal(str, str)
+    unhandled = Signal(str, str)
 
     def __init__(self, translations, open_log, parent=None):
         super().__init__(parent)
@@ -203,7 +203,7 @@ class ErrorReporter(QObject):
 class LogSignals(QObject):
     """``logs.subscribe`` as a Qt signal: an error was logged."""
 
-    error_logged = pyqtSignal()
+    error_logged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)

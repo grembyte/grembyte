@@ -49,8 +49,8 @@ def test_removing_a_process_takes_everything_saved_for_it(sessions, repository):
 
 def test_dialog_ticks_rows_and_deletes(qt_app, translations, sessions, repository, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-    from PyQt6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
     from hermes.ui.widgets.database_entries import (
         KIND_COLUMNS,
         PROCESS_COLUMN,
@@ -90,8 +90,8 @@ def test_dialog_ticks_rows_and_deletes(qt_app, translations, sessions, repositor
 
 def test_space_steps_the_selected_rows(qt_app, translations, sessions, repository):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-    from PyQt6.QtGui import QShortcut  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtGui import QShortcut  # pylint: disable=import-error,no-name-in-module
     from hermes.ui.widgets.database_entries import (
         KIND_COLUMNS,
         PROCESS_COLUMN,

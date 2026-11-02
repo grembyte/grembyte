@@ -1,6 +1,6 @@
 """Shared dialog button-row construction."""
 
-from PyQt6.QtWidgets import QHBoxLayout, QPushButton  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import QHBoxLayout, QPushButton  # pylint: disable=import-error,no-name-in-module
 
 from hermes.ui.widgets.icons import set_button_icon
 

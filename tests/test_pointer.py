@@ -359,7 +359,7 @@ def fixture_qt_app():
     # pylint: disable=import-outside-toplevel
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
     return QApplication.instance() or QApplication([])
 
@@ -433,7 +433,7 @@ def test_pointer_scan_dialog_scans_filters_and_picks(binary, qt_app, sessions):
         assert expected in dialog.candidates()
         assert repository.get_pointer_scan(entry_id).rounds == 1
 
-        from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+        from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
         row = next(r for r in range(dialog.table.rowCount())
                    if dialog.table.item(r, 0).data(Qt.ItemDataRole.UserRole) == expected)
         dialog.table.selectRow(row)
@@ -451,10 +451,10 @@ def _delete_window(window):
     ``destroyed`` handlers in the middle of a collection, which can crash the
     interpreter in a later test.
     """
-    from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module,import-outside-toplevel
+    import shiboken6  # pylint: disable=import-error,no-name-in-module,import-outside-toplevel
 
     window.close()
-    sip.delete(window)
+    shiboken6.delete(window)
 
 
 def test_main_window_table_headers_are_centered(qt_app, sessions, monkeypatch):
@@ -707,7 +707,7 @@ def test_pointer_dialog_stays_open_while_scanning(binary, qt_app, sessions, monk
 def test_pointer_dialog_survives_a_restart_of_the_program(binary, qt_app, sessions,
                                                          monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access,too-many-locals
-    from PyQt6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
 
     from hermes.db.repository.addresses import AddressRepository
     from hermes.db.repository.hooks import HookRepository
@@ -834,8 +834,8 @@ def test_pointer_dialog_survives_a_restart_of_the_program(binary, qt_app, sessio
 def test_scan_of_the_previous_program_is_cleared_on_a_switch(binary, qt_app, sessions,
                                                              monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access
-    from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-    from PyQt6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
 
     from hermes.db.repository.addresses import AddressRepository
     from hermes.db.repository.hooks import HookRepository
@@ -847,10 +847,10 @@ def test_scan_of_the_previous_program_is_cleared_on_a_switch(binary, qt_app, ses
     class InstantScan(QThread):
         """Finds one address at once; its results are still queued on the switch."""
 
-        results_ready = pyqtSignal(object)
-        scan_failed = pyqtSignal(str)
-        scan_cancelled = pyqtSignal()
-        progress_changed = pyqtSignal(int)
+        results_ready = Signal(object)
+        scan_failed = Signal(str)
+        scan_cancelled = Signal()
+        progress_changed = Signal(int)
 
         def __init__(self, *_args, parent=None, **_kwargs):
             super().__init__(parent)
@@ -928,9 +928,9 @@ def test_worker_finishing_after_its_dialog_was_deleted_is_harmless(qt_app, monke
     dialog.start_scan()
     worker = dialog._worker
     dialog.reject()
-    from PyQt6.QtCore import QCoreApplication, QEvent  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QCoreApplication, QEvent  # pylint: disable=import-error,no-name-in-module
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    assert pointer_scan.sip.isdeleted(dialog)
+    assert not getattr(pointer_scan.shiboken6, "isValid")(dialog)
 
     # The worker finishes now; its callbacks must not touch the deleted dialog.
     release.set()

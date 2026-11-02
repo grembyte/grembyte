@@ -3,8 +3,8 @@
 import itertools
 from dataclasses import replace
 
-from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QCheckBox,
     QDialog,
     QFormLayout,
@@ -60,7 +60,7 @@ class TraceFilterPanel(QWidget):
     """
 
     # pylint: disable=too-many-instance-attributes
-    selection_changed = pyqtSignal()
+    selection_changed = Signal()
 
     def __init__(self, translations, repository=None, parent=None):
         super().__init__(parent)

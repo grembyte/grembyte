@@ -5,9 +5,9 @@ instance UFunction of the catalog on a live object of its class."""
 import html
 from datetime import datetime
 
-from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QFontDatabase  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QFontDatabase  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QCheckBox,
     QDialog,
     QFormLayout,
@@ -101,8 +101,8 @@ class MethodCallDialog(QDialog):
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
     # a field of an inspected object to put on the address list (see ObjectInspectorDialog)
-    address_requested = pyqtSignal(object)
-    call_done = pyqtSignal()
+    address_requested = Signal(object)
+    call_done = Signal()
 
     def __init__(self, translations, pid=None, parent=None, worker=None):
         super().__init__(parent)

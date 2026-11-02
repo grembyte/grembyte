@@ -1,7 +1,7 @@
 """Window of the native function monitor: monitored functions and their calls."""
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
     QComboBox,
@@ -216,7 +216,7 @@ class NativeMonitorDialog(QDialog):
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
     # address (int) to show in the memory viewer
-    memory_requested = pyqtSignal(object)
+    memory_requested = Signal(object)
 
     def __init__(self, translations, pid, parent=None):
         super().__init__(parent)

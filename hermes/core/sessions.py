@@ -16,7 +16,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import QObject, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import activity, logs
 from hermes.platform import read_mappings
@@ -174,7 +174,7 @@ class SessionRegistry:
 class SessionSignals(QObject):
     """``changed`` of ``SESSIONS`` as a Qt signal, delivered in the GUI thread."""
 
-    changed = pyqtSignal()
+    changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)

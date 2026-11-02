@@ -11,7 +11,7 @@ from hermes.ui.localization import load_translations
 def fixture_qt_app():
     # pylint: disable=import-outside-toplevel
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
     return QApplication.instance() or QApplication([])
 
 
@@ -38,7 +38,7 @@ def _settle(qt_app):
 def test_windows_get_their_size_splitters_and_column_widths_back(qt_app, keeper):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from hermes.ui.widgets.scripts import ScriptPanel
-    from PyQt6.QtWidgets import QDialog, QVBoxLayout  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QDialog, QVBoxLayout  # pylint: disable=import-error,no-name-in-module
 
     translations = load_translations("en")
 
@@ -75,7 +75,7 @@ def test_windows_get_their_size_splitters_and_column_widths_back(qt_app, keeper)
 
 def test_modal_dialogs_get_only_their_size_back(qt_app, keeper):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import QSize  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QSize  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui import window_state
     from hermes.ui.widgets.scripts import ScriptDialog

@@ -6,8 +6,8 @@ a slot of ``finished`` that drops the last reference may destroy it too early.
 Workers of windows that close are kept here until then.
 """
 
-from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+import shiboken6  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core.wine_gadget import ensure_gadget
 
@@ -17,8 +17,8 @@ _workers = set()
 class GadgetDownloadWorker(QThread):
     """Download a Wine gadget without blocking the GUI thread."""
 
-    progress = pyqtSignal(int, int)
-    completed = pyqtSignal()
+    progress = Signal(int, int)
+    completed = Signal()
 
     def __init__(self, bits, parent=None):
         super().__init__(parent)
@@ -49,7 +49,8 @@ def _release(worker):
 def running_workers():
     """The workers kept right now."""
     # One deleted by Qt (e.g. never started, with its parent gone) runs no more.
-    _workers.difference_update([worker for worker in _workers if sip.isdeleted(worker)])
+    _workers.difference_update([worker for worker in _workers
+                                if not getattr(shiboken6, "isValid")(worker)])
     return set(_workers)
 
 

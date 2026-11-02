@@ -4,10 +4,10 @@ import dataclasses
 import html
 from datetime import datetime
 
-from PyQt6.QtCore import QThread, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QColor, QFontDatabase  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread, Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QColor, QFontDatabase  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy.exc import SQLAlchemyError
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QComboBox,
     QDialog,
@@ -475,14 +475,14 @@ class HookPanel(QGroupBox):
 
     # pylint: disable=too-many-instance-attributes
 
-    count_changed = pyqtSignal(int)
+    count_changed = Signal(int)
     # From the context menu: watch the target of a value hook (HookSpec, reads)
-    watch_requested = pyqtSignal(object, bool)
+    watch_requested = Signal(object, bool)
     # ... or monitor the method of a method hook (its identity)
-    monitor_requested = pyqtSignal(object)
+    monitor_requested = Signal(object)
     # From the debug window: add an address to the address list
     # (address, value type, description)
-    address_requested = pyqtSignal(object, str, str)  # object: int is 32-bit in Qt
+    address_requested = Signal(object, str, str)  # object: int is 32-bit in Qt
 
     _COLUMNS = (
         "hooks.column_label",

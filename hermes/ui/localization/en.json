@@ -14,7 +14,7 @@
   "menu.about": "About Hermes Hook …",
   "about.title": "About Hermes Hook",
   "about.project_version": "Hermes Hook {version}",
-  "about.license_notice": "Copyright (C) 2026 Frank Hoogen. Hermes Hook is free software under the GNU General Public License, version 3 or later, and comes with ABSOLUTELY NO WARRANTY. Third-party licenses: THIRD_PARTY_NOTICES and the LICENSES folder.",
+  "about.license_notice": "Copyright (C) 2026 Frank Hoogen. Hermes Hook is distributed under the MIT License and comes with ABSOLUTELY NO WARRANTY. Third-party licenses: THIRD_PARTY_NOTICES and the LICENSES folder.",
   "about.intro": "Open-source components used by Hermes Hook:",
   "about.component": "Component",
   "about.version": "Version",

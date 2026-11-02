@@ -31,7 +31,7 @@ import queue
 import threading
 import time
 
-from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import messages, sessions
 from hermes.core.memory import read_memory, write_process_bytes
@@ -56,30 +56,30 @@ class PtraceHookWorker(PtraceWatchpointEngine):
     signals exist for interface parity but this backend never emits them.
     """
 
-    session_ready = pyqtSignal(str)
-    hook_installed = pyqtSignal(int, dict)
-    hook_training = pyqtSignal(int, dict)
-    hook_failed = pyqtSignal(int, str)
-    hook_removed = pyqtSignal(int)
-    hook_updated = pyqtSignal(int)
-    hook_events = pyqtSignal(list)
-    transform_error = pyqtSignal(int, str)
-    callers_learned = pyqtSignal(int, list)
-    callers_ambiguous = pyqtSignal(int)
-    callers_dropped = pyqtSignal(int, int)
+    session_ready = Signal(str)
+    hook_installed = Signal(int, object)
+    hook_training = Signal(int, object)
+    hook_failed = Signal(int, str)
+    hook_removed = Signal(int)
+    hook_updated = Signal(int)
+    hook_events = Signal(object)
+    transform_error = Signal(int, str)
+    callers_learned = Signal(int, object)
+    callers_ambiguous = Signal(int)
+    callers_dropped = Signal(int, int)
     # Frida-only; kept for interface parity
-    site_method = pyqtSignal(list, str, object)
-    managed_failed = pyqtSignal(int, str)
-    site_state = pyqtSignal(list, str, int, str)
-    hook_profile = pyqtSignal(list)
+    site_method = Signal(object, str, object)
+    managed_failed = Signal(int, str)
+    site_state = Signal(object, str, int, str)
+    hook_profile = Signal(object)
     # ctx.log lines of scripts (also outside debug mode): [{hookId, time, text}],
     # lines dropped per hook id (more than the agent sends at once)
-    hook_logs = pyqtSignal(list, dict)
-    hook_debug = pyqtSignal(list, dict)
-    agent_log = pyqtSignal(str, str)
-    agent_warning = pyqtSignal(str)
-    worker_failed = pyqtSignal(str)
-    worker_stopped = pyqtSignal()
+    hook_logs = Signal(object, object)
+    hook_debug = Signal(object, object)
+    agent_log = Signal(str, str)
+    agent_warning = Signal(str)
+    worker_failed = Signal(str)
+    worker_stopped = Signal()
 
     # Pointer targets can move; re-resolve them this often.
     RERESOLVE_INTERVAL = 1.0

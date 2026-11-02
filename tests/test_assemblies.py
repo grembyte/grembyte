@@ -3,7 +3,7 @@
 import os
 
 import pytest
-from PyQt6.QtCore import QObject, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -43,7 +43,7 @@ def fixture_repository(sessions):
 def fixture_qt_app():
     # pylint: disable=import-outside-toplevel
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
     return QApplication.instance() or QApplication([])
 
@@ -56,9 +56,9 @@ def fixture_translations():
 class FakeCatalogWorker(QObject):
     """Answers the assembly list at once instead of attaching to a game."""
 
-    assemblies_found = pyqtSignal(list)
-    catalog_failed = pyqtSignal(str)
-    finished = pyqtSignal()
+    assemblies_found = Signal(object)
+    catalog_failed = Signal(str)
+    finished = Signal()
 
     def __init__(self, _pid, assemblies=None, engine=None):
         super().__init__()
@@ -100,7 +100,7 @@ def test_repository_replaces_the_selection_per_program(repository, process_id, s
 def test_window_selects_saves_and_clears(qt_app, repository, process_id, translations,
                                          monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui.widgets import assemblies
     from hermes.ui.widgets.assemblies import AssemblyDialog, AssemblySelectionStore

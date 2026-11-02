@@ -265,7 +265,7 @@ def test_large_agents_reach_the_gadget_in_parts(activity_file):
 
 def test_clicks_actions_and_windows_are_recorded(activity_file, qt_app):
     # pylint: disable=import-outside-toplevel
-    from PyQt6.QtWidgets import QComboBox, QDialog, QMenu, QPushButton, QVBoxLayout  # pylint: disable=no-name-in-module
+    from PySide6.QtWidgets import QComboBox, QDialog, QMenu, QPushButton, QVBoxLayout  # pylint: disable=no-name-in-module
 
     from hermes.ui.activity_recorder import UiRecorder
 

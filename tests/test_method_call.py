@@ -41,7 +41,7 @@ def _type(kind, name="T", **extra):
 def fixture_qt_app():
     # pylint: disable=import-outside-toplevel
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
     return QApplication.instance() or QApplication([])
 
@@ -173,21 +173,21 @@ class _FakeWorker:
 
     def __init__(self, _pid):
         # pylint: disable=import-outside-toplevel
-        from PyQt6.QtCore import QObject, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+        from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
 
         class Signals(QObject):  # pylint: disable=too-few-public-methods
-            call_described = pyqtSignal(int, dict)
-            called = pyqtSignal(int, dict)
-            call_failed = pyqtSignal(int, str)
-            worker_failed = pyqtSignal(str)
-            inspected = pyqtSignal(int, dict)
-            inspect_failed = pyqtSignal(int, str)
-            evaluated = pyqtSignal(int, list)
-            evaluate_failed = pyqtSignal(int, str)
-            methods_listed = pyqtSignal(int, list)
-            methods_failed = pyqtSignal(int, str)
-            text_fetched = pyqtSignal(int, object)
-            text_failed = pyqtSignal(int, str)
+            call_described = Signal(int, object)
+            called = Signal(int, object)
+            call_failed = Signal(int, str)
+            worker_failed = Signal(str)
+            inspected = Signal(int, object)
+            inspect_failed = Signal(int, str)
+            evaluated = Signal(int, object)
+            evaluate_failed = Signal(int, str)
+            methods_listed = Signal(int, object)
+            methods_failed = Signal(int, str)
+            text_fetched = Signal(int, object)
+            text_failed = Signal(int, str)
 
         self.signals = Signals()
         self.call_described = self.signals.call_described
@@ -301,7 +301,7 @@ def test_call_dialog_reads_arguments_and_logs_results(qt_app, translations, monk
 
 def test_unreal_instance_functions_run_on_a_found_object(qt_app, translations, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from PyQt6.QtWidgets import QCheckBox  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QCheckBox  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui.widgets import method_call
 
@@ -401,7 +401,7 @@ def test_only_static_methods_can_be_called(qt_app, translations, tmp_path):
 
 def test_an_object_a_call_returns_opens_in_the_inspector(qt_app, translations, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from PyQt6.QtCore import QUrl  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QUrl  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui.widgets import method_call
 
@@ -446,7 +446,7 @@ def test_an_object_a_call_returns_opens_in_the_inspector(qt_app, translations, m
 
 def test_the_inspector_sets_properties_and_calls_methods(qt_app, translations, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from PyQt6.QtWidgets import QWidget  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QWidget  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui import window_state
     from hermes.ui.widgets import method_call

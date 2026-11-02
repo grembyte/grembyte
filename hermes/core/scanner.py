@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 import numpy as np
-from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs
 from hermes.core.messages import LocalizedValueError
@@ -278,10 +278,10 @@ class ScanWorker(QThread):
     """Scan readable process mappings without blocking the UI thread."""
 
     # ScanResults or a MemorySnapshot.
-    results_ready = pyqtSignal(object)
-    scan_failed = pyqtSignal(str)
-    scan_cancelled = pyqtSignal()
-    progress_changed = pyqtSignal(int)
+    results_ready = Signal(object)
+    scan_failed = Signal(str)
+    scan_cancelled = Signal()
+    progress_changed = Signal(int)
 
     _VALUE_FORMATS = _VALUE_FORMATS
     _NUMPY_DTYPES = _NUMPY_DTYPES
@@ -708,9 +708,9 @@ class ValueRefreshWorker(QThread):
     the entry's ``key`` (None if the chain does not resolve right now).
     """
 
-    values_ready = pyqtSignal(dict)
-    addresses_resolved = pyqtSignal(dict)
-    refresh_failed = pyqtSignal(str)
+    values_ready = Signal(object)
+    addresses_resolved = Signal(object)
+    refresh_failed = Signal(str)
 
     def __init__(self, pid, entries, parent=None):
         super().__init__(parent)

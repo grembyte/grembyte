@@ -8,9 +8,9 @@ lists them, keeps a note for each and hands them to the monitors.
 
 from dataclasses import asdict
 
-from PyQt6.QtCore import QItemSelectionModel, QObject, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QGuiApplication, QKeySequence, QShortcut  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QItemSelectionModel, QObject, Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QDialog,
     QHBoxLayout,
@@ -50,9 +50,9 @@ class FavoriteStore(QObject):
     """
 
     # The set of favorites changed (added or removed)
-    changed = pyqtSignal()
+    changed = Signal()
     # A database error, as text
-    failed = pyqtSignal(str)
+    failed = Signal(str)
 
     def __init__(self, repository, parent=None):
         super().__init__(parent)
@@ -217,15 +217,15 @@ class FavoritesDialog(QDialog):
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
     # [CatalogMethod] to log the calls of
-    method_monitor_requested = pyqtSignal(list)
+    method_monitor_requested = Signal(object)
     # [NativeFunction] to log the calls of
-    native_monitor_requested = pyqtSignal(list)
+    native_monitor_requested = Signal(object)
     # CatalogMethod to call ("Call …"), see _callable_method
-    call_requested = pyqtSignal(object)
+    call_requested = Signal(object)
     # CatalogMethod to create a method hook for
-    method_hook_requested = pyqtSignal(object)
+    method_hook_requested = Signal(object)
     # CatalogMethod to show in the call graph
-    calls_requested = pyqtSignal(object)
+    calls_requested = Signal(object)
 
     def __init__(self, translations, store, parent=None):
         super().__init__(parent)

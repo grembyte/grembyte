@@ -30,7 +30,7 @@ from capstone import (  # pylint: disable=import-error
     CS_OP_MEM,
     Cs,
 )
-from PyQt6.QtCore import QThread  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import messages
 from hermes.core.pointer import module_bases

@@ -3,7 +3,7 @@
 from hermes.ui.styles.styles import STYLE, build_stylesheet
 from hermes.ui.localization import load_translations
 from hermes.ui.styles.themes import COLOR_KEYS, ThemeManager
-from PyQt6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
 
 
 class MemorySettings:
@@ -105,8 +105,8 @@ def test_github_themes_are_bundled():
 
 def test_existing_menu_icons_follow_theme(monkeypatch):
     # pylint: disable=import-outside-toplevel
-    from PyQt6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
-    from PyQt6.QtWidgets import QApplication, QMenu  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication, QMenu  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui.widgets.icons import apply_icon_theme, material_icon
 

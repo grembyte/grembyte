@@ -2,9 +2,9 @@
 
 import math
 
-from PyQt6.QtCore import QSize, Qt  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QTextOption  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QSize, Qt  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QTextOption  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QFrame,
     QLabel,
     QSizePolicy,

@@ -6,14 +6,13 @@ that appeared since, and notes the windows and dialogs that opened or
 closed. Only what was clicked is recorded, with its window; nothing typed
 into fields.
 
-Not an event filter on the application: PyQt wraps the receiver of every
-event for a Python filter before the filter can look at it, and an object
-Qt is deleting just then (a closed window's widgets, deleted later) crashed
-Hermes in sip.
+Not an event filter on the application: Python event filters can receive
+wrappers for Qt objects that are being deleted; accessing those wrappers
+crashed Hermes in the Qt binding's object wrapper.
 """
 
-from PyQt6.QtCore import QObject, Qt, QTimer  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QObject, Qt, QTimer  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractButton,
     QAbstractItemView,
     QApplication,

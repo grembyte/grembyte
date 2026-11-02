@@ -148,14 +148,14 @@ def test_repository_keeps_user_filters(repository):
 def fixture_qt_app():
     # pylint: disable=import-outside-toplevel
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
     return QApplication.instance() or QApplication([])
 
 
 def test_panel_counts_and_selects(qt_app, repository):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
     from hermes.ui.widgets.trace_filters import TraceFilterPanel
 
     translations = load_translations("de")

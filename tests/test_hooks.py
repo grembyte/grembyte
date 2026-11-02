@@ -279,7 +279,7 @@ def _wait_for(app, predicate, timeout=5):
 @pytest.fixture(name="qt_app", scope="module")
 def fixture_qt_app():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module,import-outside-toplevel
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module,import-outside-toplevel
 
     return QApplication.instance() or QApplication([])
 
@@ -718,7 +718,7 @@ def test_hook_edited_while_the_game_exits_is_only_saved(tmp_path, qt_app, transl
     # pylint: disable=import-outside-toplevel,protected-access
     import types
 
-    from PyQt6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui.widgets import hooks
 

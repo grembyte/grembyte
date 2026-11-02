@@ -248,7 +248,7 @@ def test_only_exports_of_hermes_hook_are_read(tmp_path, repository):
 def test_import_dialog_selects_the_target_and_imports(qt_app, translations, sessions,
                                                       repository, tmp_path, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
     from hermes.ui.widgets.game_export import GameImportDialog
 
     path = tmp_path / "export.json"

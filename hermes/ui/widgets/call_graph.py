@@ -1,8 +1,8 @@
 """Window of the call graph: what a C# method calls and who calls it."""
 
-from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QDialog,
     QHBoxLayout,
@@ -49,7 +49,7 @@ class CallGraphDialog(QDialog):
     # pylint: disable=too-many-instance-attributes
 
     # CatalogMethod to log the calls of
-    monitor_requested = pyqtSignal(object)
+    monitor_requested = Signal(object)
 
     def __init__(self, translations, pid, method, parent=None, engine=None, selection=(),
                  game=None):

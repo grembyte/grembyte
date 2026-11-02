@@ -17,7 +17,7 @@ from hermes.platform.linux import parse_maps
 def fixture_qt_app():
     # pylint: disable=import-outside-toplevel
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
     return QApplication.instance() or QApplication([])
 
@@ -93,7 +93,7 @@ def test_describe_address():
 
 def test_viewer_shows_bytes_values_and_changes(qt_app):
     # pylint: disable=import-outside-toplevel
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui.localization import load_translations
     from hermes.ui.widgets.memory_view import BYTES_PER_ROW, MemoryViewerDialog

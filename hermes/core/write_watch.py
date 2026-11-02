@@ -11,7 +11,7 @@ import sys
 import threading
 
 import frida
-from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs, messages
 from hermes.core import sessions
@@ -69,11 +69,11 @@ class WriteWatchWorker(QThread):
     instruction ``read`` and/or ``write``-s the target.
     """
 
-    monitor_ready = pyqtSignal(int, str)
-    hits_ready = pyqtSignal(list)
-    monitor_warning = pyqtSignal(str)
-    monitor_failed = pyqtSignal(str)
-    monitor_stopped = pyqtSignal()
+    monitor_ready = Signal(int, str)
+    hits_ready = Signal(object)
+    monitor_warning = Signal(str)
+    monitor_failed = Signal(str)
+    monitor_stopped = Signal()
 
     def __init__(self, pid, address, size, parent=None, reads=False):
         # pylint: disable=too-many-arguments

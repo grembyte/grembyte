@@ -1,8 +1,8 @@
 """Window of the native trace: which functions of the game's code a scenario runs."""
 
-from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
     QDialog,
@@ -81,9 +81,9 @@ class NativeTraceDialog(QDialog):
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
     # address (int) to show in the memory viewer
-    memory_requested = pyqtSignal(object)
+    memory_requested = Signal(object)
     # NativeFunction whose calls to monitor
-    monitor_requested = pyqtSignal(object)
+    monitor_requested = Signal(object)
 
     def __init__(self, translations, pid, parent=None, favorites=None):
         super().__init__(parent)

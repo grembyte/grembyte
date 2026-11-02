@@ -14,8 +14,8 @@ hides nor re-creates it, so a modal dialog stays open.
 
 import sys
 
-from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import QApplication, QDialog  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import QApplication, QDialog  # pylint: disable=import-error,no-name-in-module
 
 _BUTTONS = Qt.WindowType.WindowMinMaxButtonsHint
 

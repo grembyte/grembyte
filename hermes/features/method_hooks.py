@@ -69,7 +69,7 @@ import threading
 from dataclasses import dataclass
 
 import frida
-from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs, messages
 from hermes.core import sessions
@@ -129,33 +129,33 @@ class MethodHookWorker(QThread):
 
     _requests = itertools.count(1)
 
-    session_ready = pyqtSignal(str)
-    hook_installed = pyqtSignal(int, dict)
-    hook_failed = pyqtSignal(int, str)
-    hook_removed = pyqtSignal(int)
-    hook_updated = pyqtSignal(int)
+    session_ready = Signal(str)
+    hook_installed = Signal(int, object)
+    hook_failed = Signal(int, str)
+    hook_removed = Signal(int)
+    hook_updated = Signal(int)
     # [{hookId, count, last: {old, result, kept, error}}]
-    hook_events = pyqtSignal(list)
+    hook_events = Signal(object)
     # ctx.log lines: {hookId, time, text, targets?}; lines dropped per hook id
-    hook_logs = pyqtSignal(list, dict)
-    inspected = pyqtSignal(int, dict)
-    inspect_failed = pyqtSignal(int, str)
-    evaluated = pyqtSignal(int, list)
-    evaluate_failed = pyqtSignal(int, str)
-    methods_listed = pyqtSignal(int, list)
-    methods_failed = pyqtSignal(int, str)
-    call_described = pyqtSignal(int, dict)
-    called = pyqtSignal(int, dict)
-    call_failed = pyqtSignal(int, str)
-    text_fetched = pyqtSignal(int, object)
-    text_failed = pyqtSignal(int, str)
-    transform_error = pyqtSignal(int, str)
-    hook_debug = pyqtSignal(list, dict)
+    hook_logs = Signal(object, object)
+    inspected = Signal(int, object)
+    inspect_failed = Signal(int, str)
+    evaluated = Signal(int, object)
+    evaluate_failed = Signal(int, str)
+    methods_listed = Signal(int, object)
+    methods_failed = Signal(int, str)
+    call_described = Signal(int, object)
+    called = Signal(int, object)
+    call_failed = Signal(int, str)
+    text_fetched = Signal(int, object)
+    text_failed = Signal(int, str)
+    transform_error = Signal(int, str)
+    hook_debug = Signal(object, object)
     # hook id: the game freed the method's code (e.g. while exiting)
-    hook_ended = pyqtSignal(int)
-    agent_log = pyqtSignal(str, str)
-    agent_warning = pyqtSignal(str)
-    worker_failed = pyqtSignal(str)
+    hook_ended = Signal(int)
+    agent_log = Signal(str, str)
+    agent_warning = Signal(str)
+    worker_failed = Signal(str)
 
     def __init__(self, pid, parent=None):
         super().__init__(parent)

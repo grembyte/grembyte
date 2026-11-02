@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
-from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QDialog,
     QHeaderView,

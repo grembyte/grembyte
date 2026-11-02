@@ -122,7 +122,7 @@ def test_dialog_navigates_and_searches_callers(monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access,too-many-locals
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
     from hermes.engines.registry import engine_by_id
     from hermes.features.call_graph import CallGraphWorker
     from hermes.ui.localization import load_translations

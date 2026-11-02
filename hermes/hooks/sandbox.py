@@ -9,7 +9,7 @@ and ``console.log()`` output is collected. A QCoreApplication must exist.
 import math
 from dataclasses import dataclass, field
 
-from PyQt6.QtQml import QJSEngine  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtQml import QJSEngine  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import messages
 from hermes.core.value_types import VALUE_TYPES

@@ -5,7 +5,7 @@ import sys
 import threading
 
 import pytest
-from PyQt6.QtCore import QObject, QThread, pyqtSignal, qWarning  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QObject, QThread, Signal, qWarning  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs
 from hermes.ui.widgets.log_view import read_log
@@ -72,9 +72,9 @@ def test_exceptions_nothing_caught_are_logged_not_fatal(log_file, qt_app):
 
 def test_worker_failures_are_logged_once_per_interval(log_file):
     class Worker(QObject):
-        worker_failed = pyqtSignal(str)
-        hook_failed = pyqtSignal(int, str)
-        progress = pyqtSignal(int)
+        worker_failed = Signal(str)
+        hook_failed = Signal(int, str)
+        progress = Signal(int)
 
         pid = 4711
 
@@ -91,7 +91,7 @@ def test_worker_failures_are_logged_once_per_interval(log_file):
 
 
 def test_qt_messages_go_to_the_log(log_file):
-    qWarning(b"something odd")
+    qWarning("something odd")
     assert "WARNING  [MainThread] hermes.qt: something odd" in _text(log_file)
 
 

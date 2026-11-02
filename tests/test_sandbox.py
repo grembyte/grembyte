@@ -12,7 +12,7 @@ from hermes.hooks.transforms import ClampTransform, MultiplyTransform
 def fixture_sandbox():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     # pylint: disable=import-error,no-name-in-module,import-outside-toplevel
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     from hermes.hooks.sandbox import TransformSandbox
 
     app = QApplication.instance() or QApplication([])

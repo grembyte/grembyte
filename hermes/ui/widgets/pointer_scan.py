@@ -1,8 +1,8 @@
 """Dialog for finding pointer chains to an address-list entry."""
 
-from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtCore import Qt, QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+import shiboken6  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt, QThread, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
     QDialog,
@@ -51,9 +51,9 @@ class PointerScanWorker(QThread):
     """Run a pointer scan, or filter candidates, outside the GUI thread."""
 
     # phase ("reading", "searching", "filtering") and percent or level
-    progress = pyqtSignal(str, int)
-    chains_ready = pyqtSignal(list)
-    failed = pyqtSignal(str)
+    progress = Signal(str, int)
+    chains_ready = Signal(object)
+    failed = Signal(str)
 
     def __init__(self, pid, target, *, chains=None, max_depth=5, max_offset=0x1000,
                  max_results=10000, base_modules=None, aligned_values=True, parent=None):
@@ -136,9 +136,9 @@ class PointerScanDialog(QDialog):
     # Widgets are created by _build_ui called from __init__.
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
-    chain_chosen = pyqtSignal(object)
+    chain_chosen = Signal(object)
     # Candidates (list of PointerChain) to add to the address list as entries.
-    chains_adopted = pyqtSignal(list)
+    chains_adopted = Signal(object)
 
     def __init__(self, translations, repository, pid, entry, parent=None,
                  address_source=None):
@@ -471,7 +471,7 @@ class PointerScanDialog(QDialog):
 
     def _if_alive(self, callback):
         """Wrap a worker callback so it is skipped once the dialog is deleted."""
-        return lambda *args: None if sip.isdeleted(self) else callback(*args)
+        return lambda *args: None if not getattr(shiboken6, "isValid")(self) else callback(*args)
 
     def _on_progress(self, phase, value):
         if phase == "searching":

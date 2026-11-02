@@ -1,7 +1,7 @@
 """Window of the Mono trace: which C# methods a scenario in the game runs."""
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
     QDialog,
@@ -249,7 +249,7 @@ def trace_table(model, stretch_column, sortable=False, favorites=None, source=""
 class RowFilterBar(QWidget):
     """Narrow the rows of a trace down: by words in the name, by call count."""
 
-    changed = pyqtSignal()
+    changed = Signal()
 
     def __init__(self, translations, parent=None):
         super().__init__(parent)
@@ -298,8 +298,8 @@ class TraceDialog(QDialog):
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
     # CatalogMethod to log the calls of, or to create a method hook for
-    monitor_requested = pyqtSignal(object)
-    hook_requested = pyqtSignal(object)
+    monitor_requested = Signal(object)
+    hook_requested = Signal(object)
 
     def __init__(self, translations, pid, parent=None, engine=None, filter_repository=None,
                  favorites=None, assembly_selection=None):

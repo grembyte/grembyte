@@ -13,7 +13,7 @@ are mixed in.
 from datetime import date
 from pathlib import Path
 
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
     QDialog,

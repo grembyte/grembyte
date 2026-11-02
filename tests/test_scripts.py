@@ -15,7 +15,7 @@ from hermes.ui.localization import language_code, load_translations
 def fixture_qt_app():
     # pylint: disable=import-outside-toplevel
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
     return QApplication.instance() or QApplication([])
 
 
@@ -64,8 +64,8 @@ def test_the_dialog_builds_a_script_and_rejects_busy_loops(qt_app, language):
 
 def test_the_address_search_folds_away_and_stays_so(qt_app, tmp_path, monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access,unused-argument
-    from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
-    from PyQt6.QtCore import QSettings  # pylint: disable=import-error,no-name-in-module
+    import shiboken6  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QSettings  # pylint: disable=import-error,no-name-in-module
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
@@ -93,7 +93,7 @@ def test_the_address_search_folds_away_and_stays_so(qt_app, tmp_path, monkeypatc
 
     def close(window):
         window.close()
-        sip.delete(window)
+        shiboken6.delete(window)
 
     try:
         window = open_window()
@@ -143,8 +143,8 @@ def test_the_address_search_folds_away_and_stays_so(qt_app, tmp_path, monkeypatc
 
 def test_native_tools_ask_first_in_mono_games(qt_app, tmp_path, monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access,unused-argument
-    from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
-    from PyQt6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
+    import shiboken6  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
@@ -186,7 +186,7 @@ def test_native_tools_ask_first_in_mono_games(qt_app, tmp_path, monkeypatch):
         assert asked == ["Trace", "Trace"]
     finally:
         window.close()
-        sip.delete(window)
+        shiboken6.delete(window)
         engine.dispose()
 
 
@@ -198,30 +198,30 @@ class _FakeScriptWorker:
 
     def __init__(self, _pid, _parent=None, _language="en"):
         # pylint: disable=import-outside-toplevel
-        from PyQt6.QtCore import QObject, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+        from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
 
         class Signals(QObject):  # pylint: disable=too-few-public-methods
-            script_added = pyqtSignal(int)
-            script_updated = pyqtSignal(int)
-            script_removed = pyqtSignal(int)
-            script_failed = pyqtSignal(int, str)
-            script_ran = pyqtSignal(int, dict)
-            worker_failed = pyqtSignal(str)
-            inspected = pyqtSignal(int, dict)
-            inspect_failed = pyqtSignal(int, str)
-            evaluated = pyqtSignal(int, list)
-            evaluate_failed = pyqtSignal(int, str)
-            methods_listed = pyqtSignal(int, list)
-            methods_failed = pyqtSignal(int, str)
-            text_fetched = pyqtSignal(int, object)
-            text_failed = pyqtSignal(int, str)
-            gas_listed = pyqtSignal(int, object)
-            gas_failed = pyqtSignal(int, str)
-            gas_set = pyqtSignal(int, object)
-            gas_set_failed = pyqtSignal(int, str)
-            options_listed = pyqtSignal(int, list)
-            options_failed = pyqtSignal(int, str)
-            finished = pyqtSignal()
+            script_added = Signal(int)
+            script_updated = Signal(int)
+            script_removed = Signal(int)
+            script_failed = Signal(int, str)
+            script_ran = Signal(int, object)
+            worker_failed = Signal(str)
+            inspected = Signal(int, object)
+            inspect_failed = Signal(int, str)
+            evaluated = Signal(int, object)
+            evaluate_failed = Signal(int, str)
+            methods_listed = Signal(int, object)
+            methods_failed = Signal(int, str)
+            text_fetched = Signal(int, object)
+            text_failed = Signal(int, str)
+            gas_listed = Signal(int, object)
+            gas_failed = Signal(int, str)
+            gas_set = Signal(int, object)
+            gas_set_failed = Signal(int, str)
+            options_listed = Signal(int, object)
+            options_failed = Signal(int, str)
+            finished = Signal()
 
         self.signals = Signals()
         self.script_added = self.signals.script_added
@@ -294,7 +294,7 @@ class _FakeScriptWorker:
 
 def test_objects_scripts_return_open_in_the_inspector_from_the_log(qt_app, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from PyQt6.QtCore import QUrl  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QUrl  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui.widgets import scripts
 
@@ -337,7 +337,7 @@ def test_objects_scripts_return_open_in_the_inspector_from_the_log(qt_app, monke
 @pytest.mark.parametrize("language, suffix", [("en", "(copy)"), ("de", "(Kopie)")])
 def test_context_menu_creates_a_localized_script_copy(qt_app, monkeypatch, language, suffix):
     # pylint: disable=import-outside-toplevel,protected-access,unused-argument
-    from PyQt6.QtCore import QPoint  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QPoint  # pylint: disable=import-error,no-name-in-module
 
     from hermes.features.scripts import ScriptParam
     from hermes.ui.widgets import scripts
@@ -479,7 +479,7 @@ def test_the_dialog_defines_parameters_and_their_options(qt_app):
 
 def test_running_by_hand_asks_for_the_parameters(qt_app, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from PyQt6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
 
     from hermes.features.scripts import ScriptParam
     from hermes.ui.widgets import scripts

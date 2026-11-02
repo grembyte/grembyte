@@ -3,7 +3,7 @@
 from html import escape
 from importlib.metadata import PackageNotFoundError, version
 
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -24,9 +24,9 @@ _COMPONENTS = (
      "https://github.com/giampaolo/psutil/blob/master/LICENSE"),
     ("NumPy", "numpy", "BSD 3-Clause", "https://numpy.org/",
      "https://github.com/numpy/numpy/blob/main/LICENSE.txt"),
-    ("PyQt6", "PyQt6", "GPL v3", "https://riverbankcomputing.com/software/pyqt/",
-     "https://www.riverbankcomputing.com/commercial/license-faq"),
-    ("Qt 6", "PyQt6-Qt6", "LGPL v3", "https://www.qt.io/",
+    ("PySide6", "PySide6_Essentials", "LGPL v3", "https://doc.qt.io/qtforpython-6/",
+     "https://www.qt.io/licensing/"),
+    ("Qt 6", "PySide6_Essentials", "LGPL v3", "https://www.qt.io/",
      "https://www.qt.io/licensing/open-source-lgpl-obligations"),
     ("SQLAlchemy", "SQLAlchemy", "MIT", "https://www.sqlalchemy.org/",
      "https://github.com/sqlalchemy/sqlalchemy/blob/main/LICENSE"),

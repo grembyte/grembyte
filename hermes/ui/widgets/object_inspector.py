@@ -3,9 +3,9 @@
 import json
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QColor, QGuiApplication  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt, QTimer, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QColor, QGuiApplication  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
     QDialog,
@@ -84,7 +84,7 @@ class InspectorSection(QWidget):
     ``inspector/<key>_open``, ``default`` the first time).
     """
 
-    toggled = pyqtSignal(bool)
+    toggled = Signal(bool)
 
     def __init__(self, translations, title, tooltip, body, controls=(), key=None, default=True):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -163,7 +163,7 @@ class ObjectInspectorDialog(QDialog):
     # pylint: disable=attribute-defined-outside-init  # the _build_* helpers of _build_ui
 
     # {"address": int, "value_type": str, "label": str} to add to the address list
-    address_requested = pyqtSignal(object)
+    address_requested = Signal(object)
 
     def __init__(self, translations, open_object, target=None, request=None,
                  contents=None, captured=None, evaluate=None, name="", depth=1, parent=None,

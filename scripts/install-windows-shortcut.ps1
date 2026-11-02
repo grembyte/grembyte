@@ -31,7 +31,7 @@ New-Item -ItemType Directory -Force (Split-Path $IconFile) | Out-Null
 $env:QT_QPA_PLATFORM = "offscreen"
 & (Join-Path $VenvDir "Scripts\python.exe") -c @"
 import sys
-from PyQt6.QtGui import QGuiApplication, QIcon
+from PySide6.QtGui import QGuiApplication, QIcon
 app = QGuiApplication(sys.argv)
 image = QIcon(sys.argv[1]).pixmap(256, 256).toImage()
 sys.exit(0 if image.save(sys.argv[2], 'ICO') else 1)

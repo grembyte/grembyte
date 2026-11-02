@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -29,12 +29,12 @@ class WriteWatchDialog(QDialog):
     columns tell what each instruction does with the target.
     """
 
-    stop_requested = pyqtSignal()
+    stop_requested = Signal()
     # trap PC (instruction after the write), module/offset description
     # (a Qt int has 32 bits and would cut off 64-bit addresses)
-    hook_requested = pyqtSignal(object, str)
+    hook_requested = Signal(object, str)
     # trap PC to monitor in the native function monitor
-    monitor_requested = pyqtSignal(object)
+    monitor_requested = Signal(object)
 
     def __init__(self, address, size, translations, parent=None, reads=False):
         # pylint: disable=too-many-arguments

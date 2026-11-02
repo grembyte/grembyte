@@ -35,7 +35,7 @@ import threading
 from dataclasses import dataclass
 
 import frida
-from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import activity, logs, messages, settings
 from hermes.core import sessions
@@ -289,17 +289,17 @@ class AgentWorker(QThread):
     """
 
     # step, done, total, item at hand (e.g. the method Mono compiles)
-    progress = pyqtSignal(str, int, int, str)
+    progress = Signal(str, int, int, str)
     # recording of the phase ("baseline", "scenario") has begun
-    began = pyqtSignal(str)
+    began = Signal(str)
     # {phase, calls, methods, events} while recording
-    live = pyqtSignal(dict)
+    live = Signal(object)
     # a ``finish`` answer: {phase, duration, counts, events, dropped}
-    recorded = pyqtSignal(dict)
-    stopped = pyqtSignal()
+    recorded = Signal(object)
+    stopped = Signal()
     # a command failed: what was asked, message
-    command_failed = pyqtSignal(str, str)
-    worker_failed = pyqtSignal(str)
+    command_failed = Signal(str, str)
+    worker_failed = Signal(str)
 
     # What failed to load, for the log
     agent_name = "trace"
@@ -458,14 +458,14 @@ class TraceWorker(AgentWorker):
     """
 
     # {methods, skipped: {abstract, native, generic}, assemblies}
-    planned = pyqtSignal(dict)
+    planned = Signal(object)
     # every method a trace could hook (CatalogMethods), {abstract, native, generic}
-    candidates_found = pyqtSignal(list, dict)
+    candidates_found = Signal(object, object)
     # CatalogMethods in index order, {skipped: {abstract, native, generic, com},
     # notCompiled, failed}
-    started = pyqtSignal(list, dict)
+    started = Signal(object, object)
     # the game freed traced code (e.g. while exiting); the trace was removed
-    ended = pyqtSignal()
+    ended = Signal()
 
     agent_name = "Mono trace"
     agent_key = "mono_trace"

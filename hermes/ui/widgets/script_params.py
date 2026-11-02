@@ -7,8 +7,8 @@ session (``options_cache``) and shows them in a combo box that filters by
 any part of a choice's text.
 """
 
-from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
     QComboBox,

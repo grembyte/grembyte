@@ -2,8 +2,8 @@
 
 import time
 
-from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtCore import QThread  # pylint: disable=import-error,no-name-in-module
+import shiboken6  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread  # pylint: disable=import-error,no-name-in-module
 
 from hermes.ui import workers
 
@@ -36,6 +36,6 @@ def test_stop_workers_without_workers_is_true():
 def test_a_worker_deleted_before_it_started_is_dropped():
     worker = _Worker()
     workers.keep_until_finished(worker)
-    sip.delete(worker)
+    shiboken6.delete(worker)
     assert workers.stop_workers(0)
     assert not workers.running_workers()

@@ -4,10 +4,10 @@ from functools import lru_cache
 from pathlib import Path
 import re
 
-from PyQt6.QtCore import QByteArray, QEvent, QObject, QRectF, Qt  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QGuiApplication, QIcon, QPainter, QPixmap  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtSvg import QSvgRenderer  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QByteArray, QEvent, QObject, QRectF, Qt  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QGuiApplication, QIcon, QPainter, QPixmap  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtSvg import QSvgRenderer  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
 ICONS_DIR = Path(__file__).resolve().parent.parent / "resources" / "icons"
 

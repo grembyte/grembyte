@@ -28,7 +28,7 @@ functions beyond it are lost, the answers count them in ``lost``.
 
 from dataclasses import dataclass
 
-from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Signal  # pylint: disable=import-error,no-name-in-module
 
 import sys
 import threading
@@ -221,9 +221,9 @@ class NativeTraceWorker(AgentWorker):
     """
 
     # TraceThreads (the busiest first), TraceModules, platform
-    inventory_found = pyqtSignal(list, list, str)
+    inventory_found = Signal(object, object, str)
     # {threads, failed, modules}
-    started = pyqtSignal(dict)
+    started = Signal(object)
 
     agent_name = "native trace"
     agent_key = "native_trace"

@@ -1419,7 +1419,7 @@ def test_inspector_puts_number_fields_on_the_address_list(qt_app, translations):
 
 def test_inspector_action_columns_can_be_resized(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtWidgets import QHeaderView  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QHeaderView  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
 
@@ -1894,7 +1894,7 @@ def test_method_hook_signature_shows_argument_names():
 
 def test_method_script_with_a_syntax_error_is_refused(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from PyQt6.QtWidgets import QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
     from hermes.hooks.syntax import checker
     from hermes.ui.widgets.hooks import HookDialog
 
@@ -2353,7 +2353,7 @@ def test_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, translati
 @requires_target
 def test_trace_dialog_traces_a_preselection(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
     from hermes.ui.widgets.trace import TraceDialog
 
     target = _MonoTarget(_build(tmp_path))
@@ -2497,7 +2497,7 @@ def test_agent_answers_while_mono_works_on_a_thread_of_its_own(tmp_path, qt_app)
 @requires_target
 def test_hook_panel_logs_scripts_and_acts_on_several_hooks(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from PyQt6.QtCore import QUrl  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QUrl  # pylint: disable=import-error,no-name-in-module
     from hermes.features.method_hooks import MethodHookSpec
     from hermes.ui.widgets.hooks import HookPanel
 

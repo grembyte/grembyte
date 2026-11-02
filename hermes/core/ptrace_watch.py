@@ -10,7 +10,7 @@ module turns watchpoint traps into the hit records the UI shows.
 import errno
 import time
 
-from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import messages, sessions
 from hermes.core.memory import read_memory
@@ -34,11 +34,11 @@ class PtraceWriteWatchWorker(PtraceWatchpointEngine):
     instruction ``read`` and/or ``write``-s the target.
     """
 
-    monitor_ready = pyqtSignal(int, str)
-    hits_ready = pyqtSignal(list)
-    monitor_warning = pyqtSignal(str)
-    monitor_failed = pyqtSignal(str)
-    monitor_stopped = pyqtSignal()
+    monitor_ready = Signal(int, str)
+    hits_ready = Signal(object)
+    monitor_warning = Signal(str)
+    monitor_failed = Signal(str)
+    monitor_stopped = Signal()
 
     FLUSH_INTERVAL = 0.1
 

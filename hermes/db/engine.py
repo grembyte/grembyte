@@ -6,7 +6,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from PyQt6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker

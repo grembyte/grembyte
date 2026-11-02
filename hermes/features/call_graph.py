@@ -29,7 +29,7 @@ import threading
 from dataclasses import dataclass
 
 import frida
-from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs, messages
 from hermes.core import sessions
@@ -292,15 +292,15 @@ class CallGraphWorker(QThread):
 
     # request id, method (CatalogMethod), its Calls, the Calls of its body
     # in a compiler-made MoveNext (async methods, iterators)
-    callees_found = pyqtSignal(int, object, list, list)
+    callees_found = Signal(int, object, object, object)
     # request id, method, the Calls of the methods that call it, the
     # assemblies not searched (offline: no call index in the cache)
-    callers_found = pyqtSignal(int, object, list, list)
+    callers_found = Signal(int, object, object, object)
     # request id, message (NOT_CACHED: offline, not in the cache)
-    request_failed = pyqtSignal(int, str)
+    request_failed = Signal(int, str)
     # assemblies indexed so far, of how many, the one at hand
-    progress = pyqtSignal(int, int, str)
-    worker_failed = pyqtSignal(str)
+    progress = Signal(int, int, str)
+    worker_failed = Signal(str)
 
     NOT_CACHED = "not cached"
 

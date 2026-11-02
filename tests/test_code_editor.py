@@ -5,15 +5,15 @@ from tests.test_hooks import fixture_qt_app, fixture_translations  # pylint: dis
 
 def _press(editor, key):
     # pylint: disable=import-outside-toplevel
-    from PyQt6.QtTest import QTest  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtTest import QTest  # pylint: disable=import-error,no-name-in-module
 
     QTest.keyClick(editor, key)
 
 
 def test_tab_indents_by_two_spaces_and_shift_tab_outdents(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-    from PyQt6.QtGui import QTextCursor  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtGui import QTextCursor  # pylint: disable=import-error,no-name-in-module
     from hermes.ui.widgets.code_editor import CodeEditor
 
     editor = CodeEditor("a\nb\nc")

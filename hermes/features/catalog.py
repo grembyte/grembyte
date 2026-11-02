@@ -12,7 +12,7 @@ import threading
 from dataclasses import dataclass, field, replace
 
 import frida
-from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs, messages
 from hermes.core import sessions
@@ -169,14 +169,14 @@ class CatalogWorker(QThread):
     before its ``assembly_loaded``; ``fresh`` reads every one anew.
     """
 
-    assemblies_found = pyqtSignal(list)
+    assemblies_found = Signal(object)
     # assembly name, its methods (CatalogMethod)
-    assembly_loaded = pyqtSignal(str, list)
+    assembly_loaded = Signal(str, object)
     # assembly name: its methods come from the cache
-    assembly_cached = pyqtSignal(str)
+    assembly_cached = Signal(str)
     # assembly name, error message
-    assembly_failed = pyqtSignal(str, str)
-    catalog_failed = pyqtSignal(str)
+    assembly_failed = Signal(str, str)
+    catalog_failed = Signal(str)
 
     def __init__(self, pid, assemblies=None, parent=None, engine=None, selection=(),
                  fresh=False):
@@ -250,11 +250,11 @@ class CachedCatalogWorker(QThread):
     ``assembly_failed`` with ``NOT_CACHED``.
     """
 
-    assemblies_found = pyqtSignal(list)
-    assembly_loaded = pyqtSignal(str, list)
-    assembly_cached = pyqtSignal(str)
-    assembly_failed = pyqtSignal(str, str)
-    catalog_failed = pyqtSignal(str)
+    assemblies_found = Signal(object)
+    assembly_loaded = Signal(str, object)
+    assembly_cached = Signal(str)
+    assembly_failed = Signal(str, str)
+    catalog_failed = Signal(str)
 
     NOT_CACHED = "not cached"
 

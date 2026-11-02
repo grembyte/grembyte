@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings, QStandardPaths  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QSettings, QStandardPaths  # pylint: disable=import-error,no-name-in-module
 
 from hermes.ui.styles.styles import _STYLE_COLOR_KEYS, build_stylesheet
 

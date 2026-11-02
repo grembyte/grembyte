@@ -3,8 +3,8 @@
 import json
 from datetime import datetime
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
     QDialog,
@@ -161,9 +161,9 @@ class MethodMonitorDialog(QDialog):
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
     # CatalogMethod to create a method hook for
-    hook_requested = pyqtSignal(object)
+    hook_requested = Signal(object)
     # a field of an inspected object to put on the address list (see ObjectInspectorDialog)
-    address_requested = pyqtSignal(object)
+    address_requested = Signal(object)
 
     def __init__(self, translations, pid, parent=None):
         super().__init__(parent)

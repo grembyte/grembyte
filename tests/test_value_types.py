@@ -144,7 +144,7 @@ def _trap_pc(target, command, size):
 @pytest.fixture(name="qt_app", scope="module")
 def fixture_qt_app():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module,import-outside-toplevel
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module,import-outside-toplevel
 
     return QApplication.instance() or QApplication([])
 

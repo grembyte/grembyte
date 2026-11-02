@@ -5,9 +5,9 @@ import html
 import json
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QColor, QFontDatabase  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QColor, QFontDatabase  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QComboBox,
     QDialog,
@@ -179,9 +179,9 @@ class ScriptPanel(QGroupBox):
 
     # pylint: disable=too-many-instance-attributes
 
-    count_changed = pyqtSignal(int)
+    count_changed = Signal(int)
     # a field of an inspected object to put on the address list (see ObjectInspectorDialog)
-    address_requested = pyqtSignal(object)
+    address_requested = Signal(object)
 
     _COLUMNS = (
         "scripts.column_label",

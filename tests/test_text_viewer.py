@@ -2,7 +2,7 @@
 
 import json
 
-from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
 
 from hermes.ui.widgets.text_viewer import TextViewerDialog, parse_json, summary
 

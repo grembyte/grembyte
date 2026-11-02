@@ -1,7 +1,7 @@
 """Dialog for selecting and editing UI color themes."""
 
-from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QApplication,
     QColorDialog,
     QComboBox,

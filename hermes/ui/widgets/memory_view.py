@@ -3,9 +3,9 @@
 import struct
 import time
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QColor, QFont, QKeySequence, QShortcut  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QColor, QFont, QKeySequence, QShortcut  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
     QDialog,

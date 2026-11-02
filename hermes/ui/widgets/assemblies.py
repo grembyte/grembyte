@@ -5,8 +5,8 @@ saved per program (see hermes.features.assemblies). The catalog and the
 trace follow the saved selection at once.
 """
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QObject, Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QDialog,
     QHBoxLayout,
@@ -35,9 +35,9 @@ class AssemblySelectionStore(QObject):
     """The assembly selection of the program last attached, shared by all windows."""
 
     # The saved selection changed
-    changed = pyqtSignal()
+    changed = Signal()
     # A database error, as text
-    failed = pyqtSignal(str)
+    failed = Signal(str)
 
     def __init__(self, repository, parent=None):
         super().__init__(parent)

@@ -82,7 +82,7 @@ import threading
 from dataclasses import dataclass, field
 
 import frida
-from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs, messages
 from hermes.core import sessions
@@ -232,36 +232,36 @@ class ScriptWorker(QThread):
     back through the signals.
     """
 
-    script_added = pyqtSignal(int)
-    script_updated = pyqtSignal(int)
-    script_removed = pyqtSignal(int)
+    script_added = Signal(int)
+    script_updated = Signal(int)
+    script_removed = Signal(int)
     # script id, error text (compiling it, or a command failed)
-    script_failed = pyqtSignal(int, str)
+    script_failed = Signal(int, str)
     # script id, {time, runs, result, target?, logs, error}
-    script_ran = pyqtSignal(int, dict)
+    script_ran = Signal(int, object)
     # As MethodMonitorWorker's, for the object inspector (see hermes.ui.widgets.inspection)
-    inspected = pyqtSignal(int, dict)
-    inspect_failed = pyqtSignal(int, str)
-    evaluated = pyqtSignal(int, list)
-    evaluate_failed = pyqtSignal(int, str)
-    methods_listed = pyqtSignal(int, list)
-    methods_failed = pyqtSignal(int, str)
-    call_described = pyqtSignal(int, dict)
-    called = pyqtSignal(int, dict)
-    call_failed = pyqtSignal(int, str)
-    text_fetched = pyqtSignal(int, object)
-    text_failed = pyqtSignal(int, str)
+    inspected = Signal(int, object)
+    inspect_failed = Signal(int, str)
+    evaluated = Signal(int, object)
+    evaluate_failed = Signal(int, str)
+    methods_listed = Signal(int, object)
+    methods_failed = Signal(int, str)
+    call_described = Signal(int, object)
+    called = Signal(int, object)
+    call_failed = Signal(int, str)
+    text_fetched = Signal(int, object)
+    text_failed = Signal(int, str)
     # request id, the player's GAS attributes (see gas_attributes) or None
-    gas_listed = pyqtSignal(int, object)
-    gas_failed = pyqtSignal(int, str)
+    gas_listed = Signal(int, object)
+    gas_failed = Signal(int, str)
     # request id, {base, current} after setting a base value
-    gas_set = pyqtSignal(int, object)
-    gas_set_failed = pyqtSignal(int, str)
+    gas_set = Signal(int, object)
+    gas_set_failed = Signal(int, str)
     # request id, a choice parameter's options [{label, value}] (see script_options)
-    options_listed = pyqtSignal(int, list)
-    options_failed = pyqtSignal(int, str)
-    agent_log = pyqtSignal(str, str)
-    worker_failed = pyqtSignal(str)
+    options_listed = Signal(int, object)
+    options_failed = Signal(int, str)
+    agent_log = Signal(str, str)
+    worker_failed = Signal(str)
 
     _ids = itertools.count(1)
     _requests = itertools.count(1)

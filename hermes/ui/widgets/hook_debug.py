@@ -2,9 +2,9 @@
 
 from datetime import datetime
 
-from PyQt6.QtCore import Qt, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QColor, QFontDatabase  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QColor, QFontDatabase  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QComboBox,
     QDialog,
@@ -69,9 +69,9 @@ class HookDebugWindow(QDialog):
     # Widgets are created by _build_ui called from __init__.
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
-    closed = pyqtSignal()
+    closed = Signal()
     # From the context menu: put the address of an entry on the address list
-    add_address_requested = pyqtSignal(object)
+    add_address_requested = Signal(object)
 
     def __init__(self, translations, parent=None):
         super().__init__(parent)

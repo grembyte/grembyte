@@ -406,15 +406,16 @@ chosen automatically on attach.
 
 ## Binary distribution (PyInstaller) and licenses
 
-Open, nothing is built yet. Hermes Hook is GPL-3.0-or-later; a frozen bundle contains
+Open, nothing is built yet. Hermes Hook is MIT-licensed; a frozen bundle contains
 third-party code whose licenses add duties that a source release through pip does not have:
 
 - **Qt (LGPL-3.0):** users must be able to replace the bundled Qt libraries with their own
   build. Build in one-folder mode (`--onedir`), not `--onefile`, so the Qt shared libraries
   stay separate, replaceable files. Ship the LGPL text and point to the source of the exact Qt
   version (`download.qt.io`), or offer it in writing.
-- **PyQt6 (GPL-3.0-only):** the bundle as a whole is under the GPL v3. Each release needs the
-  corresponding source: a Git tag per release and its link in the download notes.
+- **PySide6 (LGPL-3.0-only, GPL-2.0-only or GPL-3.0-only):** the Qt for Python bindings offer
+  an LGPL route as well as GPL and commercial terms. A frozen bundle must meet the chosen
+  license's obligations; the project's own MIT license remains unchanged.
 - **License files in the bundle:** PyInstaller does not collect `LICENSE`, `LICENSES/` and
   `THIRD_PARTY_NOTICES`; add them as data files, next to the executable.
 - **Inventory the bundle:** PyInstaller pulls in more than `requirements.txt` lists — the Python

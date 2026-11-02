@@ -39,7 +39,7 @@ game: the agent refuses hooks whose patched bytes would overlap.
 import re
 
 import frida
-from PyQt6.QtCore import pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import messages, sessions
 from hermes.features.trace import AgentWorker
@@ -129,12 +129,12 @@ class NativeMonitorWorker(AgentWorker):
     """
 
     # monitor id, {address, where, symbol, kind, function?, functionName?}
-    added = pyqtSignal(int, dict)
-    removed = pyqtSignal(int)
+    added = Signal(int, object)
+    removed = Signal(int)
     # calls, {monitor id: {calls, skipped}}
-    calls = pyqtSignal(list, dict)
+    calls = Signal(object, object)
     # monitor id, message: adding it failed
-    add_failed = pyqtSignal(int, str)
+    add_failed = Signal(int, str)
 
     agent_name = "native monitor"
     agent_key = "native_monitor"

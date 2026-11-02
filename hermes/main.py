@@ -4,9 +4,9 @@ import os
 import signal
 import sys
 
-from PyQt6.QtCore import QStandardPaths, QTimer  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QStandardPaths, QTimer  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import activity, logs, settings
 from hermes.core.sessions import SESSIONS

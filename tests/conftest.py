@@ -13,7 +13,7 @@ def _private_catalog_cache(tmp_path, monkeypatch):
 def _private_window_state(tmp_path, monkeypatch):
     """Keep window sizes and column widths (see hermes.ui.window_state) out of the user's."""
     # pylint: disable=import-outside-toplevel
-    from PyQt6.QtCore import QSettings  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QSettings  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui import window_state
 

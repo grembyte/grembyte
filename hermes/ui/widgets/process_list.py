@@ -6,12 +6,12 @@ import re
 
 import psutil
 
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QDialog, QVBoxLayout,
     QTableWidget, QTableWidgetItem, QLineEdit,
     QHeaderView, QAbstractItemView, QMessageBox,
 )
-from PyQt6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
 
 from hermes.engines.unreal.adapter import bootstrapped_game
 from hermes.ui.widgets.dialog_buttons import dialog_button_row

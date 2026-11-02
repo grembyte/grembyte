@@ -4,9 +4,9 @@ import re
 from datetime import datetime
 from functools import lru_cache
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, pyqtSignal  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
     QDialog,
@@ -228,11 +228,11 @@ class CatalogDialog(QDialog):
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
     # CatalogMethod to log the calls of (double click or "Monitor")
-    monitor_requested = pyqtSignal(object)
+    monitor_requested = Signal(object)
     # static CatalogMethod to call ("Call …")
-    call_requested = pyqtSignal(object)
+    call_requested = Signal(object)
     # CatalogMethod to create a method hook for
-    hook_requested = pyqtSignal(object)
+    hook_requested = Signal(object)
 
     def __init__(self, translations, pid, parent=None, engine=None, favorites=None,
                  assembly_selection=None, game=None):

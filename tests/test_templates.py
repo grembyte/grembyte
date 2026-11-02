@@ -17,7 +17,7 @@ from hermes.ui.widgets.templates import format_choices, parse_choices
 @pytest.fixture(name="qt_app", scope="module")
 def fixture_qt_app():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module,import-outside-toplevel
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module,import-outside-toplevel
 
     return QApplication.instance() or QApplication([])
 
@@ -123,7 +123,7 @@ def test_save_reports_invalid_input(dialog, name, param_name, default, message):
 
 def test_delete_template(dialog, repository, monkeypatch):
     # pylint: disable=protected-access,import-outside-toplevel
-    from PyQt6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
 
     monkeypatch.setattr(
         QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes

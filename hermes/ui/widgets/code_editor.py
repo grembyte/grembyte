@@ -7,8 +7,8 @@ With several lines selected Tab and Shift+Tab indent and outdent them all.
 
 import re
 
-from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
     QColor,
     QFont,
     QFontDatabase,
@@ -17,7 +17,7 @@ from PyQt6.QtGui import (  # pylint: disable=import-error,no-name-in-module
     QTextCharFormat,
     QTextCursor,
 )
-from PyQt6.QtWidgets import QApplication, QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import QApplication, QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
 
 INDENT = "  "
 _BLOCK_COMMENT = 1

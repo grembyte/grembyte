@@ -1,8 +1,8 @@
 """Shared settings for table widgets."""
 
-from PyQt6.QtCore import QEvent, QObject, Qt, QTimer  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractButton,
     QComboBox,
     QHeaderView,
@@ -143,7 +143,7 @@ class _ColumnSizer(QObject):
     def __init__(self, view):
         header = view.horizontalHeader()
         super().__init__(header)
-        # The header keeps the Qt object, but PyQt ties the Python object to the
+        # The header keeps the Qt object, but PySide ties the Python object to the
         # header's wrapper, which horizontalHeader() makes anew and Python
         # collects: the view (kept by its window) keeps it instead. Not a
         # handler of ``destroyed``: run while the garbage collector deletes a

@@ -115,7 +115,7 @@ import threading
 from dataclasses import dataclass, field
 
 import frida
-from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs, messages
 from hermes.core import sessions
@@ -283,43 +283,43 @@ class HookWorker(QThread):
     back through the signals.
     """
 
-    session_ready = pyqtSignal(str)
-    hook_installed = pyqtSignal(int, dict)
+    session_ready = Signal(str)
+    hook_installed = Signal(int, object)
     # hook id, training state: resolved (target found), waiting (for a free
     # watchpoint), seen and rejected writes; empty when the training starts
-    hook_training = pyqtSignal(int, dict)
-    hook_failed = pyqtSignal(int, str)
-    hook_removed = pyqtSignal(int)
-    hook_updated = pyqtSignal(int)
-    hook_events = pyqtSignal(list)
-    transform_error = pyqtSignal(int, str)
+    hook_training = Signal(int, object)
+    hook_failed = Signal(int, str)
+    hook_removed = Signal(int)
+    hook_updated = Signal(int)
+    hook_events = Signal(object)
+    transform_error = Signal(int, str)
     # hook id, learned caller signatures (frames are [module, offset] or None)
-    callers_learned = pyqtSignal(int, list)
-    callers_ambiguous = pyqtSignal(int)
+    callers_learned = Signal(int, object)
+    callers_ambiguous = Signal(int)
     # hook id, number of learned callers dropped as stale return addresses
-    callers_dropped = pyqtSignal(int, int)
+    callers_dropped = Signal(int, int)
     # hook ids sharing a write site in JIT code, its C# method (Mono games)
     # and what finds it again after a restart (HookSpec.managed)
-    site_method = pyqtSignal(list, str, object)
+    site_method = Signal(object, str, object)
     # hook id, why its C# method did not lead to the write site; it trains
-    managed_failed = pyqtSignal(int, str)
+    managed_failed = Signal(int, str)
     # hook ids sharing a write site, its state (reverted, changed, repatched,
     # restored), how often the game reverted it and why patching it again
     # failed ("" if it did not)
-    site_state = pyqtSignal(list, str, int, str)
+    site_state = Signal(object, str, int, str)
     # timings per write site, once a second with hook_profiling: dicts with
     # hookIds, calls, skipped, waitAvg, waitMax, runAvg, runMax (µs)
-    hook_profile = pyqtSignal(list)
+    hook_profile = Signal(object)
     # debug events of hooks in debug mode, events dropped per hook id
-    hook_debug = pyqtSignal(list, dict)
+    hook_debug = Signal(object, object)
     # ctx.log lines of scripts (also outside debug mode): [{hookId, time, text}],
     # lines dropped per hook id (more than the agent sends at once)
-    hook_logs = pyqtSignal(list, dict)
+    hook_logs = Signal(object, object)
     # console.log output of the agent and its transforms: level, text
-    agent_log = pyqtSignal(str, str)
-    agent_warning = pyqtSignal(str)
-    worker_failed = pyqtSignal(str)
-    worker_stopped = pyqtSignal()
+    agent_log = Signal(str, str)
+    agent_warning = Signal(str)
+    worker_failed = Signal(str)
+    worker_stopped = Signal()
 
     # Shared by all workers so ids stay unique when a worker is replaced.
     _ids = itertools.count(1)

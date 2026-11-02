@@ -44,7 +44,7 @@ def test_dialog_shows_the_time_of_the_last_write():
     from datetime import datetime
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui.localization import load_translations
     from hermes.ui.widgets.write_watch import WriteWatchDialog
@@ -69,8 +69,8 @@ def test_dialog_shows_reads_and_writes_and_hooks_only_writes():
     import os
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui.localization import load_translations
     from hermes.ui.widgets.write_watch import WriteWatchDialog
@@ -108,7 +108,7 @@ def test_dialog_names_jit_code_by_its_csharp_method():
     import os
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
     from hermes.ui.localization import load_translations
     from hermes.ui.widgets.write_watch import WriteWatchDialog

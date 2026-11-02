@@ -9,9 +9,9 @@ Rows can be selected (several with Ctrl and Shift); the space key steps the
 selected rows through: all their entries, also the process, nothing.
 """
 
-from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtGui import QKeySequence, QShortcut  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QKeySequence, QShortcut  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QDialog,
     QHeaderView,

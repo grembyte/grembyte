@@ -2,8 +2,8 @@
 
 import json
 
-from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtCore import QObject, QPoint, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+import shiboken6  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QObject, QPoint, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
 from hermes.ui.widgets.text_viewer import TextViewerDialog
@@ -20,7 +20,7 @@ class Inspections(QObject):
     """
 
     # a field of an inspected object to put on the address list (see ObjectInspectorDialog)
-    address_requested = pyqtSignal(object)
+    address_requested = Signal(object)
 
     def __init__(self, translations, worker, window, time=lambda: ""):
         super().__init__(window)
@@ -73,16 +73,16 @@ class Inspections(QObject):
         inspector.show()
         inspector.activateWindow()
 
-    # Slots for ``destroyed`` are bound methods, not lambdas: PyQt does not
+    # Slots for ``destroyed`` are bound methods, not lambdas: PySide does not
     # call a bound method of a dialog the garbage collector is taking apart,
     # while a lambda's ``self`` may already be cleared then (a fatal error in
     # the slot). The destroyed object is not the wrapper we keep, but that
     # one is marked as deleted already.
     def _forget_inspectors(self, _object=None):
         self.inspectors = [inspector for inspector in self.inspectors
-                           if not sip.isdeleted(inspector)]
+                           if getattr(shiboken6, "isValid")(inspector)]
         for request_id, waiting in list(self._inspections.items()):
-            if sip.isdeleted(waiting):
+            if not getattr(shiboken6, "isValid")(waiting):
                 del self._inspections[request_id]
 
     def _request_inspection(self, target, inspector):
@@ -160,7 +160,7 @@ class Inspections(QObject):
 
     def _forget_texts(self, _object=None):
         for request_id, (waiting, _value) in list(self._text_requests.items()):
-            if sip.isdeleted(waiting):
+            if not getattr(shiboken6, "isValid")(waiting):
                 del self._text_requests[request_id]
 
     def _on_text_fetched(self, request_id, text):

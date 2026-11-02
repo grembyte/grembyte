@@ -8,9 +8,9 @@ thread to ``crash.log`` should the process crash or abort, and routes Qt's
 messages into the log.
 
 ``install_exception_hooks`` catches exceptions nothing else caught, in slots,
-in ``QThread.run`` (PyQt hands them to ``sys.excepthook``) and in Python
+in ``QThread.run`` (PySide hands them to ``sys.excepthook``) and in Python
 threads. They are logged and reported to ``on_unhandled`` callbacks instead
-of PyQt aborting the application.
+of PySide aborting the application.
 
 ``log_failures(worker)`` logs what a worker reports through its ``…_failed``
 and ``…_error`` signals. Counting: ``error_count()`` is the number of
@@ -28,7 +28,7 @@ import time
 import traceback
 from pathlib import Path
 
-from PyQt6.QtCore import QStandardPaths, Qt, QtMsgType, pyqtBoundSignal, qInstallMessageHandler  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QStandardPaths, Qt, QtMsgType, SignalInstance, qInstallMessageHandler  # pylint: disable=import-error,no-name-in-module
 
 
 LOG_NAME = "hermes.log"
@@ -251,7 +251,7 @@ def report_unhandled(kind, value, trace, thread_name=None):
 
 
 def install_exception_hooks():
-    """Report exceptions nothing caught instead of letting PyQt abort."""
+    """Report exceptions nothing caught instead of letting PySide abort."""
     sys.excepthook = report_unhandled
     threading.excepthook = lambda args: report_unhandled(
         args.exc_type, args.exc_value, args.exc_traceback,
@@ -296,7 +296,7 @@ def log_failures(worker):
         if not _is_failure_signal(name):
             continue
         signal = getattr(worker, name, None)
-        if not isinstance(signal, pyqtBoundSignal):
+        if not isinstance(signal, SignalInstance):
             continue
 
         def write(*args, name=name):

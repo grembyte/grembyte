@@ -52,7 +52,7 @@ def fixture_repository(sessions):
 def fixture_qt_app():
     # pylint: disable=import-outside-toplevel
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
     return QApplication.instance() or QApplication([])
 
@@ -123,7 +123,7 @@ def test_favorite_store_backfills_argument_names(repository, process_id):
 
 def test_star_column_marks_and_unmarks(qt_app, repository, process_id, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
 
     from hermes.features.trace import NEW, TraceRow
     from hermes.ui.widgets.favorites import NO_STAR, STAR, FavoriteStore
@@ -156,8 +156,8 @@ def test_star_column_marks_and_unmarks(qt_app, repository, process_id, translati
 
 def test_space_marks_the_selected_row(qt_app, repository, process_id, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-    from PyQt6.QtGui import QShortcut  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtGui import QShortcut  # pylint: disable=import-error,no-name-in-module
 
     from hermes.features.trace import NEW, TraceRow
     from hermes.ui.widgets.favorites import FavoriteStore
@@ -236,9 +236,9 @@ def test_favorites_window_annotates_and_monitors(qt_app, repository, process_id,
 def test_favorites_window_handles_several_at_once(qt_app, repository, process_id, translations,
                                                   monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import QItemSelectionModel  # pylint: disable=import-error,no-name-in-module
-    from PyQt6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
-    from PyQt6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QItemSelectionModel  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
     from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 
     store = FavoriteStore(repository)
@@ -284,7 +284,7 @@ def test_favorites_window_handles_several_at_once(qt_app, repository, process_id
 
 def test_favorites_window_sorts_by_column(qt_app, repository, process_id, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
     from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 
     store = FavoriteStore(repository)
@@ -326,8 +326,8 @@ def test_favorites_show_static_methods(qt_app, repository, process_id, translati
 
 def test_catalog_sorts_by_column_and_keeps_the_selection(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PyQt6.QtCore import QItemSelectionModel, Qt  # pylint: disable=import-error,no-name-in-module
-    from PyQt6.QtWidgets import QTableView  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QItemSelectionModel, Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QTableView  # pylint: disable=import-error,no-name-in-module
     from hermes.ui.widgets.catalog import CatalogModel
 
     class Engine:  # pylint: disable=too-few-public-methods

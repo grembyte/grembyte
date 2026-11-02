@@ -81,7 +81,7 @@ import queue
 import threading
 
 import frida
-from PyQt6.QtCore import QThread, pyqtSignal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs, messages
 from hermes.core import sessions
@@ -106,32 +106,32 @@ class MethodMonitorWorker(QThread):
     """
 
     # monitor id, {address, instance, params, returns, undecoded}
-    monitor_added = pyqtSignal(int, dict)
+    monitor_added = Signal(int, object)
     # monitor id: the game freed the method's code (e.g. while exiting)
-    monitor_ended = pyqtSignal(int)
+    monitor_ended = Signal(int)
     # request id, {name, address, fields: [{name, type, offset, static, value}],
     # properties: [{name, type, static, setter}], length?}
-    inspected = pyqtSignal(int, dict)
-    inspect_failed = pyqtSignal(int, str)
+    inspected = Signal(int, object)
+    inspect_failed = Signal(int, str)
     # request id, [{name, value}] of evaluated properties
-    evaluated = pyqtSignal(int, list)
-    evaluate_failed = pyqtSignal(int, str)
+    evaluated = Signal(int, object)
+    evaluate_failed = Signal(int, str)
     # request id, [{name, method, owner, params, returns}] of an object's instance methods
-    methods_listed = pyqtSignal(int, list)
-    methods_failed = pyqtSignal(int, str)
+    methods_listed = Signal(int, object)
+    methods_failed = Signal(int, str)
     # request id, {params: [{name, type}], returns} of a static or instance method
-    call_described = pyqtSignal(int, dict)
+    call_described = Signal(int, object)
     # request id, {result: value or None (void), outputs?: [{name, value}],
     # object?: value} or {exception: text}
-    called = pyqtSignal(int, dict)
-    call_failed = pyqtSignal(int, str)
+    called = Signal(int, object)
+    call_failed = Signal(int, str)
     # request id, the whole text of a long string value (None: no longer kept)
-    text_fetched = pyqtSignal(int, object)
-    text_failed = pyqtSignal(int, str)
-    monitor_failed = pyqtSignal(int, str)
+    text_fetched = Signal(int, object)
+    text_failed = Signal(int, str)
+    monitor_failed = Signal(int, str)
     # calls, dropped calls per monitor id, all calls per monitor id
-    calls = pyqtSignal(list, dict, dict)
-    worker_failed = pyqtSignal(str)
+    calls = Signal(object, object, object)
+    worker_failed = Signal(str)
 
     _ids = itertools.count(1)
     _requests = itertools.count(1)

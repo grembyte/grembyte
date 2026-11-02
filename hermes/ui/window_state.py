@@ -15,8 +15,8 @@ Everything lives in QSettings("hermes-hook", "hermes-hook") under
 
 import json
 
-from PyQt6.QtCore import QByteArray, QEvent, QObject, QSettings, QSize  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import QDialog, QSplitter, QWidget  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QByteArray, QEvent, QObject, QSettings, QSize  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import QDialog, QSplitter, QWidget  # pylint: disable=import-error,no-name-in-module
 
 # Set on a window once its state was restored
 _RESTORED = "hermesStateRestored"

@@ -1,6 +1,6 @@
 """A line under a code editor that says whether its JavaScript compiles."""
 
-from PyQt6.QtCore import QTimer  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QTimer  # pylint: disable=import-error,no-name-in-module
 
 from hermes.hooks.syntax import FUNCTION, checker, looks_like_function
 from hermes.ui.widgets.labels import WrappedLabel

@@ -5,8 +5,8 @@ import sys
 import threading
 import time
 
-from PyQt6.QtCore import QThread  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QThread  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import sessions
 from hermes.core.sessions import SESSIONS, frida_agents

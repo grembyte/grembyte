@@ -23,7 +23,7 @@ import threading
 import time
 from pathlib import Path
 
-from PyQt6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs
 

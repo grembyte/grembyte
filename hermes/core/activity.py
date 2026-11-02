@@ -264,15 +264,16 @@ def environment():
     """What Hermes runs on: versions, system, session."""
     # pylint: disable=import-outside-toplevel
     import frida
-    from PyQt6.QtCore import PYQT_VERSION_STR, QT_VERSION_STR  # pylint: disable=import-error,no-name-in-module
+    from PySide6 import __version__ as PYSIDE_VERSION
+    from PySide6.QtCore import qVersion  # pylint: disable=import-error,no-name-in-module
 
     return {
         "pid": os.getpid(),
         "hermes": _version("hermes-hook"),
         "python": platform.python_version(),
         "frida": frida.__version__,
-        "qt": QT_VERSION_STR,
-        "pyqt": PYQT_VERSION_STR,
+        "qt": qVersion(),
+        "pyside": PYSIDE_VERSION,
         "system": _os_release() or platform.platform(),
         "kernel": platform.release(),
         "machine": platform.machine(),

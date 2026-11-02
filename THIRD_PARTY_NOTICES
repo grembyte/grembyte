@@ -4,21 +4,22 @@ Third-Party Notices
 Hermes Hook
 Copyright (C) 2026 Frank Hoogen
 
-Hermes Hook is free software: you can redistribute it and/or modify it under
-the terms of the GNU General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later
-version. See LICENSE for the full text. Hermes Hook is distributed WITHOUT ANY
-WARRANTY.
+Hermes Hook is distributed under the MIT License. See LICENSE for the full
+text. Hermes Hook is distributed WITHOUT ANY WARRANTY.
 
 Hermes Hook uses the third-party components listed below. Each keeps its own
 license; the full license texts are in the LICENSES directory. Versions are
 those pinned in requirements.txt and may differ in other installations.
 
 Hermes Hook does not ship these packages in its source tree: pip installs
-them. Whoever builds and distributes a binary bundle (installer, frozen
-executable) must inventory that exact bundle, include the license texts of
-everything it contains and, for Qt (LGPL v3), allow users to replace the Qt
-libraries and offer the corresponding source.
+them. Installing a package with pip does not by itself satisfy license
+obligations for a distributor. Whoever builds and distributes a binary bundle
+(installer, frozen executable) must inventory that exact bundle, include the
+applicable license texts and notices, and meet the requirements of every
+license that applies to the bundled components. For Qt under LGPL v3, this
+includes allowing users to relink the application with a modified compatible
+Qt library and providing or offering the corresponding source for distributed
+LGPL libraries, including any modifications.
 
 Runtime components
 ------------------
@@ -47,25 +48,21 @@ NumPy 2.5.4
   License text: LICENSES/NumPy.txt (includes the licenses of the components
   bundled with NumPy)
 
-PyQt6 6.11.0
-  License: GPL-3.0-only (or a commercial license from Riverbank Computing)
-  Copyright (c) Riverbank Computing Limited
-  Project: https://riverbankcomputing.com/software/pyqt/
-  License text: LICENSE (GNU General Public License, version 3)
+PySide6_Essentials 6.12.0, shiboken6 6.12.0 (Qt for Python)
+  License: LGPL-3.0-only (also offered under GPL-2.0-only, GPL-3.0-only or
+  commercial terms; Hermes Hook uses the LGPL v3 option)
+  Copyright (C) The Qt Company Ltd. and other contributors
+  Project: https://doc.qt.io/qtforpython/
+  License texts: LICENSES/LGPL-3.0.txt and LICENSES/GPL-3.0.txt
 
-PyQt6-Qt6 6.11.2 (Qt 6 libraries)
-  License: LGPL-3.0-only
+Qt 6.12.0 (Qt libraries)
+  License: LGPL-3.0-only (only the modules in PySide6_Essentials are used)
   Copyright (C) The Qt Company Ltd. and other contributors
   Project: https://www.qt.io/
   Source: https://download.qt.io/official_releases/qt/
-  License text: LICENSES/LGPL-3.0.txt, together with LICENSE (the LGPL v3
-  supplements the GPL v3)
-
-PyQt6-sip 13.13.0
-  License: BSD-2-Clause
-  Copyright (c) 2025 Phil Thompson <phil@riverbankcomputing.com>
-  Project: https://pypi.org/project/PyQt6-sip/
-  License text: LICENSES/PyQt6-sip.txt
+  License texts: LICENSES/LGPL-3.0.txt and LICENSES/GPL-3.0.txt (LGPL v3
+  supplements GPL v3). Qt may include third-party components under other
+  licenses; distributors must inventory the exact Qt build they ship.
 
 SQLAlchemy 2.1.6
   License: MIT

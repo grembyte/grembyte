@@ -1,6 +1,6 @@
 """The window of the general settings (hermes.core.settings), under Settings in the menu."""
 
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QCheckBox,
     QComboBox,
     QDialog,

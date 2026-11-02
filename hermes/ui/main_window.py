@@ -1,4 +1,4 @@
-"""hermes-hook – Main Window: application main UI (PyQt6)."""
+"""hermes-hook – Main Window: application main UI (PySide6)."""
 
 import itertools
 import platform
@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy.exc import SQLAlchemyError
-from PyQt6 import sip  # pylint: disable=import-error,no-name-in-module
-from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+import shiboken6  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QLabel,
     QPushButton, QLineEdit, QComboBox, QGroupBox, QToolButton,
@@ -18,10 +18,10 @@ from PyQt6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox, QTabWidget, QSizePolicy,
     QInputDialog, QApplication, QProgressDialog,
 )
-from PyQt6.QtCore import (  # pylint: disable=import-error,no-name-in-module
-    Qt, QSize, QTimer, QSettings, pyqtSlot,
+from PySide6.QtCore import (  # pylint: disable=import-error,no-name-in-module
+    Qt, QSize, QTimer, QSettings, Slot,
 )
-from PyQt6.QtGui import QColor, QActionGroup, QIcon  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QColor, QActionGroup, QIcon  # pylint: disable=import-error,no-name-in-module
 
 from hermes import __version__
 from hermes.ui.localization import language_code, load_translations
@@ -130,7 +130,7 @@ BRAND_ICON_SIZE = 22
 class GadgetProgressDialog(QProgressDialog):
     """Progress dialog updated by the gadget download worker."""
 
-    @pyqtSlot(int, int)
+    @Slot(int, int)
     def set_download_progress(self, received, total):
         if total <= 0:
             self.setRange(0, 0)
@@ -3096,7 +3096,7 @@ class MainWindow(QMainWindow):
         )
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.new_description:
             # The list may have been rebuilt meanwhile, e.g. when the game exited.
-            if sip.isdeleted(description_item):
+            if not getattr(shiboken6, "isValid")(description_item):
                 return
             # Saved by _on_address_item_changed like an inline edit.
             description_item.setText(dlg.new_description)
