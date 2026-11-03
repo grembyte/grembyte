@@ -4,8 +4,8 @@ game engine's runtime.
 hermes' managed-code features (catalog, trace, method monitor, method hooks,
 and naming of code addresses in write watches and hooks) do not talk to Mono
 directly. They use the ``engine`` object of the Frida agent, which forwards to
-the adapter whose runtime the game has loaded: Mono (hermes/engines/mono) and
-Unreal Engine (hermes/engines/unreal); IL2CPP would be a further one.
+the adapter whose runtime the game has loaded: Mono (hermes/engines/mono),
+IL2CPP (hermes/engines/il2cpp) and Unreal Engine (hermes/engines/unreal).
 
 Python side: a subclass of :class:`EngineAdapter` says how to recognize the
 engine from outside (``detect``), what it can do (``capabilities``) and which

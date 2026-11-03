@@ -18,9 +18,10 @@ Available independent of any engine:
 
 For Unity games with Mono there are also the catalog, the trace (with preselection
 filters), the method monitor, method hooks and game scripts, through the engine adapter layer
-(`hermes/engines/`). For Unreal Engine games there are the catalog, the trace, the method
-monitor, method hooks, calling UFunctions (dialog and scripts), game scripts and the GAS
-attributes window.
+(`hermes/engines/`). For Unity games with IL2CPP there are the catalog and the trace, and
+code in `GameAssembly` is named as C# methods. For Unreal Engine games there are the catalog,
+the trace, the method monitor, method hooks, calling UFunctions (dialog and scripts), game
+scripts and the GAS attributes window.
 
 Methods and functions found in the catalog, the trace or the native trace can be marked
 with ★ (first table column). Favorites are saved per program at once, so they survive a
@@ -190,10 +191,29 @@ subpackage with an `EngineAdapter` subclass and an agent part that registers its
 | Engine | Approach | Result |
 |---|---|---|
 | **Unreal** | Reflection through GNames/GObjects | **catalog, trace, method monitor/hooks, UFunction calls, scripts and GAS attributes done (2026-10-30/31)**; Blueprint call graph open, see below |
-| **IL2CPP** (Unity without Mono) | `global-metadata.dat` + the `il2cpp_*` API | like Mono, but compiled ahead of time; shares the .NET model of the JS contract |
+| **IL2CPP** (Unity without Mono) | the `il2cpp_*` API of `GameAssembly` | **catalog, trace and naming done (2026-11-03)**; monitor, hooks and calls open, see below |
 | **Godot** | ClassDB / object properties | scene tree and variables |
 | **Lua engines** | hook the `lua_*` API | tables and variables of the script state |
 | **RPG Maker MV/MZ, Ren'Py** | JavaScript or Python runtime | game variables directly in the script state |
+
+**IL2CPP adapter (2026-11-03):** `hermes/engines/il2cpp/` (`Il2CppAdapter`, agent in
+`agent.js`), tried on V Rising (Unity 2022.3, metadata v31, Proton). Recognised by
+`GameAssembly.dll`/`.so`; the runtime counts as started once `il2cpp_get_corlib` answers.
+- Catalog: images without `.dll` as assembly names, signatures as Mono writes them, the
+  PE time stamp and size of GameAssembly as MVID. 139 assemblies, 43,000 classes in V Rising.
+- Naming: a table of all method code starts (230,000 methods, under a second), built on the
+  agent's thread after attaching. The function holding an address comes from the unwind data
+  (`RtlLookupFunctionEntry` on Windows, `.eh_frame_hdr` on Linux); it belongs to a method only
+  if it starts at one. Abstract methods are left out, their pointer is a shared stub.
+- Trace: `compileAll` hands out the code pointers; nothing to compile or undo.
+- Shared code: about a quarter of the methods share their code with others (folded identical
+  functions, shared generics; one empty constructor stands for 8,400 methods in V Rising).
+- Probed for the next steps: Unity calls `il2cpp_runtime_invoke` on the main thread about
+  17,000 times a second (also on job threads, to be filtered out), so the Mono way of running
+  work on the main thread carries over to calls. Arguments: IL2CPP passes a hidden
+  `MethodInfo*` last. The call graph would need disassembly instead of IL.
+- ECS games: of 538 `OnUpdate` methods in V Rising's gameplay systems, 8 ran as IL2CPP code;
+  the rest are Burst-compiled. Their data lies in ECS chunks, not in objects.
 
 **Unreal adapter (2026-10-30):** `hermes/engines/unreal/` (`UnrealAdapter`, agent in
 `agent.js`). Recognised by the executable's name (`<Project>-Win64-Shipping.exe`, also Linux
@@ -319,8 +339,8 @@ runs; optionally memory through `ctx.read`/`ctx.write`.
 **1 (Stalker diff trace)** and **2 (accesses of an instruction)** bring the most
 independent of any engine and use much of what exists; 2 is the next larger step. Among the
 adapters, **Unreal** has catalog, trace, method monitor, hooks and calls now; the call graph
-from Blueprint bytecode is left there. **IL2CPP** is the most obvious one for Unity games
-without Mono.
+from Blueprint bytecode is left there. **IL2CPP** has catalog, trace and naming; the
+method monitor, hooks and calls are next there.
 
 ## Write hooks under anti-tamper protection (2026-10-27)
 

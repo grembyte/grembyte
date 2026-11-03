@@ -237,10 +237,12 @@ function readCounts(t) {
 }
 
 async function callerTexts(addresses) {
-  // ``module+0x…`` for native code, ``Namespace.Class:Method+0x…`` for JIT code.
+  // ``module+0x…`` for native code, ``Namespace.Class:Method+0x…`` for JIT
+  // code and for methods compiled ahead of time into a module (IL2CPP).
   const texts = addresses.map(address => {
     const module = Process.findModuleByAddress(address);
-    return module === null ? null : `${module.name}+${address.sub(module.base)}`;
+    return module === null ? null
+      : engine.name(address) || `${module.name}+${address.sub(module.base)}`;
   });
   const jit = addresses.filter((_address, i) => texts[i] === null);
   let names = [];

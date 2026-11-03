@@ -5,11 +5,12 @@ the order is the order in which the agent looks for their runtimes.
 """
 
 from hermes.engines.base import ENGINE_FACADE_SOURCE, ENGINE_PRELUDE_SOURCE
+from hermes.engines.il2cpp.adapter import Il2CppAdapter
 from hermes.engines.mono.adapter import MonoAdapter
 from hermes.engines.platform import PLATFORM_AGENT_SOURCE
 from hermes.engines.unreal.adapter import UnrealAdapter
 
-ENGINES = (MonoAdapter(), UnrealAdapter())
+ENGINES = (MonoAdapter(), Il2CppAdapter(), UnrealAdapter())
 
 # Agents that work with managed code start with this: the platform helpers,
 # every adapter, and ``engine``.

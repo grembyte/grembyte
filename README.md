@@ -34,6 +34,11 @@ Use of the feature for restoring memory modifications may be detected by anti-ta
   - The **method monitor** logs calls with arguments and results; **method hooks** change arguments, fields or results with templates of their own.
   - The **call graph** shows which methods a method calls and which call it, from the IL code.
   - The **object inspector** shows the fields of C# objects, and **Call method** runs a static method on the game's main thread.
+- **Unity games with IL2CPP** (e.g. V Rising under Proton): Hermes reads the game through the `il2cpp_*` API that `GameAssembly.dll` (or `GameAssembly.so`) exports.
+  - The **catalog**, **Assemblies …** and the **trace** work as for Mono, with the same signatures (`Ns.Class:Method (int,single)`).
+  - Code addresses in `GameAssembly` are named as the C# method they belong to: in the trace's callers, in the write watch and at hook sites. IL2CPP keeps no table from code to methods, so Hermes builds one when it attaches; function bounds come from the module's unwind data.
+  - Many methods share one piece of code: the linker folds identical functions, and generic code is shared. Their names end in `[shared with N]`, and the trace counts them under the first.
+  - Not yet: the method monitor, method hooks, calling methods and the call graph (IL2CPP keeps no IL). Games built on Unity's ECS run much of their logic as Burst code, which method hooks do not see (in V Rising most gameplay systems).
 - **Unreal Engine games** (4.23 and later, 64-bit; e.g. Avowed under Proton): Hermes finds the engine's reflection data (`FNamePool`, `GUObjectArray`) in memory, without signatures or a mod loader.
   - The **catalog** lists the classes and UFunctions with C++ parameter types, grouped by package: `/Script/<Module>` for C++ classes, the first folder for Blueprints (`/Game/Blueprints`).
   - **Assemblies …** (here: packages) and the **trace** work as for Mono. The trace hooks the exec thunks of native UFunctions and gives every Blueprint function a hookable stub of its own; it sees calls from Blueprints and through `ProcessEvent` (events, delegates), not C++ calling C++ directly (the native trace sees those).
@@ -141,7 +146,7 @@ HERMES_LANGUAGE=en hermes
 HERMES_LANGUAGE=de hermes
 ```
 
-At first start the SQLite database is created at `~/.local/share/hermes-hook/hermes.db` (or under `$XDG_DATA_HOME/hermes-hook/`), on Windows at `%LOCALAPPDATA%\hermes-hook\hermes.db`. `HERMES_DB=/path/to/file.db` uses another file. If there is no database there yet but one from earlier versions at `data/hermes.db` in the project directory, it is copied once; the original stays. Catalogs read from Mono and Unreal games are cached beside it in `hermes-hook/cache` (or `$HERMES_CACHE_DIR`). User themes are saved in `~/.config/hermes-hook/themes/` (or `$XDG_CONFIG_HOME/hermes-hook/themes/`), and on Windows in `%APPDATA%\hermes-hook\themes\`; each file is named `hermes_themes_<name>.json`. Bundled themes ship in `hermes/ui/themes/`. The process list only shows processes whose information the current user may access. When the attached process exits, Hermes resets the window within a second: scans, watches, freezing and hooks stop; stored addresses and hooks are kept and loaded again the next time it attaches.
+At first start the SQLite database is created at `~/.local/share/hermes-hook/hermes.db` (or under `$XDG_DATA_HOME/hermes-hook/`), on Windows at `%LOCALAPPDATA%\hermes-hook\hermes.db`. `HERMES_DB=/path/to/file.db` uses another file. If there is no database there yet but one from earlier versions at `data/hermes.db` in the project directory, it is copied once; the original stays. Catalogs read from Mono, IL2CPP and Unreal games are cached beside it in `hermes-hook/cache` (or `$HERMES_CACHE_DIR`). User themes are saved in `~/.config/hermes-hook/themes/` (or `$XDG_CONFIG_HOME/hermes-hook/themes/`), and on Windows in `%APPDATA%\hermes-hook\themes\`; each file is named `hermes_themes_<name>.json`. Bundled themes ship in `hermes/ui/themes/`. The process list only shows processes whose information the current user may access. When the attached process exits, Hermes resets the window within a second: scans, watches, freezing and hooks stop; stored addresses and hooks are kept and loaded again the next time it attaches.
 
 ## Linux permissions for memory access
 
@@ -291,7 +296,7 @@ pytest comes with the `test` extra:
 ./.venv/bin/python -m pytest
 ```
 
-Many tests compile a small C program and attach to it with Frida (hooks, watch, native trace and monitor, the Mono features against a stand-in Mono runtime, the Unreal features against a stand-in Unreal game). They are skipped if `gcc` is missing, `kernel.yama.ptrace_scope` is not `0` or the machine is not x86-64. Tests of the Windows helper need MinGW, some need Linux.
+Many tests compile a small C program and attach to it with Frida (hooks, watch, native trace and monitor, the Mono features against a stand-in Mono runtime, the IL2CPP features against a stand-in `GameAssembly.so`, the Unreal features against a stand-in Unreal game). They are skipped if `gcc` is missing, `kernel.yama.ptrace_scope` is not `0` or the machine is not x86-64. Tests of the Windows helper need MinGW, some need Linux.
 
 ## License
 

@@ -3,6 +3,7 @@
 import pytest
 
 from hermes.engines import base
+from hermes.engines.il2cpp.adapter import Il2CppAdapter
 from hermes.engines.mono.adapter import MonoAdapter
 from hermes.engines.unreal.adapter import UnrealAdapter, bootstrapped_game
 from hermes.engines.registry import (
@@ -22,6 +23,30 @@ def test_mono_recognizes_its_runtime_on_linux_and_wine(name):
 @pytest.mark.parametrize("name", ["libmono-native.so", "MonoPosixHelper.dll", "libc.so.6"])
 def test_mono_ignores_other_libraries(name):
     assert not MonoAdapter().is_runtime_file(name)
+
+
+@pytest.mark.parametrize("name", ["GameAssembly.dll", "GameAssembly.so", "gameassembly.DLL"])
+def test_il2cpp_recognizes_game_assembly(name):
+    assert Il2CppAdapter().is_runtime_file(name)
+
+
+@pytest.mark.parametrize("name", ["UnityPlayer.dll", "Assembly-CSharp.dll", "GameAssembly.exe"])
+def test_il2cpp_ignores_other_modules(name):
+    assert not Il2CppAdapter().is_runtime_file(name)
+
+
+def test_il2cpp_adapter_capabilities_and_framework_filter():
+    il2cpp = engine_by_id("il2cpp")
+    for capability in (base.NAMING, base.CATALOG, base.TRACE):
+        assert il2cpp.supports(capability)
+    # Not yet
+    for capability in (base.MONITOR, base.METHOD_HOOKS, base.CALL, base.CALL_GRAPH):
+        assert not il2cpp.supports(capability)
+    for name in ("mscorlib", "UnityEngine.CoreModule", "Unity.Entities", "__Generated"):
+        assert il2cpp.is_framework_assembly(name)
+    for name in ("ProjectM", "ProjectM.Gameplay.Systems", "Assembly-CSharp"):
+        assert not il2cpp.is_framework_assembly(name)
+    assert il2cpp.native_tools
 
 
 @pytest.mark.parametrize("name", [
@@ -64,7 +89,9 @@ def test_detects_the_engine_from_the_mapped_runtime(tmp_path):
           "/games/Kathy Rain 2/MonoBleedingEdge/EmbedRuntime/mono-2.0-bdwgc.dll")
     _maps(tmp_path, 42, "/usr/lib/libc.so.6")
     _maps(tmp_path, 44, "/games/Avowed/Alabama/Binaries/Win64/Avowed-Win64-Shipping.exe")
+    _maps(tmp_path, 47, "/games/VRising/UnityPlayer.dll", "/games/VRising/GameAssembly.dll")
     assert detect_engine(41, proc_root=str(tmp_path)).id == "mono"
+    assert detect_engine(47, proc_root=str(tmp_path)).id == "il2cpp"
     assert detect_engine(44, proc_root=str(tmp_path)).id == "unreal"
     assert detect_engine(42, proc_root=str(tmp_path)) is None
     assert detect_engine(43, proc_root=str(tmp_path)) is None
