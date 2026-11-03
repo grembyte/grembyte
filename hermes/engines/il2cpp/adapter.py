@@ -14,7 +14,8 @@ class Il2CppAdapter(base.EngineAdapter):
 
     id = "il2cpp"
     display_name = "IL2CPP"
-    capabilities = frozenset({base.NAMING, base.CATALOG, base.TRACE, base.MONITOR})
+    capabilities = frozenset({base.NAMING, base.CATALOG, base.TRACE, base.MONITOR,
+                              base.METHOD_HOOKS})
     agent_source = IL2CPP_AGENT_SOURCE
     # All code is machine code in GameAssembly, as with Unreal.
     native_tools = True

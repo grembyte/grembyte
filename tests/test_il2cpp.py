@@ -27,6 +27,7 @@ from tests.test_hooks import (  # pylint: disable=unused-import
 _GAME_ASSEMBLY_SOURCE = r"""
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -58,8 +59,8 @@ struct Method {
     Class *klass;
     uint32_t token, flags, iflags;
     uint32_t param_count;
-    Type *params[2];
-    const char *param_names[2];
+    Type *params[3];
+    const char *param_names[3];
     Type *returns;
 };
 typedef struct Assembly { Image *image; } Assembly;
@@ -72,6 +73,7 @@ static Type t_void = {"System.Void", 0x01}, t_int = {"System.Int32", 0x08};
 static Type t_float = {"System.Single", 0x0c}, t_string = {"System.String", 0x0e};
 static Type t_param = {"T", 0x13}, t_vec = {"Game.Vec", 0x11, 0, &vec_class};
 static Type t_hero = {"Game.Hero", 0x12, 0, &hero};
+static Type t_bool = {"System.Boolean", 0x02}, t_double = {"System.Double", 0x0d};
 
 int g_gold;
 static int g_instances = 7;
@@ -99,6 +101,17 @@ __attribute__((noinline)) Vec Hero_Place(HeroObject *self, int steps, void *meth
     return v;
 }
 
+__attribute__((noinline)) int Hero_get_Count(void *method) { (void)method; return 7; }
+__attribute__((noinline)) int Hero_Roll(HeroObject *self, int min, float scale, int crit,
+                                        void *method) {
+    (void)method;
+    return (int)(min * scale * (crit ? 2 : 1)) + self->gold * 0;
+}
+__attribute__((noinline)) double Vec_Length(Vec *self, void *method) {
+    (void)method;
+    return self->x + self->y + self->z;
+}
+
 #define STATIC 0x10
 #define PUBLIC 0x06
 #define ABSTRACT 0x400
@@ -116,18 +129,30 @@ static Method m_rename = {Hero_Rename, "Rename", &hero, 0x06000007, PUBLIC, 0, 1
                           {&t_string}, {"name"}, &t_void};
 static Method m_place = {Hero_Place, "Place", &hero, 0x06000008, PUBLIC, 0, 1,
                          {&t_int}, {"steps"}, &t_vec};
+static Method m_count = {Hero_get_Count, "get_Count", &hero, 0x06000009, PUBLIC | STATIC, 0, 0,
+                         {0}, {0}, &t_int};
+static Method m_roll = {Hero_Roll, "Roll", &hero, 0x0600000a, PUBLIC, 0, 3,
+                        {&t_int, &t_float, &t_bool}, {"min", "scale", "crit"}, &t_int};
+static Method m_length_vec = {Vec_Length, "Length", &vec_class, 0x0600000b, PUBLIC, 0, 0,
+                              {0}, {0}, &t_double};
 static Method m_bag_add = {Bag_Add, "Add", &bag, 0x06000006, PUBLIC, 0, 1,
                            {&t_param}, {"item"}, &t_void};
 static Method m_length = {String_get_Length, "get_Length", &string_class, 0x06000001, PUBLIC,
                           0, 0, {0}, {0}, &t_int};
 static Method *hero_methods[] = {&m_add, &m_tick, &m_idle, &m_loot, &m_attack, &m_rename,
-                                 &m_place};
+                                 &m_place, &m_count, &m_roll};
+static Method *vec_methods[] = {&m_length_vec};
 static Method *bag_methods[] = {&m_bag_add};
 static Method *string_methods[] = {&m_length};
 static Field hero_fields[] = {
     {"Gold", &t_int, &hero, 0x10, 0x06},
     {"Name", &t_string, &hero, 0x18, 0x06},
     {"Instances", &t_int, &hero, 0, 0x16},
+};
+static Field vec_fields[] = {
+    {"x", &t_double, &vec_class, 0x10, 0x06},
+    {"y", &t_double, &vec_class, 0x18, 0x06},
+    {"z", &t_double, &vec_class, 0x20, 0x06},
 };
 static Field string_fields[] = {{"m_stringLength", &t_int, &string_class, 0x10, 0x01}};
 static Image game, corlib;
@@ -137,12 +162,13 @@ static Class object_class = {.image = &corlib, .name = "Object",
 static Class hero = {.image = &game, .name = "Hero", .type = {"Game.Hero", 0x12, 0, &hero},
     .element_class = &hero, .klass = &hero, .fields = hero_fields,
     .static_fields = &g_instances, .parent = &object_class, .size = 0x20,
-    .methods = hero_methods, .count = 7, .field_count = 3};
+    .methods = hero_methods, .count = 9, .field_count = 3};
 static Class bag = {.image = &game, .name = "Bag", .type = {"Game.Bag<T>", 0x12, 0, &bag},
     .element_class = &bag, .klass = &bag, .parent = &object_class, .generic = 1,
     .methods = bag_methods, .count = 1};
 static Class vec_class = {.image = &game, .name = "Vec", .type = {"Game.Vec", 0x11, 0, &vec_class},
-    .element_class = &vec_class, .klass = &vec_class, .valuetype = 1, .size = 16 + 24};
+    .element_class = &vec_class, .klass = &vec_class, .valuetype = 1, .size = 16 + 24,
+    .fields = vec_fields, .field_count = 3, .methods = vec_methods, .count = 1};
 static Class string_class = {.image = &corlib, .name = "String",
     .type = {"System.String", 0x0e, 0, &string_class}, .element_class = &string_class,
     .klass = &string_class, .fields = string_fields, .parent = &object_class,
@@ -171,6 +197,16 @@ void Game_Rename(int which) {
     }
     Hero_Rename(&player, &names[which], &m_rename);
 }
+int Game_Roll(int min) {
+    Game_Rename(0);
+    return Hero_Roll(&player, min, 1.5f, 1, &m_roll);
+}
+int Game_Length(int x) {
+    Vec v = {x, 1, 2};
+    return (int)Vec_Length(&v, &m_length_vec);
+}
+int Game_Gold(void) { return player.gold; }
+int Game_NameLength(void) { return player.name ? player.name->length : -1; }
 int Game_Place(int steps) {
     Game_Rename(0);
     return (int)Hero_Place(&player, steps, &m_place).y;
@@ -241,10 +277,35 @@ Method *il2cpp_class_get_method_from_name(Class *k, const char *name, int count)
     return NULL;
 }
 Method *il2cpp_object_get_virtual_method(void *o, Method *m) { (void)o; return m; }
+/* As IL2CPP's: values come back boxed */
 void *il2cpp_runtime_invoke(Method *m, void *obj, void **params, void **exc) {
     (void)params;
     *exc = NULL;
+    if (m->returns->kind == 0x08) {
+        static struct { void *klass, *monitor; int value; } box;
+        box.value = (m->flags & STATIC) ? ((int (*)(Method *))m->pointer)(m)
+                                        : ((int (*)(void *, Method *))m->pointer)(obj, m);
+        return &box;
+    }
     return ((void *(*)(void *, Method *))m->pointer)(obj, m);
+}
+Class *il2cpp_class_from_name(Image *image, const char *space, const char *name) {
+    char full[128];
+    snprintf(full, sizeof full, "%s%s%s", space, *space ? "." : "", name);
+    for (size_t i = 0; i < image->count; i++)
+        if (strcmp(image->classes[i]->type.name, full) == 0)
+            return image->classes[i];
+    return NULL;
+}
+void *il2cpp_type_get_object(Type *t) { return t; }
+String *il2cpp_string_new(const char *text) {
+    String *s = calloc(1, sizeof(String));
+    make_name(s, text);
+    return s;
+}
+void il2cpp_gc_wbarrier_set_field(void *object, void **field, void *value) {
+    (void)object;
+    *field = value;
 }
 """
 
@@ -258,6 +319,10 @@ void Hero_Tick(float delta);
 void Hero_Loot(int amount);
 void Game_Rename(int which);
 int Game_Place(int steps);
+int Game_Roll(int min);
+int Game_Length(int x);
+int Game_Gold(void);
+int Game_NameLength(void);
 
 int main(void) {
     printf("%d %p\n", getpid(), (void *)&g_gold);
@@ -274,6 +339,12 @@ int main(void) {
             Game_Rename(value);
         else if (strcmp(cmd, "place") == 0)
             answer = Game_Place(value);
+        else if (strcmp(cmd, "roll") == 0)
+            answer = Game_Roll(value);
+        else if (strcmp(cmd, "length") == 0)
+            answer = Game_Length(value);
+        else if (strcmp(cmd, "hero") == 0)
+            answer = Game_Gold() * 100 + Game_NameLength();
         printf("%d %d\n", g_gold, answer);
         fflush(stdout);
     }
@@ -331,7 +402,8 @@ def test_catalog_lists_images_classes_and_methods(tmp_path, qt_app):
         assert sorted(methods) == [
             "Game.Bag`1:Add (T)", "Game.Hero:AddGold (int)", "Game.Hero:Attack ()",
             "Game.Hero:Idle (single)", "Game.Hero:Loot (int)", "Game.Hero:Place (int)",
-            "Game.Hero:Rename (string)", "Game.Hero:Tick (single)"]
+            "Game.Hero:Rename (string)", "Game.Hero:Roll (int,single,bool)",
+            "Game.Hero:Tick (single)", "Game.Hero:get_Count ()", "Game.Vec:Length ()"]
         add = methods["Game.Hero:AddGold (int)"]
         assert (add.class_name, add.name, add.parameters, add.return_type, add.static,
                 add.token, add.engine, add.argument_names) == (
@@ -375,7 +447,7 @@ def test_trace_counts_methods_and_names_their_callers(tmp_path, qt_app):
         _wait_for(qt_app, lambda: planned or failed)
         assert not failed
         # Attack is abstract, Bag`1:Add belongs to a generic definition.
-        assert planned[0] == {"methods": 6, "skipped": {"abstract": 1, "native": 0, "generic": 1},
+        assert planned[0] == {"methods": 9, "skipped": {"abstract": 1, "native": 0, "generic": 1},
                               "assemblies": ["Assembly-CSharp"]}
 
         worker.trace([])
@@ -385,7 +457,7 @@ def test_trace_counts_methods_and_names_their_callers(tmp_path, qt_app):
         assert (info["notCompiled"], info["failed"]) == (0, 0)
         # Tick and Idle share their code: hooked once, under the first.
         assert sorted(method.name for method in methods) == [
-            "AddGold", "Loot", "Place", "Rename", "Tick"]
+            "AddGold", "Length", "Loot", "Place", "Rename", "Roll", "Tick", "get_Count"]
 
         baseline = record("baseline", ("tick", 0), ("tick", 0))
         index = {method.name: i for i, method in enumerate(methods)}
@@ -534,6 +606,78 @@ def test_method_monitor_logs_arguments_and_inspects_objects(tmp_path, qt_app):
         assert fields["Gold"]["valueType"] == "int32"
         # An address that holds no object is refused instead of read.
         assert "no object" in inspect({"address": "0x10"})
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+_ROLL = {"engine": "il2cpp", "image": "Assembly-CSharp", "file": None, "token": 0x0600000a,
+         "method": "Game.Hero:Roll (int,single,bool)"}
+_LENGTH = {"engine": "il2cpp", "image": "Assembly-CSharp", "file": None, "token": 0x0600000b,
+           "method": "Game.Vec:Length ()"}
+
+
+def _method_transform(source, **params):
+    # pylint: disable=import-outside-toplevel
+    from hermes.hooks.transforms import TemplateTransform, TransformDefinition, TransformParameter
+
+    definition = TransformDefinition(
+        "test", source, tuple(TransformParameter(name, default=value)
+                              for name, value in params.items()), kind="method")
+    return TemplateTransform(definition, **params)
+
+
+@requires_target
+def test_method_hooks_change_arguments_fields_and_results(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.method_hooks import MethodHookSpec, MethodHookWorker
+
+    target = _Target(_build(tmp_path))
+    worker = MethodHookWorker(target.pid)
+    installed, failed, errors, debug = {}, {}, {}, []
+    worker.hook_installed.connect(installed.__setitem__)
+    worker.hook_failed.connect(failed.__setitem__)
+    worker.transform_error.connect(errors.__setitem__)
+    worker.hook_debug.connect(lambda entries, _dropped: debug.extend(entries))
+    before = """function (ctx) {
+      ctx.args.min = 10;            // int in a register
+      ctx.args.scale = 3;           // float in an xmm register
+      ctx.args.crit = false;        // bool
+      ctx.this.Gold = 5;            // an int field
+      ctx.this.Name = "Renamed";    // a new string in a reference field
+    }"""
+    after = """function (ctx) {
+      ctx.log(ctx.args.min, ctx.this.Gold, ctx.this.Name, ctx.static("Game.Hero.Instances"));
+      return ctx.result + ctx.call("Game.Hero:get_Count");
+    }"""
+    try:
+        worker.start()
+        first = worker.add_hook(MethodHookSpec(_ROLL, _method_transform(before), phase="before"))
+        second = worker.add_hook(MethodHookSpec(_ROLL, _method_transform(after)))
+        struct = worker.add_hook(MethodHookSpec(
+            _LENGTH, _method_transform("function (ctx) { return ctx.this.x * 10 + ctx.this.z; }")))
+        _wait_for(qt_app, lambda: {first, second, struct} <= set(installed) | set(failed))
+        assert not failed, failed
+        worker.set_debug(second, True)
+        time.sleep(0.2)
+
+        # 10 * 3 without crit, plus get_Count (7) after the call
+        assert target.send("roll", 5) == (0, 37)
+        _wait_for(qt_app, lambda: debug)
+        assert not errors, errors
+        assert debug[0]["logs"] == ["10 5 Renamed 7"]
+        assert target.send("hero", 0) == (0, 5 * 100 + len("Renamed"))
+        # A struct's method: ``this`` is its data. x 4, y 1, z 2 -> 4 * 10 + 2
+        assert target.send("length", 4) == (0, 42)
+
+        removed = []
+        worker.hook_removed.connect(removed.append)
+        for hook_id in (first, second, struct):
+            worker.remove_hook(hook_id)
+        _wait_for(qt_app, lambda: len(removed) == 3)
+        assert target.send("roll", 5) == (0, 15)
+        assert target.send("length", 4) == (0, 7)
     finally:
         worker.requestInterruption()
         worker.wait(5000)

@@ -70,7 +70,11 @@ const il2cpp = (() => {
         virtualMethod: fn('il2cpp_object_get_virtual_method', 'pointer', ['pointer', 'pointer']),
         runtimeInvoke: fn('il2cpp_runtime_invoke', 'pointer',
           ['pointer', 'pointer', 'pointer', 'pointer']),
-        runtimeInvokeAddress: found.getExportByName('il2cpp_runtime_invoke')
+        runtimeInvokeAddress: found.getExportByName('il2cpp_runtime_invoke'),
+        classFromName: fn('il2cpp_class_from_name', 'pointer', ['pointer', 'pointer', 'pointer']),
+        typeObject: fn('il2cpp_type_get_object', 'pointer', ['pointer']),
+        stringNew: fn('il2cpp_string_new', 'pointer', ['pointer']),
+        writeBarrier: fn('il2cpp_gc_wbarrier_set_field', 'void', ['pointer', 'pointer', 'pointer'])
       }))
     };
   }
@@ -721,7 +725,8 @@ const il2cpp = (() => {
   const signatures = new Map();
 
   function signatureOf(method) {
-    // { instance, params: [{ name, type }], returns: type, returnPointerFirst }
+    // { instance, params: [{ name, type }], returns: type, returnPointerFirst,
+    // selfStruct }
     const key = method.toString();
     let result = signatures.get(key);
     if (result !== undefined)
@@ -731,11 +736,14 @@ const il2cpp = (() => {
     const params = [];
     for (let i = 0; i < names.length; i++)
       params.push({ name: names[i], type: typeInfo(api.param(method, i)) });
+    const owner = api.methodClass(method);
     result = {
       params,
       instance: o.isInstance(method),
       returns: typeInfo(api.returnType(method)),
-      returnPointerFirst: true
+      returnPointerFirst: true,
+      // A struct's methods get a pointer to its data as ``this``, no object
+      selfStruct: o.isInstance(method) && o.isValueType(owner) ? owner : null
     };
     signatures.set(key, result);
     return result;
@@ -962,6 +970,9 @@ const il2cpp = (() => {
     result = [];
     const seen = new Set();
     const setters = new Map();
+    if (classChain(klass).some(current => layout(current).name === 'UnityEngine.GameObject'))
+      result.push({ name: 'GetComponents()', special: 'components', static: false,
+                    type: { kind: 0x1d, byref: false, name: 'UnityEngine.Component[]' } });
     for (const current of classChain(klass)) {
       eachMethodOf(current, method => {
         const name = text(api.methodName(method));
@@ -983,7 +994,8 @@ const il2cpp = (() => {
       });
     }
     for (const property of result)
-      property.setter = setters.get(`set_${property.name}`) || null;
+      if (property.special === undefined)
+        property.setter = setters.get(`set_${property.name}`) || null;
     propertyLists.set(key, result);
     return result;
   }
@@ -997,14 +1009,162 @@ const il2cpp = (() => {
   }
 
   function getProperty(object, property, isStruct) {
-    // Call a getter of ``object``; on the main thread. Getters of a struct
-    // inside an object are not called: IL2CPP wants a boxed one.
-    if (isStruct)
-      throw hermesError('error.il2cpp.struct_property', { name: property.name });
+    // Call a getter of ``object`` (a struct's data for a struct, as
+    // il2cpp_runtime_invoke wants it); on the main thread.
+    if (property.special === 'components')
+      return components(object);
     let method = ptr(property.method);
-    if (!property.static)
+    if (!property.static && !isStruct)
       method = api.objects.virtualMethod(object, method);  // the override
     return invoke(method, property.static ? NULL : object, NULL);
+  }
+
+  function methodTakingType(klass, name) {
+    // The method ``name`` of ``klass`` itself taking one System.Type, or null.
+    let found = null;
+    eachMethodOf(klass, method => {
+      if (text(api.methodName(method)) === name && api.paramCount(method) === 1
+          && ownedText(api.typeName(api.param(method, 0))) === 'System.Type')
+        found = method;
+    });
+    return found;
+  }
+
+  function findObjectsMethod(unityObject) {
+    // UnityEngine.Object.FindObjectsOfType(Type), or, where code stripping
+    // left only that one (V Rising), FindObjectsOfType(Type, bool)
+    let single = null;
+    let withFlag = null;
+    eachMethodOf(unityObject, method => {
+      if (text(api.methodName(method)) !== 'FindObjectsOfType' || api.paramCount(method) < 1
+          || ownedText(api.typeName(api.param(method, 0))) !== 'System.Type')
+        return;
+      if (api.paramCount(method) === 1)
+        single = method;
+      else if (api.paramCount(method) === 2
+               && ownedText(api.typeName(api.param(method, 1))) === 'System.Boolean')
+        withFlag = method;
+    });
+    return single || withFlag;
+  }
+
+  function typeObject(klass) {
+    // The System.Type of a class
+    return api.objects.typeObject(api.classType(klass));
+  }
+
+  function components(gameObject) {
+    // GameObject.GetComponents(typeof(Component)): { result, exception }
+    const klass = classOf(gameObject);
+    const method = klass === null ? null : methodTakingType(klass, 'GetComponents');
+    if (method === null)
+      throw hermesError('error.il2cpp.no_components');
+    const params = Memory.alloc(Process.pointerSize);
+    params.writePointer(typeObject(findClass('UnityEngine.Component')));
+    return invoke(method, gameObject, params);
+  }
+
+  // --- Calling game code by name ------------------------------------------------
+
+  const classesByName = new Map();
+
+  function findClass(fullName) {
+    // A class of a loaded assembly by its full name, e.g. "Game.PartyHelper";
+    // nested classes as their outer class's name, a dot and theirs.
+    let klass = classesByName.get(fullName);
+    if (klass !== undefined)
+      return klass;
+    const o = objectsApi();
+    const dot = fullName.lastIndexOf('.');
+    const space = Memory.allocUtf8String(dot < 0 ? '' : fullName.substring(0, dot));
+    const name = Memory.allocUtf8String(fullName.substring(dot + 1));
+    klass = null;
+    for (const found of images()) {
+      const candidate = o.classFromName(found.image, space, name);
+      if (!candidate.isNull()) {
+        klass = candidate;
+        break;
+      }
+    }
+    if (klass === null)
+      throw hermesError('error.il2cpp.class_not_found', { name: fullName });
+    classesByName.set(fullName, klass);
+    return klass;
+  }
+
+  function findMethod(klass, name, argumentCount, wantStatic) {
+    // The first method ``name`` of the class or a base class taking
+    // ``argumentCount`` arguments; ``wantStatic`` true/false or null for any.
+    objectsApi();
+    for (const current of classChain(klass)) {
+      let found = null;
+      eachMethodOf(current, method => {
+        if (found !== null || text(api.methodName(method)) !== name
+            || api.paramCount(method) !== argumentCount)
+          return;
+        const isStatic = !api.objects.isInstance(method);
+        if (wantStatic === null || isStatic === wantStatic)
+          found = method;
+      });
+      if (found !== null)
+        return found;
+    }
+    const values = { class_name: layout(klass).name, method: name, count: argumentCount };
+    throw wantStatic ? hermesError('error.il2cpp.no_static_method', values)
+      : hermesError('error.il2cpp.no_method', values);
+  }
+
+  function findObject(className, named = null) {
+    // A live Unity object of the class or a subclass (optionally of that
+    // Unity name), or null; asks UnityEngine.Object.FindObjectsOfType(Type),
+    // so only on the main thread.
+    const [object] = findObjects(className, named, 1);
+    return object === undefined ? null : object;
+  }
+
+  function findObjects(className, named = null, limit = Number.MAX_SAFE_INTEGER) {
+    const klass = findClass(className);
+    const unityObject = classChain(klass).find(
+      current => layout(current).name === 'UnityEngine.Object');
+    if (unityObject === undefined)
+      throw hermesError('error.il2cpp.not_unity_object', { class_name: className });
+    const method = findObjectsMethod(unityObject);
+    if (method === null)
+      throw hermesError('error.il2cpp.no_find_objects');
+    // (Type) or (Type, bool includeInactive): false, passed by its address
+    const params = Memory.alloc(2 * Process.pointerSize);
+    const includeInactive = Memory.alloc(4);
+    includeInactive.writeU32(0);
+    params.writePointer(typeObject(klass));
+    params.add(Process.pointerSize).writePointer(includeInactive);
+    const { result, exception } = invoke(method, NULL, params);
+    if (!exception.isNull())
+      throw hermesError('error.il2cpp.find_objects_failed');
+    const found = [];
+    if (result.isNull())
+      return found;
+    const length = result.add(3 * Process.pointerSize).readU32();
+    const data = result.add(4 * Process.pointerSize);
+    for (let i = 0; i < length && found.length < limit; i++) {
+      const object = data.add(i * Process.pointerSize).readPointer();
+      if (!object.isNull() && (named === null || unityName(object) === named))
+        found.push(object);
+    }
+    return found;
+  }
+
+  function writeReference(object, field, value) {
+    // Store reference ``value`` in the field at ``field`` of ``object``,
+    // telling the garbage collector (a struct outside any object: plainly).
+    if (object !== null && api.objects !== null)
+      api.objects.writeBarrier(object, field, value);
+    else
+      field.writePointer(value);
+  }
+
+  function newString(text) {
+    // A managed string; on a thread IL2CPP knows (a game thread in a hook).
+    return objectsApi().stringNew(Memory.allocUtf8String(text));
   }
 
   // --- Unity object names ----------------------------------------------------------
@@ -1097,7 +1257,14 @@ const il2cpp = (() => {
       const klass = classOf(object);
       return klass === null ? null : layout(klass).name;
     },
-    virtualMethod: (object, method) => api.objects.virtualMethod(object, method)
+    virtualMethod: (object, method) => api.objects.virtualMethod(object, method),
+    // Method hooks and their scripts
+    writeReference,
+    newString,
+    findClass,
+    findMethod,
+    findObject,
+    findObjects
   };
 })();
 

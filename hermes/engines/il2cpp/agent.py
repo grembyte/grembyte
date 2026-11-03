@@ -9,7 +9,8 @@ methods.
 
 ``IL2CPP_AGENT_SOURCE`` is the IL2CPP engine adapter of the agent: it
 defines ``il2cpp`` and registers it (see hermes/engines/base.py for the
-contract). It offers naming, the catalog, the trace and the method monitor:
+contract). It offers naming, the catalog, the trace, the method monitor and
+method hooks:
 
 Catalog
     The images of the domain (named without ``.dll``, as Mono names
@@ -41,6 +42,13 @@ Method monitor and object inspector
     may set classes up runs on a thread that attaches to IL2CPP and
     detaches again (``onRuntimeThread``); getters and Unity names run on
     the main thread, reached through ``il2cpp_runtime_invoke`` as with Mono.
+    Struct methods get a pointer to the struct's data as ``this``
+    (``selfStruct``), and so does ``il2cpp_runtime_invoke`` for them.
+Method hooks
+    References are written through IL2CPP's write barrier, strings made with
+    ``il2cpp_string_new``; scripts find classes, methods and Unity objects
+    by name (``FindObjectsOfType(Type)``, or ``(Type, bool)`` where code
+    stripping left only that, as in V Rising).
 
 Reading a class's methods makes IL2CPP set it up, which allocates from
 its own heap and not from the garbage collector; this works from the

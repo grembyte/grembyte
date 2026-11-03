@@ -799,8 +799,7 @@ function onEnter(monitor, invocation) {
     monitorId: monitor.id,
     time: Date.now(),
     threadId: invocation.threadId,
-    self: layout.self === null ? null
-      : argumentValue(monitor, { kind: 0x1c, byref: false }, rawValue(context, layout.self)),
+    self: layout.self === null ? null : selfValue(monitor, rawValue(context, layout.self)),
     args: info.params.map((param, i) => {
       if (layout.args[i] === null)
         return { name: param.name, text: '?' };
@@ -819,6 +818,17 @@ function onEnter(monitor, invocation) {
   } else {
     push(monitor, record);
   }
+}
+
+function selfValue(monitor, raw) {
+  // ``this``: an object, or (IL2CPP) a pointer to the data of a struct
+  const owner = monitor.info.selfStruct;
+  if (owner) {
+    const value = { text: `struct ${engine.layout(owner).name}@${raw}`,
+                    target: { address: raw.toString(), klass: owner.toString() } };
+    return monitor.objects ? snapshot(value) : value;
+  }
+  return argumentValue(monitor, { kind: 0x1c, byref: false }, raw);
 }
 
 function onLeave(monitor, invocation, retval) {
@@ -1704,7 +1714,11 @@ function hookArguments(hook, invocation) {
     });
     return found;
   }
-  found.self = layout.self === null ? null : objectJs(rawValue(context, layout.self));
+  if (layout.self !== null) {
+    const raw = rawValue(context, layout.self);
+    found.self = info.selfStruct ? wrap(new ManagedObject(raw, info.selfStruct, true))
+      : objectJs(raw);
+  }
   info.params.forEach((param, i) => {
     const location = layout.args[i];
     if (location === null)
