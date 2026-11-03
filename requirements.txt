@@ -1,5 +1,5 @@
 capstone==5.0.9
-frida==17.24.3
+frida==17.25.2
 greenlet==3.5.6
 iniconfig==2.3.1
 numpy==2.5.4
@@ -8,7 +8,7 @@ pluggy==1.7.0
 psutil==7.2.2
 Pygments==2.21.0
 PySide6_Essentials==6.12.0
-pytest==9.1.1
+pytest==9.2.0
 shiboken6==6.12.0
-SQLAlchemy==2.1.6
+SQLAlchemy==2.1.7
 typing_extensions==4.16.0
