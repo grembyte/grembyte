@@ -108,7 +108,12 @@ function argumentLayout(info) {
   const hiddenReturn = hasHiddenReturn(info.returns);
   const firstIsReference = info.params.length > 0 && isReference(info.params[0].type);
   const layout = { self: null, args: [] };
-  if (info.instance) {
+  if (hiddenReturn && info.returnPointerFirst) {
+    // IL2CPP: a C function whose hidden result pointer comes before ``this``
+    next(POINTER);
+    if (info.instance)
+      layout.self = next(POINTER);
+  } else if (info.instance) {
     layout.self = next(POINTER);
     if (hiddenReturn)
       next(POINTER);

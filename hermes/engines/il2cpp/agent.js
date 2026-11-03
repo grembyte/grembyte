@@ -43,8 +43,44 @@ const il2cpp = (() => {
         : fn('il2cpp_free', 'void', ['pointer']),
       // Windows x64: the function containing an address, from the unwind data
       functionEntry: lookup === null ? null
-        : new NativeFunction(lookup, 'pointer', ['pointer', 'pointer', 'pointer'])
+        : new NativeFunction(lookup, 'pointer', ['pointer', 'pointer', 'pointer']),
+      // The method monitor and the object inspector; null if any is missing
+      objects: optional(() => ({
+        threadAttach: fn('il2cpp_thread_attach', 'pointer', ['pointer']),
+        threadDetach: fn('il2cpp_thread_detach', 'void', ['pointer']),
+        typeKind: fn('il2cpp_type_get_type', 'int', ['pointer']),
+        isByref: fn('il2cpp_type_is_byref', 'bool', ['pointer']),
+        typeClass: fn('il2cpp_class_from_type', 'pointer', ['pointer']),
+        isEnum: fn('il2cpp_class_is_enum', 'bool', ['pointer']),
+        enumBase: fn('il2cpp_class_enum_basetype', 'pointer', ['pointer']),
+        isValueType: fn('il2cpp_class_is_valuetype', 'bool', ['pointer']),
+        valueSize: fn('il2cpp_class_value_size', 'int', ['pointer', 'pointer']),
+        isInstance: fn('il2cpp_method_is_instance', 'bool', ['pointer']),
+        classParent: fn('il2cpp_class_get_parent', 'pointer', ['pointer']),
+        classFields: fn('il2cpp_class_get_fields', 'pointer', ['pointer', 'pointer']),
+        fieldName: fn('il2cpp_field_get_name', 'pointer', ['pointer']),
+        fieldType: fn('il2cpp_field_get_type', 'pointer', ['pointer']),
+        fieldOffset: fn('il2cpp_field_get_offset', 'size_t', ['pointer']),
+        fieldFlags: fn('il2cpp_field_get_flags', 'int', ['pointer']),
+        classRank: fn('il2cpp_class_get_rank', 'int', ['pointer']),
+        elementClass: fn('il2cpp_class_get_element_class', 'pointer', ['pointer']),
+        elementSize: fn('il2cpp_class_array_element_size', 'int', ['pointer']),
+        methodFromName: fn('il2cpp_class_get_method_from_name', 'pointer',
+          ['pointer', 'pointer', 'int']),
+        virtualMethod: fn('il2cpp_object_get_virtual_method', 'pointer', ['pointer', 'pointer']),
+        runtimeInvoke: fn('il2cpp_runtime_invoke', 'pointer',
+          ['pointer', 'pointer', 'pointer', 'pointer']),
+        runtimeInvokeAddress: found.getExportByName('il2cpp_runtime_invoke')
+      }))
     };
+  }
+
+  function optional(bindAll) {
+    try {
+      return bindAll();
+    } catch (_error) {
+      return null;
+    }
   }
 
   function refresh() {
@@ -586,6 +622,437 @@ const il2cpp = (() => {
     return code;
   }
 
+
+  // --- Threads IL2CPP knows ------------------------------------------------------
+  // Setting a class up may allocate from the garbage collector, which only
+  // threads IL2CPP knows may do. Such work runs on a short-lived thread of
+  // its own that attaches and detaches again (as with Mono): the agent's
+  // thread is not attached, so no garbage collection waits for it.
+
+  const RUNTIME_THREAD_POLL = 5;
+  const RUNTIME_THREAD_LEAVE = 200;
+
+  function objectsApi() {
+    requireRuntime();
+    if (api.objects === null)
+      throw hermesError('error.il2cpp.no_objects');
+    return api.objects;
+  }
+
+  function onRuntimeThread(work) {
+    // A promise of work()'s result, computed on an attached thread.
+    let o;
+    try {
+      o = objectsApi();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const state = { done: false, result: undefined, failure: null };
+    const body = new NativeCallback(() => {
+      try {
+        const thread = o.threadAttach(api.domain());
+        try {
+          state.result = work();
+        } finally {
+          o.threadDetach(thread);
+        }
+      } catch (error) {
+        state.failure = error;
+      }
+      state.done = true;
+      return NULL;
+    }, 'pointer', ['pointer']);
+    try {
+      spawnThread(body, NULL);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    Script.pin();
+    return new Promise((resolve, reject) => {
+      const poll = () => {
+        if (!state.done) {
+          setTimeout(poll, RUNTIME_THREAD_POLL);
+          return;
+        }
+        setTimeout(() => {
+          body.toString();
+          Script.unpin();
+        }, RUNTIME_THREAD_LEAVE);
+        if (state.failure !== null)
+          reject(state.failure);
+        else
+          resolve(state.result);
+      };
+      poll();
+    });
+  }
+
+  // --- Signatures --------------------------------------------------------------
+  // IL2CPP's type enum is ECMA-335's element type. A method is a C function
+  // (this, arguments..., MethodInfo*); a struct it returns through a hidden
+  // pointer comes before ``this`` (returnPointerFirst).
+
+  const TYPE = {
+    VOID: 0x01, I4: 0x08, VALUETYPE: 0x11, GENERICINST: 0x15
+  };
+
+  function typeInfo(type) {
+    // { kind, byref, name, enumName?, structSize?, klass? }, as Mono's
+    const o = api.objects;
+    const info = {
+      kind: o.typeKind(type),
+      byref: o.isByref(type),
+      name: ownedText(api.typeName(type)) || '?'
+    };
+    if (info.kind === TYPE.VALUETYPE || info.kind === TYPE.GENERICINST) {
+      const klass = o.typeClass(type);
+      if (!klass.isNull() && o.isEnum(klass)) {
+        info.enumName = info.name;
+        info.kind = o.typeKind(o.enumBase(klass));
+      } else if (!klass.isNull() && o.isValueType(klass)) {
+        info.kind = TYPE.VALUETYPE;
+        info.structSize = o.valueSize(klass, NULL);
+        info.klass = klass;
+      }
+    }
+    return info;
+  }
+
+  const signatures = new Map();
+
+  function signatureOf(method) {
+    // { instance, params: [{ name, type }], returns: type, returnPointerFirst }
+    const key = method.toString();
+    let result = signatures.get(key);
+    if (result !== undefined)
+      return result;
+    const o = objectsApi();
+    const names = parameterNames(method);
+    const params = [];
+    for (let i = 0; i < names.length; i++)
+      params.push({ name: names[i], type: typeInfo(api.param(method, i)) });
+    result = {
+      params,
+      instance: o.isInstance(method),
+      returns: typeInfo(api.returnType(method)),
+      returnPointerFirst: true
+    };
+    signatures.set(key, result);
+    return result;
+  }
+
+  function prepare(identity) {
+    // { start, size, instance, params, returns, returnPointerFirst }
+    objectsApi();
+    return onRuntimeThread(() => {
+      const method = resolve(identity);
+      const code = codeOf(method);
+      if (code === null)
+        throw hermesError('error.il2cpp.no_code', { method: identity.method });
+      return { ...code, ...signatureOf(method) };
+    });
+  }
+
+  // --- Objects -----------------------------------------------------------------
+  // Il2CppObject: the class, a monitor, then the fields; strings and arrays
+  // are laid out as Mono's. Il2CppClass starts with its image.
+
+  const FIELD_STATIC = 0x10;
+  const FIELD_LITERAL = 0x40;
+  const THREAD_STATIC = 0xffffffff;
+  const layouts = new Map();
+  let imageSet = new Set();
+
+  function isImage(image) {
+    if (imageSet.has(image.toString()))
+      return true;
+    imageSet = new Set(images().map(found => found.image.toString()));
+    return imageSet.has(image.toString());
+  }
+
+  function classOf(object) {
+    // The class of a managed object, or null if ``object`` is none (any
+    // more): only plain memory reads until its class proves real.
+    objectsApi();
+    try {
+      const klass = object.readPointer();
+      return isImage(klass.readPointer()) ? klass : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function layout(klass) {
+    // { name, valueType, rank, fields: [{ name, type, offset, static, owner?,
+    // storage? }] } with inherited fields first, as Mono's (cached)
+    const key = klass.toString();
+    let result = layouts.get(key);
+    if (result !== undefined)
+      return result;
+    const o = objectsApi();
+    const chain = [];
+    for (let current = klass; !current.isNull(); current = o.classParent(current))
+      chain.unshift(current);
+    const fields = [];
+    const iterator = Memory.alloc(Process.pointerSize);
+    for (const current of chain) {
+      iterator.writePointer(NULL);
+      for (;;) {
+        const field = o.classFields(current, iterator);
+        if (field.isNull())
+          break;
+        const flags = o.fieldFlags(field);
+        const offset = o.fieldOffset(field).toNumber();
+        const entry = {
+          name: text(o.fieldName(field)),
+          type: typeInfo(o.fieldType(field)),
+          offset,
+          static: (flags & FIELD_STATIC) !== 0
+        };
+        if (entry.static) {
+          entry.owner = current;
+          entry.storage = (flags & FIELD_LITERAL) !== 0 ? 'const'
+            : (offset >>> 0) === THREAD_STATIC ? 'thread' : 'data';
+        }
+        fields.push(entry);
+      }
+    }
+    result = {
+      name: ownedText(api.typeName(api.classType(klass))) || '?',
+      valueType: o.isValueType(klass),
+      rank: o.classRank(klass),
+      fields
+    };
+    if (result.rank > 0) {
+      result.element = typeInfo(api.classType(o.elementClass(klass)));
+      result.elementSize = o.elementSize(klass);
+    }
+    layouts.set(key, result);
+    return result;
+  }
+
+  // Il2CppClass has no exported getter for its static data. Its field
+  // ``klass`` points at the class itself (to look like Mono's vtable); the
+  // fields array follows it and static_fields seven pointers later, in
+  // every IL2CPP since Unity 2018. ``klass`` is the last pointer to the
+  // class among its first fields (element_class and castClass come earlier).
+  const CLASS_SCAN = 0x100;
+  let staticFieldsOffset;
+
+  function findStaticFieldsOffset(klass) {
+    const o = api.objects;
+    const iterator = Memory.alloc(Process.pointerSize);
+    iterator.writePointer(NULL);
+    const firstField = o.classFields(klass, iterator);
+    if (firstField.isNull())
+      return undefined;  // ask another class
+    let self = -1;
+    for (let at = 0; at < CLASS_SCAN; at += Process.pointerSize)
+      if (klass.add(at).readPointer().equals(klass))
+        self = at;
+    if (self < 0 || !klass.add(self + Process.pointerSize).readPointer().equals(firstField))
+      return null;
+    return self + 8 * Process.pointerSize;
+  }
+
+  function staticData(klass) {
+    // Where the static fields of ``klass`` are, or null: before IL2CPP set
+    // the class up (it allocates them then) or where the layout is unknown.
+    if (!refresh() || api.objects === null)
+      return null;
+    if (staticFieldsOffset === undefined)
+      staticFieldsOffset = findStaticFieldsOffset(klass);
+    if (staticFieldsOffset === undefined || staticFieldsOffset === null)
+      return null;
+    const data = klass.add(staticFieldsOffset).readPointer();
+    return data.isNull() ? null : data;
+  }
+
+  // --- Unity's main thread ------------------------------------------------------
+  // As with Mono: Unity starts script methods on its main thread through
+  // il2cpp_runtime_invoke (thousands of times a second); queued work runs
+  // there first. Job threads call it too, and are left alone.
+
+  const MAIN_TIMEOUT = 3000;
+  const mainQueue = [];
+  let mainHook = null;
+  let draining = false;
+
+  function isMainThread() {
+    return Process.getCurrentThreadId() === mainThreadId();
+  }
+
+  function drainMain() {
+    if (draining || !isMainThread())
+      return;
+    draining = true;
+    try {
+      while (mainQueue.length > 0) {
+        const job = mainQueue.shift();
+        clearTimeout(job.timer);
+        try {
+          job.resolve(job.work());
+        } catch (error) {
+          job.reject(error);
+        }
+      }
+    } finally {
+      draining = false;
+    }
+    if (mainHook !== null) {
+      const hook = mainHook;
+      mainHook = null;
+      setTimeout(() => hook.detach(), 0);
+    }
+  }
+
+  function onMainThread(work) {
+    let o;
+    try {
+      o = objectsApi();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    mainThreadId();
+    return new Promise((resolve, reject) => {
+      const job = { work, resolve, reject };
+      job.timer = setTimeout(() => {
+        const index = mainQueue.indexOf(job);
+        if (index >= 0)
+          mainQueue.splice(index, 1);
+        reject(hermesError('error.il2cpp.main_thread_timeout'));
+      }, MAIN_TIMEOUT);
+      mainQueue.push(job);
+      if (mainHook === null)
+        mainHook = Interceptor.attach(o.runtimeInvokeAddress, {
+          onEnter() {
+            drainMain();
+          }
+        });
+    });
+  }
+
+  function invoke(method, object, params) {
+    // { result, exception } of calling a method; on the main thread
+    const exception = Memory.alloc(Process.pointerSize);
+    exception.writePointer(NULL);
+    const result = api.objects.runtimeInvoke(method, object, params, exception);
+    return { result, exception: exception.readPointer() };
+  }
+
+  // --- Properties: parameterless getters ---------------------------------------
+
+  const propertyLists = new Map();
+
+  function classChain(klass) {
+    const chain = [];
+    for (let current = klass; !current.isNull(); current = api.objects.classParent(current))
+      chain.push(current);
+    return chain;  // the class first, System.Object last
+  }
+
+  function properties(klass) {
+    // [{ name, method, static, type, setter }] of the getters of ``klass``
+    // and its base classes, as Mono's (cached)
+    const key = klass.toString();
+    let result = propertyLists.get(key);
+    if (result !== undefined)
+      return result;
+    objectsApi();
+    result = [];
+    const seen = new Set();
+    const setters = new Map();
+    for (const current of classChain(klass)) {
+      eachMethodOf(current, method => {
+        const name = text(api.methodName(method));
+        const count = api.paramCount(method);
+        if (name.startsWith('set_')) {
+          if (!setters.has(name) && count === 1)
+            setters.set(name, method.toString());
+          return;
+        }
+        if (!name.startsWith('get_') || count !== 0 || seen.has(name))
+          return;
+        seen.add(name);
+        result.push({
+          name: name.substring(4),
+          method: method.toString(),
+          static: !api.objects.isInstance(method),
+          type: typeInfo(api.returnType(method))
+        });
+      });
+    }
+    for (const property of result)
+      property.setter = setters.get(`set_${property.name}`) || null;
+    propertyLists.set(key, result);
+    return result;
+  }
+
+  function eachMethodOf(klass, visit) {
+    const iterator = Memory.alloc(Process.pointerSize);
+    iterator.writePointer(NULL);
+    for (let method = api.classMethods(klass, iterator); !method.isNull();
+         method = api.classMethods(klass, iterator))
+      visit(method);
+  }
+
+  function getProperty(object, property, isStruct) {
+    // Call a getter of ``object``; on the main thread. Getters of a struct
+    // inside an object are not called: IL2CPP wants a boxed one.
+    if (isStruct)
+      throw hermesError('error.il2cpp.struct_property', { name: property.name });
+    let method = ptr(property.method);
+    if (!property.static)
+      method = api.objects.virtualMethod(object, method);  // the override
+    return invoke(method, property.static ? NULL : object, NULL);
+  }
+
+  // --- Unity object names ----------------------------------------------------------
+  // UnityEngine.Object.get_name, on the main thread only: Unity refuses it
+  // elsewhere, and other threads running game code need not be attached.
+
+  const MAX_NAME = 120;
+  const nameMethods = new Map();
+  let naming = false;
+
+  function nameMethod(klass) {
+    const key = klass.toString();
+    let method = nameMethods.get(key);
+    if (method !== undefined)
+      return method;
+    method = null;
+    for (const current of classChain(klass)) {
+      if (layout(current).name === 'UnityEngine.Object') {
+        const found = api.objects.methodFromName(current, Memory.allocUtf8String('get_name'), 0);
+        method = found.isNull() ? null : found;
+        break;
+      }
+    }
+    nameMethods.set(key, method);
+    return method;
+  }
+
+  function unityName(object) {
+    if (api === null || api.objects === null || naming || !isMainThread())
+      return null;
+    const klass = classOf(object);
+    const method = klass === null ? null : nameMethod(klass);
+    if (method === null)
+      return null;
+    naming = true;  // get_name could run a monitored method
+    let called;
+    try {
+      called = invoke(method, object, NULL);
+    } finally {
+      naming = false;
+    }
+    if (!called.exception.isNull() || called.result.isNull())
+      return null;
+    const string = called.result;
+    const length = string.add(2 * Process.pointerSize).readS32();
+    return string.add(2 * Process.pointerSize + 4).readUtf16String(Math.min(length, MAX_NAME));
+  }
+
   return {
     id: 'il2cpp',
     refresh,
@@ -611,7 +1078,26 @@ const il2cpp = (() => {
     }),
     cancelBatches: () => 0,
     batchesRunning: () => false,
-    releaseCode() {}
+    releaseCode() {},
+    // The method monitor and the object inspector
+    prepare,
+    signatureOf,
+    classOf,
+    layout,
+    staticData,
+    properties,
+    getProperty,
+    invoke,
+    classChain,
+    unityName,
+    onRuntimeThread,
+    onMainThread,
+    drainMain,
+    objectClassName: object => {
+      const klass = classOf(object);
+      return klass === null ? null : layout(klass).name;
+    },
+    virtualMethod: (object, method) => api.objects.virtualMethod(object, method)
   };
 })();
 

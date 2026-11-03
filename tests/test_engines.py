@@ -37,10 +37,10 @@ def test_il2cpp_ignores_other_modules(name):
 
 def test_il2cpp_adapter_capabilities_and_framework_filter():
     il2cpp = engine_by_id("il2cpp")
-    for capability in (base.NAMING, base.CATALOG, base.TRACE):
+    for capability in (base.NAMING, base.CATALOG, base.TRACE, base.MONITOR):
         assert il2cpp.supports(capability)
     # Not yet
-    for capability in (base.MONITOR, base.METHOD_HOOKS, base.CALL, base.CALL_GRAPH):
+    for capability in (base.METHOD_HOOKS, base.CALL, base.CALL_GRAPH):
         assert not il2cpp.supports(capability)
     for name in ("mscorlib", "UnityEngine.CoreModule", "Unity.Entities", "__Generated"):
         assert il2cpp.is_framework_assembly(name)

@@ -61,7 +61,8 @@ the platform's calling convention puts them, unless ``prepare`` answers
 one is (``{address}`` or ``{value}``) and where the result will be, and
 types with ``engine`` set are read by ``readValue(type, address)`` (Unreal).
 ``layout`` may give ``headerSize``, where struct field offsets start
-(Mono: after an object header).
+(Mono: after an object header). ``prepare`` answering ``returnPointerFirst``
+(IL2CPP) says that a struct result's hidden pointer comes before ``this``.
 
 Method hooks (``METHOD_HOOKS``) also need ``writeReference``; with
 ``frame: true`` also ``valueJs(type, address)`` and ``writeValue(type, address,
