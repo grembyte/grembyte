@@ -1,5 +1,11 @@
 """Application-wide Qt stylesheet for hermes-hook (dark GitHub theme)."""
 
+import re
+import tempfile
+from pathlib import Path
+
+from PySide6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
+
 # NOTE: Qt style sheets do not resolve the generic family name "monospace",
 # so concrete font names must be listed. Add your preferred font first.
 MONO = "'JetBrains Mono', 'Fira Code', 'DejaVu Sans Mono', 'Liberation Mono'"
@@ -389,6 +395,45 @@ STYLE = """
         min-height: 1px;
         max-height: 1px;
     }
+
+    /* ------------------------------------------------------------------
+       Check boxes, also those of list and table items. Without these rules
+       Fusion draws them from the desktop's palette, not the theme's: near
+       invisible on the light themes. The images are files of the theme's
+       colours (see _indicator_images).
+       ------------------------------------------------------------------ */
+    QCheckBox::indicator, QAbstractItemView::indicator {
+        width: 12px;
+        height: 12px;
+        border: 1px solid #8b949e;
+        border-radius: 3px;
+        background-color: #0d1117;
+    }
+    QCheckBox::indicator:hover, QAbstractItemView::indicator:hover {
+        border-color: #58a6ff;
+    }
+    QCheckBox::indicator:checked, QAbstractItemView::indicator:checked {
+        border-color: #58a6ff;
+        background-color: #58a6ff;
+        image: url(__CHECK_IMAGE__);
+    }
+    QCheckBox::indicator:indeterminate, QAbstractItemView::indicator:indeterminate {
+        border-color: #58a6ff;
+        background-color: #58a6ff;
+        image: url(__PARTIAL_IMAGE__);
+    }
+    QCheckBox::indicator:disabled, QAbstractItemView::indicator:disabled {
+        border-color: #484f58;
+    }
+    QCheckBox::indicator:checked:disabled, QAbstractItemView::indicator:checked:disabled {
+        background-color: #484f58;
+        image: url(__CHECK_DISABLED_IMAGE__);
+    }
+    QCheckBox::indicator:indeterminate:disabled,
+    QAbstractItemView::indicator:indeterminate:disabled {
+        background-color: #484f58;
+        image: url(__PARTIAL_DISABLED_IMAGE__);
+    }
 """.replace("__MONO__", MONO)
 
 
@@ -417,9 +462,52 @@ _STYLE_COLOR_KEYS = {
 }
 
 
-def build_stylesheet(colors):
-    """Build the application stylesheet with the supplied theme colors."""
+_ICONS_DIR = Path(__file__).resolve().parents[1] / "resources" / "icons"
+# Placeholder in STYLE: (Material icon, colour key of the mark)
+_INDICATOR_IMAGES = {
+    "__CHECK_IMAGE__": ("check", "white"),
+    "__PARTIAL_IMAGE__": ("remove", "white"),
+    "__CHECK_DISABLED_IMAGE__": ("check", "background"),
+    "__PARTIAL_DISABLED_IMAGE__": ("remove", "background"),
+}
+_RGBA = re.compile(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)")
+
+
+def _indicator_dir():
+    cache = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.GenericCacheLocation)
+    return Path(cache or tempfile.gettempdir()) / "hermes-hook" / "indicators"
+
+
+def _indicator_image(icon, color, directory):
+    """The path of ``icon`` in ``color`` as an SVG file, written once.
+
+    Style sheets take images only as files, and an SVG's colour is in the file.
+    """
+    rgba = _RGBA.fullmatch(color)
+    fill = (f'fill="rgb({rgba[1]},{rgba[2]},{rgba[3]})" fill-opacity="{rgba[4]}"'
+            if rgba else f'fill="{color}"')
+    path = directory / f"{icon}-{re.sub(r'[^0-9A-Za-z]', '', color).lower()}.svg"
+    if not path.exists():
+        svg = (_ICONS_DIR / f"{icon}.svg").read_text(encoding="utf-8")
+        svg = re.sub(r'(<svg\b[^>]*?)\s+fill=(["\']).*?\2', r"\1", svg, count=1)
+        directory.mkdir(parents=True, exist_ok=True)
+        path.write_text(svg.replace("<svg ", f"<svg {fill} ", 1), encoding="utf-8")
+    return path.as_posix()
+
+
+def build_stylesheet(colors, indicator_dir=None):
+    """Build the application stylesheet with the supplied theme colors.
+
+    The check box images go to ``indicator_dir`` (default: the user's cache).
+    """
     stylesheet = STYLE
     for original, key in _STYLE_COLOR_KEYS.items():
         stylesheet = stylesheet.replace(original, colors[key])
+    directory = Path(indicator_dir) if indicator_dir is not None else _indicator_dir()
+    for placeholder, (icon, key) in _INDICATOR_IMAGES.items():
+        try:
+            image = _indicator_image(icon, colors[key], directory)
+        except OSError:
+            image = ""  # no mark rather than no stylesheet
+        stylesheet = stylesheet.replace(placeholder, image)
     return stylesheet

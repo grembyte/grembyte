@@ -174,3 +174,15 @@ def test_theme_colors_and_label_icons_follow_theme(monkeypatch):
         apply_icon_theme(default_colors)
         label.deleteLater()
         application.processEvents()
+
+def test_check_boxes_use_theme_colors(tmp_path):
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
+    colors = manager.load_theme("Github-Light")["colors"]
+
+    stylesheet = build_stylesheet(colors, indicator_dir=tmp_path)
+
+    assert "__" not in stylesheet.replace("__MONO__", "")
+    check = tmp_path / "check-ffffff.svg"
+    assert f"image: url({check.as_posix()})" in stylesheet
+    assert 'fill="#ffffff"' in check.read_text(encoding="utf-8")
+    assert (tmp_path / "check-ffffff.svg").exists() and (tmp_path / "remove-ffffff.svg").exists()
