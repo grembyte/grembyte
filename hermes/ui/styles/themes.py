@@ -10,7 +10,7 @@ from hermes.ui.styles.styles import _STYLE_COLOR_KEYS, build_stylesheet
 
 
 THEME_PREFIX = "hermes_themes_"
-DEFAULT_THEME = "Default"
+DEFAULT_THEME = "Github-Dark"
 THEME_DIRECTORY = Path(__file__).parents[1] / "themes"
 CODE_COLOR_KEYS = ("code_text", "code_keyword", "code_string", "code_number")
 COLOR_KEYS = tuple(dict.fromkeys((*_STYLE_COLOR_KEYS.values(), *CODE_COLOR_KEYS)))
@@ -60,7 +60,7 @@ class ThemeManager:
             item[0] != DEFAULT_THEME, item[0].casefold())))
 
     def load_theme(self, name=None):
-        """Return a named theme, falling back to Default if it is unavailable."""
+        """Return a named theme, falling back to Github-Dark if it is unavailable."""
         name = name or self.settings.value("ui_theme", DEFAULT_THEME)
         themes = self.available_themes()
         return themes.get(name, themes[DEFAULT_THEME])

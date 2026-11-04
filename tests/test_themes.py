@@ -1,6 +1,6 @@
 """Tests for JSON UI theme loading and persistence."""
 
-from hermes.ui.styles.styles import STYLE, build_stylesheet
+from hermes.ui.styles.styles import build_stylesheet
 from hermes.ui.localization import load_translations
 from hermes.ui.styles.themes import COLOR_KEYS, ThemeManager
 from PySide6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
@@ -17,11 +17,22 @@ class MemorySettings:
         self.values[key] = value
 
 
-def test_default_theme_renders_existing_stylesheet():
+def test_default_theme_is_github_dark():
     manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
 
-    assert manager.load_theme()["name"] == "Default"
-    assert manager.stylesheet() == STYLE
+    assert manager.load_theme()["name"] == "Github-Dark"
+    assert "Default" not in manager.available_themes()
+    assert next(iter(manager.available_themes())) == "Github-Dark"
+    assert manager.stylesheet() == build_stylesheet(manager.load_theme("Github-Dark")["colors"])
+    assert "#e6edf3" in manager.stylesheet()
+
+
+def test_unknown_saved_theme_falls_back_to_github_dark():
+    settings = MemorySettings()
+    settings.setValue("ui_theme", "Default")
+    manager = ThemeManager(settings=settings, user_theme_dir="/tmp/no-hermes-themes")
+
+    assert manager.load_theme()["name"] == "Github-Dark"
 
 
 def test_saved_theme_is_discovered_and_can_be_selected(tmp_path):
@@ -74,7 +85,7 @@ def test_older_user_theme_inherits_syntax_colors(tmp_path):
     import json
 
     manager = ThemeManager(settings=MemorySettings(), user_theme_dir=tmp_path)
-    colors = manager.load_theme("Default")["colors"]
+    colors = manager.load_theme("Github-Dark")["colors"]
     for key in ("code_text", "code_keyword", "code_string", "code_number"):
         colors.pop(key)
     colors["background"] = "#102030"
@@ -82,7 +93,7 @@ def test_older_user_theme_inherits_syntax_colors(tmp_path):
         json.dumps({"name": "Old_Custom", "colors": colors}), encoding="utf-8")
 
     loaded = manager.load_theme("Old_Custom")["colors"]
-    defaults = manager.load_theme("Default")["colors"]
+    defaults = manager.load_theme("Github-Dark")["colors"]
 
     assert loaded["background"] == "#102030"
     assert all(loaded[key] == defaults[key]
@@ -113,7 +124,7 @@ def test_existing_menu_icons_follow_theme(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     application = QApplication.instance() or QApplication([])
     manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
-    default_colors = manager.load_theme("Default")["colors"]
+    default_colors = manager.load_theme("Github-Dark")["colors"]
     apply_icon_theme(default_colors)
     menu = QMenu()
     action = menu.addAction(material_icon("track_changes"), "Trace")
@@ -142,7 +153,7 @@ def test_theme_colors_and_label_icons_follow_theme(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     application = QApplication.instance() or QApplication([])
     manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
-    default_colors = manager.load_theme("Default")["colors"]
+    default_colors = manager.load_theme("Github-Dark")["colors"]
     apply_icon_theme(default_colors)
     label = QLabel()
     set_label_icon(label, "memory", "warning")

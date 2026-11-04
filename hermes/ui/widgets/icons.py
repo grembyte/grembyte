@@ -13,15 +13,15 @@ ICONS_DIR = Path(__file__).resolve().parent.parent / "resources" / "icons"
 
 # Text colours in styles.py: (normal, hover/selected, disabled) of menu items
 # and of the kinds of buttons.
-_MENU = ("#c9d1d9", "#ffffff", "#484f58")
+_MENU = ("#e6edf3", "#ffffff", "#484f58")
 _BUTTON_COLORS = {
-    "": ("#c9d1d9", "#58a6ff", "#484f58"),
+    "": ("#e6edf3", "#2f81f7", "#484f58"),
     "btn_danger": ("#f85149", "#ffffff", "#6e3a37"),
     "btn_primary": ("#ffffff", "#ffffff", "#6e7f99"),
 }
 _MENU_ICON_NAMES = {}
-# The colours of the theme last applied; until then those of Default.
-_DEFAULT_COLORS = {"muted": "#8b949e", "warning": "#f0883e"}
+# The colours of the theme last applied; until then those of Github-Dark.
+_DEFAULT_COLORS = {"muted": "#8b949e", "warning": "#d29922"}
 _theme_colors = dict(_DEFAULT_COLORS)
 
 

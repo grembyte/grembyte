@@ -35,7 +35,7 @@ _KEYWORDS = frozenset({
     "true", "try", "typeof", "undefined", "var", "void", "while", "with", "yield",
 })
 _CODE_COLORS = {
-    "code_text": "#c9d1d9",
+    "code_text": "#e6edf3",
     "code_keyword": "#ff7b72",
     "code_string": "#a5d6ff",
     "code_number": "#79c0ff",

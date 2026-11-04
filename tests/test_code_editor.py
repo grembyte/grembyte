@@ -106,5 +106,5 @@ def test_existing_code_editor_rehighlights_after_theme_change(qt_app):
                        if format_range.start == 0)
         assert keyword.format.foreground().color().name() == "#cb4b16"
     finally:
-        apply_code_theme(manager.load_theme("Default")["colors"])
+        apply_code_theme(manager.load_theme("Github-Dark")["colors"])
         editor.close()
