@@ -2,7 +2,7 @@
 
 Hermes Hook is a desktop application for inspecting and manipulating the memory of running games. It runs on Linux, including Windows games under Wine/Proton, and on Windows. The project is under development.
 
-The full documentation with screenshots is in [`docs/`](docs/index.md); `mkdocs serve` shows it as a website (see [Development](docs/development/index.md#documentation)).
+**Documentation: <https://winterhafen.github.io/hermes-hook/>** – installation, tutorials, the user guide and examples with screenshots. Its sources are in [`docs/`](docs/index.md); `mkdocs serve` shows them locally (see [Development](docs/development/index.md#documentation)).
 
 ## Disclaimer
 
@@ -34,7 +34,7 @@ python3 -m venv .venv
 ./.venv/bin/hermes
 ```
 
-On Linux, Hermes needs `kernel.yama.ptrace_scope=0` to access a game started separately. The [installation guide](docs/getting-started/installation.md), the [permissions](docs/getting-started/permissions.md) and a [tutorial](docs/getting-started/first-hook.md) with the test game in `test_app/` have the details.
+On Linux, Hermes needs `kernel.yama.ptrace_scope=0` to access a game started separately. The [installation guide](https://winterhafen.github.io/hermes-hook/getting-started/installation/), the [permissions](https://winterhafen.github.io/hermes-hook/getting-started/permissions/) and a [tutorial](https://winterhafen.github.io/hermes-hook/getting-started/first-hook/) with the test game in `test_app/` have the details.
 
 ## License
 
