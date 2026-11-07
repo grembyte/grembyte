@@ -99,3 +99,4 @@ The [HermesQuest examples](../examples/hermesquest-hooks.md#method-hooks) explai
 
 Pillars of Eternity, Pillars of Eternity II, Kathy Rain 2 (Proton) and Shadowrun Returns (32-bit, Proton).
 
+<small>The screenshots of Pillars of Eternity on this page only illustrate how Hermes Hook works. All game names, trademarks and game content belong to their respective owners. Hermes Hook is not affiliated with, endorsed or sponsored by them.</small>

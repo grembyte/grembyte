@@ -1,0 +1,60 @@
+name: Game compatibility report
+description: Tell us about a game Hermes works with, or one where it fails.
+labels: ["game report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reports on working games are welcome too: they end up in the "Tested games" lists of the documentation.
+        If Hermes crashes or a feature fails, a [bug report](https://github.com/winterhafen/hermes-hook/issues/new?template=bug_report.yml) with the log is more helpful.
+  - type: input
+    id: game
+    attributes:
+      label: Game
+      description: Name, version and store.
+      placeholder: Avowed 1.3, Steam
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      options:
+        - Unity (Mono)
+        - Unity (IL2CPP)
+        - Unreal Engine
+        - Other / native
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: How does the game run?
+      options:
+        - Native Linux
+        - Windows game under Proton
+        - Windows game under Wine
+        - Native Windows
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Works
+        - Works partly
+        - Does not work
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Which features did you try (scan, hooks, catalog, trace, …), and what worked or failed?
+  - type: input
+    id: environment
+    attributes:
+      label: Hermes version and system
+      placeholder: 0.5.0, Fedora 44, Proton 10.0

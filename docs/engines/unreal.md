@@ -88,3 +88,5 @@ In Gothic 1 Remake, a manual [script](../guide/scripts.md) adds any item to the 
 ## Tested games
 
 Avowed (UE5, Proton), Gothic 1 Remake (UE5, Proton; its GAS setter follows AngelscriptGAS).
+
+<small>The screenshots of Avowed and Gothic 1 Remake on this page only illustrate how Hermes Hook works. All game names, trademarks and game content belong to their respective owners. Hermes Hook is not affiliated with, endorsed or sponsored by them.</small>

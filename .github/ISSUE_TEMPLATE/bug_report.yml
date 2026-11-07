@@ -1,0 +1,89 @@
+name: Bug report
+description: Something in Hermes Hook does not work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Security problems go through a [private report](https://github.com/winterhafen/hermes-hook/security/advisories/new) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: |
+        1. Attached to …
+        2. Opened the catalog and …
+        3. The game froze.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Hermes is affected?
+      options:
+        - Memory scan / tracked addresses
+        - Pointer scan
+        - Write and read watch
+        - Hooks / hook templates
+        - Scripts
+        - Native trace / function monitor
+        - Engine tools (catalog, trace, method monitor, method hooks)
+        - Attaching / sessions
+        - User interface
+        - Installation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: game
+    attributes:
+      label: Game
+      description: Name of the game and, if known, its version and store (Steam, GOG, …).
+      placeholder: Pillars of Eternity 3.08, GOG
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      options:
+        - Unity (Mono)
+        - Unity (IL2CPP)
+        - Unreal Engine
+        - Other / native
+        - Not sure
+  - type: dropdown
+    id: platform
+    attributes:
+      label: How does the game run?
+      options:
+        - Native Linux
+        - Windows game under Proton
+        - Windows game under Wine
+        - Native Windows
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Hermes version and system
+      description: Hermes version or commit, distribution, and the Proton or Wine version if used.
+      placeholder: 0.5.0 (commit abc1234), Fedora 44, Proton 10.0
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Bug report ZIP or log excerpt
+      description: |
+        Attach the ZIP from **Log → Export bug report …** by dragging it here, or paste the relevant lines.
+        Issues are public: check the ZIP first, the logs contain file paths with your user name and process names.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched the existing issues and this bug is not reported yet.
+          required: true
+        - label: This happens in a single-player game or offline mode.
+          required: true

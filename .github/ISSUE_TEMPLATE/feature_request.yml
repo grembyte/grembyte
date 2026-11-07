@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a new feature or an improvement.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do?
+      description: Describe the task or the problem, not only the solution. Which game or engine is it about?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How could Hermes help with it?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and workarounds
+      description: What do you do today instead? Other tools that do it are worth mentioning too.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched the existing issues and the documentation.
+          required: true
+        - label: The feature is not aimed at online games or at bypassing anti-cheat systems.
+          required: true
