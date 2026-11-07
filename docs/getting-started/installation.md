@@ -50,7 +50,7 @@ hermes
 Or straight from the project directory, without activating anything:
 
 ```bash
-./.venv/bin/python main.py
+./.venv/bin/python -m hermes
 ```
 
 ### Menu entry and shortcut

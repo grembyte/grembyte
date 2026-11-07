@@ -23,7 +23,7 @@ if ($Uninstall) {
 
 $Pythonw = Join-Path $VenvDir "Scripts\pythonw.exe"
 if (-not (Test-Path $Pythonw)) {
-    Write-Error "No virtual environment at $VenvDir (see readme.md, Installation)."
+    Write-Error "No virtual environment at $VenvDir (see docs\getting-started\installation.md)."
 }
 
 # Shortcuts cannot use the SVG icon, so render it to an .ico with Qt.
@@ -46,7 +46,7 @@ if ($LASTEXITCODE -ne 0) {
 $Shell = New-Object -ComObject WScript.Shell
 $Shortcut = $Shell.CreateShortcut($ShortcutFile)
 $Shortcut.TargetPath = $Pythonw
-$Shortcut.Arguments = "`"$(Join-Path $ProjectDir 'main.py')`""
+$Shortcut.Arguments = "-m hermes"
 $Shortcut.WorkingDirectory = $ProjectDir
 $Shortcut.IconLocation = "$IconFile,0"
 $Shortcut.Description = "Memory scanner, hook engine and reverse engineering tool"
