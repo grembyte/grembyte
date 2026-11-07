@@ -74,6 +74,7 @@ It runs on **Linux**, including Windows games under **Wine and Proton**, and on 
 1. [Install](getting-started/installation.md) Hermes Hook and check the [permissions](getting-started/permissions.md) it needs on Linux.
 2. Follow the [tutorial](getting-started/first-hook.md): with the small test game in the repository you find a value, watch its writes and hook them, in about ten minutes.
 3. Read the [user guide](guide/scanning.md) for the details of each tool, and the [engine pages](engines/index.md) for Unity and Unreal games.
+4. Try everything on [HermesQuest](examples/index.md), a small Unity role-playing game made for it, with worked examples of pointer scans, hooks and scripts – and an introduction to [JavaScript in Hermes](examples/javascript.md).
 
 !!! info "Under development"
     Hermes Hook is under active development. The [roadmap](https://github.com/winterhafen/hermes-hook/blob/main/ROADMAP.md) lists what is planned and what is still open.

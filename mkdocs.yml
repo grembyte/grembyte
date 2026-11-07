@@ -103,6 +103,12 @@ nav:
       - Unity (Mono): engines/unity-mono.md
       - Unity (IL2CPP): engines/unity-il2cpp.md
       - Unreal Engine: engines/unreal.md
+  - Examples:
+      - examples/index.md
+      - Scans and pointer scan: examples/hermesquest-scans.md
+      - Hooks: examples/hermesquest-hooks.md
+      - Scripts: examples/hermesquest-scripts.md
+      - JavaScript in Hermes: examples/javascript.md
   - Wine and Proton: wine-proton.md
   - Reference:
       - Files and environment: reference/files.md
