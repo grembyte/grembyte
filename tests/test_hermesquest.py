@@ -59,6 +59,15 @@ class _Game:
         self.process = subprocess.Popen(  # pylint: disable=consider-using-with
             [str(_GAME), "-batchmode", "-nographics", "-logFile", str(log), "-seed", "1"])
         self.pid = self.process.pid
+        # Attaching right after the start can kill the game: on Linux Frida's
+        # thread then comes before glibc set its default stack size
+        # ("allocate_stack: assertion failed: size != 0", signal 6). Unity
+        # writes its log once the player runs, the process is set up by then.
+        deadline = time.monotonic() + 30
+        while not (log.exists() and log.stat().st_size) and time.monotonic() < deadline:
+            if not self.alive():
+                raise AssertionError(f"HermesQuest ended at the start ({self.process.returncode})")
+            time.sleep(0.1)
 
     def identity(self, namespace, class_name, name, params):
         """The identity of a method of Assembly-CSharp; skips if the build lacks it."""
