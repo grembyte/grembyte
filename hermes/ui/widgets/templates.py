@@ -33,7 +33,7 @@ from hermes.hooks.syntax import BODY, FUNCTION
 from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.hooks import TransformForm, format_number, parse_number
 from hermes.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
-from hermes.ui.widgets.labels import WrappedLabel
+from hermes.ui.widgets.labels import DocsHint, WrappedLabel
 from hermes.ui.widgets.syntax_hint import SyntaxHint, syntax_problem
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 
@@ -206,7 +206,8 @@ class TemplateDialog(QDialog):
         layout.addWidget(self.source_input, 1)
         self.syntax_hint = SyntaxHint(self.translations, self.source_input, FUNCTION)
         layout.addWidget(self.syntax_hint)
-        self.script_hint = WrappedLabel(self.translations["hooks.script_hint"])
+        self.script_hint = DocsHint(self.translations, self.translations["hooks.script_hint"],
+                                    "reference/hook-context/")
         layout.addWidget(self.script_hint)
 
         self.error_label = WrappedLabel()
@@ -255,8 +256,9 @@ class TemplateDialog(QDialog):
 
     def _update_script_hint(self):
         method = self.hook_kind_combo.currentData() == "method"
-        self.script_hint.setText(self.translations[
-            "hooks.method_script_hint" if method else "hooks.script_hint"])
+        self.script_hint.set_hint(
+            self.translations["hooks.method_script_hint" if method else "hooks.script_hint"],
+            "reference/hook-context/#method-hooks" if method else "reference/hook-context/")
 
     def _kind_combo(self):
         combo = QComboBox()

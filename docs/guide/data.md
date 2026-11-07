@@ -27,5 +27,5 @@ When the attached game exits, Hermes resets the window within a second: scans, w
 
 ## Cleaning up
 
-- **File → Delete saved entries …** deletes chosen addresses, pointer scans, hooks, method hooks, favorites or scripts of saved programs, or the programs altogether.
+- **File → Delete saved entries …** deletes chosen addresses, pointer scans, hooks, method hooks, favorites or scripts of saved programs, or the programs altogether. Tick the entries per program; the box in front of a row ticks all its entries. For several selected rows (Ctrl or Shift), the space key ticks their entries, a second time their program too, a third time nothing. Deleting an address deletes its pointer scans as well. **Remove process** deletes the program with all its entries and its assembly selection; it is saved anew when you attach to it again.
 - **File → Compact database …** frees the space of deleted entries (e.g. large pointer scans) that SQLite otherwise keeps in the file.

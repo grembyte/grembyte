@@ -408,7 +408,7 @@ EXAMPLE_TEMPLATE_KINDS = ("multiply", "freeze", "clamp")
 METHOD_EXAMPLES = {
     "method_multiply": (
         """function (ctx) {
-  // The method's result times the factor, e.g. the damage of Health:DoDamage.
+  // The method's result times the factor, e.g. the damage of Combat.CalculateDamage.
   return ctx.result * ctx.params.factor;
 }""",
         (TransformParameter("factor", default=2),),
@@ -425,13 +425,15 @@ METHOD_EXAMPLES = {
         (TransformParameter(
             "code", kind="code",
             default="""// ctx.phase ("before"/"after"), ctx.args.<name>, ctx.this, ctx.result, ctx.log(...)
-// Objects: .name, .className, fields and properties directly (e.g. .IsPartyMember),
+// Objects: .name, .className, fields and properties directly (e.g. .IsPlayer),
 // .field("x"), .get("property"), .call("Method", ...), .component("Type")
 // Static methods: ctx.call("Namespace.Class.Method", ...)
 // After the call: return a value to replace the result, nothing to keep it.
 // Before the call: ctx.args.x = …, obj.Field = … change what the method works with.
+// Example for HermesQuest's Combat.CalculateDamage, after the call:
+// the player deals twice the damage.
 const attacker = ctx.args.attacker;
-if (attacker && !/^(Player|Companion)_/.test(attacker.name))
+if (attacker && attacker.IsPlayer)
   return ctx.result * 2;
 """),),
     ),
@@ -455,7 +457,7 @@ EXAMPLE_TEXTS = {
     "method_multiply": "Result × factor",
     "method_multiply.factor": "Factor",
     "method_multiply.description":
-        "Multiplies the method's result, e.g. the damage of Health:DoDamage.",
+        "Multiplies the method's result, e.g. the damage of Combat.CalculateDamage.",
     "method_script": "Method script",
     "method_script.code": "Script",
     "method_script.description":

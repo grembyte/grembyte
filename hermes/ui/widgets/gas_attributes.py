@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 from hermes.features.scripts import ScriptSpec
 from hermes.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
+from hermes.ui.widgets.labels import DocsHint
 
 _SET, _ATTRIBUTE, _BASE, _CURRENT, _HELD = range(5)
 _COLUMNS = ("gas.column_set", "gas.column_attribute", "gas.column_base",
@@ -120,9 +121,7 @@ class GasAttributesDialog(QDialog):
     def _build_ui(self):
         t = self.translations
         layout = QVBoxLayout(self)
-        hint = QLabel(t["gas.hint"])
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {theme_color('muted')};")
+        hint = DocsHint(t, t["gas.hint"], "engines/unreal/#gas-attributes")
         layout.addWidget(hint)
 
         top = QHBoxLayout()

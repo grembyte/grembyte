@@ -32,7 +32,7 @@ from hermes.core.pointer import (
 from hermes.platform import ProcessMemory, main_module, read_mappings
 from hermes.db.repository.addresses import SavedPointerScan
 from hermes.ui.widgets.icons import set_button_icon, theme_color
-from hermes.ui.widgets.labels import WrappedLabel
+from hermes.ui.widgets.labels import DocsHint, WrappedLabel
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from hermes.ui.workers import keep_until_finished
 
@@ -167,8 +167,7 @@ class PointerScanDialog(QDialog):
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
-        hint = WrappedLabel(self.translations["pointer.hint"])
-        hint.setStyleSheet(f"color: {theme_color('muted')};")
+        hint = DocsHint(self.translations, self.translations["pointer.hint"], "guide/pointer-scan/")
         layout.addWidget(hint)
 
         # Shown when the address lies in a module's static data: no scan needed.

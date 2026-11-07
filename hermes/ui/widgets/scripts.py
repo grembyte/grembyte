@@ -39,7 +39,7 @@ from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.icons import material_icon, set_button_icon, theme_color
 from hermes.ui.widgets.inspection import Inspections
-from hermes.ui.widgets.labels import WrappedLabel
+from hermes.ui.widgets.labels import DocsHint, WrappedLabel
 from hermes.ui.widgets.script_params import ParamEditor, ScriptRunDialog
 from hermes.ui.widgets.syntax_hint import SyntaxHint
 from hermes.ui.widgets.table import (
@@ -61,10 +61,13 @@ MAX_LOG_LINES = 2000
 # Characters of a result the table shows
 MAX_RESULT_TEXT = 120
 
+# The code a new script starts with: an example for the test game HermesQuest
+# (see docs/examples/hermesquest-scripts.md).
 EXAMPLE = """\
-// Avowed: heal the player by 50
-const cheats = ctx.find("AlabamaCheatManager");
-cheats.call("GiveHealth", 50);
+// HermesQuest: heal the player by 10 health
+const player = ctx.static("HermesQuest.GameState.Current").Player;
+const healed = player.Heal(10);
+return `Healed ${healed.toFixed(1)} health`;
 """
 
 
@@ -120,9 +123,8 @@ class ScriptDialog(QDialog):
         code_layout.addWidget(self.code_edit, 1)
         self.syntax_hint = SyntaxHint(translations, self.code_edit, BODY)
         code_layout.addWidget(self.syntax_hint)
-        help_label = WrappedLabel(translations["scripts.code_help"])
-        help_label.setStyleSheet(f"color:{theme_color('muted')};")
-        help_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        help_label = DocsHint(translations, translations["scripts.code_help"],
+                              "reference/script-context/")
         code_layout.addWidget(help_label)
         self.tabs.addTab(code_page, translations["scripts.code"])
         self.param_editor = ParamEditor(translations, spec.params if spec else ())

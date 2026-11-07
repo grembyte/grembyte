@@ -26,6 +26,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from hermes.db.repository.game_export import DELETABLE
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.table import resizable_columns, set_row_height
+from hermes.ui.widgets.labels import DocsHint
 
 ROW_COLUMN, NAME_COLUMN, PLATFORM_COLUMN, PATH_COLUMN = range(4)
 # Columns of the kinds of entries, then the one that removes the process
@@ -54,8 +55,7 @@ class DeleteEntriesDialog(QDialog):
         self.setWindowTitle(translations["delete_entries.title"])
         self.setMinimumWidth(900)
         layout = QVBoxLayout(self)
-        hint = QLabel(translations["delete_entries.hint"])
-        hint.setWordWrap(True)
+        hint = DocsHint(translations, translations["delete_entries.hint"], "guide/data/#cleaning-up")
         layout.addWidget(hint)
 
         headers = (["", translations["export.column_name"], translations["export.column_platform"],

@@ -179,7 +179,7 @@ def test_native_tools_ask_first_in_mono_games(qt_app, tmp_path, monkeypatch):
         window._engine = engine_by_id("mono")
         window._update_catalog_button()
         assert window.act_native_trace.isEnabled()
-        assert "Shadowrun Returns" in window.act_native_trace.toolTip()
+        assert "Mono-Spiel" in window.act_native_trace.toolTip()
         assert not window._confirm_native_tools("Trace")  # "No"
         assert window._confirm_native_tools("Trace")      # "Yes"
         assert window._confirm_native_tools("Monitor")    # not asked again

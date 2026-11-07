@@ -33,8 +33,9 @@ A choice parameter gets its options from a short JavaScript function evaluated i
 
 The script's `ctx` gives access to the game; all fields are in the [script context reference](../reference/script-context.md). Objects returned by `ctx.find` are wrappers: call instance methods with `.call(name, ...args)`, read fields and properties as properties, and use `.field(name)` where a name clashes. A returned object is shown as the result and can be opened in the object inspector.
 
-```js title="Restore 50 health in Avowed (Unreal)"
-ctx.find("AlabamaCheatManager").call("GiveHealth", 50);
+```js title="Heal the player by 10 health (HermesQuest, Unity Mono)"
+const player = ctx.static("HermesQuest.GameState.Current").Player;
+return `Healed ${player.Heal(10).toFixed(1)} health`;
 ```
 
 ```js title="Keep an attribute at a value (Unreal, Gameplay Ability System)"

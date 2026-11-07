@@ -39,7 +39,7 @@ from hermes.ui.widgets.favorites import (
     set_up_favorite_column,
 )
 from hermes.ui.widgets.icons import set_button_icon, theme_color
-from hermes.ui.widgets.labels import SelectableText
+from hermes.ui.widgets.labels import DocsHint, SelectableText
 from hermes.ui.widgets.trace_filters import TraceFilterPanel
 from hermes.ui.widgets.table import copy_menu, resizable_columns
 from hermes.ui.workers import keep_until_finished
@@ -350,10 +350,8 @@ class TraceDialog(QDialog):
         layout = QVBoxLayout(self)
         # An engine whose trace sees other calls than Mono's says which.
         hint_key = f"trace.hint_{self.engine.id}"
-        hint = QLabel(self.translations[hint_key if hint_key in self.translations
-                                        else "trace.hint"])
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {theme_color('muted')};")
+        hint = DocsHint(self.translations, self.translations[
+            hint_key if hint_key in self.translations else "trace.hint"], "engines/#trace")
         layout.addWidget(hint)
 
         scope = QHBoxLayout()

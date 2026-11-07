@@ -25,8 +25,9 @@ from hermes.core import messages
 from hermes.engines.registry import resolve_engine
 from hermes.features.assemblies import missing_assemblies
 from hermes.features.catalog import CatalogWorker
-from hermes.ui.widgets.icons import set_button_icon, theme_color
+from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.table import copy_menu, resizable_columns
+from hermes.ui.widgets.labels import DocsHint
 from hermes.ui.workers import keep_until_finished
 
 
@@ -108,9 +109,7 @@ class AssemblyDialog(QDialog):
     def _build_ui(self):
         t = self.translations
         layout = QVBoxLayout(self)
-        hint = QLabel(t["assemblies.hint"])
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {theme_color('muted')};")
+        hint = DocsHint(t, t["assemblies.hint"], "engines/#assemblies")
         layout.addWidget(hint)
 
         bar = QHBoxLayout()

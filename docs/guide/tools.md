@@ -12,7 +12,10 @@
 
 ## Sessions
 
-**Sessions** in the toolbar lists Hermes' connections to processes – Frida sessions and ptrace attachments – with what uses them. A session that no longer responds can be cut there.
+**Sessions** in the toolbar lists Hermes' connections to processes – Frida sessions and ptrace attachments – with what uses them. A session that no longer responds can be cut there:
+
+- **Stop** lets the session remove its hooks and detach cleanly.
+- **Disconnect** cuts the Frida session if it does not react to Stop. The part of Hermes it belongs to (e.g. the hooks) then has to be started again.
 
 <figure markdown="span">
   ![Sessions](../assets/screenshots/sessions-dark.webp#only-dark){ width="720" }

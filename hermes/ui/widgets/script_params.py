@@ -31,12 +31,15 @@ from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.icons import set_button_icon, theme_color
-from hermes.ui.widgets.labels import WrappedLabel
+from hermes.ui.widgets.labels import DocsHint, WrappedLabel
 from hermes.ui.widgets.syntax_hint import SyntaxHint, syntax_problem
 
 OPTIONS_EXAMPLE = """\
 // The choices: values, or {label, value}
-return ["Fire", "Ice"];
+return [
+  { label: "Strength (melee damage)", value: "Strength" },
+  { label: "Dexterity (hit chance)", value: "Dexterity" },
+];
 """
 
 
@@ -55,8 +58,7 @@ class ParamEditor(QWidget):
         self._shown = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 6, 0, 0)
-        hint = WrappedLabel(translations["scripts.params_help"])
-        hint.setStyleSheet(f"color:{theme_color('muted')};")
+        hint = DocsHint(translations, translations["scripts.params_help"], "guide/scripts/#parameters")
         layout.addWidget(hint)
 
         self.table = QTableWidget(0, len(self._COLUMNS))

@@ -19,11 +19,12 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QInputDialog, QApplication, QProgressDialog, QScrollArea,
 )
 from PySide6.QtCore import (  # pylint: disable=import-error,no-name-in-module
-    Qt, QSize, QTimer, QSettings, Slot,
+    Qt, QSize, QTimer, QSettings, QUrl, Slot,
 )
-from PySide6.QtGui import QActionGroup, QIcon  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QActionGroup, QDesktopServices, QIcon  # pylint: disable=import-error,no-name-in-module
 
 from hermes import __version__
+from hermes.ui.links import BUG_REPORT_URL, docs_url
 from hermes.ui.localization import language_code, load_translations
 from hermes.ui.styles.themes import ThemeManager
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
@@ -584,6 +585,17 @@ class MainWindow(QMainWindow):
 
         help_menu = menu_bar.addMenu(self.translations["menu.help"])
         help_menu.setToolTipsVisible(True)
+        self.act_documentation = help_menu.addAction(
+            material_icon("library_books"), self.translations["menu.documentation"])
+        self.act_documentation.setToolTip(self.translations["menu.documentation_tooltip"])
+        self.act_documentation.triggered.connect(
+            lambda: QDesktopServices.openUrl(QUrl(docs_url())))
+        self.act_report_bug = help_menu.addAction(
+            material_icon("bug_report"), self.translations["menu.report_bug"])
+        self.act_report_bug.setToolTip(self.translations["menu.report_bug_tooltip"])
+        self.act_report_bug.triggered.connect(
+            lambda: QDesktopServices.openUrl(QUrl(BUG_REPORT_URL)))
+        help_menu.addSeparator()
         self.act_about = help_menu.addAction(
             material_icon("info"), self.translations["menu.about"])
         self.act_about.triggered.connect(self._open_about)

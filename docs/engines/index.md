@@ -45,6 +45,11 @@ A catalog read once is cached; **View → Catalog (offline) …** opens it witho
 
 **View → Trace …** finds the methods that a scenario in the game calls – *which method runs when I buy something?* It hooks the methods of the chosen assemblies and works like the [native trace](../guide/native-tools.md): a **baseline** while the game idles, then the **scenario**; the methods that are new or called more often in the scenario are the candidates. Preselection filters keep large games manageable.
 
+What the trace cannot see:
+
+- **Mono** often builds small methods right into their callers (inlining). Such calls never reach a hook, neither in the trace nor in the method monitor.
+- **Unreal**: the trace sees calls from Blueprints and through `ProcessEvent` (events, delegates). C++ calling C++ directly is only seen by the [native trace](../guide/native-tools.md); a Blueprint function calling another Blueprint function directly is not seen.
+
 <figure markdown="span">
   ![Trace](../assets/screenshots/trace-dark.webp#only-dark)
   ![Trace](../assets/screenshots/trace-light.webp#only-light)
@@ -53,6 +58,8 @@ A catalog read once is cached; **View → Catalog (offline) …** opens it witho
 ## Method monitor
 
 The method monitor logs the calls of chosen methods with their arguments, the result and the object they run on.
+
+It shares the limits of the trace: calls Mono has inlined are missing. In Unreal games, when a Blueprint calls a native function, the arguments come from the Blueprint's bytecode: variables and constants are shown, other arguments as `?`.
 
 <figure markdown="span">
   ![Method monitor](../assets/screenshots/method-monitor-dark.webp#only-dark)

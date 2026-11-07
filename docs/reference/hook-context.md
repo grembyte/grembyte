@@ -19,6 +19,25 @@ The object a [hook template](../guide/templates.md) and a method hook's script r
 
 Integer results are truncated and limited to the range of the type. `int64` and `uint64` values are exact only up to 2^53.
 
-Method hooks in Unity and Unreal games can also use `ctx.call`, `ctx.static` and `ctx.find` to reach other game code; see [Engines](../engines/index.md#method-hooks).
+## Method hooks
+
+A method hook's script runs before or after the hooked method (**When**). Besides `ctx.params`, `ctx.state`, `ctx.this`, `ctx.log(…)` and `ctx.hookId` it gets:
+
+| Field | Meaning |
+| --- | --- |
+| `ctx.phase` | `"before"` or `"after"` the call |
+| `ctx.args.<name>` | The method's arguments by name. Before the call, assigning one (`ctx.args.amount = 0`) changes what the method gets. |
+| `ctx.result` | After the call: the method's result (`undefined` for `void` methods). A returned value replaces it. |
+| `ctx.refs.<name>` | After the call: what `ref` and `out` arguments hold |
+| `ctx.caller` | The innermost hooked call this call runs in, if that hook runs "after the call": an object with `.method`, `.this`, `.args` and `.caller`; otherwise `null` |
+| `ctx.method` | The hooked method |
+| `ctx.threadId` | Thread the call runs on |
+| `ctx.call(method, ...args)` | Call a static game method, as in [scripts](script-context.md) |
+| `ctx.static(field)` | Mono and IL2CPP: read a static field |
+| `ctx.find(className[, objectName])`, `ctx.forEach(…)`, `ctx.outerName(…)` | Find live objects, as in [scripts](script-context.md) |
+
+Objects – `ctx.this`, object arguments, results – are the same wrappers as in scripts: `.name`, `.className`, `.field("x")`, `.get("property")`, `.call("Method", …)`, `.component("Type")`, and fields, properties and methods directly (`target.IsPlayer`, `obj.GetComponentByName("Stats")`). Before the call, assigning a field (`obj.Field = …`) or property (which calls its setter) changes what the method works with.
+
+In Unreal games a hook called from Blueprint bytecode only gets arguments that are simple variables or constants, and only `ref` arguments can be changed. See [Engines](../engines/index.md#method-hooks) for an overview and the [HermesQuest examples](../examples/hermesquest-hooks.md#method-hooks) for method hooks step by step.
 
 The [Scripts](../guide/scripts.md) tab has a `ctx` of its own, described in the [script context reference](script-context.md).

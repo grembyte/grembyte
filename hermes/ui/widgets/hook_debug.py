@@ -21,8 +21,9 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 
 from hermes.core import messages
-from hermes.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
+from hermes.ui.widgets.icons import set_button_icon, theme_qcolor
 from hermes.ui.widgets.table import add_copy_actions, resizable_columns, set_row_height
+from hermes.ui.widgets.labels import DocsHint
 
 
 # Oldest entries are discarded beyond this many.
@@ -111,9 +112,8 @@ class HookDebugWindow(QDialog):
         controls.addWidget(self.count_label, 1)
         layout.addLayout(controls)
 
-        hint = QLabel(self.translations["debug.hint"])
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {theme_color('muted')};")
+        hint = DocsHint(self.translations, self.translations["debug.hint"],
+                        "guide/hooks/#debugging-hooks")
         layout.addWidget(hint)
 
         splitter = QSplitter(Qt.Orientation.Vertical)

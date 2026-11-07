@@ -30,6 +30,7 @@ from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.object_inspector import link_label, link_width
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
+from hermes.ui.widgets.labels import DocsHint
 from hermes.ui.workers import keep_until_finished
 
 
@@ -208,9 +209,7 @@ class MethodMonitorDialog(QDialog):
     # --- UI ------------------------------------------------------------------
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        hint = QLabel(self.translations["monitor.hint"])
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {theme_color('muted')};")
+        hint = DocsHint(self.translations, self.translations["monitor.hint"], "engines/#method-monitor")
         layout.addWidget(hint)
 
         splitter = QSplitter(Qt.Orientation.Vertical)

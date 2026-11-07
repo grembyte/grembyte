@@ -1,6 +1,7 @@
 """Label widgets shared by dialogs."""
 
 import math
+from html import escape
 
 from PySide6.QtCore import QSize, Qt  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtGui import QTextOption  # pylint: disable=import-error,no-name-in-module
@@ -10,6 +11,9 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QSizePolicy,
     QTextEdit,
 )
+
+from hermes.ui.links import docs_url
+from hermes.ui.widgets.icons import theme_color
 
 
 class SelectableText(QTextEdit):
@@ -97,3 +101,27 @@ class WrappedLabel(QLabel):
         self.setMinimumHeight(0)
         height = self.heightForWidth(self.width()) if self.text() else 0
         self.setMinimumHeight(max(height, 0) if height != current else current)
+
+
+class DocsHint(WrappedLabel):
+    """A dialog's muted hint text, ending with a link to its page in the documentation.
+
+    The hints in the windows stay short; the documentation explains the rest.
+    """
+
+    def __init__(self, translations, text, page, parent=None):
+        super().__init__("", parent)
+        self.translations = translations
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setOpenExternalLinks(True)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.setStyleSheet(f"color: {theme_color('muted')};")
+        self._link_color = theme_color("accent")
+        self.set_hint(text, page)
+
+    def set_hint(self, text, page):
+        """Show ``text`` and the link to ``page``."""
+        link = (f'<a href="{escape(docs_url(page), quote=True)}" '
+                f'style="color: {self._link_color};">'
+                f'{escape(self.translations["docs.more"])}</a>')
+        self.setText(f"{escape(text)} {link}")
