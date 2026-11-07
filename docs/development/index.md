@@ -34,41 +34,9 @@ The screenshots are rendered by a script; see [Screenshots](screenshots.md).
 
 ### Publishing on GitHub Pages
 
-Once the repository is public, the site can be published by GitHub Actions. A workflow like the following builds it on every push to `main` (enable it under *Settings → Pages → Source: GitHub Actions*):
+The workflow [`.github/workflows/docs.yml`](https://github.com/winterhafen/hermes-hook/blob/main/.github/workflows/docs.yml) builds the site with `mkdocs build --strict` on every push to `main` that changes `docs/` or `mkdocs.yml`, and publishes it at <https://winterhafen.github.io/hermes-hook/>. It can also be started by hand under *Actions → docs → Run workflow*. GitHub Pages must be set to *Settings → Pages → Source: GitHub Actions*.
 
-```yaml title=".github/workflows/docs.yml"
-name: docs
-on:
-  push:
-    branches: [main]
-    paths: ["docs/**", "mkdocs.yml"]
-  workflow_dispatch:
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-concurrency:
-  group: pages
-  cancel-in-progress: true
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install mkdocs-material mkdocs-glightbox
-      - run: mkdocs build --strict
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-      - id: deployment
-        uses: actions/deploy-pages@v4
-```
+The workflow pins the versions of `mkdocs-material` and `mkdocs-glightbox`; raise them there after checking a local build with the new versions.
 
 ## Code style
 
