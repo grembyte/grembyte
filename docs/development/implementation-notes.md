@@ -209,6 +209,25 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   discovery supports the standard AbilitySystemComponent/FGameplayAttribute pattern and
   AngelscriptGAS's `TrySetAttributeBaseValue(FName, float)` pattern (Gothic 1 Remake).
 
+## Hooking managed methods
+
+- **Exceptions through hooked methods (2026-11-07):** Pillars of Eternity crashed at the
+  first attack with a monitor on `Health.DoDamage`, with and without recording results.
+  The game's AI threw a `NullReferenceException` below `DoDamage`; without a hook Unity
+  catches it further up. Frida 17 puts a return address of its own on the stack for
+  `Interceptor.attach` with a callbacks object, **also with only `onEnter`**. Mono's
+  unwinder found no managed caller behind it, took the exception for unhandled
+  (`UnhandledExceptionEventArgs`, the stack trace ends at the hooked method), and Unity
+  ended the game. Only a probe (a function or a CModule function as callback) leaves the
+  stack alone; its `returnAddress` is wrong, the caller is at `[sp]` on entry.
+  `hookCalls` in `monitor.js` therefore probes the start and, for results and the "after"
+  phase, the instructions right before each `ret` (found by disassembling the code; at
+  least 5 bytes, no branch into them, no tail jump). Calls are matched per thread by the
+  stack pointer; calls that ended by an exception are dropped. If a return cannot be
+  probed, it falls back to `onLeave` and logs a warning. The trace probes as well.
+  Test: `test_monitor_leaves_exceptions_thrown_through_the_method_to_the_game` with
+  `Rumors.Parse` in HermesQuest (fails without it: Unity logs the unhandled exception).
+
 ## Write hooks under anti-tamper protection
 
 Found with Dark Souls III (Arxan/GuardIT):

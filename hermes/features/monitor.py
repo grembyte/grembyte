@@ -281,9 +281,12 @@ class MethodMonitorWorker(QThread):
     def _execute(self, api, action, monitor_id, argument):
         try:
             if action == "add":
-                self.monitor_added.emit(
-                    monitor_id, api.add_monitor({"id": monitor_id, **argument})
-                )
+                info = api.add_monitor({"id": monitor_id, **argument})
+                if info.get("viaStack"):
+                    logs.log.warning("method monitor: returns of %s not probed, an exception "
+                                     "thrown through it may end the game",
+                                     argument["identity"].get("method"))
+                self.monitor_added.emit(monitor_id, info)
             elif action == "remove":
                 api.remove_monitor(monitor_id)
             elif action == "inspect":

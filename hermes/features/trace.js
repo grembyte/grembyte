@@ -40,7 +40,12 @@ void on_enter (GumInvocationContext * ic) {
   Event * event = &events[slot];
   event->method = index;
   event->thread = gum_invocation_context_get_thread_id (ic);
-  event->caller = GPOINTER_TO_SIZE (gum_invocation_context_get_return_address (ic));
+  /* a probe: the caller's return address is on top of the stack */
+#if GLIB_SIZEOF_VOID_P == 8
+  event->caller = *(guint64 *) GSIZE_TO_POINTER (ic->cpu_context->rsp);
+#else
+  event->caller = *(guint32 *) GSIZE_TO_POINTER (ic->cpu_context->esp);
+#endif
   event->time = g_get_monotonic_time ();
   /* last: the reader skips events still being written */
   ((volatile Event *) event)->seq = slot + 1;
@@ -186,7 +191,10 @@ async function attachAll(codes, chosen, cm) {
       continue;  // shared code: counted under the first method
     const index = trace.methods.length;
     try {
-      trace.listeners.push(Interceptor.attach(code.start, { onEnter: cm.on_enter }, ptr(index)));
+      // A probe: an onEnter would put a return address of Frida's own on the
+      // stack, and an exception thrown through the method end the game
+      // (see hookCalls in monitor.js).
+      trace.listeners.push(Interceptor.attach(code.start, cm.on_enter, ptr(index)));
     } catch (_error) {
       failed++;  // e.g. too short to intercept
       continue;

@@ -152,6 +152,214 @@ function resultRaw(context, retval, type) {
   return isFloat(type) ? context.xmm0 : retval;
 }
 
+// --- Hooking calls ----------------------------------------------------------
+// Frida's onLeave, and in Frida 17 already an onEnter in a callbacks object,
+// puts a return address of Frida's own on the stack. An exception thrown
+// through such a call ends there: Mono's unwinder finds no caller behind it
+// and takes the exception for unhandled, and Unity ends the game. Probes (a
+// function as callback) leave the stack alone, so calls are hooked with a
+// probe at the start of the code and one before each of its returns.
+
+const RESULT_REG = Process.arch === 'ia32' ? 'eax' : 'rax';
+// The jmp Frida writes over the probed instructions (rel32; more bytes are
+// refused rather than written past the ret, see returnProbes).
+const MIN_PATCH = 5;
+// The start's probe covers at least this much; a return probe stays clear of it.
+const START_PATCH = 16;
+
+function isControl(instruction) {
+  return instruction.groups.some(group => ['jump', 'call', 'ret', 'int', 'iret'].includes(group));
+}
+
+function branchTarget(instruction) {
+  const operand = instruction.operands[0];
+  return operand !== undefined && operand.type === 'imm' ? ptr(operand.value.toString()) : null;
+}
+
+function readCode(start, end) {
+  // The instructions from ``start`` up to ``end`` or code that cannot be
+  // decoded (data after it): a Map from address text to instruction.
+  const found = new Map();
+  let address = start;
+  while (address.compare(end) < 0) {
+    let instruction;
+    try {
+      instruction = Instruction.parse(address);
+    } catch (_error) {
+      break;
+    }
+    found.set(address.toString(), instruction);
+    address = instruction.next;
+  }
+  return found;
+}
+
+function reachedCode(start, end, linear) {
+  // The instructions control reaches from ``start`` (direct branches only),
+  // or null when it reaches a tail jump or an instruction the linear read
+  // has not seen.
+  const inside = address => address.compare(start) >= 0 && address.compare(end) < 0;
+  const reached = new Map();
+  const todo = [start];
+  while (todo.length > 0) {
+    let address = todo.pop();
+    while (inside(address) && !reached.has(address.toString())) {
+      let instruction = linear.get(address.toString());
+      if (instruction === undefined) {
+        try {
+          instruction = Instruction.parse(address);
+        } catch (_error) {
+          return null;
+        }
+      }
+      reached.set(address.toString(), instruction);
+      const groups = instruction.groups;
+      if (groups.includes('jump') || groups.includes('call')) {
+        const target = branchTarget(instruction);
+        if (target !== null && inside(target))
+          todo.push(target);
+        else if (target !== null && instruction.mnemonic === 'jmp')
+          return null;  // a tail call: it returns past the code's own rets
+      }
+      if (groups.includes('ret') || instruction.mnemonic === 'jmp' || groups.includes('int'))
+        break;
+      address = instruction.next;
+    }
+  }
+  return reached;
+}
+
+function returnProbes(info) {
+  // Where to probe the returns of a method's code: per ret the first of the
+  // instructions right before it, with it at least MIN_PATCH bytes, that
+  // no other branch jumps into. Null if not every return can be probed so.
+  if (Process.arch !== 'x64' && Process.arch !== 'ia32')
+    return null;
+  const start = info.start;
+  const end = start.add(info.size);
+  const linear = readCode(start, end);
+  const reached = reachedCode(start, end, linear);
+  if (reached === null)
+    return null;
+  const indirect = Array.from(reached.values()).some(instruction =>
+    instruction.groups.includes('jump') && branchTarget(instruction) === null);
+  const rets = Array.from(reached.values()).filter(instruction => instruction.groups.includes('ret'));
+  // Through a jump table (switch) control reaches code not followed here:
+  // only if the linear read finds no ret more is every return known.
+  const linearRets = Array.from(linear.values()).filter(instruction => instruction.groups.includes('ret'));
+  if (rets.length === 0 || (indirect && linearRets.length > rets.length))
+    return null;
+  // Branch targets of both reads: a false one only makes a probe less likely.
+  const targets = new Set();
+  for (const instruction of [...linear.values(), ...reached.values()]) {
+    const target = branchTarget(instruction);
+    if (target !== null && (instruction.groups.includes('jump') || instruction.groups.includes('call')))
+      targets.add(target.toString());
+  }
+  const previous = new Map();  // address text of an instruction -> the one before it
+  for (const instruction of reached.values())
+    previous.set(instruction.next.toString(), instruction);
+  const sites = [];
+  for (const ret of rets) {
+    let site = ret;
+    while (ret.next.sub(site.address).toInt32() < MIN_PATCH) {
+      const before = previous.get(site.address.toString());
+      if (before === undefined || isControl(before) || targets.has(site.address.toString()))
+        return null;
+      site = before;
+    }
+    if (site.address.compare(start.add(START_PATCH)) < 0)
+      return null;
+    sites.push(site.address);
+  }
+  return sites;
+}
+
+function hookCalls(info, enter, leave = null) {
+  // Call enter(invocation) when the method's code starts and, with
+  // ``leave``, leave(invocation, retval) when it returns, on the same
+  // invocation: { context, returnAddress, threadId, replaceResult(value) },
+  // which the callbacks may add to. Returns { detach(), viaStack } with
+  // viaStack true when the code's returns could not be probed and Frida's
+  // onLeave serves instead.
+  const sites = leave === null ? [] : returnProbes(info);
+  if (sites === null)
+    return hookCallsViaStack(info, enter, leave);
+  const calls = new Map();  // thread id -> [{ sp, invocation }], the innermost last
+  const listeners = [];
+  try {
+    listeners.push(Interceptor.attach(info.start, function () {
+      const context = this.context;
+      // A probe's returnAddress is not the caller's: it is on top of the stack.
+      const invocation = { context, returnAddress: context.sp.readPointer(),
+                           threadId: this.threadId };
+      if (leave !== null) {
+        let stack = calls.get(this.threadId);
+        if (stack === undefined) {
+          stack = [];
+          calls.set(this.threadId, stack);
+        }
+        // Calls not below this one have ended (by an exception, else their probe pops them)
+        while (stack.length > 0 && stack[stack.length - 1].sp.compare(context.sp) <= 0)
+          stack.pop();
+        stack.push({ sp: context.sp, invocation });
+      }
+      enter(invocation);
+    }));
+    for (const site of sites)
+      listeners.push(Interceptor.attach(site, function () {
+        const stack = calls.get(this.threadId);
+        if (stack === undefined)
+          return;
+        const context = this.context;
+        // Below the stack pointer: calls further in that ended by an exception
+        while (stack.length > 0 && stack[stack.length - 1].sp.compare(context.sp) < 0)
+          stack.pop();
+        const entry = stack.pop();
+        if (stack.length === 0)
+          calls.delete(this.threadId);
+        if (entry === undefined)
+          return;
+        const invocation = entry.invocation;
+        invocation.context = context;
+        invocation.replaceResult = value => { context[RESULT_REG] = value; };
+        leave(invocation, ptr(context[RESULT_REG]));
+      }));
+  } catch (error) {
+    // A return too short to probe after all (Frida found no jump target near enough)
+    listeners.forEach(listener => listener.detach());
+    if (leave === null)
+      throw error;
+    return hookCallsViaStack(info, enter, leave);
+  }
+  return {
+    detach() {
+      listeners.forEach(listener => listener.detach());
+      calls.clear();
+    },
+    viaStack: false
+  };
+}
+
+function hookCallsViaStack(info, enter, leave) {
+  // hookCalls with Frida's onEnter and onLeave: an exception thrown through
+  // the method ends the game (see above).
+  const listener = Interceptor.attach(info.start, {
+    onEnter() {
+      this.invocation = { context: this.context, returnAddress: this.returnAddress,
+                          threadId: this.threadId };
+      enter(this.invocation);
+    },
+    onLeave(retval) {
+      const invocation = this.invocation;
+      invocation.context = this.context;
+      invocation.replaceResult = value => retval.replace(value);
+      leave(invocation, retval);
+    }
+  });
+  return { detach: () => listener.detach(), viaStack: true };
+}
+
 // --- Values -----------------------------------------------------------------
 // A value is { text, target?, snapshot? }: ``target`` is what the object
 // inspector opens ({ address } of an object or array, { address, klass } of
@@ -886,25 +1094,19 @@ async function addMonitor(spec) {
     objects: spec.objects === null ? hasObjects : spec.objects,
     errorReported: false
   };
-  const callbacks = {
-    onEnter() {
-      try {
-        onEnter(monitor, this);
-      } catch (error) {
-        reportError(monitor, error);
-      }
+  monitor.listener = hookCalls(info, invocation => {
+    try {
+      onEnter(monitor, invocation);
+    } catch (error) {
+      reportError(monitor, error);
     }
-  };
-  // Without onLeave Frida leaves the return address alone.
-  if (monitor.returns)
-    callbacks.onLeave = function (retval) {
-      try {
-        onLeave(monitor, this, retval);
-      } catch (error) {
-        reportError(monitor, error);
-      }
-    };
-  monitor.listener = Interceptor.attach(info.start, callbacks);
+  }, !monitor.returns ? null : (invocation, retval) => {
+    try {
+      onLeave(monitor, invocation, retval);
+    } catch (error) {
+      reportError(monitor, error);
+    }
+  });
   monitors.set(spec.id, monitor);
   updateUnmapWatch();
   return {
@@ -919,7 +1121,8 @@ async function addMonitor(spec) {
     hasResults,
     hasObjects,
     recordsResults: monitor.returns,
-    recordsObjects: monitor.objects
+    recordsObjects: monitor.objects,
+    viaStack: monitor.listener.viaStack
   };
 }
 
@@ -988,7 +1191,7 @@ const hookLogs = [];
 const hookLogsDropped = new Map();
 // Per thread the hooked calls (after the call) that are still running, the
 // innermost last: ctx.caller of a nested hook. A frame whose method left by an
-// exception never sees onLeave; enterFrame drops it once the stack is below it.
+// exception never returns; enterFrame drops it once the stack is below it.
 const activeCalls = new Map();
 const MAX_HOOK_DEBUG = 200;
 
@@ -1519,7 +1722,7 @@ function displayText(value) {
   return String(value);
 }
 
-function replaceResult(hook, invocation, retval, value) {
+function replaceResult(hook, invocation, value) {
   const type = hook.info.returns;
   if (type.kind === T.VOID && !type.byref)
     throw hermesError('error.monitor.void_result');
@@ -1540,17 +1743,17 @@ function replaceResult(hook, invocation, retval, value) {
   if (type.kind === T.VALUETYPE && !type.byref)
     throw hermesError('error.monitor.struct_result', { type: type.name });
   if (type.kind === T.BOOLEAN) {
-    retval.replace(ptr(value ? 1 : 0));
+    invocation.replaceResult(ptr(value ? 1 : 0));
     return;
   }
   if (REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING || type.byref) {
-    retval.replace(pointerOf(type, value));
+    invocation.replaceResult(pointerOf(type, value));
     return;
   }
   if (typeof value !== 'number' || !Number.isFinite(value))
     throw hermesError('error.monitor.result_number', { value: displayText(value) });
-  retval.replace(ptr(BigInt.asUintN(8 * Process.pointerSize,
-                                    BigInt(Math.trunc(value))).toString()));
+  invocation.replaceResult(ptr(BigInt.asUintN(8 * Process.pointerSize,
+                                              BigInt(Math.trunc(value))).toString()));
 }
 
 function replaceFrameResult(hook, call, value) {
@@ -1868,7 +2071,7 @@ function hookLeave(hook, invocation, retval) {
       if (hook.info.frame)
         replaceFrameResult(hook, call, returned);
       else
-        replaceResult(hook, invocation, retval, returned);
+        replaceResult(hook, invocation, returned);
     }
     hook.errorReported = false;
   } catch (thrown) {
@@ -1995,7 +2198,8 @@ async function addMethodHook(spec) {
     params: info.params.map(p => `${p.type.name} ${p.name}`),
     returns: info.returns.name,
     // Unreal: which arguments are unknown shows only per call (missing in ctx.args)
-    undecoded: info.frame ? 0 : hook.layout.args.filter(location => location === null).length
+    undecoded: info.frame ? 0 : hook.layout.args.filter(location => location === null).length,
+    viaStack: hook.listener.viaStack
   };
 }
 
@@ -2007,33 +2211,28 @@ function reportHookError(hook, error) {
 }
 
 function attachHook(hook) {
-  // Before the call only onEnter: Frida then leaves the return address alone.
+  // Before the call only the start's probe.
   if (hook.phase === 'before') {
-    hook.listener = Interceptor.attach(hook.info.start, {
-      onEnter() {
-        try {
-          hookBefore(hook, this);
-        } catch (error) {
-          reportHookError(hook, error);
-        }
+    hook.listener = hookCalls(hook.info, invocation => {
+      try {
+        hookBefore(hook, invocation);
+      } catch (error) {
+        reportHookError(hook, error);
       }
     });
     return;
   }
-  hook.listener = Interceptor.attach(hook.info.start, {
-    onEnter() {
-      try {
-        hookEnter(hook, this);
-      } catch (error) {
-        reportHookError(hook, error);
-      }
-    },
-    onLeave(retval) {
-      try {
-        hookLeave(hook, this, retval);
-      } catch (error) {
-        reportHookError(hook, error);
-      }
+  hook.listener = hookCalls(hook.info, invocation => {
+    try {
+      hookEnter(hook, invocation);
+    } catch (error) {
+      reportHookError(hook, error);
+    }
+  }, (invocation, retval) => {
+    try {
+      hookLeave(hook, invocation, retval);
+    } catch (error) {
+      reportHookError(hook, error);
     }
   });
 }

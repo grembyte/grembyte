@@ -275,6 +275,9 @@ class MethodHookWorker(QThread):
         try:
             if action == "add":
                 info = api.add_method_hook(argument.to_agent(hook_id))
+                if info.get("viaStack"):
+                    logs.log.warning("method hook: returns of %s not probed, an exception "
+                                     "thrown through it may end the game", argument.label)
                 info["label"] = argument.label
                 info["transformDescription"] = argument.transform.describe()
                 self.hook_installed.emit(hook_id, info)
