@@ -225,6 +225,12 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   least 5 bytes, no branch into them, no tail jump). Calls are matched per thread by the
   stack pointer; calls that ended by an exception are dropped. If a return cannot be
   probed, it falls back to `onLeave` and logs a warning. The trace probes as well.
+  Learned: a return probe runs *before* the instructions it covers. In `Vec.Length` of the
+  IL2CPP test target (`cvtsi2sd xmm0, eax; pop rbp; ret`) the result only reached `xmm0`
+  after the probe, the "after" hook saw a stale result and its own was overwritten. The
+  covered instructions may therefore write neither a result register (rax, rdx, xmm0,
+  xmm1 and their parts; `vzeroupper` is allowed) nor memory (`leavesResult`); otherwise
+  that method falls back to `onLeave`.
   Test: `test_monitor_leaves_exceptions_thrown_through_the_method_to_the_game` with
   `Rumors.Parse` in HermesQuest (fails without it: Unity logs the unhandled exception).
 

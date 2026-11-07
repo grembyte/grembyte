@@ -171,6 +171,25 @@ function isControl(instruction) {
   return instruction.groups.some(group => ['jump', 'call', 'ret', 'int', 'iret'].includes(group));
 }
 
+// Registers a result comes back in (rax:rdx, xmm0:xmm1 and their parts).
+const RESULT_REGISTER = /^([re]?[ad]x|[ad][lh]|[xyz]mm[01])$/;
+
+function leavesResult(instruction) {
+  // Whether the instruction keeps what the method returns and leaves memory
+  // alone: a return probe runs before the instructions it covers, so these
+  // may only restore registers and the stack (pop, add rsp, leave, ...).
+  if (instruction.mnemonic === 'vzeroupper')
+    return true;  // clears only the upper halves, xmm0 stays
+  let written;
+  try {
+    written = instruction.regsAccessed.written;
+  } catch (_error) {
+    return false;
+  }
+  return !written.some(register => RESULT_REGISTER.test(register))
+    && !instruction.operands.some(operand => operand.type === 'mem' && operand.access.includes('w'));
+}
+
 function branchTarget(instruction) {
   const operand = instruction.operands[0];
   return operand !== undefined && operand.type === 'imm' ? ptr(operand.value.toString()) : null;
@@ -232,7 +251,8 @@ function reachedCode(start, end, linear) {
 function returnProbes(info) {
   // Where to probe the returns of a method's code: per ret the first of the
   // instructions right before it, with it at least MIN_PATCH bytes, that
-  // no other branch jumps into. Null if not every return can be probed so.
+  // no other branch jumps into and that leave the result as it is (the probe
+  // runs before them). Null if not every return can be probed so.
   if (Process.arch !== 'x64' && Process.arch !== 'ia32')
     return null;
   const start = info.start;
@@ -264,7 +284,8 @@ function returnProbes(info) {
     let site = ret;
     while (ret.next.sub(site.address).toInt32() < MIN_PATCH) {
       const before = previous.get(site.address.toString());
-      if (before === undefined || isControl(before) || targets.has(site.address.toString()))
+      if (before === undefined || isControl(before) || !leavesResult(before)
+          || targets.has(site.address.toString()))
         return null;
       site = before;
     }
