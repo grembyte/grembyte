@@ -1,0 +1,55 @@
+# Architecture
+
+Hermes is a PySide6 application in one Python package, `hermes`. The code that runs inside the game is JavaScript for [Frida](https://frida.re), kept in `.js` files beside the Python module that loads it.
+
+## Packages
+
+The packages form layers; each depends only on the layers below it.
+
+```mermaid
+flowchart BT
+    agent["agent<br/><small>base of every Frida agent</small>"]
+    platform["platform<br/><small>OS differences, host side</small>"]
+    core["core<br/><small>memory, scans, pointers, settings, logs</small>"]
+    attach["attach<br/><small>Frida sessions, Wine gadget, ptrace</small>"]
+    engines["engines<br/><small>Mono, IL2CPP, Unreal adapters</small>"]
+    hooks["hooks<br/><small>hook engine, templates</small>"]
+    features["features<br/><small>watch, trace, monitor, scripts, …</small>"]
+    db["db<br/><small>SQLAlchemy models, repositories</small>"]
+    ui["ui<br/><small>main window, widgets, themes</small>"]
+    platform --> core
+    core --> attach
+    agent --> engines
+    platform --> engines
+    attach --> hooks
+    engines --> hooks
+    hooks --> features
+    features --> db
+    db --> ui
+```
+
+| Package | Contents |
+| --- | --- |
+| `hermes/agent` | What every agent builds on: loading agent sources (`source.py`), errors in the user's language (`messages.js`), what differs between Linux and Windows inside the game (`platform.js`). Imports nothing else from Hermes. |
+| `hermes/platform` | Hermes' own side of a process: reading memory and mappings, process facts (`linux.py`, `windows.py`), PE images of Wine processes (`wine.py`). |
+| `hermes/core` | Memory access, the value scanner, pointer chains and value types; settings, logs, the activity log and the session registry. |
+| `hermes/attach` | Getting into a process: Frida sessions (`frida_attach.py`), the Wine gadget and its Windows helper (`wine_gadget.py`, `wine_helper.py`, `inject/`), shared ptrace machinery (`ptrace_engine.py`), the watch backend names. |
+| `hermes/engines` | One adapter per engine (`mono/`, `il2cpp/`, `unreal/`), each with a Python adapter and its agent; `registry.py` combines them into the engine agent the features load. |
+| `hermes/hooks` | The hook engine (`engine.py` + `engine.js`), the ptrace hook, the built-in manipulations and templates (`transforms.py`), the script sandbox. |
+| `hermes/features` | The tools: write watch, freeze, catalog, trace, native trace, monitors, method hooks and calls, scripts, favorites, call graph. |
+| `hermes/db` | SQLite through SQLAlchemy: models and repositories, export and import. |
+| `hermes/ui` | The main window, widgets, localization, themes, icons. |
+
+## Agents
+
+A feature's agent is put together from parts: the platform helpers (`agent/platform.js` with `agent/messages.js`), the engine prelude, every engine adapter's agent, the engine facade, and the feature's own script. The engine adapters register themselves; the facade picks the one whose runtime the game has loaded, so features use one `engine` object whatever the engine.
+
+Under Wine/Proton the agents run in Frida's Windows gadget. The gadget drops messages larger than 128 KiB, so `attach/frida_attach.py` sends larger agents in parts.
+
+## Adding an engine
+
+1. Add a subpackage under `hermes/engines/` with an `EngineAdapter` subclass (see `engines/base.py`) and an `agent.js` that registers itself with `registerEngine(...)`.
+2. List the adapter in `ENGINES` in `engines/registry.py`; the order is the order in which the agent looks for runtimes.
+3. Declare its capabilities; the UI enables the tools the adapter supports.
+
+The [roadmap](https://github.com/winterhafen/hermes-hook/blob/main/ROADMAP.md) discusses candidates such as Godot, Lua engines, RPG Maker and Ren'Py.

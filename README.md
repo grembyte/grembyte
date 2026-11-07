@@ -2,6 +2,8 @@
 
 Hermes Hook is a desktop application built with Python and PySide6 for inspecting and manipulating the memory of running processes such as games. It runs on Linux, including Windows games under Wine/Proton, and on Windows. The project is under development.
 
+The full documentation with screenshots is in [`docs/`](docs/index.md); `mkdocs serve` shows it as a website (see [Development](docs/development/index.md#documentation)).
+
 ## Disclaimer
 This tool is intended solely for educational, research, and single-player game modding purposes. It is not designed or intended to bypass anti-cheat mechanisms or be used in online multiplayer games. The developer assumes no responsibility or liability for any account bans, suspensions, or damages resulting from the use or misuse of this software.
 
