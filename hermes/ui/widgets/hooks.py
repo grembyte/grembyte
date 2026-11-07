@@ -33,7 +33,7 @@ from hermes.core.pointer import PointerChain
 from hermes.db.repository.hooks import hook_transform
 from hermes.hooks.engine import MAX_CALLER_DEPTH, HookSpec, create_hook_worker
 from hermes.features.method_hooks import PHASES, MethodHookSpec, MethodHookWorker
-from hermes.features.write_watch import BACKEND_FRIDA
+from hermes.attach.backends import BACKEND_FRIDA
 from hermes.hooks.transforms import (
     TemplateTransform,
     as_template_transform,

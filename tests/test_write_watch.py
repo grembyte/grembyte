@@ -2,10 +2,8 @@
 
 import pytest
 
-from hermes.features.write_watch import (
-    _build_agent_source,
-    watch_size_for_type,
-)
+from hermes.core.value_types import watch_size_for_type
+from hermes.features.write_watch import _build_agent_source
 
 
 @pytest.mark.parametrize(

@@ -331,11 +331,14 @@ def _executable(pid, proc_root):
 
 
 def describe_process(pid, proc_root="/proc"):
-    """What is known of ``pid`` without attaching: program, bits, Wine, Frida in it."""
+    """What is known of ``pid`` without attaching: program, bits, Wine, Frida in it.
+
+    The Wine gadget's fields come from ``hermes.attach.wine_gadget.gadget_details``.
+    """
     # pylint: disable=import-outside-toplevel
-    from hermes.attach import wine_gadget
     from hermes.core import sessions
     from hermes.platform import is_wine_process, program_bits
+    from hermes.platform.wine import wine_program
 
     details = {"pid": pid}
     details["exe"] = _executable(pid, proc_root)
@@ -343,12 +346,10 @@ def describe_process(pid, proc_root="/proc"):
     details["wine"] = wine
     details["loader_bits"] = program_bits(pid, proc_root)
     if wine:
-        program, bits = wine_gadget.wine_program(pid)
+        program, bits = wine_program(pid)
         details.update(program=program, bits=bits,
                        proton=proton_version(details["exe"]) if details["exe"] else None,
-                       variables=_environ(pid, WINE_VARIABLES, proc_root),
-                       gadget_port=wine_gadget.gadget_port(pid, proc_root),
-                       gadget_loader=wine_gadget.gadget_loader(pid))
+                       variables=_environ(pid, WINE_VARIABLES, proc_root))
     else:
         details["bits"] = details["loader_bits"]
     details["frida_agents"] = sessions.frida_agents(pid, proc_root)

@@ -123,7 +123,8 @@ from hermes.core import settings
 from hermes.engines.registry import ENGINE_AGENT_SOURCE
 from hermes.core.pointer import PointerChain
 from hermes.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
-from hermes.features.write_watch import BACKEND_PTRACE, watch_size_for_type
+from hermes.attach.backends import BACKEND_PTRACE
+from hermes.core.value_types import watch_size_for_type
 from hermes.hooks.transforms import ValueTransform
 from hermes.agent.source import load_agent_source
 

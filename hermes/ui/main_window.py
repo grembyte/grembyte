@@ -55,18 +55,16 @@ from hermes.features.catalog import (
     with_type_arguments,
 )
 from hermes.features.method_call import call_capability
-from hermes.attach.wine_gadget import gadget_loader, gadget_path, gadget_port, wine_bits
+from hermes.attach.wine_gadget import gadget_details, gadget_loader, gadget_path, gadget_port
 from hermes.platform import (
     ProcessMemory, is_wine_process, process_start_time, program_bits, read_mappings,
 )
-from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES, value_type as get_value_type
-from hermes.features.write_watch import (
-    WATCH_BACKENDS,
-    BACKEND_FRIDA,
-    BACKEND_PTRACE,
-    create_watch_worker,
-    watch_size_for_type,
+from hermes.platform.wine import wine_bits
+from hermes.attach.backends import BACKEND_FRIDA, BACKEND_PTRACE, WATCH_BACKENDS
+from hermes.core.value_types import (
+    DEFAULT_VALUE_TYPE, VALUE_TYPES, value_type as get_value_type, watch_size_for_type,
 )
+from hermes.features.write_watch import create_watch_worker
 from hermes.db.engine import DB_PATH, database_size, vacuum_db
 from hermes.db.repository.addresses import AddressRepository, address_pointer
 from hermes.db.repository.assembly_selections import AssemblySelectionRepository
@@ -2377,7 +2375,9 @@ class MainWindow(QMainWindow):
                 return
             changed = dlg.selected_pid != self._current_pid
             activity.record("process_selected", name=dlg.selected_name, changed=changed,
-                            **activity.describe_process(dlg.selected_pid))
+                            **activity.describe_process(dlg.selected_pid),
+                            **(gadget_details(dlg.selected_pid)
+                               if is_wine_process(dlg.selected_pid) else {}))
             process_id = self._known_process_id(dlg) if changed else self._process_id
             if downloaded and not changed:
                 self._restart_current_frida_workers()

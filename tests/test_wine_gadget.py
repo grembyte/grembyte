@@ -10,6 +10,7 @@ import pytest
 
 from hermes.attach import wine_gadget
 from hermes.attach.wine_gadget import GadgetError, ensure_gadget
+from hermes.platform.wine import RawMemory
 
 
 def _pe(machine):
@@ -331,7 +332,7 @@ def test_a_borrowed_thread_calls_and_the_others_keep_their_signals(tmp_path):
     memory = None
     try:
         pid, hot, answer, trap = (int(field, 0) for field in target.stdout.readline().split())
-        memory = wine_gadget._Memory(pid)
+        memory = RawMemory(pid)
         pinger.start()
         for _round in range(3):
             tracee = wine_gadget._Tracee(pid)

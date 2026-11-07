@@ -86,3 +86,12 @@ def value_type(name):
         return VALUE_TYPES[name]
     except KeyError as error:
         raise LocalizedValueError("error.value_types.unsupported_type", type=name) from error
+
+
+def watch_size_for_type(value_type):
+    """Return the byte width associated with a supported scan data type."""
+    try:
+        return VALUE_TYPES[value_type].size
+    except KeyError as error:
+        raise LocalizedValueError("error.write_watch.unsupported_type",
+                                  type=value_type) from error

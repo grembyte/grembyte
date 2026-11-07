@@ -43,6 +43,7 @@ from hermes.platform import (
     program_bits,
     read_mappings,
 )
+from hermes.platform.wine import wine_bits
 
 
 POINTER_SIZE = 8
@@ -121,7 +122,6 @@ def pointer_size(pid):
     if known is not None and known[0] == started:
         return known[1]
     if is_wine_process(pid):
-        from hermes.attach.wine_gadget import wine_bits  # pylint: disable=import-outside-toplevel
         bits = wine_bits(pid)
     else:
         bits = program_bits(pid)

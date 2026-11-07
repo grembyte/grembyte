@@ -7,29 +7,19 @@ whether it reads and/or writes the target.
 In Mono games (Unity) a hit in JIT code names its C# method (``method``).
 """
 
-import sys
 import threading
 
 from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.attach.backends import BACKEND_PTRACE
 from hermes.core import logs, messages
 from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE
 from hermes.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
-from hermes.core.value_types import VALUE_TYPES
 from hermes.agent.source import load_agent_source
 
 
 _AGENT_SOURCE = load_agent_source(__file__)
-
-
-def watch_size_for_type(value_type):
-    """Return the byte width associated with a supported scan data type."""
-    try:
-        return VALUE_TYPES[value_type].size
-    except KeyError as error:
-        raise messages.LocalizedValueError("error.write_watch.unsupported_type",
-                                          type=value_type) from error
 
 
 def _build_agent_source(address, size, reads=False):
@@ -147,13 +137,6 @@ class WriteWatchWorker(QThread):
 
     def _on_session_detached(self, reason, _crash):
         self._detach_reason = reason
-
-
-# Watch backends the UI can switch between; ptrace is Linux's.
-BACKEND_FRIDA = "frida"
-BACKEND_PTRACE = "ptrace"
-WATCH_BACKENDS = ((BACKEND_FRIDA, BACKEND_PTRACE) if sys.platform.startswith("linux")
-                  else (BACKEND_FRIDA,))
 
 
 def create_watch_worker(backend, pid, address, size, parent=None, reads=False):
