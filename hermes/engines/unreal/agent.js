@@ -1684,11 +1684,52 @@ const unreal = (() => {
   // FStrings of the arguments of the call being made (the game copies them)
   let callStrings = [];
 
+  let functionTable;  // { start, count } of the executable's .pdata; null: none
+
+  function functionEnd(fn) {
+    // Where the function starting at ``fn`` ends, from the PE's exception
+    // directory (.pdata, sorted RUNTIME_FUNCTIONs: begin, end, unwind
+    // info); undefined without one (Linux), null for a function it does not
+    // list (a leaf function: it calls nothing).
+    if (functionTable === undefined) {
+      functionTable = null;
+      if (Process.platform === 'windows') {
+        try {
+          const header = module.base.add(module.base.add(0x3c).readU32());
+          // PE32+: the optional header's data directories start at +112; 3: exceptions
+          const directory = header.add(24 + 112 + 3 * 8);
+          const size = directory.add(4).readU32();
+          if (size > 0)
+            functionTable = { start: module.base.add(directory.readU32()), count: size / 12 };
+        } catch (_error) {
+          functionTable = null;
+        }
+      }
+    }
+    if (functionTable === null)
+      return undefined;
+    const rva = Number(fn.sub(module.base).toString());
+    let low = 0, high = functionTable.count - 1;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      const entry = functionTable.start.add(middle * 12);
+      if (rva < entry.readU32())
+        high = middle - 1;
+      else if (rva >= entry.add(4).readU32())
+        low = middle + 1;
+      else
+        return entry.readU32() === rva ? module.base.add(entry.add(4).readU32()) : null;
+    }
+    return null;
+  }
+
   function findProcessEvent() {
     // The one virtual function of UObject that calls a UFunction's Func
     // (call [reg + Func]); the others call into it. Where no slot does, the
     // one that calls a short function doing it (some games do not inline
-    // UFunction::Invoke).
+    // UFunction::Invoke). Each function is searched up to its end where the
+    // executable says where that is: read on, the search found such calls
+    // in the functions after two slots and missed ProcessEvent (Queen's Domain).
     if (processEvent !== null)
       return processEvent;
     reflection();
@@ -1701,9 +1742,13 @@ const unreal = (() => {
     const funcOffset = ue.layout.func;
     const inCode = fn => fn.compare(module.base) >= 0
       && fn.compare(module.base.add(module.size)) < 0;
-    const readCode = fn => {
+    const readCode = (fn, bounded) => {
+      const end = bounded ? functionEnd(fn) : undefined;
+      if (end === null)
+        return new Uint8Array(0);  // a leaf function: calls nothing
+      const length = end === undefined ? 0x800 : Math.min(Number(end.sub(fn).toString()), 0x4000);
       try {
-        return new Uint8Array(fn.readByteArray(0x800));
+        return new Uint8Array(fn.readByteArray(length));
       } catch (_error) {
         // close to the end of the code: what is left of its page
         const left = 0x1000 - Number(fn.and(0xfff).toString());
@@ -1755,19 +1800,26 @@ const unreal = (() => {
       }
       return false;
     };
-    const direct = [];
-    const throughCall = [];
-    for (let slot = 0; slot < 160; slot++) {
-      const fn = vtable.add(slot * Process.pointerSize).readPointer();
-      if (!inCode(fn))
-        break;
-      const bytes = readCode(fn);
-      if (callsFunc(bytes))
-        direct.push(fn);
-      else if (direct.length === 0 && callsInvoke(fn, bytes))
-        throughCall.push(fn);
-    }
-    const found = direct.length > 0 ? direct : throughCall;
+    const search = bounded => {
+      const direct = [];
+      const throughCall = [];
+      for (let slot = 0; slot < 160; slot++) {
+        const fn = vtable.add(slot * Process.pointerSize).readPointer();
+        if (!inCode(fn))
+          break;
+        const bytes = readCode(fn, bounded);
+        if (callsFunc(bytes))
+          direct.push(fn);
+        else if (direct.length === 0 && callsInvoke(fn, bytes))
+          throughCall.push(fn);
+      }
+      return direct.length > 0 ? direct : throughCall;
+    };
+    // Unbounded as before where the bounds find none (a function split in
+    // parts, of which .pdata lists the first only as this function's)
+    let found = search(true);
+    if (found.length === 0)
+      found = search(false);
     if (found.length !== 1)
       throw hermesError('error.unreal.no_process_event', { count: found.length });
     processEvent = {

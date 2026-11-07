@@ -194,6 +194,11 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   the shipping build (`GiveHealth`, `AddCurrency`, `ToggleUnlimitedStamina` checked live).
   Scripts (hermes/features/scripts.py) run such calls by time. Hooks on functions a call
   reaches do not fire for it (Frida's interceptor ignores the thread inside a callback).
+  Learned (2026-11-08, Queen's Domain, UE4): the search read 0x800 bytes from each slot and
+  found `call [reg + 0xd8]` in the functions *after* slots 16 and 65 ("2 candidates"), while
+  ProcessEvent (slot 68) calls a non-inlined `UFunction::Invoke`. On Windows each function is
+  now read up to its end from the executable's `.pdata` (functions it does not list are
+  leaves and call nothing); unbounded as before only where that finds none.
 - **(2026-10-31):** scripts in the game export.
 - **(2026-10-31):** Unreal in the **Call method** dialog. FString and FName as text, bools
   as a checkbox, enums by name; a struct whose fields are all numbers (FVector) is typed field
