@@ -490,11 +490,11 @@ third-party code whose licenses add duties that a source release through pip doe
   though; Mono features always go through the gadget. The reason is the hook engine, which
   only handles x64 code (`installSite`); the method monitor follows the x86 convention there
   (see above).
-- **Gadget through the Windows helper (implemented):** `hermes/core/inject/inject.c`, built
+- **Gadget through the Windows helper (implemented):** `hermes/attach/inject/inject.c`, built
   with `build.sh` (MinGW or zig) as `hermes-inject-x86_64.exe` or `-x86.exe` into
   `build/inject/` (not in git; `helper_path` runs `build.sh` once if they are missing), loads the gadget
   with `VirtualAllocEx`/`WriteProcessMemory`/`CreateRemoteThread` + `LoadLibraryW`.
-  `hermes/core/wine_helper.py` starts it with the game's `wine` (beside or above its
+  `hermes/attach/wine_helper.py` starts it with the game's `wine` (beside or above its
   preloader) and its `WINEPREFIX` and sync variables. It finds the Windows PID by exe name and
   creation time. Beforehand it checks that the prefix's wineserver socket exists in `/tmp`, so
   that no second server starts. `load_gadget` tries the helper first and falls back to the

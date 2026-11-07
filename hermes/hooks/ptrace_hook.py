@@ -2,7 +2,7 @@
 
 This is "Option A": it does not inject code or patch the game. It sets a
 hardware *data* watchpoint on the target address (reusing
-:class:`hermes.core.ptrace_engine.PtraceWatchpointEngine`); the write traps the
+:class:`hermes.attach.ptrace_engine.PtraceWatchpointEngine`); the write traps the
 thread *after* it stored the value, and the worker then reads the value back,
 runs the hook's :class:`~hermes.hooks.transforms.ValueTransform` on it (in Qt's
 JavaScript engine, the same ``ctx`` the Frida agent uses), and writes the
@@ -36,7 +36,7 @@ from PySide6.QtCore import Signal  # pylint: disable=import-error,no-name-in-mod
 from hermes.core import messages, sessions
 from hermes.core.memory import read_memory, write_process_bytes
 from hermes.core.pointer import resolve_chain
-from hermes.core.ptrace_engine import (
+from hermes.attach.ptrace_engine import (
     PtraceWatchpointEngine,
     WATCHPOINT_SLOTS,
     watch_alignment_error,

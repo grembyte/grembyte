@@ -194,7 +194,7 @@ def _wait_for_sleeping(pid, timeout=5.0):
 @requires_target
 def test_frida_sessions_note_agents_rpcs_and_their_end(activity_file):
     # pylint: disable=import-outside-toplevel
-    from hermes.core.frida_attach import attach_session
+    from hermes.attach.frida_attach import attach_session
 
     process = subprocess.Popen(["sleep", "30"])
     try:
@@ -235,7 +235,7 @@ def test_large_agents_reach_the_gadget_in_parts(activity_file):
     # pylint: disable=import-outside-toplevel
     import frida
 
-    from hermes.core.frida_attach import GADGET_SOURCE_LIMIT, RecordedSession
+    from hermes.attach.frida_attach import GADGET_SOURCE_LIMIT, RecordedSession
 
     process = subprocess.Popen(["sleep", "30"])
     try:

@@ -35,7 +35,7 @@ from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.ui.widgets.table import (
     add_copy_actions, add_delete_action, resizable_columns, set_row_height)
 from hermes.core.pointer import chain_for_static_address, module_bases, resolve_chain
-from hermes.core.freeze import FreezeWorker, FrozenValue
+from hermes.features.freeze import FreezeWorker, FrozenValue
 from hermes.core.scanner import (
     FLOAT_ROUNDING_MODES,
     FUZZY_MODES,
@@ -55,12 +55,12 @@ from hermes.features.catalog import (
     with_type_arguments,
 )
 from hermes.features.method_call import call_capability
-from hermes.core.wine_gadget import gadget_loader, gadget_path, gadget_port, wine_bits
+from hermes.attach.wine_gadget import gadget_loader, gadget_path, gadget_port, wine_bits
 from hermes.platform import (
     ProcessMemory, is_wine_process, process_start_time, program_bits, read_mappings,
 )
 from hermes.core.value_types import DEFAULT_VALUE_TYPE, VALUE_TYPES, value_type as get_value_type
-from hermes.core.write_watch import (
+from hermes.features.write_watch import (
     WATCH_BACKENDS,
     BACKEND_FRIDA,
     BACKEND_PTRACE,

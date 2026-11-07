@@ -35,10 +35,11 @@ from pathlib import Path
 
 import frida
 
-from hermes.core import activity, settings, wine_helper
+from hermes.attach import wine_helper
+from hermes.core import activity, settings
 from hermes.core.messages import LocalizedError
 from hermes.platform import process_start_time
-from hermes.core.ptrace_engine import (
+from hermes.attach.ptrace_engine import (
     _WAIT_ANY,
     _WALL,
     DR6,

@@ -118,7 +118,7 @@ class _SmallTarget:
 def _trap_pc(target, command, size):
     """Watch the command's variable with the real write-watch agent."""
     import frida  # pylint: disable=import-outside-toplevel
-    from hermes.core.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
+    from hermes.features.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
 
     hits = []
     session = frida.attach(target.pid)

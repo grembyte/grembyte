@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from hermes.core import freeze
-from hermes.core.freeze import FreezeWorker, FrozenValue
+from hermes.features import freeze
+from hermes.features.freeze import FreezeWorker, FrozenValue
 from hermes.core.pointer import PointerChain
 from hermes.core.value_types import value_type
 

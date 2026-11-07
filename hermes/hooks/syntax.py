@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import frida
 
 from hermes.core import logs
-from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
+from hermes.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS
 
 FUNCTION, BODY = "function", "body"
 

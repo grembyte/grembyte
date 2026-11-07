@@ -9,7 +9,7 @@ Workers of windows that close are kept here until then.
 import shiboken6  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core.wine_gadget import ensure_gadget
+from hermes.attach.wine_gadget import ensure_gadget
 
 _workers = set()
 

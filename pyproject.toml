@@ -32,7 +32,7 @@ include = ["hermes*"]
 
 [tool.setuptools.package-data]
 "hermes.ui" = ["localization/*.json", "resources/*.svg", "resources/icons/*", "themes/*.json"]
-"hermes.core" = ["*.js", "inject/inject.c", "inject/build.sh"]
+"hermes.attach" = ["inject/inject.c", "inject/build.sh"]
 "hermes.agent" = ["*.js"]
 "hermes.engines" = ["*.js"]
 "hermes.engines.il2cpp" = ["*.js"]

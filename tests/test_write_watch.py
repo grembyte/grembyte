@@ -2,7 +2,7 @@
 
 import pytest
 
-from hermes.core.write_watch import (
+from hermes.features.write_watch import (
     _build_agent_source,
     watch_size_for_type,
 )

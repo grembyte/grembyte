@@ -3,7 +3,7 @@
 This is an alternative to the Frida watch backend (see write_watch.py). Instead
 of injecting an agent it drives the Linux ``ptrace`` API directly, so it works
 on targets Frida cannot instrument, most notably Wine/Proton processes. The
-low-level ptrace machinery lives in :mod:`hermes.core.ptrace_engine`; this
+low-level ptrace machinery lives in :mod:`hermes.attach.ptrace_engine`; this
 module turns watchpoint traps into the hit records the UI shows.
 """
 
@@ -14,7 +14,7 @@ from PySide6.QtCore import Signal  # pylint: disable=import-error,no-name-in-mod
 
 from hermes.core import messages, sessions
 from hermes.core.memory import read_memory
-from hermes.core.ptrace_engine import (
+from hermes.attach.ptrace_engine import (
     MAX_INSTRUCTION_SIZE,
     SYNC_WINDOW,
     PtraceWatchpointEngine,
@@ -29,7 +29,7 @@ __all__ = ["PtraceWriteWatchWorker", "build_dr7", "decode_access"]
 class PtraceWriteWatchWorker(PtraceWatchpointEngine):
     """Report writes (and, with ``reads``, reads) via ptrace watchpoints.
 
-    Matches :class:`hermes.core.write_watch.WriteWatchWorker`'s interface so
+    Matches :class:`hermes.features.write_watch.WriteWatchWorker`'s interface so
     the two backends are interchangeable. Each hit tells whether its
     instruction ``read`` and/or ``write``-s the target.
     """

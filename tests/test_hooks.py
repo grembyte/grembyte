@@ -238,7 +238,7 @@ class _Target:
 def _trap_pcs(target):
     """Run the real write-watch agent and return the trap PC per command."""
     import frida  # pylint: disable=import-outside-toplevel
-    from hermes.core.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
+    from hermes.features.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
 
     hits = []
     session = frida.attach(target.pid)
@@ -414,7 +414,7 @@ def test_hook_works_while_its_target_is_write_watched(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
     import frida
 
-    from hermes.core.write_watch import _build_agent_source
+    from hermes.features.write_watch import _build_agent_source
     from hermes.hooks.engine import HookWorker
 
     target = _Target(_build_target(tmp_path))
@@ -855,7 +855,7 @@ def test_breakpoint_hook_leaves_the_code_untouched(tmp_path, qt_app, translation
 def _watch_hits(target, command, reads):
     """Run the watch agent around one command and return its hits."""
     import frida  # pylint: disable=import-outside-toplevel
-    from hermes.core.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
+    from hermes.features.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
 
     hits = []
     session = frida.attach(target.pid)

@@ -9,8 +9,8 @@ import pytest
 
 from hermes.agent.source import MESSAGES_SOURCE
 from hermes.core import messages
-from hermes.core.wine_gadget import GadgetError
-from hermes.core.wine_helper import HelperError
+from hermes.attach.wine_gadget import GadgetError
+from hermes.attach.wine_helper import HelperError
 from hermes.ui.localization import load_translations
 
 _HERMES = Path(messages.__file__).resolve().parents[1]

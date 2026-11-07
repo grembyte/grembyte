@@ -142,7 +142,7 @@ def program_bits(pid, proc_root="/proc"):
     """Return 32 or 64 for the ELF program ``pid`` runs, or None if unknown.
 
     Under Wine that is the loader's; the Windows program's own is
-    ``wine_bits`` (hermes.core.wine_gadget).
+    ``wine_bits`` (hermes.attach.wine_gadget).
     """
     try:
         with open(f"{proc_root}/{pid}/exe", "rb") as exe:

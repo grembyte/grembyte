@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-from hermes.core import wine_helper
-from hermes.core.wine_helper import (
+from hermes.attach import wine_helper
+from hermes.attach.wine_helper import (
     HelperError,
     WineProcess,
     helper_environment,

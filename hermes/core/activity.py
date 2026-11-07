@@ -333,7 +333,8 @@ def _executable(pid, proc_root):
 def describe_process(pid, proc_root="/proc"):
     """What is known of ``pid`` without attaching: program, bits, Wine, Frida in it."""
     # pylint: disable=import-outside-toplevel
-    from hermes.core import sessions, wine_gadget
+    from hermes.attach import wine_gadget
+    from hermes.core import sessions
     from hermes.platform import is_wine_process, program_bits
 
     details = {"pid": pid}

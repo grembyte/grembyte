@@ -43,8 +43,7 @@ from hermes.engines.registry import ENGINE_AGENT_SOURCE, resolve_engine
 from hermes.features import catalog_cache, games
 from hermes.features.assemblies import chosen_assemblies
 from hermes.features.catalog import CatalogMethod
-from hermes.core.frida_attach import attach_session
-from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
+from hermes.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
 from hermes.agent.source import load_agent_source
 
 

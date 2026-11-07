@@ -121,7 +121,7 @@ def pointer_size(pid):
     if known is not None and known[0] == started:
         return known[1]
     if is_wine_process(pid):
-        from hermes.core.wine_gadget import wine_bits  # pylint: disable=import-outside-toplevel
+        from hermes.attach.wine_gadget import wine_bits  # pylint: disable=import-outside-toplevel
         bits = wine_bits(pid)
     else:
         bits = program_bits(pid)

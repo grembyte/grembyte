@@ -22,8 +22,30 @@ import time
 
 import frida
 
-from hermes.core import activity, messages, wine_gadget
+from hermes.attach import wine_gadget
+from hermes.core import activity, messages
 from hermes.platform import is_wine_process
+
+# What Frida raises when attaching, loading or talking to an agent fails.
+FRIDA_ERRORS = (
+  frida.AddressInUseError,
+  frida.ExecutableNotFoundError,
+  frida.ExecutableNotSupportedError,
+  frida.InvalidArgumentError,
+  frida.InvalidOperationError,
+  frida.NotSupportedError,
+  frida.OperationCancelledError,
+  frida.PermissionDeniedError,
+  frida.ProcessNotFoundError,
+  frida.ProcessNotRespondingError,
+  frida.ProtocolError,
+  frida.ServerNotRunningError,
+  frida.TimedOutError,
+  frida.TransportError,
+)
+
+# Raised by exports_sync calls when the agent-side RPC handler throws.
+CLEANUP_ERRORS = FRIDA_ERRORS + (frida.RPCException, RuntimeError)
 
 # Agents above this size are sent to the gadget in parts.
 GADGET_SOURCE_LIMIT = 100_000

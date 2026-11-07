@@ -169,10 +169,10 @@ sudo sysctl kernel.yama.ptrace_scope=0
 
 On Linux, **File → Check Frida Gadget Version …** checks locally for the gadget matching the installed Frida version. With a Wine/Proton process selected it checks that process's architecture; otherwise it checks both x86 and x86_64. If a matching file is missing, Hermes asks whether to download it now. This manual check is a one-time action and does not enable automatic downloads. It does not query GitHub for a newer Frida release. While Frida is using a Wine gadget, the status bar adds **(Update available)** when the matching gadget file is missing.
 
-A small Windows program, `hermes-inject-x86_64.exe` or `hermes-inject-x86.exe` (source `hermes/core/inject/inject.c`), loads the gadget; Hermes starts it with the game's Wine and prefix. If that fails, Hermes uses ptrace as a fallback for 64-bit games. The executables are not in the repository: `hermes/core/inject/build.sh` builds them into `build/inject/` (needs `mingw64-gcc` and `mingw32-gcc`, or `pip install ziglang`). Hermes runs it by itself the first time a Wine game needs the helper; `HERMES_INJECT_DIR` points to executables elsewhere.
+A small Windows program, `hermes-inject-x86_64.exe` or `hermes-inject-x86.exe` (source `hermes/attach/inject/inject.c`), loads the gadget; Hermes starts it with the game's Wine and prefix. If that fails, Hermes uses ptrace as a fallback for 64-bit games. The executables are not in the repository: `hermes/attach/inject/build.sh` builds them into `build/inject/` (needs `mingw64-gcc` and `mingw32-gcc`, or `pip install ziglang`). Hermes runs it by itself the first time a Wine game needs the helper; `HERMES_INJECT_DIR` points to executables elsewhere.
 
 ```bash
-sh hermes/core/inject/build.sh
+sh hermes/attach/inject/build.sh
 ```
 
 ## Example: gold multiplier for the test game

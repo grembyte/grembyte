@@ -8,8 +8,8 @@ import struct
 
 import pytest
 
-from hermes.core import wine_gadget
-from hermes.core.wine_gadget import GadgetError, ensure_gadget
+from hermes.attach import wine_gadget
+from hermes.attach.wine_gadget import GadgetError, ensure_gadget
 
 
 def _pe(machine):

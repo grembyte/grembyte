@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes.core.ptrace_engine import WATCHPOINT_SLOTS, build_dr7, combined_dr7
+from hermes.attach.ptrace_engine import WATCHPOINT_SLOTS, build_dr7, combined_dr7
 
 
 def test_combined_dr7_matches_single_slot_for_slot_zero():
@@ -49,7 +49,7 @@ def test_claim_address_uses_four_slots_then_refuses(qt_app):
 
 def test_unaligned_addresses_take_no_watchpoint(qt_app):
     # pylint: disable=unused-argument,protected-access,import-outside-toplevel
-    from hermes.core.ptrace_engine import watch_alignment_error
+    from hermes.attach.ptrace_engine import watch_alignment_error
     from hermes.hooks.ptrace_hook import PtraceHookWorker
 
     # The kernel refuses them; a thread whose registers failed stayed stopped.

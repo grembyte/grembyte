@@ -10,36 +10,15 @@ In Mono games (Unity) a hit in JIT code names its C# method (``method``).
 import sys
 import threading
 
-import frida
 from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs, messages
 from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE
-from hermes.core.frida_attach import attach_session
+from hermes.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
 from hermes.core.value_types import VALUE_TYPES
 from hermes.agent.source import load_agent_source
 
-
-FRIDA_ERRORS = (
-  frida.AddressInUseError,
-  frida.ExecutableNotFoundError,
-  frida.ExecutableNotSupportedError,
-  frida.InvalidArgumentError,
-  frida.InvalidOperationError,
-  frida.NotSupportedError,
-  frida.OperationCancelledError,
-  frida.PermissionDeniedError,
-  frida.ProcessNotFoundError,
-  frida.ProcessNotRespondingError,
-  frida.ProtocolError,
-  frida.ServerNotRunningError,
-  frida.TimedOutError,
-  frida.TransportError,
-)
-
-# Raised by exports_sync calls when the agent-side RPC handler throws.
-CLEANUP_ERRORS = FRIDA_ERRORS + (frida.RPCException, RuntimeError)
 
 _AGENT_SOURCE = load_agent_source(__file__)
 
@@ -186,7 +165,7 @@ def create_watch_worker(backend, pid, address, size, parent=None, reads=False):
     """
     # pylint: disable=too-many-arguments
     if backend == BACKEND_PTRACE:
-        from hermes.core.ptrace_watch import (  # pylint: disable=import-outside-toplevel
+        from hermes.features.ptrace_watch import (  # pylint: disable=import-outside-toplevel
             PtraceWriteWatchWorker,
         )
         return PtraceWriteWatchWorker(pid, address, size, parent, reads=reads)

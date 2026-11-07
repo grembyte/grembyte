@@ -86,8 +86,7 @@ from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-na
 from hermes.core import logs, messages
 from hermes.core import sessions
 from hermes.engines.registry import ENGINE_AGENT_SOURCE
-from hermes.core.frida_attach import attach_session
-from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
+from hermes.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
 from hermes.agent.source import load_agent_source
 
 
