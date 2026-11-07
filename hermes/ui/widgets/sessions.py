@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 
 from hermes.core.sessions import SESSIONS, SessionSignals, frida_agents, frida_gadgets
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 
 
@@ -75,7 +75,7 @@ class SessionsDialog(QDialog):
         layout = QVBoxLayout(self)
         hint = QLabel(self.translations["sessions.hint"])
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #8b949e;")
+        hint.setStyleSheet(f"color: {theme_color('muted')};")
         layout.addWidget(hint)
 
         self.table = QTableWidget(0, 4)

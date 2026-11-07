@@ -194,7 +194,7 @@ def test_debug_window_lists_filters_and_pauses(qt_app, translations):
 
     assert window.table.rowCount() == 4
     assert window.table.item(0, 7).text() == "130"
-    assert "1 Ausgaben: x" in window.table.item(0, 8).text()
+    assert "Ausgabe: x" in window.table.item(0, 8).text()
     assert "Aufrufer nicht gelernt" in window.table.item(1, 8).text()
     assert window.table.item(2, 8).text() == "Fehler: Error: boom"
     assert window.table.item(3, 1).text() == "Konsole"

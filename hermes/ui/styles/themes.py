@@ -13,7 +13,14 @@ THEME_PREFIX = "hermes_themes_"
 DEFAULT_THEME = "Github-Dark"
 THEME_DIRECTORY = Path(__file__).parents[1] / "themes"
 CODE_COLOR_KEYS = ("code_text", "code_keyword", "code_string", "code_number")
-COLOR_KEYS = tuple(dict.fromkeys((*_STYLE_COLOR_KEYS.values(), *CODE_COLOR_KEYS)))
+# Colours widgets use for their content (pointers, method templates; value
+# types, changed bytes) rather than the stylesheet.
+CONTENT_COLOR_KEYS = ("purple", "orange")
+COLOR_KEYS = tuple(dict.fromkeys(
+    (*_STYLE_COLOR_KEYS.values(), *CONTENT_COLOR_KEYS, *CODE_COLOR_KEYS)))
+# Keys added after themes were first saved: a theme without them takes them
+# from the bundled theme of its name, or from Github-Dark.
+_LATER_COLOR_KEYS = (*CONTENT_COLOR_KEYS, *CODE_COLOR_KEYS)
 _THEME_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 _COLOR = re.compile(
     r"(?:#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?|"
@@ -101,7 +108,7 @@ class ThemeManager:
                 or not isinstance(colors, dict) or set(colors) - set(COLOR_KEYS)):
             raise ValueError(f"Invalid theme: {path}")
         missing = set(COLOR_KEYS) - set(colors)
-        if missing - set(CODE_COLOR_KEYS):
+        if missing - set(_LATER_COLOR_KEYS):
             raise ValueError(f"Invalid theme: {path}")
         if missing:
             fallbacks = fallback_themes or {}

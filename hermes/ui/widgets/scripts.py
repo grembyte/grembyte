@@ -37,7 +37,7 @@ from hermes.features.scripts import (
 from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
-from hermes.ui.widgets.icons import material_icon, set_button_icon
+from hermes.ui.widgets.icons import material_icon, set_button_icon, theme_color
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.script_params import ParamEditor, ScriptRunDialog
@@ -45,13 +45,14 @@ from hermes.ui.widgets.syntax_hint import SyntaxHint
 from hermes.ui.widgets.table import (
     add_copy_actions, add_delete_action, resizable_columns, select_clicked_row, set_row_height)
 
+# Theme colours (see icons.theme_color) of the states
 STATUS_COLORS = {
-    "starting": "#8b949e",
-    "active": "#3fb950",
-    "running": "#58a6ff",
-    "paused": "#d29922",
-    "failed": "#f85149",
-    "disconnected": "#8b949e",
+    "starting": "muted",
+    "active": "success",
+    "running": "accent",
+    "paused": "warning",
+    "failed": "danger",
+    "disconnected": "muted",
 }
 # Statuses of scripts the worker no longer runs: saving an edit starts them anew
 _STOPPED = frozenset({"failed", "disconnected"})
@@ -120,7 +121,7 @@ class ScriptDialog(QDialog):
         self.syntax_hint = SyntaxHint(translations, self.code_edit, BODY)
         code_layout.addWidget(self.syntax_hint)
         help_label = WrappedLabel(translations["scripts.code_help"])
-        help_label.setStyleSheet("color:#8b949e;")
+        help_label.setStyleSheet(f"color:{theme_color('muted')};")
         help_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         code_layout.addWidget(help_label)
         self.tabs.addTab(code_page, translations["scripts.code"])
@@ -129,7 +130,7 @@ class ScriptDialog(QDialog):
         layout.addWidget(self.tabs, 1)
 
         self.error_label = WrappedLabel("")
-        self.error_label.setStyleSheet("color:#f85149;")
+        self.error_label.setStyleSheet(f"color:{theme_color('danger')};")
         layout.addWidget(self.error_label)
         layout.addLayout(dialog_button_row(translations, "button.save" if spec
                                            else "scripts.create", self._accept, self.reject))
@@ -352,7 +353,7 @@ class ScriptPanel(QGroupBox):
         state["status"] = status
         state["message"] = message
         self._set_cell(script_id, 2, self.translations[f"scripts.status_{status}"],
-                       STATUS_COLORS[status], tooltip=message)
+                       theme_color(STATUS_COLORS[status]), tooltip=message)
         self._update_buttons()
 
     def _update_buttons(self):

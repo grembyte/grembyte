@@ -29,7 +29,7 @@ from hermes.engines import base as engine_base
 from hermes.engines.registry import engine_by_id
 from hermes.features.favorites import METHOD, favorite_key, favorite_of
 from hermes.features.method_call import can_call
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.table import copy_menu, resizable_columns
 
@@ -246,7 +246,7 @@ class FavoritesDialog(QDialog):
         layout = QVBoxLayout(self)
         hint = QLabel(t["favorites.hint"])
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #8b949e;")
+        hint.setStyleSheet(f"color: {theme_color('muted')};")
         layout.addWidget(hint)
 
         self.search_input = QLineEdit()

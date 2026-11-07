@@ -34,7 +34,7 @@ from hermes.features.native_monitor import (
     parse_location,
     signed,
 )
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.method_monitor import call_time
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
@@ -248,7 +248,7 @@ class NativeMonitorDialog(QDialog):
         layout = QVBoxLayout(self)
         hint = QLabel(t["native_monitor.hint"])
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #8b949e;")
+        hint.setStyleSheet(f"color: {theme_color('muted')};")
         layout.addWidget(hint)
         if is_wine_process(self.pid):
             warning = QLabel(t["native_monitor.wine_warning"])

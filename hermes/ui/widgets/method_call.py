@@ -40,7 +40,7 @@ from hermes.features.method_call import (
     supported,
 )
 from hermes.features.monitor import MethodMonitorWorker
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.method_monitor import stop_worker
@@ -143,7 +143,7 @@ class MethodCallDialog(QDialog):
         layout = QVBoxLayout(self)
         self.hint_label = QLabel(t["call.hint"])
         self.hint_label.setWordWrap(True)
-        self.hint_label.setStyleSheet("color: #8b949e;")
+        self.hint_label.setStyleSheet(f"color: {theme_color('muted')};")
         layout.addWidget(self.hint_label)
         self.signature_label = SelectableText()
         layout.addWidget(self.signature_label)
@@ -255,7 +255,7 @@ class MethodCallDialog(QDialog):
         for param in self._params:
             if is_output(param):
                 hint = QLabel(t["call.output"])
-                hint.setStyleSheet("color: #8b949e;")
+                hint.setStyleSheet(f"color: {theme_color('muted')};")
                 self.form.addRow(self._param_label(param), hint)
                 continue
             i = len(self._editors)

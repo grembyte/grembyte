@@ -100,6 +100,44 @@ def test_older_user_theme_inherits_syntax_colors(tmp_path):
                for key in ("code_text", "code_keyword", "code_string", "code_number"))
 
 
+def test_user_theme_saved_before_content_colors_still_loads(tmp_path):
+    import json
+
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir=tmp_path)
+    colors = manager.load_theme("Github-Light")["colors"]
+    for key in ("purple", "orange"):
+        colors.pop(key)
+    # Same name as the bundled theme: the missing colours come from that one.
+    (tmp_path / "hermes_themes_Github-Light.json").write_text(
+        json.dumps({"name": "Github-Light", "colors": colors}), encoding="utf-8")
+
+    loaded = manager.load_theme("Github-Light")["colors"]
+
+    assert loaded["purple"] == "#8250df"
+    assert loaded["orange"] == "#bc4c00"
+
+
+def test_theme_qcolor_reads_css_rgba(monkeypatch):
+    from hermes.ui.widgets import icons
+
+    monkeypatch.setattr(icons, "_theme_colors", {"selection": "rgba(9, 105, 218, 0.5)"})
+
+    color = icons.theme_qcolor("selection")
+
+    assert (color.red(), color.green(), color.blue(), color.alpha()) == (9, 105, 218, 128)
+    # A key the theme lacks falls back to Github-Dark
+    assert icons.theme_qcolor("purple").name() == "#d2a8ff"
+
+
+def test_color_swatch_labels_stay_readable():
+    from hermes.ui.widgets.theme_dialog import _label_color
+
+    assert _label_color("#ffffff", "#ffffff") == "#000000"
+    assert _label_color("#0d1117", "#ffffff") == "#ffffff"
+    # A translucent selection over a white background is light
+    assert _label_color("rgba(9, 105, 218, 0.18)", "#ffffff") == "#000000"
+
+
 def test_solarized_themes_are_bundled():
     manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
 

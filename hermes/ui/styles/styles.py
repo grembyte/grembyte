@@ -62,7 +62,7 @@ STYLE = """
         outline: none;
         gridline-color: #21262d;
         selection-background-color: rgba(31, 111, 235, 0.28);
-        selection-color: #ffffff;
+        selection-color: #c9d1d9;
         alternate-background-color: #11161d;
         font-family: __MONO__;
         font-size: 12px;
@@ -71,9 +71,14 @@ STYLE = """
         padding: 4px 8px;
         border: none;
     }
+    /* Widgets in cells (links, check boxes) let the row's selection show through. */
+    QWidget#cell_widget, QWidget#cell_widget QCheckBox {
+        background: transparent;
+    }
+    /* The theme's text colour: white would vanish on a light theme's selection. */
     QTableWidget::item:selected {
         background-color: rgba(31, 111, 235, 0.28);
-        color: #ffffff;
+        color: #c9d1d9;
     }
     QHeaderView {
         background-color: #161b22;
@@ -160,7 +165,7 @@ STYLE = """
     /* ------------------------------------------------------------------
        Inputs
        ------------------------------------------------------------------ */
-    QLineEdit, QComboBox, QPlainTextEdit {
+    QLineEdit, QComboBox, QPlainTextEdit, QSpinBox, QDoubleSpinBox {
         background-color: #161b22;
         border: 1px solid #30363d;
         border-radius: 6px;
@@ -169,7 +174,8 @@ STYLE = """
         font-family: __MONO__;
         font-size: 13px;
     }
-    QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {
+    QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus,
+    QSpinBox:focus, QDoubleSpinBox:focus {
         border-color: #58a6ff;
     }
     /* Editors inside table cells: the cell height is fixed, so use less padding. */
@@ -315,7 +321,7 @@ STYLE = """
     }
 
     /* ------------------------------------------------------------------
-       Lists (process dialog)
+       Lists
        ------------------------------------------------------------------ */
     QListWidget {
         background-color: #0d1117;
@@ -323,16 +329,18 @@ STYLE = """
         border-radius: 4px;
         alternate-background-color: #11161d;
         outline: none;
+        color: #c9d1d9;
     }
+    /* No colour on the items: what a list colours itself (e.g. method
+       templates) has to show, and disabled lists their disabled colour. */
     QListWidget::item {
         padding: 3px 6px;
-        color: #3fb950;
         font-family: __MONO__;
         font-size: 12px;
     }
     QListWidget::item:selected {
         background-color: rgba(31, 111, 235, 0.28);
-        color: #ffffff;
+        color: #c9d1d9;
     }
     QListWidget::item:hover {
         background-color: #21262d;
@@ -434,6 +442,43 @@ STYLE = """
         background-color: #484f58;
         image: url(__PARTIAL_DISABLED_IMAGE__);
     }
+
+    /* ------------------------------------------------------------------
+       Spin boxes: framed like the line edits beside them. With a border of
+       their own Fusion no longer draws the buttons' arrows, so they are
+       images of the theme's colours too.
+       ------------------------------------------------------------------ */
+    QSpinBox, QDoubleSpinBox {
+        padding: 4px 6px;
+    }
+    QSpinBox::up-button, QSpinBox::down-button,
+    QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+        width: 18px;
+        border: none;
+        background: transparent;
+    }
+    QSpinBox::up-button:hover, QSpinBox::down-button:hover,
+    QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {
+        background-color: #21262d;
+    }
+    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+        width: 14px;
+        height: 14px;
+        image: url(__SPIN_UP_IMAGE__);
+    }
+    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+        width: 14px;
+        height: 14px;
+        image: url(__SPIN_DOWN_IMAGE__);
+    }
+    QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off,
+    QDoubleSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:off {
+        image: url(__SPIN_UP_DISABLED_IMAGE__);
+    }
+    QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off,
+    QDoubleSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:off {
+        image: url(__SPIN_DOWN_DISABLED_IMAGE__);
+    }
 """.replace("__MONO__", MONO)
 
 
@@ -469,6 +514,10 @@ _INDICATOR_IMAGES = {
     "__PARTIAL_IMAGE__": ("remove", "white"),
     "__CHECK_DISABLED_IMAGE__": ("check", "background"),
     "__PARTIAL_DISABLED_IMAGE__": ("remove", "background"),
+    "__SPIN_UP_IMAGE__": ("expand_less", "muted"),
+    "__SPIN_DOWN_IMAGE__": ("expand_more", "muted"),
+    "__SPIN_UP_DISABLED_IMAGE__": ("expand_less", "disabled_text"),
+    "__SPIN_DOWN_DISABLED_IMAGE__": ("expand_more", "disabled_text"),
 }
 _RGBA = re.compile(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)")
 

@@ -4,7 +4,7 @@ import struct
 import time
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer  # pylint: disable=import-error,no-name-in-module
-from PySide6.QtGui import QColor, QFont, QKeySequence, QShortcut  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QFont, QKeySequence, QShortcut  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 from hermes.core.memory import describe_address, parse_address, read_memory
 from hermes.platform import read_mappings
 from hermes.core.value_types import VALUE_TYPES
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 
 BYTES_PER_ROW = 16
 REFRESH_MS = 500
@@ -33,9 +33,10 @@ _TAIL = 8
 # Rows shown until the view knows its size.
 DEFAULT_ROWS = 16
 
-_CHANGED = QColor("#f0883e")
-_UNREADABLE = QColor("#484f58")
-_ASCII = QColor("#8b949e")
+# Theme colours (see icons.theme_color) of changed and unreadable bytes and of the text
+_CHANGED = "orange"
+_UNREADABLE = "disabled_text"
+_ASCII = "muted"
 
 
 class MemoryModel(QAbstractTableModel):
@@ -71,7 +72,7 @@ class MemoryModel(QAbstractTableModel):
             if role == Qt.ItemDataRole.DisplayRole:
                 return self._ascii(row)
             if role == Qt.ItemDataRole.ForegroundRole:
-                return _ASCII
+                return theme_qcolor(_ASCII)
             return None
         offset = row * BYTES_PER_ROW + column
         if offset >= len(self.data_bytes):
@@ -81,9 +82,9 @@ class MemoryModel(QAbstractTableModel):
             return f"{self.data_bytes[offset]:02X}" if readable else "??"
         if role == Qt.ItemDataRole.ForegroundRole:
             if not readable:
-                return _UNREADABLE
+                return theme_qcolor(_UNREADABLE)
             if self.changed(offset):
-                return _CHANGED
+                return theme_qcolor(_CHANGED)
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return Qt.AlignmentFlag.AlignCenter
         return None
@@ -247,7 +248,7 @@ class MemoryViewerDialog(QDialog):
         layout.addWidget(self.view, 1)
 
         self.region_label = QLabel("")
-        self.region_label.setStyleSheet("color: #8b949e;")
+        self.region_label.setStyleSheet(f"color: {theme_color('muted')};")
         layout.addWidget(self.region_label)
 
         # Values at the selected byte.

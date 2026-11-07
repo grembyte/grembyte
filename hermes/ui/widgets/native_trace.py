@@ -21,7 +21,7 @@ from hermes.features.favorites import NATIVE_TRACE
 from hermes.features.native_trace import NativeTraceWorker, apply_names
 from hermes.features.trace import analyze, recording_calls
 from hermes.ui.widgets.favorites import FAVORITE_COLUMN
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.trace import (
     RECORDING_ICONS,
@@ -124,7 +124,7 @@ class NativeTraceDialog(QDialog):
         layout = QVBoxLayout(self)
         hint = QLabel(t["native_trace.hint"])
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #8b949e;")
+        hint.setStyleSheet(f"color: {theme_color('muted')};")
         layout.addWidget(hint)
         if self.wine:
             warning = QLabel(t["native_trace.wine_warning"])

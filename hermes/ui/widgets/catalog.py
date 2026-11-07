@@ -282,7 +282,8 @@ class CatalogDialog(QDialog):
         self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(lambda _text: self._filter_timer.start())
         bar.addWidget(self.search_input, 1)
-        self.framework_check = QCheckBox(self.translations["catalog.framework"])
+        # "&" would mark a keyboard shortcut ("Framework _libraries"): doubled it shows.
+        self.framework_check = QCheckBox(self.translations["catalog.framework"].replace("&", "&&"))
         self.framework_check.setToolTip(self.translations["catalog.framework_tooltip"])
         self.framework_check.toggled.connect(self._toggle_framework)
         bar.addWidget(self.framework_check)
@@ -482,7 +483,8 @@ class CatalogDialog(QDialog):
 
     def _show_summary(self):
         classes = {(m.assembly, m.class_name) for m in self.model.visible}
-        text = self.translations["catalog.summary"].format(
+        key = "catalog.summary_one_class" if len(classes) == 1 else "catalog.summary"
+        text = self.translations[key].format(
             shown=len(self.model.visible), total=len(self.model.methods),
             classes=len(classes), assemblies=len(self._loaded),
         )

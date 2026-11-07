@@ -11,12 +11,12 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QTableWidget, QTableWidgetItem, QLineEdit,
     QHeaderView, QAbstractItemView, QMessageBox,
 )
-from PySide6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
 
 from hermes.engines.unreal.adapter import bootstrapped_game
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from hermes.ui.localization import load_translations
+from hermes.ui.widgets.icons import theme_qcolor
 
 
 _PYTHON_NAME = re.compile(r"^python[\d.]*w?$")
@@ -86,6 +86,8 @@ class ProcessSelectDialog(QDialog):
 
         # Process list
         self.list = QTableWidget(0, 3)
+        # One line per process: a long path is shortened, not broken at a space.
+        self.list.setWordWrap(False)
         self.list.setHorizontalHeaderLabels([
             self.translations["process.column_pid"],
             self.translations["process.column_name"],
@@ -138,11 +140,11 @@ class ProcessSelectDialog(QDialog):
             row = self.list.rowCount()
             self.list.insertRow(row)
             pid_item = QTableWidgetItem(pid)
-            pid_item.setForeground(QColor("#58a6ff"))
+            pid_item.setForeground(theme_qcolor("accent"))
             self.list.setItem(row, 0, pid_item)
             self.list.setItem(row, 1, QTableWidgetItem(name))
             path_item = QTableWidgetItem(exe)
-            path_item.setForeground(QColor("#8b949e"))
+            path_item.setForeground(theme_qcolor("muted"))
             self.list.setItem(row, 2, path_item)
 
     def _filter(self, text):

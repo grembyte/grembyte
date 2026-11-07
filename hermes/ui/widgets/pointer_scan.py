@@ -31,7 +31,7 @@ from hermes.core.pointer import (
 )
 from hermes.platform import ProcessMemory, main_module, read_mappings
 from hermes.db.repository.addresses import SavedPointerScan
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from hermes.ui.workers import keep_until_finished
@@ -168,13 +168,13 @@ class PointerScanDialog(QDialog):
         layout = QVBoxLayout(self)
 
         hint = WrappedLabel(self.translations["pointer.hint"])
-        hint.setStyleSheet("color: #8b949e;")
+        hint.setStyleSheet(f"color: {theme_color('muted')};")
         layout.addWidget(hint)
 
         # Shown when the address lies in a module's static data: no scan needed.
         self.static_notice = QHBoxLayout()
         self.static_label = WrappedLabel("")
-        self.static_label.setStyleSheet("color: #3fb950;")
+        self.static_label.setStyleSheet(f"color: {theme_color('success')};")
         self.btn_static = QPushButton(self.translations["pointer.static_use"])
         set_button_icon(self.btn_static, "push_pin")
         self.btn_static.clicked.connect(self._use_static)

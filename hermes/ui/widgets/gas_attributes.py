@@ -16,7 +16,6 @@ hermes attaches.
 import json
 
 from PySide6.QtCore import Qt, QTimer  # pylint: disable=import-error,no-name-in-module
-from PySide6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
@@ -32,7 +31,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 
 from hermes.features.scripts import ScriptSpec
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 
 _SET, _ATTRIBUTE, _BASE, _CURRENT, _HELD = range(5)
@@ -44,8 +43,9 @@ LIVE_INTERVAL_MS = 1000
 HOLD_SECONDS = 2.0
 # Labels of the hold scripts: "GAS: AttributeSetCore.Might = 14"
 HOLD_PREFIX = "GAS: "
-_HELD_COLOR = QColor("#3fb950")
-_CHANGED_COLOR = QColor("#d29922")
+# Theme colours (see icons.theme_color) of a held and of a changed value
+_HELD_COLOR = "success"
+_CHANGED_COLOR = "warning"
 
 _HOLD_SOURCE = """\
 // Made by the GAS attributes window: sets the base value of the player's
@@ -122,7 +122,7 @@ class GasAttributesDialog(QDialog):
         layout = QVBoxLayout(self)
         hint = QLabel(t["gas.hint"])
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #8b949e;")
+        hint.setStyleSheet(f"color: {theme_color('muted')};")
         layout.addWidget(hint)
 
         top = QHBoxLayout()
@@ -175,7 +175,7 @@ class GasAttributesDialog(QDialog):
 
         actions = QHBoxLayout()
         self.owner_label = QLabel("")
-        self.owner_label.setStyleSheet("color: #8b949e;")
+        self.owner_label.setStyleSheet(f"color: {theme_color('muted')};")
         actions.addWidget(self.owner_label, 1)
         self.hold_button = QPushButton(t["gas.hold"])
         self.hold_button.setObjectName("btn_primary")
@@ -346,11 +346,15 @@ class GasAttributesDialog(QDialog):
                         flags |= Qt.ItemFlag.ItemIsEditable
                     item.setFlags(flags)
                 self.table.item(row, _ATTRIBUTE).setData(Qt.ItemDataRole.UserRole, name)
-                self.table.item(row, _HELD).setForeground(_HELD_COLOR)
+                self.table.item(row, _HELD).setForeground(theme_qcolor(_HELD_COLOR))
                 # The effects change it: shown in the colour of a changed value
                 differs = abs(attribute["current"] - attribute["base"]) >= 1e-6
-                self.table.item(row, _CURRENT).setForeground(
-                    _CHANGED_COLOR if differs else self.table.palette().text().color())
+                # An unchanged one in the table's own text colour: no colour of its own
+                current = self.table.item(row, _CURRENT)
+                if differs:
+                    current.setForeground(theme_qcolor(_CHANGED_COLOR))
+                else:
+                    current.setData(Qt.ItemDataRole.ForegroundRole, None)
                 if name in selected:
                     self.table.selectRow(row)
         finally:

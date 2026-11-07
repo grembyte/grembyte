@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 
 from hermes.features.trace_filters import BUILTIN_FILTERS, TraceFilter, select_methods
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 
 # Methods the editor shows as examples of what a filter matches
 _PREVIEW = 8
@@ -309,7 +309,7 @@ class TraceFilterDialog(QDialog):
         self.preview_list = QListWidget()
         layout.addWidget(self.preview_list, 1)
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: #f85149;")
+        self.error_label.setStyleSheet(f"color: {theme_color('danger')};")
         self.error_label.setWordWrap(True)
         layout.addWidget(self.error_label)
         layout.addLayout(dialog_button_row(self.translations, "button.save",

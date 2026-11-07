@@ -3,12 +3,14 @@
 from PySide6.QtCore import QTimer  # pylint: disable=import-error,no-name-in-module
 
 from hermes.hooks.syntax import FUNCTION, checker, looks_like_function
+from hermes.ui.widgets.icons import theme_color
 from hermes.ui.widgets.labels import WrappedLabel
 
 # Typing pauses this long before the code is checked.
 CHECK_DELAY_MS = 400
 
-_COLORS = {"error": "#f85149", "warning": "#d29922", "ok": "#3fb950"}
+# Theme colours (see icons.theme_color) of the levels
+_COLORS = {"error": "danger", "warning": "warning", "ok": "success"}
 
 
 def syntax_problem(translations, kind, code):
@@ -60,5 +62,5 @@ class SyntaxHint(WrappedLabel):
         return problem
 
     def _show(self, text, level):
-        self.setStyleSheet(f"color: {_COLORS[level]};")
+        self.setStyleSheet(f"color: {theme_color(_COLORS[level])};")
         self.setText(text)

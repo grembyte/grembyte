@@ -210,7 +210,7 @@ class MethodMonitorDialog(QDialog):
         layout = QVBoxLayout(self)
         hint = QLabel(self.translations["monitor.hint"])
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #8b949e;")
+        hint.setStyleSheet(f"color: {theme_color('muted')};")
         layout.addWidget(hint)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -337,6 +337,7 @@ class MethodMonitorDialog(QDialog):
         check.setChecked(checked)
         check.setToolTip(tooltip)
         holder = QWidget()
+        holder.setObjectName("cell_widget")  # the row's selection shows through (styles.py)
         holder_layout = QHBoxLayout(holder)
         holder_layout.setContentsMargins(0, 0, 0, 0)
         holder_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)

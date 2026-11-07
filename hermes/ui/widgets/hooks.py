@@ -43,7 +43,7 @@ from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.hook_debug import HookDebugWindow
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.syntax_hint import SyntaxHint
 from hermes.ui.widgets.table import (
@@ -60,15 +60,16 @@ _LIVE = frozenset({"active", "paused", "error", "training", "reverted"})
 # Lines the log below the table keeps
 MAX_LOG_LINES = 2000
 
+# Theme colours (see icons.theme_color) of the states
 _STATUS_COLORS = {
-    "installing": "#d29922",
-    "training": "#a371f7",
-    "active": "#3fb950",
-    "paused": "#8b949e",
-    "failed": "#f85149",
-    "error": "#f85149",
-    "reverted": "#db6d28",
-    "disconnected": "#8b949e",
+    "installing": "warning",
+    "training": "purple",
+    "active": "success",
+    "paused": "muted",
+    "failed": "danger",
+    "error": "danger",
+    "reverted": "orange",
+    "disconnected": "muted",
 }
 
 
@@ -255,7 +256,7 @@ class HookDialog(QDialog):
         form.addRow(self.translations["hooks.label"], self.label_input)
         if self.pointer is not None:
             target = QLabel(self.pointer.text())
-            target.setStyleSheet("color: #d2a8ff;")
+            target.setStyleSheet(f"color: {theme_color('purple')};")
             target.setToolTip(self.translations["hooks.pointer_hint"])
             target.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             form.addRow(self.translations["hooks.pointer"], target)
@@ -292,7 +293,7 @@ class HookDialog(QDialog):
         notice_layout.setContentsMargins(0, 0, 0, 0)
         self.template_notice_label = QLabel()
         self.template_notice_label.setWordWrap(True)
-        self.template_notice_label.setStyleSheet("color: #d29922;")
+        self.template_notice_label.setStyleSheet(f"color: {theme_color('warning')};")
         self.btn_adopt_template = QPushButton(self.translations["hooks.template_adopt"])
         set_button_icon(self.btn_adopt_template, "sync")
         self.btn_adopt_template.clicked.connect(self._adopt_template)
@@ -314,7 +315,7 @@ class HookDialog(QDialog):
 
         self.error_label = QLabel("")
         self.error_label.setWordWrap(True)
-        self.error_label.setStyleSheet("color: #f85149;")
+        self.error_label.setStyleSheet(f"color: {theme_color('danger')};")
         layout.addWidget(self.error_label)
 
         layout.addLayout(dialog_button_row(
@@ -546,6 +547,8 @@ class HookPanel(QGroupBox):
         layout.addLayout(controls)
 
         self.table = QTableWidget(0, len(self._COLUMNS))
+        # One line per hook: a long write site is shortened, not broken in two.
+        self.table.setWordWrap(False)
         self.table.setHorizontalHeaderLabels(
             [self.translations[key] for key in self._COLUMNS]
         )
@@ -747,7 +750,7 @@ class HookPanel(QGroupBox):
             hook_id,
             4,
             self.translations[f"hooks.status_{status}"],
-            _STATUS_COLORS[status],
+            theme_color(_STATUS_COLORS[status]),
             tooltip,
         )
         self._update_buttons()
@@ -810,10 +813,10 @@ class HookPanel(QGroupBox):
         label_item = QTableWidgetItem(self._label_text(spec, False))
         label_item.setData(Qt.ItemDataRole.UserRole, hook_id)
         self.table.setItem(row, 0, label_item)
-        self._set_cell(hook_id, 1, self._address_text(spec), "#3fb950")
+        self._set_cell(hook_id, 1, self._address_text(spec), theme_color("success"))
         self._show_callers(hook_id)
         self._set_cell(hook_id, 2, site)
-        self._set_cell(hook_id, 3, spec.transform.describe(), "#f0883e")
+        self._set_cell(hook_id, 3, spec.transform.describe(), theme_color("orange"))
         self._set_cell(hook_id, 5, "0")
         self._set_cell(hook_id, 6, "")
         self._set_status(hook_id, "installing")
@@ -852,7 +855,7 @@ class HookPanel(QGroupBox):
         self.table.setItem(row, 0, label_item)
         self._show_method_phase(hook_id, spec)
         self._set_cell(hook_id, 2, method_name(spec.signature), tooltip=spec.signature)
-        self._set_cell(hook_id, 3, spec.transform.describe(), "#f0883e")
+        self._set_cell(hook_id, 3, spec.transform.describe(), theme_color("orange"))
         self._set_cell(hook_id, 5, "0")
         self._set_cell(hook_id, 6, "")
         self._set_status(hook_id, "installing")
@@ -866,7 +869,7 @@ class HookPanel(QGroupBox):
             hook_id, 1,
             f"{self.translations['hooks.address_method']} · "
             f"{self.translations[f'hooks.phase_short_{spec.phase}']}",
-            "#d2a8ff", tooltip=self.translations[f"hooks.method_tooltip_{spec.phase}"])
+            theme_color("purple"), tooltip=self.translations[f"hooks.method_tooltip_{spec.phase}"])
 
     def _ensure_method_worker(self):
         worker = self._method_worker

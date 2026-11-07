@@ -1,7 +1,7 @@
 """Dialog for maintaining hook templates (JavaScript manipulations)."""
 
 from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-from PySide6.QtGui import QColor, QFontDatabase  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QFontDatabase  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QComboBox,
@@ -32,7 +32,7 @@ from hermes.hooks.sandbox import TransformSandbox
 from hermes.hooks.syntax import BODY, FUNCTION
 from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.hooks import TransformForm, format_number, parse_number
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.syntax_hint import SyntaxHint, syntax_problem
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
@@ -47,7 +47,8 @@ _NAME, _LABEL, _KIND, _DEFAULT, _OPTIONAL, _CHOICES = range(6)
 _KINDS = ("number", "choice", "code")
 # What a template is for: write hooks or method hooks.
 _HOOK_KINDS = ("value", "method")
-_METHOD_COLOR = QColor("#d2a8ff")
+# Theme colour (see icons.theme_color) of method templates in the list
+_METHOD_COLOR = "purple"
 
 
 def format_choices(parameter):
@@ -209,7 +210,7 @@ class TemplateDialog(QDialog):
         layout.addWidget(self.script_hint)
 
         self.error_label = WrappedLabel()
-        self.error_label.setStyleSheet("color: #f85149;")
+        self.error_label.setStyleSheet(f"color: {theme_color('danger')};")
         layout.addWidget(self.error_label)
 
         save_row = QHBoxLayout()
@@ -287,7 +288,7 @@ class TemplateDialog(QDialog):
             kind = self.translations[f"templates.hook_kind_{definition.kind}"]
             item.setToolTip(f"{kind}\n{definition.description}".strip())
             if definition.kind == "method":
-                item.setForeground(_METHOD_COLOR)
+                item.setForeground(theme_qcolor(_METHOD_COLOR))
             self.template_list.addItem(item)
             if definition.template_id == select_id:
                 self.template_list.setCurrentItem(item)
@@ -689,7 +690,8 @@ class TemplateTestDialog(QDialog):
 
     def _show(self, text, error):
         self.result_label.setText(text)
-        self.result_label.setStyleSheet("color: #f85149;" if error else "color: #3fb950;")
+        self.result_label.setStyleSheet(
+            f"color: {theme_color('danger' if error else 'success')};")
 
 
 def normalize_for_display(value, value_type):

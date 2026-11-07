@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 from PySide6.QtCore import (  # pylint: disable=import-error,no-name-in-module
     Qt, QSize, QTimer, QSettings, Slot,
 )
-from PySide6.QtGui import QColor, QActionGroup, QIcon  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QActionGroup, QIcon  # pylint: disable=import-error,no-name-in-module
 
 from hermes import __version__
 from hermes.ui.localization import language_code, load_translations
@@ -30,7 +30,8 @@ from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.code_editor import apply_code_theme
 from hermes.ui.widgets.about_dialog import AboutDialog
 from hermes.ui.widgets.icons import (
-    apply_icon_theme, material_icon, set_button_icon, set_label_icon)
+    apply_icon_theme, material_icon, set_button_icon, set_label_icon, theme_color, theme_qcolor,
+)
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.ui.widgets.table import (
     add_copy_actions, add_delete_action, resizable_columns, set_row_height)
@@ -204,9 +205,9 @@ class ValueInputDialog(QDialog):
 
         info = QLabel(
             f"{self.translations['value_dialog.address']}: "
-            f"<span style='color:#3fb950'>{address}</span>"
+            f"<span style='color:{theme_color('success')}'>{address}</span>"
             f"  &nbsp;{self.translations['value_dialog.type']}: "
-            f"<span style='color:#f0883e'>{vtype}</span>"
+            f"<span style='color:{theme_color('orange')}'>{vtype}</span>"
         )
         info.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(info)
@@ -251,7 +252,7 @@ class DescriptionInputDialog(QDialog):
 
         info = QLabel(
             f"{self.translations['value_dialog.address']}: "
-            f"<span style='color:#3fb950'>{address}</span>"
+            f"<span style='color:{theme_color('success')}'>{address}</span>"
         )
         info.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(info)
@@ -313,7 +314,7 @@ class AddressInputDialog(QDialog):
         layout.addLayout(form)
 
         self.error_label = QLabel()
-        self.error_label.setStyleSheet("color: #f85149;")
+        self.error_label.setStyleSheet(f"color: {theme_color('danger')};")
         self.error_label.setWordWrap(True)
         self.error_label.hide()
         layout.addWidget(self.error_label)
@@ -945,7 +946,7 @@ class MainWindow(QMainWindow):
         self.lbl_result_count = QLabel(
             self.translations["results.count"].format(count=0, shown=0)
         )
-        self.lbl_result_count.setStyleSheet("color:#8b949e; font-size:11px;")
+        self.lbl_result_count.setStyleSheet(f"color:{theme_color('muted')}; font-size:11px;")
         ctrl.addWidget(self.lbl_result_count)
         ctrl.addStretch()
 
@@ -1165,7 +1166,7 @@ class MainWindow(QMainWindow):
 
         # Status label
         self.lbl_scan_status = QLabel(self.translations["search.ready"])
-        self.lbl_scan_status.setStyleSheet("color:#8b949e; font-size:11px;")
+        self.lbl_scan_status.setStyleSheet(f"color:{theme_color('muted')}; font-size:11px;")
         self.lbl_scan_status.setWordWrap(True)
         layout.addWidget(self.lbl_scan_status)
 
@@ -1316,7 +1317,7 @@ class MainWindow(QMainWindow):
         self._set_row_address(row, addr)
 
         type_item = QTableWidgetItem(vtype)
-        type_item.setForeground(QColor("#f0883e"))
+        type_item.setForeground(theme_qcolor("orange"))
         type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.addr_table.setItem(row, 2, type_item)
 
@@ -1353,11 +1354,11 @@ class MainWindow(QMainWindow):
         self._filling_addresses = True
         if address is None:
             item.setText(self.translations["address_table.unresolved"])
-            item.setForeground(QColor("#8b949e"))
+            item.setForeground(theme_qcolor("muted"))
             item.setToolTip(self.translations["address_table.unresolved_tooltip"])
         else:
             item.setText(address if isinstance(address, str) else f"0x{address:X}")
-            item.setForeground(QColor("#3fb950"))
+            item.setForeground(theme_qcolor("success"))
             item.setToolTip("")
         self._filling_addresses = False
 
@@ -1373,11 +1374,11 @@ class MainWindow(QMainWindow):
         desc_item.setData(Qt.ItemDataRole.UserRole, meta)
         if pointer is None:
             item.setText("—")
-            item.setForeground(QColor("#8b949e"))
+            item.setForeground(theme_qcolor("muted"))
             item.setToolTip(self.translations["address_table.pointer_none"])
         else:
             item.setText(pointer.text())
-            item.setForeground(QColor("#d2a8ff"))
+            item.setForeground(theme_qcolor("purple"))
             item.setToolTip(self.translations["address_table.pointer_tooltip"])
         self._filling_addresses = False
 
@@ -3232,12 +3233,12 @@ class MainWindow(QMainWindow):
         item.setData(Qt.ItemDataRole.UserRole, frozen_value)
         if frozen_value is None:
             item.setText(self.translations["address_table.no"])
-            item.setForeground(QColor("#8b949e"))
+            item.setForeground(theme_qcolor("muted"))
         else:
             item.setText(
                 self.translations["address_table.frozen_value"].format(value=frozen_value)
             )
-            item.setForeground(QColor("#58a6ff"))
+            item.setForeground(theme_qcolor("accent"))
         self._filling_addresses = False
         self._sync_freeze(row)
 

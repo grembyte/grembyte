@@ -38,7 +38,7 @@ from hermes.ui.widgets.favorites import (
     FavoriteColumn,
     set_up_favorite_column,
 )
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.trace_filters import TraceFilterPanel
 from hermes.ui.widgets.table import copy_menu, resizable_columns
@@ -251,12 +251,13 @@ class RowFilterBar(QWidget):
 
     changed = Signal()
 
-    def __init__(self, translations, parent=None):
+    def __init__(self, translations, parent=None, placeholder="trace.rows_name_placeholder"):
+        """``placeholder`` is the catalog key of the name field's hint text."""
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText(translations["trace.rows_name_placeholder"])
+        self.name_input.setPlaceholderText(translations[placeholder])
         self.name_input.setToolTip(translations["trace.rows_name_tooltip"])
         self.name_input.setClearButtonEnabled(True)
         self.name_input.textChanged.connect(lambda _text: self.changed.emit())
@@ -275,7 +276,7 @@ class RowFilterBar(QWidget):
             self.calls_input.setStyleSheet("")
         except ValueError:
             # Keep the last valid filter while the text is being typed.
-            self.calls_input.setStyleSheet("border: 1px solid #f85149;")
+            self.calls_input.setStyleSheet(f"border: 1px solid {theme_color('danger')};")
             return
         self.changed.emit()
 
@@ -352,7 +353,7 @@ class TraceDialog(QDialog):
         hint = QLabel(self.translations[hint_key if hint_key in self.translations
                                         else "trace.hint"])
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #8b949e;")
+        hint.setStyleSheet(f"color: {theme_color('muted')};")
         layout.addWidget(hint)
 
         scope = QHBoxLayout()
@@ -373,7 +374,7 @@ class TraceDialog(QDialog):
         self.filter_panel.selection_changed.connect(self._show_choice)
         layout.addWidget(self.filter_panel)
         self.choice_label = QLabel("")
-        self.choice_label.setStyleSheet("color: #8b949e;")
+        self.choice_label.setStyleSheet(f"color: {theme_color('muted')};")
         layout.addWidget(self.choice_label)
         # In the choice label's place while the method list loads
         self.loading_bar = QProgressBar()
@@ -417,7 +418,8 @@ class TraceDialog(QDialog):
         self.notable_check.toggled.connect(lambda _checked: self._show_rows())
         rows_bar.addWidget(self.notable_check)
         top_layout.addLayout(rows_bar)
-        self.row_filter = RowFilterBar(self.translations, self)
+        self.row_filter = RowFilterBar(
+            self.translations, self, placeholder="trace.rows_method_placeholder")
         self.row_filter.changed.connect(self._show_rows)
         top_layout.addWidget(self.row_filter)
         self.row_model = TraceRowModel(self.translations, self)

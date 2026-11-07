@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 
 from hermes.core import settings
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
+from hermes.ui.widgets.labels import WrappedLabel
 
 
 _SETTING_CATEGORIES = (
@@ -51,10 +52,10 @@ class SettingsDialog(QDialog):
             for key in keys:
                 setting = settings.BY_KEY[key]
                 if key == "hook_repatch":
-                    warning = QLabel(translations["settings.hook_repatch_warning"])
+                    # Reserves the height of its lines: a QLabel was cut off here.
+                    warning = WrappedLabel(translations["settings.hook_repatch_warning"])
                     warning.setObjectName("settings_hook_repatch_warning")
-                    warning.setWordWrap(True)
-                    warning.setStyleSheet("color: #d29922; font-weight: bold;")
+                    warning.setStyleSheet(f"color: {theme_color('warning')}; font-weight: bold;")
                     form.addRow(warning)
                 editor = self._editor(setting)
                 self.editors[setting.key] = editor
@@ -65,7 +66,7 @@ class SettingsDialog(QDialog):
                 form.addRow(label, editor)
             layout.addWidget(group)
         self.restart_label = QLabel(translations["settings.restart"])
-        self.restart_label.setStyleSheet("color: #d29922;")
+        self.restart_label.setStyleSheet(f"color: {theme_color('warning')};")
         self.restart_label.setVisible(False)
         layout.addWidget(self.restart_label)
         defaults = QHBoxLayout()

@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 
 from hermes.core import activity, logs
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 
 
 # Lines of the log the window shows at most (the newest).
@@ -83,7 +83,7 @@ class LogDialog(QDialog):
         self.source_combo.currentIndexChanged.connect(lambda _index: self.refresh())
         top.addWidget(self.source_combo)
         self.path_label = QLabel()
-        self.path_label.setStyleSheet("color: #8b949e;")
+        self.path_label.setStyleSheet(f"color: {theme_color('muted')};")
         top.addWidget(self.path_label, 1)
         layout.addLayout(top)
         self.text = QPlainTextEdit()

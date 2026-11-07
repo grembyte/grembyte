@@ -1,6 +1,5 @@
 """Dialog for selecting and editing UI color themes."""
 
-from PySide6.QtGui import QColor  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QApplication,
     QColorDialog,
@@ -19,7 +18,22 @@ from hermes.ui.styles.styles import build_stylesheet
 from hermes.ui.styles.themes import COLOR_KEYS
 from hermes.ui.widgets.code_editor import apply_code_theme
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
-from hermes.ui.widgets.icons import apply_icon_theme
+from hermes.ui.widgets.icons import apply_icon_theme, parse_color
+
+
+def _label_color(value, background):
+    """Black or white, whichever reads better on the colour ``value``.
+
+    A translucent colour (the selection) is judged as it shows: over the
+    theme's ``background``.
+    """
+    color, under = parse_color(value), parse_color(background)
+    alpha = color.alphaF()
+    red, green, blue = (alpha * channel + (1 - alpha) * base for channel, base in (
+        (color.redF(), under.redF()), (color.greenF(), under.greenF()),
+        (color.blueF(), under.blueF())))
+    luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+    return "#000000" if luminance > 0.5 else "#ffffff"
 
 
 class ThemeDialog(QDialog):
@@ -73,7 +87,7 @@ class ThemeDialog(QDialog):
 
     def _choose_color(self, key):
         color = QColorDialog.getColor(
-            QColor(self.colors[key]), self, self.translations[f"theme.color.{key}"],
+            parse_color(self.colors[key]), self, self.translations[f"theme.color.{key}"],
             options=QColorDialog.ColorDialogOption.ShowAlphaChannel)
         if not color.isValid():
             return
@@ -88,7 +102,8 @@ class ThemeDialog(QDialog):
             value = self.colors[key]
             button.setText(value)
             button.setToolTip(value)
-            button.setStyleSheet(f"background-color: {value}; color: #ffffff;")
+            label = _label_color(value, self.colors["background"])
+            button.setStyleSheet(f"background-color: {value}; color: {label};")
 
     def _preview(self):
         self.application.setStyleSheet(build_stylesheet(self.colors))

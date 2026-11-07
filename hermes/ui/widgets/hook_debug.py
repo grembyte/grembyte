@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal  # pylint: disable=import-error,no-name-in-module
-from PySide6.QtGui import QColor, QFontDatabase  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QFontDatabase  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QComboBox,
@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 
 from hermes.core import messages
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 from hermes.ui.widgets.table import add_copy_actions, resizable_columns, set_row_height
 
 
@@ -41,7 +41,8 @@ _COLUMNS = (
     "debug.column_result",
     "debug.column_note",
 )
-_COLORS = {"error": "#f85149", "skipped": "#8b949e", "kept": "#d29922", "applied": "#3fb950"}
+# Theme colours (see icons.theme_color) of the kinds of entries
+_COLORS = {"error": "danger", "skipped": "muted", "kept": "warning", "applied": "success"}
 
 
 def _number(value):
@@ -112,7 +113,7 @@ class HookDebugWindow(QDialog):
 
         hint = QLabel(self.translations["debug.hint"])
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #8b949e;")
+        hint.setStyleSheet(f"color: {theme_color('muted')};")
         layout.addWidget(hint)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -256,9 +257,8 @@ class HookDebugWindow(QDialog):
             return logs[0] if logs else ""
         note = self.translations[f"debug.note_{kind}"]
         if logs:
-            note += "  ·  " + self.translations["debug.note_logs"].format(
-                count=len(logs), first=logs[0]
-            )
+            key = "debug.note_log" if len(logs) == 1 else "debug.note_logs"
+            note += "  ·  " + self.translations[key].format(count=len(logs), first=logs[0])
         return note
 
     def _add_row(self, entry):
@@ -282,7 +282,7 @@ class HookDebugWindow(QDialog):
             if column == 0:
                 item.setData(Qt.ItemDataRole.UserRole, entry)
             if column == len(values) - 1 and kind in _COLORS:
-                item.setForeground(QColor(_COLORS[kind]))
+                item.setForeground(theme_qcolor(_COLORS[kind]))
             self.table.setItem(row, column, item)
 
     def _show_context_menu(self, position):

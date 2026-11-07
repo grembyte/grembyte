@@ -30,7 +30,7 @@ from hermes.features.scripts import PARAM_KINDS, ScriptParam, choice_matches
 from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
-from hermes.ui.widgets.icons import set_button_icon
+from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import WrappedLabel
 from hermes.ui.widgets.syntax_hint import SyntaxHint, syntax_problem
 
@@ -56,7 +56,7 @@ class ParamEditor(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 6, 0, 0)
         hint = WrappedLabel(translations["scripts.params_help"])
-        hint.setStyleSheet("color:#8b949e;")
+        hint.setStyleSheet(f"color:{theme_color('muted')};")
         layout.addWidget(hint)
 
         self.table = QTableWidget(0, len(self._COLUMNS))
@@ -218,10 +218,10 @@ class ScriptRunDialog(QDialog):
             form.addRow(param.label or param.name, widget)
         layout.addLayout(form)
         self.status_label = WrappedLabel("")
-        self.status_label.setStyleSheet("color:#8b949e;")
+        self.status_label.setStyleSheet(f"color:{theme_color('muted')};")
         layout.addWidget(self.status_label)
         self.error_label = WrappedLabel("")
-        self.error_label.setStyleSheet("color:#f85149;")
+        self.error_label.setStyleSheet(f"color:{theme_color('danger')};")
         layout.addWidget(self.error_label)
         layout.addStretch()
         buttons = dialog_button_row(translations, "scripts.run_button", self._accept, self.reject)

@@ -1,15 +1,24 @@
-"""Material Icons (Outlined) from ui/resources/icons, tinted to match the dark theme."""
+"""Material Icons (Outlined) from ui/resources/icons, tinted to match the theme.
+
+Also the colours of the current theme for widgets that colour their content
+(``theme_color``, ``theme_qcolor``): status texts, pointers, value types.
+"""
 
 from functools import lru_cache
+import json
 from pathlib import Path
 import re
 
 from PySide6.QtCore import QByteArray, QEvent, QObject, QRectF, Qt  # pylint: disable=import-error,no-name-in-module
-from PySide6.QtGui import QGuiApplication, QIcon, QPainter, QPixmap  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPixmap  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtSvg import QSvgRenderer  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
 ICONS_DIR = Path(__file__).resolve().parent.parent / "resources" / "icons"
+# The default theme, whose colours apply until a theme is applied (tests,
+# widgets built without the main window).
+_DEFAULT_THEME = (Path(__file__).resolve().parent.parent / "themes"
+                  / "hermes_themes_Github-Dark.json")
 
 # Text colours in styles.py: (normal, hover/selected, disabled) of menu items
 # and of the kinds of buttons.
@@ -21,13 +30,29 @@ _BUTTON_COLORS = {
 }
 _MENU_ICON_NAMES = {}
 # The colours of the theme last applied; until then those of Github-Dark.
-_DEFAULT_COLORS = {"muted": "#8b949e", "warning": "#d29922"}
+_DEFAULT_COLORS = json.loads(_DEFAULT_THEME.read_text(encoding="utf-8"))["colors"]
 _theme_colors = dict(_DEFAULT_COLORS)
 
 
 def theme_color(key):
-    """Return the colour ``key`` (e.g. "muted") of the current theme."""
+    """Return the colour ``key`` (e.g. "muted") of the current theme, as text."""
     return _theme_colors.get(key, _DEFAULT_COLORS.get(key, "#808080"))
+
+
+def parse_color(value):
+    """Return a theme colour (``#rrggbb`` or CSS ``rgba(r, g, b, a)``) as a QColor.
+
+    QColor reads the hex form but not CSS rgba.
+    """
+    match = re.fullmatch(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)", value)
+    if match:
+        return QColor(int(match[1]), int(match[2]), int(match[3]), round(float(match[4]) * 255))
+    return QColor(value)
+
+
+def theme_qcolor(key):
+    """Return the colour ``key`` of the current theme as a QColor."""
+    return parse_color(theme_color(key))
 
 
 def _render(name, color, size, ratio):
