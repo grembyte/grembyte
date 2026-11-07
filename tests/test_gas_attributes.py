@@ -9,6 +9,7 @@ from hermes.ui.widgets.gas_attributes import (
     hold_label,
     hold_spec,
     parse_value,
+    script_set_name,
 )
 
 from tests.test_scripts import _FakeScriptWorker, fixture_qt_app  # pylint: disable=unused-import
@@ -35,6 +36,17 @@ def test_values_read_short_and_type_in_either_locale():
     spec = hold_spec("Set.Might", 14)
     assert (spec.mode, spec.enabled, spec.label) == ("repeat", True, "GAS: Set.Might = 14")
     assert 'const name = "Set.Might", value = 14.0;' in spec.source
+
+
+def test_scripts_name_sets_without_their_object_number():
+    names = ["AttributeSet_Health_2147445233", "AttributeSetCore",
+             "Twin_7", "Twin_8", "Stat_2", "Stat"]
+    assert script_set_name(names[0], names) == "AttributeSet_Health"
+    assert script_set_name("AttributeSetCore", names) == "AttributeSetCore"
+    # The number tells these apart: kept
+    assert script_set_name("Twin_7", names) == "Twin_7"
+    assert script_set_name("Stat_2", names) == "Stat_2"
+    assert script_set_name("_5", ["_5"]) == "_5"
 
 
 def test_window_lists_sets_and_holds_values_by_scripts(qt_app, monkeypatch):
@@ -92,6 +104,22 @@ def test_window_lists_sets_and_holds_values_by_scripts(qt_app, monkeypatch):
 
         dialog.release_button.click()
         assert not panel.scripts_labelled("GAS: ")
+
+        # A set numbered anew on every load (Gothic 1 Remake): shown as it
+        # is, set and held without the number, which the next load changes
+        dialog.refresh()
+        worker.gas_listed.emit(len(worker.requests), {**_STATE, "sets": [
+            {"name": "AttributeSet_Health_2147445233", "className": "UAttributeSet_Health",
+             "attributes": [{"name": "Health", "base": 40, "current": 40}]}]})
+        assert table.item(0, 0).text() == "AttributeSet_Health_2147445233"
+        table.item(0, 2).setText("64")
+        assert worker.requests[-1] == ("gas_set_base", "AttributeSet_Health.Health", 64)
+        table.selectRow(0)
+        dialog.hold_button.click()
+        assert [spec.label for spec in panel.scripts_labelled("GAS: ").values()] == [
+            "GAS: AttributeSet_Health.Health = 40"]
+        assert table.item(0, 4).text() == "✓ 40"
+        dialog.release_button.click()
 
         # In the main menu there is no player: said so, the list is empty
         dialog.refresh()

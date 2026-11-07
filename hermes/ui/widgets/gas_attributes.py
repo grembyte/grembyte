@@ -10,10 +10,13 @@ damage multiplier of 3 with a +40 % bonus active becomes 4.2.
 The game sets base values itself, too (loading a save, levelling up, a
 respec). "Hold" adds a script to the scripts tab that sets the value again
 whenever it changed; it is saved with the game's scripts and runs whenever
-hermes attaches.
+hermes attaches. Unreal may name a set's object with a number it makes anew
+on every load ("AttributeSet_Health_2147445233"); the script names the set
+without it, as ``ctx.gas`` accepts it.
 """
 
 import json
+import re
 
 from PySide6.QtCore import Qt, QTimer  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
@@ -58,6 +61,22 @@ if (attribute === null || Math.abs(attribute.base - value) <= 1e-4 * Math.max(1,
 ctx.gas.setBase(name, value);
 return `${{name}} = ${{value}}`;
 """
+
+
+_OBJECT_NUMBER = re.compile(r"_\d+$")
+
+
+def script_set_name(name, names):
+    """How scripts name set ``name`` among the player's sets ``names``: without
+    the number of its object ("AttributeSet_Health" for
+    "AttributeSet_Health_2147445233") unless another set has the same name
+    without it."""
+    bare = _OBJECT_NUMBER.sub("", name)
+    if bare == name or not bare:
+        return name
+    if sum(_OBJECT_NUMBER.sub("", other) == bare for other in names) > 1:
+        return name
+    return bare
 
 
 def hold_label(name, value):
@@ -300,14 +319,20 @@ class GasAttributesDialog(QDialog):
         shown = []
         for attribute_set in self._state.get("sets", []):
             for attribute in attribute_set.get("attributes", []):
-                name = f"{attribute_set['name']}.{attribute['name']}"
-                if words and not all(word in name.lower() for word in words):
+                text = f"{attribute_set['name']}.{attribute['name']}"
+                if words and not all(word in text.lower() for word in words):
                     continue
+                name = self.attribute_name(attribute_set["name"], attribute)
                 if changed and name not in held and abs(
                         attribute["current"] - attribute["base"]) < 1e-6:
                     continue
                 shown.append((attribute_set["name"], attribute))
         return shown
+
+    def attribute_name(self, set_name, attribute):
+        """The "Set.Attribute" name scripts use (see ``script_set_name``)."""
+        names = [entry["name"] for entry in (self._state or {}).get("sets", [])]
+        return f"{script_set_name(set_name, names)}.{attribute['name']}"
 
     def _held(self):
         """``{"Set.Attribute": value}`` of the attributes a hold script holds."""
@@ -328,7 +353,7 @@ class GasAttributesDialog(QDialog):
         try:
             self.table.setRowCount(len(rows))
             for row, (set_name, attribute) in enumerate(rows):
-                name = f"{set_name}.{attribute['name']}"
+                name = self.attribute_name(set_name, attribute)
                 hold = held.get(name)
                 texts = (set_name, attribute["name"], format_value(attribute["base"]),
                          format_value(attribute["current"]),
@@ -390,7 +415,7 @@ class GasAttributesDialog(QDialog):
 
     def _hold_selected(self):
         """Hold the selected attributes at their base value now."""
-        values = {f"{set_name}.{attribute['name']}": attribute["base"]
+        values = {self.attribute_name(set_name, attribute): attribute["base"]
                   for set_name, attribute in self.rows()}
         names = [name for name in self.selected_names() if name in values]
         for name in names:

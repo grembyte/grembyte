@@ -757,7 +757,8 @@ int main(void) {
     property(controller_class, object_property, "Pawn", 8, 0x70, 0, hero);
     Object *controller = object(controller_class, "PlayerController_0", level);
     *(Object **)((char *)controller + 0x70) = player;
-    g_hero_set = object(hero_set_class, "HeroAttributeSet", player);
+    /* Numbered anew on every load, as in Gothic 1 Remake */
+    g_hero_set = object(hero_set_class, "HeroAttributeSet_2147445233", player);
     float *might = (float *)((char *)g_hero_set + 0x38);
     might[0] = 4;
     might[1] = 5;
@@ -1343,7 +1344,7 @@ def test_process_event_is_found_when_it_calls_an_out_of_line_invoke(tmp_path, qt
 @requires_target
 def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.scripts import ScriptWorker
+    from hermes.features.scripts import ScriptSpec, ScriptWorker
     from hermes.ui.widgets.gas_attributes import hold_spec
 
     target = _Target(_build(tmp_path))
@@ -1377,13 +1378,16 @@ def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app):
                                    "SetFloatAttributeBaseFromAbilitySystemComponent")
         assert state["component"]
         assert state["sets"] == [{
-            "name": "HeroAttributeSet", "className": "UHeroAttributeSet",
+            "name": "HeroAttributeSet_2147445233", "className": "UHeroAttributeSet",
             "attributes": [{"name": "Might", "base": 4, "current": 5},
                            {"name": "DamageOutgoingMult", "base": 1, "current": 1.5}]}]
 
         # Set through the game, with an FGameplayAttribute as the game makes
-        # one: the game applies its effects to the current value.
+        # one: the game applies its effects to the current value. The set is
+        # found without its object's number, too.
         set_base("HeroAttributeSet.DamageOutgoingMult", 3)
+        assert not failed, failed
+        set_base("HeroAttributeSet_2147445233.DamageOutgoingMult", 3)
         assert not failed, failed
         assert values == [{"base": 3, "current": 4.5}]
         assert target.send("attribute", 1) == (30, 45)
@@ -1401,6 +1405,18 @@ def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app):
             assert runs[0][1]["error"] is None, runs[0][1]["error"]
             assert runs[0][1]["result"] == expected
         assert target.send("attribute", 0) == (90, 135)
+
+        # ctx.gas.findSet: the set's name now, by a regular expression
+        found = worker.add_script(ScriptSpec(
+            'const set = ctx.gas.findSet("^HeroAttribute");\n'
+            'return [set, ctx.gas.findSet(/^Nope/), ctx.gas.get(`${set}.Might`).base,\n'
+            '        ctx.gas.get("HeroAttributeSet.Might").base].join(" ");'))
+        _wait_for(qt_app, lambda: found in added)
+        runs.clear()
+        worker.run_now(found)
+        _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+        assert runs[0][1]["error"] is None, runs[0][1]["error"]
+        assert runs[0][1]["result"] == '"HeroAttributeSet_2147445233  9 9"'
     finally:
         worker.requestInterruption()
         worker.wait(5000)

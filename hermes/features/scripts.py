@@ -37,7 +37,12 @@ The body gets one ``ctx`` object:
                      (null without a player); ctx.gas.setBase(name, value)
                      sets the base value through the game's own code, which
                      applies the active effects to it; ctx.gas.attributes()
-                     lists the sets (see ScriptWorker.gas_attributes)
+                     lists the sets (see ScriptWorker.gas_attributes).
+                     A set numbered anew on every load
+                     ("AttributeSet_Health_2147445233") is also found
+                     without the number ("AttributeSet_Health.Health");
+                     ctx.gas.findSet(/^AttributeSet_Health/) gives the
+                     name of the first set matching, or null
     ctx.findClass("ClassName")   Unreal: the class itself, e.g. for a
                      TSubclassOf parameter: ctx.findClass("ItFo_Potion_Health_03")
     ctx.args         the values of the script's parameters by name (see below)

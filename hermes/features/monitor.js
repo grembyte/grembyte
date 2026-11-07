@@ -2221,7 +2221,9 @@ function scriptOptions(id, name) {
 
 // --- Gameplay Ability System (Unreal): the player's attributes ------------------------
 // See the Unreal adapter (gasAttributes, gasSetBase). Names are "Attribute"
-// or "Set.Attribute", e.g. "AttributeSetCore.DamageOutgoingMult".
+// or "Set.Attribute", e.g. "AttributeSetCore.DamageOutgoingMult". A set is
+// also found without the number Unreal may give its object anew on every
+// load: "AttributeSet_Health" finds "AttributeSet_Health_2147445233".
 
 function gasEngine(name) {
   if (engine.id !== 'unreal')
@@ -2240,9 +2242,15 @@ function gasSetBase(name, value) {
   return engine.onMainThread(() => gasEngine('gasSetBase')(name, value));
 }
 
+function gasSetMatches(setName, wanted) {
+  // Whether set ``setName`` is the one named ``wanted`` (see above)
+  return setName === wanted || setName.replace(/_\d+$/, '') === wanted;
+}
+
 function gasValue(name) {
   // ctx.gas.get(name): { base, current } of the player's attribute, or null
   // without a player
+  name = String(name);
   const state = gasAttributes();
   if (state === null)
     return null;
@@ -2250,7 +2258,7 @@ function gasValue(name) {
   const wantedSet = dot < 0 ? null : name.substring(0, dot);
   const wanted = dot < 0 ? name : name.substring(dot + 1);
   for (const set of state.sets) {
-    if (wantedSet !== null && set.name !== wantedSet)
+    if (wantedSet !== null && !gasSetMatches(set.name, wantedSet))
       continue;
     const attribute = set.attributes.find(entry => entry.name === wanted);
     if (attribute !== undefined)
@@ -2259,10 +2267,26 @@ function gasValue(name) {
   throw hermesError('error.monitor.no_attribute', { name });
 }
 
+function gasFindSet(pattern) {
+  // ctx.gas.findSet(/^AttributeSet_Health_/): the name of the player's first
+  // set the regular expression (a RegExp or its text) matches, or null
+  // (also without a player)
+  const regex = pattern instanceof RegExp ? pattern : new RegExp(String(pattern));
+  const state = gasAttributes();
+  if (state === null)
+    return null;
+  const set = state.sets.find(entry => {
+    regex.lastIndex = 0;
+    return regex.test(entry.name);
+  });
+  return set === undefined ? null : set.name;
+}
+
 // ctx.gas in scripts (they run on the game thread)
 const scriptGas = {
   attributes: gasAttributes,
   get: gasValue,
+  findSet: gasFindSet,
   setBase(name, value) {
     const result = gasEngine('gasSetBase')(name, value);
     noteChange(name, value);

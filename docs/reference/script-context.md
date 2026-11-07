@@ -10,7 +10,7 @@ The object a script in the [Scripts](../guide/scripts.md) tab receives. It is se
 | `ctx.outerName(object)` | Unreal: get an object's name including its outer, useful with `ctx.find`. |
 | `ctx.call(method, ...args)` | Call a static game method, by a dotted name or the `Namespace.Class:Method` form shown in catalogs. A parameter list after it, as **Copy signature** gives it, is ignored: the method taking as many arguments as given is called. |
 | `ctx.static(field)` | Mono and IL2CPP: read a static field, e.g. `ctx.static("HermesQuest.GameState.Current")` – the way to objects that are no Unity objects. |
-| `ctx.gas` | Unreal games with the Gameplay Ability System: `attributes()` lists the sets; `get(name)` returns `{base, current}`, or `null` if there is no player; `setBase(name, value)` changes the base value through the game's code, keeping active effects. |
+| `ctx.gas` | Unreal games with the Gameplay Ability System: `attributes()` lists the sets; `get(name)` returns `{base, current}`, or `null` if there is no player; `setBase(name, value)` changes the base value through the game's code, keeping active effects; `findSet(regex)` returns the name of the player's first set the regular expression (a `RegExp` or its text) matches, or `null`. Names are `"Attribute"` or `"Set.Attribute"`; a set whose object Unreal numbers anew on every load (`AttributeSet_Health_2147445233`) is also found without the number (`"AttributeSet_Health.Health"`). |
 | `ctx.args` | Values of the script's parameters, by name. |
 | `ctx.lang` | Current app language: `"de"` or `"en"`. |
 | `ctx.log(...)` | Write to the script log. |

@@ -2336,12 +2336,16 @@ const unreal = (() => {
   }
 
   function findAttribute(parts, name) {
-    // The set and field of "Set.Attribute" or "Attribute" (the first set with it)
+    // The set and field of "Set.Attribute" or "Attribute" (the first set
+    // with it). "Set" may leave out the number Unreal gives the set's object
+    // anew on every load: "AttributeSet_Health" for "AttributeSet_Health_2147445233".
+    name = String(name);
     const dot = name.indexOf('.');
     const wantedSet = dot < 0 ? null : name.substring(0, dot);
     const attribute = dot < 0 ? name : name.substring(dot + 1);
     for (const set of parts.sets) {
-      if (wantedSet !== null && setName(set) !== wantedSet)
+      const found = wantedSet === null ? null : setName(set);
+      if (found !== null && found !== wantedSet && found.replace(/_\d+$/, '') !== wantedSet)
         continue;
       const field = attributeFields(set.add(OBJECT_CLASS).readPointer())
         .find(entry => entry.name === attribute);
