@@ -150,6 +150,7 @@ namespace HermesQuest
                                                  stats.Gold, stats.Strength, stats.Dexterity, stats.Intelligence, stats.Level), Text);
             terminal.Print(1, y++, string.Format("Mult out {0}  in {1}",
                                                  Exact(player.DamageOutgoingMultiplier), Exact(player.DamageIncomingMultiplier)), Text);
+            terminal.Print(1, y++, string.Format("Rumors heard {0}  garbled {1}", Rumors.Heard, Rumors.Garbled), Text);
             y++;
             var report = game.LastDamage;
             terminal.Print(1, y++, "Last ApplyDamage", Title);

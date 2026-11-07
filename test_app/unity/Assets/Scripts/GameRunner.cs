@@ -54,6 +54,7 @@ namespace HermesQuest
             var game = GameState.Current;
             if (game != null && !game.GameOver)
                 game.Player.RegenerateMana(Time.deltaTime);
+            Rumors.Tick(Time.unscaledDeltaTime);
         }
 
         void OnGUI()

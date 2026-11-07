@@ -62,3 +62,10 @@ Combat.MeleeAttack / Combat.CastFireBolt
 
 All these methods are marked `NoInlining`, so the Mono JIT keeps them as separate
 functions.
+
+**Exceptions (monitors and hooks on code that throws).** Once per second, also without
+a window, `Rumors.Tick` reads the next rumor with `Rumors.Parse(line)`. Two of the five
+lines are garbled: `Parse` throws a `FormatException`, and `Tick` catches it. A monitor or
+hook on `Parse` must leave that to the game; if it breaks Mono's way back to `Tick`, the
+exception goes unhandled and Unity ends the game. The F1 view counts the rumors heard and
+garbled. `tests/test_hermesquest.py` runs this against the build.
