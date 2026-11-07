@@ -43,7 +43,7 @@ from PySide6.QtCore import Signal  # pylint: disable=import-error,no-name-in-mod
 
 from hermes.core import messages, sessions
 from hermes.features.trace import AgentWorker
-from hermes.core.agent_source import load_agent_source
+from hermes.agent.source import MESSAGES_SOURCE, load_agent_source
 
 
 # Calls logged per function and second; the others are only counted.
@@ -57,7 +57,7 @@ MAX_DUMP = 0x10000
 
 FUNCTION, INSTRUCTION, AUTO = "function", "instruction", "auto"
 
-_AGENT_SOURCE = messages.AGENT_SOURCE + (
+_AGENT_SOURCE = MESSAGES_SOURCE + (
     load_agent_source(__file__)
     .replace("MAX_LOGGED_VALUE", str(MAX_LOGGED_PER_SECOND))
     .replace("MAX_CHANGES_VALUE", str(MAX_CHANGES))

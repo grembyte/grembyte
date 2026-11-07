@@ -38,7 +38,7 @@ import frida
 from hermes.core import activity, messages, sessions, settings
 from hermes.platform import is_wine_process, read_mappings
 from hermes.features.trace import AgentWorker
-from hermes.core.agent_source import load_agent_source
+from hermes.agent.source import MESSAGES_SOURCE, load_agent_source
 
 
 # Functions the CModule's table can hold (a power of two; 17 bytes each).
@@ -57,7 +57,7 @@ SYMBOL_BUDGET_MS = 3000
 # thread_activity does on Linux.
 WINE_LOAD_SECONDS = 0.5
 
-_AGENT_TEMPLATE = messages.AGENT_SOURCE + (
+_AGENT_TEMPLATE = MESSAGES_SOURCE + (
     load_agent_source(__file__)
     .replace("FUNCTION_CAPACITY_VALUE", str(FUNCTION_CAPACITY))
     .replace("SYMBOL_BUDGET_VALUE", str(SYMBOL_BUDGET_MS))

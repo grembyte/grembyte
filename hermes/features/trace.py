@@ -45,7 +45,7 @@ from hermes.features.assemblies import chosen_assemblies
 from hermes.features.catalog import CatalogMethod
 from hermes.core.frida_attach import attach_session
 from hermes.core.write_watch import CLEANUP_ERRORS, FRIDA_ERRORS
-from hermes.core.agent_source import load_agent_source
+from hermes.agent.source import load_agent_source
 
 
 # Calls of the scenario written into the sequence by default (setting

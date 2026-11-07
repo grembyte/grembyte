@@ -130,7 +130,7 @@ from hermes.core.write_watch import (
     watch_size_for_type,
 )
 from hermes.hooks.transforms import ValueTransform
-from hermes.core.agent_source import load_agent_source
+from hermes.agent.source import load_agent_source
 
 
 MAX_CALLER_DEPTH = 4

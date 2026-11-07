@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from hermes.agent.source import MESSAGES_SOURCE
 from hermes.core import messages
 from hermes.core.wine_gadget import GadgetError
 from hermes.core.wine_helper import HelperError
@@ -65,7 +66,7 @@ def test_agent_errors_are_rendered_in_the_users_language():
         pytest.skip("needs Frida's system session")
     session = frida.attach(0)
     try:
-        script = session.create_script(messages.AGENT_SOURCE + """
+        script = session.create_script(MESSAGES_SOURCE + """
             rpc.exports.fail = () => {
               try {
                 throw hermesError('error.gadget.not_present', {path: ptr(0x1234)});

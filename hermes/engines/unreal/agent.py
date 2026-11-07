@@ -43,7 +43,7 @@ decoded. ``layout`` and ``readValue`` read objects and structs through their
 FProperties (FString, FName, TArray, bitfield bools, weak pointers).
 """
 
-from hermes.core.agent_source import load_agent_source
+from hermes.agent.source import load_agent_source
 
 
 UNREAL_AGENT_SOURCE = load_agent_source(__file__)

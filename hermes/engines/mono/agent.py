@@ -82,7 +82,7 @@ for. ``compile`` runs on a short-lived thread of its own instead, which
 Mono forgets again when it ends.
 """
 
-from hermes.core.agent_source import load_agent_source
+from hermes.agent.source import load_agent_source
 
 
 MONO_AGENT_SOURCE = load_agent_source(__file__)

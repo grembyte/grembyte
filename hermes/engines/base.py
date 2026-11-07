@@ -85,14 +85,14 @@ method, static, owner}]``, the class's own methods first; a ``properties``
 entry's ``setter`` (Mono) is the property's set_ method or null.
 
 The platform helpers an adapter may use (``spawnThread``, ``watchUnmaps``,
-``pauseThreads``) are in platform.js.
+``pauseThreads``) are in hermes/agent/platform.js.
 """
 
 import ntpath
 import os
 import sys
 
-from hermes.core.agent_source import load_agent_source
+from hermes.agent.source import load_agent_source
 from hermes.platform import read_mappings
 
 # Libraries many games ship that are not the game itself (input, tweening,

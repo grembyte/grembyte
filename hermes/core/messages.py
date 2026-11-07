@@ -5,8 +5,9 @@ window passes the catalog it loaded to :func:`use`; until then, as in tests
 and command-line tools, messages are English.
 
 The Frida agents cannot render them: their errors (``hermesError(key,
-params)``, see messages.js) carry the key and values marked in the message,
-and :func:`describe` renders them wherever an agent's error becomes text.
+params)``, see hermes/agent/messages.js) carry the key and values marked in
+the message, and :func:`describe` renders them wherever an agent's error
+becomes text.
 """
 
 import json
@@ -14,11 +15,6 @@ import re
 from pathlib import Path
 
 import frida
-
-from hermes.core.agent_source import load_agent_source
-
-# Prepended to every agent source that reports errors.
-AGENT_SOURCE = load_agent_source(__file__)
 
 _MARKER = re.compile(r"\u27e6hermes:([\w.]+):(.*?)\u27e7", re.DOTALL)
 

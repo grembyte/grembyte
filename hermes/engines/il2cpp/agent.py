@@ -55,7 +55,7 @@ its own heap and not from the garbage collector; this works from the
 agent's thread, which IL2CPP does not know.
 """
 
-from hermes.core.agent_source import load_agent_source
+from hermes.agent.source import load_agent_source
 
 
 IL2CPP_AGENT_SOURCE = load_agent_source(__file__)
