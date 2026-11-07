@@ -37,3 +37,6 @@ game_assets/
 
 # Documentation built by mkdocs
 site/
+
+# Originals of the hand-made documentation photos (published as WebP)
+docs/assets/photos/*.png

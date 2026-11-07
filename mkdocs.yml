@@ -10,6 +10,7 @@ copyright: Copyright &copy; 2026 Frank Hoogen – MIT License
 # Working notes in docs/ that are not part of the site.
 exclude_docs: |
   review-*.md
+  assets/photos/*.png
 
 theme:
   name: material

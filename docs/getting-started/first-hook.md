@@ -14,9 +14,11 @@ gcc -O2 test_app/dummy_game.c -o build/dummy_game.exe $(pkg-config --cflags --li
 ./build/dummy_game.exe
 ```
 
-!!! screenshot "Screenshot to add: the test game"
-    The window of `dummy_game.exe` next to its terminal output with PID, pointer chain and gold address.
-    File: `docs/assets/photos/dummy-game.png`
+<figure markdown="span">
+  ![Hermes Hook next to the test game](../assets/photos/dummy-game-dark.webp#only-dark)
+  ![Hermes Hook next to the test game](../assets/photos/dummy-game-light.webp#only-light)
+  <figcaption>Where this tutorial leads: the test game on the right, Hermes on the left with its gold found and tracked through a pointer chain.</figcaption>
+</figure>
 
 ## 1. Attach to the game
 

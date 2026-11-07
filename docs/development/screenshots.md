@@ -38,7 +38,7 @@ The demo data follows the test game of the [tutorial](../getting-started/first-h
 
 ## Screenshots of real games
 
-Some images need a real game: the game window itself, or the effect of a change in it. They are taken by hand and kept in `docs/assets/photos/`. The pages mark the places with a box like this:
+Some images need a real game: the game window itself, or the effect of a change in it. They are taken by hand, as `-dark`/`-light` pairs where Hermes is in the picture, and kept in `docs/assets/photos/` as WebP (quality 88; the PNG originals there are ignored by git and the site). The pages mark the places with a box like this:
 
 !!! screenshot "Screenshot to add: example"
     What the image should show.

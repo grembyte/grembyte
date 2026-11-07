@@ -27,7 +27,7 @@ Scripts can have parameters of the types text, number, yes/no or choice. A manua
   ![Script parameters](../assets/screenshots/script-params-light.webp#only-light){ width="560" }
 </figure>
 
-A choice parameter gets its options from a short JavaScript function evaluated in the game, returning values or `{label, value}` objects. The list filters as you type.
+A choice parameter gets its options from a short JavaScript function evaluated in the game, returning values or `{label, value}` objects. The list filters as you type. The [Unreal page](../engines/unreal.md#example-a-script-with-a-choice-parameter) shows one in Gothic 1 Remake.
 
 ## Writing scripts
 

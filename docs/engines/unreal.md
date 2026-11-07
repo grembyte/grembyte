@@ -42,9 +42,43 @@ GAS computes the current value anew from the base value and the active effects, 
 
 **Hold** keeps a value against the game resetting it (loading, levelling up) with a script in the [Scripts](../guide/scripts.md) tab. Scripts can do the same with `ctx.gas.get("Might")` and `ctx.gas.setBase("AttributeSetCore.Might", 14)`.
 
-!!! screenshot "Screenshot to add: the effect in the game"
-    Avowed's character sheet before and after setting an attribute in the GAS window.
-    File: `docs/assets/photos/avowed-gas.png`
+In Avowed, filter the window for `might` and double-click the base value: the character sheet follows at once.
+
+=== "Before"
+
+    <figure markdown="span">
+      ![Might 1 in Avowed](../assets/photos/unreal-avowed-gas-before-dark.webp#only-dark)
+      ![Might 1 in Avowed](../assets/photos/unreal-avowed-gas-before-light.webp#only-light)
+      <figcaption>Might at its base value 1.</figcaption>
+    </figure>
+
+=== "After"
+
+    <figure markdown="span">
+      ![Might 30 in Avowed](../assets/photos/unreal-avowed-gas-after-dark.webp#only-dark)
+      ![Might 30 in Avowed](../assets/photos/unreal-avowed-gas-after-light.webp#only-light)
+      <figcaption>Base value set to 30: the game shows Might 30 with +45 % damage. It counts the points as spent, so the points available drop below zero.</figcaption>
+    </figure>
+
+## Example: a script with a choice parameter
+
+In Gothic 1 Remake, a manual [script](../guide/scripts.md) adds any item to the inventory. Its parameter *Item Name* is a choice: its options code reads the game's item list, so the run dialog offers every item by name, filtered as you type; *Count* is a number.
+
+=== "Run dialog"
+
+    <figure markdown="span">
+      ![Run dialog of a script in Gothic 1 Remake](../assets/photos/unreal-gothic-script-before-dark.webp#only-dark)
+      ![Run dialog of a script in Gothic 1 Remake](../assets/photos/unreal-gothic-script-before-light.webp#only-light)
+      <figcaption>The run dialog asks for the item and the count; <b>Reload options</b> runs the options code again.</figcaption>
+    </figure>
+
+=== "Result"
+
+    <figure markdown="span">
+      ![The item in Gothic 1 Remake's inventory](../assets/photos/unreal-gothic-script-after-dark.webp#only-dark)
+      ![The item in Gothic 1 Remake's inventory](../assets/photos/unreal-gothic-script-after-light.webp#only-light)
+      <figcaption>The ore nuggets in the inventory and the script's result in the log.</figcaption>
+    </figure>
 
 ## Not yet available
 

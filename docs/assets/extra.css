@@ -1,5 +1,6 @@
 /* Screenshots: a thin frame and a soft shadow, like a window on a desktop. */
-.md-typeset img[src*="assets/screenshots/"] {
+.md-typeset img[src*="assets/screenshots/"],
+.md-typeset img[src*="assets/photos/"] {
   border: 1px solid var(--md-default-fg-color--lightest);
   border-radius: 6px;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
