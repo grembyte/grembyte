@@ -46,6 +46,10 @@ A feature's agent is put together from parts: the platform helpers (`agent/platf
 
 Under Wine/Proton the agents run in Frida's Windows gadget. The gadget drops messages larger than 128 KiB, so `attach/frida_attach.py` sends larger agents in parts.
 
+## Built-in hook templates
+
+The example templates (Multiplier, Fixed value, Clamp and the method templates) come from subclasses of `ValueTransform` in `hermes/hooks/transforms.py` whose `kind` is in `EXAMPLE_TEMPLATE_KINDS`. If an example is missing at start (same seed key or name), Hermes creates it. Name, description and parameter labels come from `EXAMPLE_TEXTS` in the same file, under `<kind>`, `<kind>.description`, `<kind>.<parameter>` and `choice.<value>`; where they are missing, `title`, the parameter name or the choice value is used. Examples created by earlier versions with German names are renamed through `GERMAN_EXAMPLE_TEXTS`. Manipulations of your own do not need this: they are created as templates directly in the interface.
+
 ## Adding an engine
 
 1. Add a subpackage under `hermes/engines/` with an `EngineAdapter` subclass (see `engines/base.py`) and an `agent.js` that registers itself with `registerEngine(...)`.

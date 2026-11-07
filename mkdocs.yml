@@ -111,4 +111,5 @@ nav:
   - Development:
       - development/index.md
       - Architecture: development/architecture.md
+      - Implementation notes: development/implementation-notes.md
       - Screenshots: development/screenshots.md
