@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QMenu,
     QSplitter,
     QPushButton,
-    QSpinBox,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -45,6 +44,7 @@ from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.hook_debug import HookDebugWindow
 from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.inspection import Inspections
+from hermes.ui.widgets.spin_boxes import SpinBox
 from hermes.ui.widgets.syntax_hint import SyntaxHint
 from hermes.ui.widgets.table import (
     add_copy_actions, add_delete_action, resizable_columns, set_row_height)
@@ -261,7 +261,7 @@ class HookDialog(QDialog):
             target.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             form.addRow(self.translations["hooks.pointer"], target)
         elif not self._editing and self.method is None:
-            self.caller_depth_input = QSpinBox()
+            self.caller_depth_input = SpinBox()
             self.caller_depth_input.setRange(0, MAX_CALLER_DEPTH)
             self.caller_depth_input.setValue(self.caller_depth)
             self.caller_depth_input.setSpecialValueText(

@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
 )
 
@@ -17,6 +16,7 @@ from hermes.core import settings
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
 from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import WrappedLabel
+from hermes.ui.widgets.spin_boxes import SpinBox
 
 
 _SETTING_CATEGORIES = (
@@ -84,7 +84,7 @@ class SettingsDialog(QDialog):
         if setting.kind == settings.BOOL:
             return QCheckBox()
         if setting.kind == settings.INT:
-            editor = QSpinBox()
+            editor = SpinBox()
             editor.setRange(setting.minimum, setting.maximum)
             editor.setSingleStep(setting.step)
             editor.setGroupSeparatorShown(True)
@@ -103,7 +103,7 @@ class SettingsDialog(QDialog):
             editor = self.editors[key]
             if isinstance(editor, QCheckBox):
                 editor.setChecked(value)
-            elif isinstance(editor, QSpinBox):
+            elif isinstance(editor, SpinBox):
                 editor.setValue(value)
             else:
                 editor.setCurrentIndex(max(0, editor.findData(value)))
@@ -119,7 +119,7 @@ class SettingsDialog(QDialog):
         for key, editor in self.editors.items():
             if isinstance(editor, QCheckBox):
                 values[key] = editor.isChecked()
-            elif isinstance(editor, QSpinBox):
+            elif isinstance(editor, SpinBox):
                 values[key] = editor.value()
             else:
                 values[key] = editor.currentData()

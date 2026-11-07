@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QAbstractItemView,
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -41,6 +40,7 @@ from hermes.ui.widgets.icons import material_icon, set_button_icon, theme_color
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.labels import DocsHint, WrappedLabel
 from hermes.ui.widgets.script_params import ParamEditor, ScriptRunDialog
+from hermes.ui.widgets.spin_boxes import DoubleSpinBox
 from hermes.ui.widgets.syntax_hint import SyntaxHint
 from hermes.ui.widgets.table import (
     add_copy_actions, add_delete_action, resizable_columns, select_clicked_row, set_row_height)
@@ -100,7 +100,7 @@ class ScriptDialog(QDialog):
         for mode in MODES:
             self.mode_combo.addItem(translations[f"scripts.mode_{mode}"], mode)
         self.mode_combo.setCurrentIndex(MODES.index(spec.mode) if spec else MODES.index("repeat"))
-        self.seconds_spin = QDoubleSpinBox()
+        self.seconds_spin = DoubleSpinBox()
         self.seconds_spin.setRange(0, 24 * 3600)
         self.seconds_spin.setDecimals(1)
         self.seconds_spin.setSuffix(" s")

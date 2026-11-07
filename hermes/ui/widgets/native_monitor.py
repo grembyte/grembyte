@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QLabel,
     QLineEdit,
     QPushButton,
-    QSpinBox,
     QSplitter,
     QTableView,
     QTableWidget,
@@ -37,6 +36,7 @@ from hermes.features.native_monitor import (
 from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import DocsHint, SelectableText
 from hermes.ui.widgets.method_monitor import call_time
+from hermes.ui.widgets.spin_boxes import SpinBox
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from hermes.ui.workers import keep_until_finished
 
@@ -265,13 +265,13 @@ class NativeMonitorDialog(QDialog):
         self.kind_combo.setToolTip(t["native_monitor.kind_tooltip"])
         add_bar.addWidget(self.kind_combo)
         add_bar.addWidget(QLabel(t["native_monitor.arguments"]))
-        self.arguments_spin = QSpinBox()
+        self.arguments_spin = SpinBox()
         self.arguments_spin.setRange(0, 8)
         self.arguments_spin.setValue(DEFAULT_ARGUMENTS)
         self.arguments_spin.setToolTip(t["native_monitor.arguments_tooltip"])
         add_bar.addWidget(self.arguments_spin)
         add_bar.addWidget(QLabel(t["native_monitor.dump"]))
-        self.dump_spin = QSpinBox()
+        self.dump_spin = SpinBox()
         self.dump_spin.setRange(0, MAX_DUMP)
         self.dump_spin.setSingleStep(0x100)
         self.dump_spin.setValue(DEFAULT_DUMP)

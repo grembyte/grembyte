@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -33,6 +32,7 @@ from hermes.platform import ProcessMemory, main_module, read_mappings
 from hermes.db.repository.addresses import SavedPointerScan
 from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import DocsHint, WrappedLabel
+from hermes.ui.widgets.spin_boxes import SpinBox
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from hermes.ui.workers import keep_until_finished
 
@@ -193,7 +193,7 @@ class PointerScanDialog(QDialog):
         self.btn_from_scan.setVisible(self.address_source is not None)
         address_row.addWidget(self.btn_from_scan)
         form.addRow(self.translations["pointer.address"], address_row)
-        self.depth_input = QSpinBox()
+        self.depth_input = SpinBox()
         self.depth_input.setRange(1, 7)
         self.depth_input.setValue(self._scan.max_depth if self._scan else 5)
         self.depth_input.setToolTip(self.translations["pointer.depth_tooltip"])
@@ -201,7 +201,7 @@ class PointerScanDialog(QDialog):
         self.offset_input = QLineEdit(f"0x{self._scan.max_offset if self._scan else 0x1000:X}")
         self.offset_input.setToolTip(self.translations["pointer.offset_tooltip"])
         form.addRow(self.translations["pointer.offset"], self.offset_input)
-        self.results_input = QSpinBox()
+        self.results_input = SpinBox()
         self.results_input.setRange(100, 1_000_000)
         self.results_input.setSingleStep(1000)
         self.results_input.setValue(10000)
