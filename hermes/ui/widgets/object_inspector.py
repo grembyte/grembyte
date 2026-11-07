@@ -233,7 +233,8 @@ class ObjectInspectorDialog(QDialog):
 
         self.fields_section = InspectorSection(
             self.translations, self.translations["inspector.fields"],
-            self.translations["inspector.fields_tooltip"], self._build_fields_table())
+            self.translations["inspector.fields_tooltip"], self._build_fields_table(),
+            controls=[self.field_filter])
         self.properties_section = InspectorSection(
             self.translations, self.translations["inspector.properties"],
             self.translations["inspector.properties_tooltip"], self._build_properties_table(),
@@ -259,6 +260,11 @@ class ObjectInspectorDialog(QDialog):
         layout.addWidget(self.status_label)
 
     def _build_fields_table(self):
+        self.field_filter = QLineEdit()
+        self.field_filter.setPlaceholderText(self.translations["inspector.field_filter"])
+        self.field_filter.setClearButtonEnabled(True)
+        self.field_filter.setMinimumWidth(260)
+        self.field_filter.textChanged.connect(lambda _text: self._filter_fields())
         self.table = QTableWidget(0, 5)
         # One line per field: long values are shortened, not broken at a space.
         self.table.setWordWrap(False)
@@ -527,6 +533,7 @@ class ObjectInspectorDialog(QDialog):
                     self.translations["inspector.open"], lambda row=row: self.open_row(row)))
             elif not unread and self._shows_text(value):
                 self.table.setCellWidget(row, _OPEN, self._text_link(value, field.get("name", "")))
+        self._filter_fields()
         if 0 <= selected < len(fields):
             self.table.selectRow(selected)
         self.add_address_button.setEnabled(self.address_entry(self.table.currentRow()) is not None)
@@ -673,6 +680,14 @@ class ObjectInspectorDialog(QDialog):
         self._methods_pending = False
         self.status_label.setText(self.translations["inspector.methods_failed"].format(
             message=message))
+
+    def _filter_fields(self):
+        """Show the fields whose name or type contains every word of the search."""
+        words = self.field_filter.text().lower().split()
+        for row in range(self.table.rowCount()):
+            name, kind = (self.table.item(row, column) for column in (_FIELD, _TYPE))
+            text = f"{name.text() if name else ''} {kind.text() if kind else ''}".lower()
+            self.table.setRowHidden(row, not all(word in text for word in words))
 
     def _filter_methods(self):
         """Show the methods matching the search, of the own class unless base classes are on."""

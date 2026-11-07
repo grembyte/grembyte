@@ -746,6 +746,7 @@
   "inspector.column_returns": "Returns",
   "inspector.column_owner": "Class",
   "inspector.call": "call …",
+  "inspector.field_filter": "Filter fields, e.g. health",
   "inspector.method_filter": "Search method …",
   "inspector.base_classes": "Base classes",
   "inspector.base_classes_tooltip": "Also show the methods inherited from base classes (often hundreds for Unity components)",

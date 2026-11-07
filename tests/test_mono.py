@@ -1417,6 +1417,40 @@ def test_inspector_puts_number_fields_on_the_address_list(qt_app, translations):
         dialog.close()
 
 
+def test_inspector_filters_fields_by_name_and_type(qt_app, translations):
+    # Queen's Domain's player has hundreds of fields: the filter finds Health
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
+
+    def field(name, kind, offset, text):
+        return {"name": name, "type": kind, "offset": offset, "static": False,
+                "value": {"text": text}, "address": None, "valueType": None}
+
+    contents = {"name": "AFS_Full_PlayerChar_C", "address": "0x3d6c6ad0", "fields": [
+        field("Health", "float", 0x870, "84"), field("Level", "int32", 0x874, "3"),
+        field("BaseHealth", "float", 0x908, "100"), field("Dashing", "bool", 0x900, "false"),
+        field("LowHealthTimer", "FTimerHandle", 0x1340, "")]}
+    dialog = ObjectInspectorDialog(translations, lambda *_: None, contents=contents,
+                                   captured="23:58:28")
+
+    def shown():
+        return [dialog.table.item(row, 0).text() for row in range(dialog.table.rowCount())
+                if not dialog.table.isRowHidden(row)]
+
+    try:
+        dialog.field_filter.setText("health")
+        assert shown() == ["Health", "BaseHealth", "LowHealthTimer"]
+        dialog.field_filter.setText("health float")  # every word, in name or type
+        assert shown() == ["Health", "BaseHealth"]
+        # Read again (live): the filter stays
+        dialog.show_contents(contents)
+        assert shown() == ["Health", "BaseHealth"]
+        dialog.field_filter.clear()
+        assert len(shown()) == 5
+    finally:
+        dialog.close()
+
+
 def test_inspector_action_columns_can_be_resized(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtWidgets import QHeaderView  # pylint: disable=import-error,no-name-in-module

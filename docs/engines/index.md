@@ -68,7 +68,7 @@ It shares the limits of the trace: calls Mono has inlined are missing. In Unreal
 
 ## Object inspector
 
-The object inspector shows the fields of an object – for Unity also static fields and properties, for Unreal the UProperties of objects and structs – evaluated on the game's main thread. Open it from an object in the monitor or a script result; fields that hold a value can be handed to the tracked addresses.
+The object inspector shows the fields of an object – for Unity also static fields and properties, for Unreal the UProperties of objects and structs – evaluated on the game's main thread. Open it from an object in the monitor or a script result; fields that hold a value can be handed to the tracked addresses. The filter above the fields keeps those whose name or type contains every word typed, e.g. `health` among the hundreds of fields of an Unreal player character.
 
 <figure markdown="span">
   ![Object inspector](../assets/screenshots/object-inspector-dark.webp#only-dark)

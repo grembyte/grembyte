@@ -746,6 +746,7 @@
   "inspector.column_returns": "Rückgabe",
   "inspector.column_owner": "Klasse",
   "inspector.call": "aufrufen …",
+  "inspector.field_filter": "Felder filtern, z. B. health",
   "inspector.method_filter": "Methode suchen …",
   "inspector.base_classes": "Basisklassen",
   "inspector.base_classes_tooltip": "Auch die geerbten Methoden der Basisklassen zeigen (bei Unity-Komponenten oft Hunderte)",
