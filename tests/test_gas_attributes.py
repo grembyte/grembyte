@@ -16,7 +16,8 @@ from tests.test_scripts import _FakeScriptWorker, fixture_qt_app  # pylint: disa
 
 
 _STATE = {
-    "owner": "BPC_AlabamaPlayer_C_1", "setter": "Library:SetFloatAttributeBase",
+    "owner": "BPC_AlabamaPlayer_C_1", "ownerClass": "ABPC_AlabamaPlayer_C",
+    "ownerAddress": "0x7ff612340000", "setter": "Library:SetFloatAttributeBase",
     "component": True,
     "sets": [{"name": "AttributeSetCore", "className": "UAlabamaAttributeSetCore",
               "attributes": [{"name": "Might", "base": 4, "current": 5},
@@ -69,7 +70,7 @@ def test_window_lists_sets_and_holds_values_by_scripts(qt_app, monkeypatch):
             ["AttributeSetCore", "Might", "4", "5", ""],
             ["AttributeSetCore", "DamageOutgoingMult", "1", "1.4", ""],
             ["AttributeSetCore", "Health", "200", "200", ""]]
-        assert dialog.owner_label.text() == "Spielfigur: BPC_AlabamaPlayer_C_1"
+        assert dialog.owner_label.text() == "Spielfigur: BPC_AlabamaPlayer_C_1 (ABPC_AlabamaPlayer_C)"
         # Effects change these (current differs from base)
         dialog.changed_check.setChecked(True)
         assert table.rowCount() == 2
@@ -121,12 +122,29 @@ def test_window_lists_sets_and_holds_values_by_scripts(qt_app, monkeypatch):
         assert table.item(0, 4).text() == "✓ 40"
         dialog.release_button.click()
 
+        # A game without GAS (Queen's Domain): no sets and no setter. Said
+        # is that there are no sets; the player's own fields hold its values,
+        # one click opens them in the object inspector.
+        dialog.refresh()
+        worker.gas_listed.emit(len(worker.requests), {**_STATE, "setter": None,
+                                                      "component": False, "sets": []})
+        assert table.rowCount() == 0
+        assert "keine Attribut-Sets" in dialog.status_label.text()
+        assert dialog.inspect_button.isEnabled()
+        dialog.inspect_button.click()
+        assert ("inspect", {"address": "0x7ff612340000"}) in worker.requests
+        assert [inspector.name for inspector in panel.inspections.inspectors] == [
+            "BPC_AlabamaPlayer_C_1"]
+
         # In the main menu there is no player: said so, the list is empty
         dialog.refresh()
         worker.gas_listed.emit(len(worker.requests), None)
         assert table.rowCount() == 0
         assert "Keine Spielfigur" in dialog.status_label.text()
+        assert not dialog.inspect_button.isEnabled()
     finally:
+        for inspector in list(panel.inspections.inspectors):
+            inspector.close()
         dialog.close()
         panel.shutdown()
         panel.deleteLater()

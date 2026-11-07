@@ -736,6 +736,8 @@ def _attributes(*rows):
 
 _GAS_STATE = {
     "owner": "BPC_AlabamaPlayer_C_2147479871",
+    "ownerClass": "ABPC_AlabamaPlayer_C",
+    "ownerAddress": "0x2a4c1e70000",
     "setter": "AlabamaAbilitySystemBlueprintLibrary:SetFloatAttributeBaseFromAbilitySystemComponent",
     "component": True,
     "sets": [

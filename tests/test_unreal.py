@@ -1374,6 +1374,8 @@ def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app):
         assert not failed, failed
         state = listed[0]
         assert state["owner"] == "BP_Hero_C_0"
+        assert state["ownerClass"] == "ABP_Hero_C"
+        assert int(state["ownerAddress"], 16) != 0
         assert state["setter"] == ("HeroAbilityLibrary:"
                                    "SetFloatAttributeBaseFromAbilitySystemComponent")
         assert state["component"]

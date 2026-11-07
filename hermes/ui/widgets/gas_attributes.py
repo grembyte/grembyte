@@ -195,6 +195,11 @@ class GasAttributesDialog(QDialog):
         self.owner_label = QLabel("")
         self.owner_label.setStyleSheet(f"color: {theme_color('muted')};")
         actions.addWidget(self.owner_label, 1)
+        self.inspect_button = QPushButton(t["gas.inspect_owner"])
+        set_button_icon(self.inspect_button, "person_search")
+        self.inspect_button.setToolTip(t["gas.inspect_owner_tooltip"])
+        self.inspect_button.clicked.connect(self.inspect_owner)
+        actions.addWidget(self.inspect_button)
         self.hold_button = QPushButton(t["gas.hold"])
         self.hold_button.setObjectName("btn_primary")
         set_button_icon(self.hold_button, "push_pin")
@@ -267,12 +272,13 @@ class GasAttributesDialog(QDialog):
         self._pending = None
         self._state = state
         t = self.translations
-        self.owner_label.setText("" if state is None
-                                 else t["gas.owner"].format(owner=state.get("owner", "?")))
+        self.owner_label.setText("" if state is None else t["gas.owner"].format(
+            owner=state.get("owner", "?"), cls=state.get("ownerClass", "?")))
+        # Without sets there is nothing to set: that one is said, not the setter
         problem = ("gas.no_player" if state is None
+                   else "gas.no_sets" if not state.get("sets")
                    else "gas.no_setter" if not state.get("setter")
-                   else "gas.no_component" if not state.get("component")
-                   else "gas.no_sets" if not state.get("sets") else None)
+                   else "gas.no_component" if not state.get("component") else None)
         if problem is not None:
             self.status_label.setText(t[problem])
         elif self._problem is not None:
@@ -407,9 +413,17 @@ class GasAttributesDialog(QDialog):
             return
         self.set_base(name, value)
 
+    def inspect_owner(self):
+        """Open the player's object in the object inspector (its fields)."""
+        address = (self._state or {}).get("ownerAddress")
+        inspections = self.panel.inspections
+        if address and inspections is not None and self.panel.worker() is self._worker:
+            inspections.inspect({"address": address}, name=self._state.get("owner", ""))
+
     def _update_buttons(self):
         names = self.selected_names()
         held = self._held()
+        self.inspect_button.setEnabled(bool((self._state or {}).get("ownerAddress")))
         self.hold_button.setEnabled(bool(names))
         self.release_button.setEnabled(any(name in held for name in names))
 

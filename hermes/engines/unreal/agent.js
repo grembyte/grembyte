@@ -2260,8 +2260,11 @@ const unreal = (() => {
   }
 
   function gasAttributes() {
-    // { owner, setter, sets: [{ name, className, attributes: [{ name, base,
-    // current }] }] } of the player, or null without one (e.g. in the menu).
+    // { owner, ownerClass, ownerAddress, setter, component, sets: [{ name,
+    // className, attributes: [{ name, base, current }] }] } of the player, or
+    // null without one (e.g. in the menu). Games without GAS keep the
+    // player's values in fields of the pawn: the window opens it in the
+    // object inspector by ownerAddress.
     reflection();
     const parts = currentPlayerParts();
     if (parts === null)
@@ -2269,6 +2272,8 @@ const unreal = (() => {
     const setter = findAttributeSetter();
     return {
       owner: fieldName(parts.pawn.add(OBJECT_NAME)),
+      ownerClass: layout(parts.pawn.add(OBJECT_CLASS).readPointer()).name,
+      ownerAddress: parts.pawn.toString(),
       setter: setter === null ? null : setter.name,
       component: !parts.asc.isNull(),
       sets: parts.sets.map(set => {

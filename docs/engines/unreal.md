@@ -33,6 +33,13 @@ Many shipping builds keep their cheat manager: in Avowed `BP_CheatManager_C` (an
 
 Games built on Unreal's Gameplay Ability System keep values such as health, strength or damage multipliers as *attributes*. **View → GAS attributes …** shows the player's attribute sets with base and current value, live.
 
+!!! note "Games without GAS"
+    Not every Unreal game keeps its values with GAS, even when the plugin is loaded: Queen's Domain, for one, keeps health, level and potions in plain fields of the player character. The table then stays empty and the window says:
+
+    > The player has no attribute sets: the game does not keep its values with the Gameplay Ability System. They may be fields of the player: "Inspect player" shows them.
+
+    The line below the table names the player and its class. **Inspect player** opens the player's object in the [object inspector](index.md#object-inspector); its filter finds a field such as `Health` among hundreds, which can then be read, changed or put on the address list.
+
 <figure markdown="span">
   ![GAS attributes](../assets/screenshots/gas-attributes-dark.webp#only-dark)
   ![GAS attributes](../assets/screenshots/gas-attributes-light.webp#only-light)
