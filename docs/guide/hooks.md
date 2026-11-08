@@ -1,6 +1,6 @@
 # Hooks
 
-A value hook changes writes to a target address: with the Frida backend it intercepts writes at a specific instruction; with `ptrace` it watches the address and corrects its value after each write. Hooks are stored per program. Module-based write sites are reinstalled when you attach after a restart; JIT-code hooks need a pointer chain to be saved and found again.
+A value hook changes writes to a target address: with the Frida backend it intercepts writes at a specific instruction; with `ptrace` it watches the address and corrects its value after each write. Hooks are stored per program and installed again the next time it starts.
 
 <figure markdown="span">
   ![Hooks tab](../assets/screenshots/hooks-tab-dark.webp#only-dark)

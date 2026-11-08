@@ -1,13 +1,14 @@
 # Hermes Hook
 
-Hermes Hook is a desktop application for inspecting and changing the memory of running games. It finds values such as gold or health, shows which code writes them, and hooks that code so every write is changed the way you want: a multiplier, a fixed value, bounds, or a JavaScript function of your own. Hooks, addresses and scripts are stored per game and reloaded when you attach again. Whether hooks and addresses can follow the same game data after a restart depends on their location and, where needed, a pointer chain or learned callers.
+Hermes Hook is a desktop application for inspecting and changing the memory of running games. It finds values such as gold or health, shows which code writes them, and hooks that code so every write is changed the way you want: a multiplier, a fixed value, bounds, or a JavaScript function of your own. Hooks, addresses and scripts are stored per game and come back the next time it starts.
 
 It runs on **Linux**, including Windows games under **Wine and Proton**, and on **Windows**. For Unity (Mono and IL2CPP) and Unreal Engine games it also understands the game's own classes and methods.
 
 !!! info "Alpha stage"
     Hermes Hook is still in an early alpha stage. Features, the user interface and the format of saved game data can still change between releases, and some games or setups may not work yet. Bug reports and game reports are welcome on [GitHub](https://github.com/winterhafen/hermes-hook/issues).
 
-<figure markdown="span">
+<figure
+markdown="span">
   ![Hermes Hook main window with scan results and tracked addresses](assets/screenshots/main-window-dark.webp#only-dark)
   ![Hermes Hook main window with scan results and tracked addresses](assets/screenshots/main-window-light.webp#only-light)
   <figcaption>The main window after a few scans for the gold of the test game: results on the left, the value search on the right, tracked addresses with their pointer chains below.</figcaption>
@@ -50,7 +51,7 @@ It runs on **Linux**, including Windows games under **Wine and Proton**, and on 
 
     ---
 
-    Change every write at that instruction: multiply, fix, clamp or compute the value in JavaScript. Module-based hooks are reinstalled when their write site still matches; hooks on JIT code need a pointer chain to be saved across restarts.
+    Change every write at that instruction: multiply, fix, clamp or compute the value in JavaScript. Hooks are reinstalled automatically.
 
     [:octicons-arrow-right-24: Hooks](guide/hooks.md)
 
