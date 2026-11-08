@@ -4,7 +4,7 @@ import os
 import re
 
 from hermes.core.messages import LocalizedError, LocalizedValueError
-from hermes.core.pointer import module_bases
+from hermes.core.pointer import PointerChain, module_bases
 from hermes.platform import ProcessMemory
 from hermes.core.value_types import value_type as get_value_type
 
@@ -13,6 +13,10 @@ PAGE_SIZE = 4096
 _HEX = re.compile(r"(0x)?[0-9a-fA-F]+", re.IGNORECASE)
 # The last offset of an address expression, e.g. "+0x244" or "- 10"
 _LAST_OFFSET = re.compile(r"\s*(?P<sign>[+-])\s*(?P<offset>(0x)?[0-9a-fA-F]+)\s*$", re.IGNORECASE)
+# Between the steps of a pointer chain: "->", "=>", ":" or "→" (as Hermes shows chains)
+_CHAIN_STEP = re.compile(r"\s*(?:->|=>|→|:)\s*")
+# An offset of a pointer chain: "0x28", "28" (hex), "+0x8", "-8"
+_CHAIN_OFFSET = re.compile(r"(?P<sign>[+-])?\s*(?P<offset>(0x)?[0-9a-fA-F]+)", re.IGNORECASE)
 
 
 class UnknownModuleError(LocalizedError, ValueError):
@@ -91,6 +95,35 @@ def parse_address(text, mappings=None):
     if unknown is not None:
         raise UnknownModuleError(unknown)
     raise LocalizedValueError("error.memory.invalid_address", text=repr(text))
+
+
+def parse_chain(text, mappings):
+    """Parse a pointer chain: ``game.exe+0x43E600 -> 0x28 -> 0x0``.
+
+    The steps are separated by ``->``, ``=>``, ``:`` or ``→``. The first is an
+    address as ``parse_address`` reads it (``module+0x…``, also with further
+    offsets, or a number) that lies in a module; each further one is an
+    offset (hex) added after reading the pointer at the address so far.
+    Returns a PointerChain. Raises ValueError, UnknownModuleError for a
+    module the process has not loaded.
+    """
+    steps = _CHAIN_STEP.split((text or "").strip())
+    if not steps or not all(steps):
+        raise LocalizedValueError("error.memory.invalid_chain", text=repr(text))
+    address = parse_address(steps[0], mappings)
+    module = next((mapping.module for mapping in mappings or []
+                   if mapping.module is not None and mapping.start <= address < mapping.end),
+                  None)
+    if module is None:
+        raise LocalizedValueError("error.memory.chain_outside_module", address=f"0x{address:X}")
+    offsets = []
+    for step in steps[1:]:
+        match = _CHAIN_OFFSET.fullmatch(step)
+        if match is None:
+            raise LocalizedValueError("error.memory.invalid_chain", text=repr(text))
+        value = int(match["offset"], 16)
+        offsets.append(-value if match["sign"] == "-" else value)
+    return PointerChain(module, address - module_bases(mappings)[module], tuple(offsets))
 
 
 def describe_address(mappings, address):

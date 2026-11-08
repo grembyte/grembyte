@@ -15,6 +15,7 @@ from hermes.features.code_explorer import (
     load_image,
     parse_location,
 )
+from hermes.features.pseudocode import render as render_pseudocode
 
 from tests.test_hooks import fixture_qt_app  # pylint: disable=unused-import
 
@@ -105,6 +106,11 @@ def _check_index(index, symbols, rip=True):
     assert ("n.rip(at, " if rip else "readU32()") in script
     assert '"Hermes marker' in script
     assert "n.fn(at" in index.script(use.start)
+    # The pseudocode names the string and the import, the argument by the convention
+    pseudocode = render_pseudocode(index, use)
+    assert 'puts("Hermes marker: available only in debug mode.");' in pseudocode
+    assert ("(int32_t a1 /* rdi */)" if index.image.format == "elf"
+            else "(int32_t a1 /* rcx */)") in pseudocode
 
     # Signatures guessed from the code, by the platform's calling convention
     linux = index.image.format == "elf"
@@ -194,12 +200,35 @@ def test_the_window_leads_from_a_string_to_its_function_and_back(tmp_path, qt_ap
             time.sleep(0.01)
         assert dialog.index is not None, dialog.status_label.text()
 
+        # A named global: its module offset, where a pointer chain would start
+        dialog.goto_input.setText("counter")
+        dialog._goto()
+        counter = parse_location("counter", dialog.index.image)
+        assert f"(counter, game+0x{counter - dialog.index.image.base:x})" in \
+            dialog.refs_label.text()
+
         dialog.string_filter.setText("marker debug")
         assert dialog.string_model.rowCount() == 1
         dialog._string_activated(dialog.string_model.index(0, 0))
         assert dialog.ref_model.rowCount() == 1
         dialog._reference_activated(dialog.ref_model.index(0, 0))
         assert dialog.function_label.text().startswith("use_message:")
+        # The pseudocode is rendered when its tab is shown, at the selected instruction
+        loading = dialog._selected_address()
+        assert dialog.pseudocode_view.toPlainText() == ""
+        dialog.function_tabs.setCurrentWidget(dialog.pseudocode_page)
+        assert "int32_t use_message(" in dialog.pseudocode_view.toPlainText()
+        assert "puts(" in dialog.pseudocode_view.textCursor().block().text()
+        # Finding a text moves to it, and selects its instruction in the assembler
+        dialog.find_input.setText("return")
+        assert "return" in dialog.pseudocode_view.textCursor().block().text()
+        returned = dialog._selected_line()
+        assert returned.address > loading
+        dialog.find_input.setText("no such text")
+        assert dialog.find_status.text() == "Not found"
+        dialog.find_input.clear()
+        dialog.function_tabs.setCurrentWidget(dialog.line_view)
+        dialog._show_function(loading, loading, remember=False)
         selected = dialog._selected_address()
         assert dialog.index.where(selected).startswith("use_message+")
 

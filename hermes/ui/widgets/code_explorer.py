@@ -6,10 +6,21 @@ are the file's; the monitor and memory viewer get the module's address in
 the process.
 """
 
+import bisect
 import os
+import re
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPoint, Qt, QThread, Signal  # pylint: disable=import-error,no-name-in-module
-from PySide6.QtGui import QFontDatabase, QGuiApplication  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
+    QColor,
+    QFontDatabase,
+    QGuiApplication,
+    QKeySequence,
+    QShortcut,
+    QTextCursor,
+    QTextDocument,
+    QTextFormat,
+)
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QComboBox,
@@ -19,11 +30,13 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QHeaderView,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QSplitter,
     QTableView,
     QTabWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -39,10 +52,15 @@ from hermes.features.code_explorer import (
     process_modules,
     remember_index,
 )
+from hermes.features.pseudocode import render as render_pseudocode
+from hermes.ui.widgets.code_editor import PseudocodeHighlighter, code_theme_colors
 from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import DocsHint
 from hermes.ui.widgets.table import copy_menu, resizable_columns
 from hermes.ui.workers import keep_until_finished
+
+# The address comment of a pseudocode line
+_PSEUDOCODE_ADDRESS = re.compile(r"// 0x([0-9a-f]+)")
 
 class CodeIndexWorker(QThread):
     """Read a module's file and build its CodeIndex in the background."""
@@ -198,6 +216,9 @@ class CodeExplorerDialog(QDialog):
         self._history = []
         self._function = None
         self._lines = []
+        self._pseudocode_of = None  # the Function the pseudocode tab shows
+        self._pseudocode_lines = []  # (instruction address, line), by address
+        self._syncing = False  # moving one view to the other's instruction
         self.setWindowTitle(translations["code.title"])
         self.resize(1250, 800)
         self._build_ui()
@@ -321,7 +342,22 @@ class CodeExplorerDialog(QDialog):
         self.line_view.activated.connect(self._line_activated)
         self.line_view.selectionModel().currentRowChanged.connect(
             lambda _current, _previous: self._update_actions())
-        function_layout.addWidget(self.line_view)
+        self.function_tabs = QTabWidget()
+        self.function_tabs.addTab(self.line_view, t["code.assembler"])
+        self.pseudocode_view = QPlainTextEdit()
+        self.pseudocode_view.setReadOnly(True)
+        self.pseudocode_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.pseudocode_view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.pseudocode_view.pseudocode_highlighter = PseudocodeHighlighter(
+            self.pseudocode_view.document(), code_theme_colors())
+        self.pseudocode_view.cursorPositionChanged.connect(self._pseudocode_cursor_moved)
+        self.find_input = QLineEdit()
+        self.find_status = QLabel("")
+        self.pseudocode_page = self._pseudocode_page()
+        self.function_tabs.addTab(self.pseudocode_page, t["code.pseudocode"])
+        self.function_tabs.currentChanged.connect(lambda _index: self._update_pseudocode())
+        QShortcut(QKeySequence(QKeySequence.StandardKey.Find), self, self._focus_find)
+        function_layout.addWidget(self.function_tabs)
         right.addWidget(function_box)
         right.setSizes([260, 520])
         splitter.addWidget(right)
@@ -333,6 +369,33 @@ class CodeExplorerDialog(QDialog):
         self.status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.status_label)
         self._update_actions()
+
+    def _pseudocode_page(self):
+        """The pseudocode with a find bar above it."""
+        t = self.translations
+        page = QWidget()
+        box = QVBoxLayout(page)
+        box.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout()
+        self.find_input.setPlaceholderText(t["code.find_placeholder"])
+        self.find_input.setClearButtonEnabled(True)
+        self.find_input.textChanged.connect(lambda _text: self._find(again=False))
+        self.find_input.returnPressed.connect(self._find)
+        previous = QShortcut(QKeySequence("Shift+Return"), self.find_input,
+                             lambda: self._find(backward=True))
+        previous.setContext(Qt.ShortcutContext.WidgetShortcut)
+        row.addWidget(self.find_input, 1)
+        for icon, key, backward in (("expand_less", "code.find_previous", True),
+                                    ("expand_more", "code.find_next", False)):
+            button = QPushButton()
+            set_button_icon(button, icon)
+            button.setToolTip(t[key])
+            button.clicked.connect(lambda _checked=False, back=backward: self._find(backward=back))
+            row.addWidget(button)
+        row.addWidget(self.find_status)
+        box.addLayout(row)
+        box.addWidget(self.pseudocode_view)
+        return page
 
     @staticmethod
     def _with_filter(filter_input, view):
@@ -446,6 +509,9 @@ class CodeExplorerDialog(QDialog):
             model.set_rows([])
         self._function = None
         self._lines = []
+        self._pseudocode_of = None
+        self._pseudocode_lines = []
+        self.pseudocode_view.clear()
         self.refs_label.setText(self.translations["code.references_none"])
         self.function_label.setText(self.translations["code.function_none"])
         self._update_actions()
@@ -499,7 +565,13 @@ class CodeExplorerDialog(QDialog):
 
     def _show_references(self, target):
         index = self.index
-        what = index.describe(target) or self._location(target)
+        what = index.describe(target)
+        location = self._location(target)
+        if not what:
+            what = location
+        elif not what.startswith(('"', "→")) and index.function_starting(target) is None:
+            # A named global: module+offset is where a pointer chain starts
+            what = f"{what}, {location}"
         refs = index.references(target)
         self.refs_label.setText(self.translations["code.references_to"].format(
             target=f"0x{target:x}", what=what, count=len(refs)))
@@ -558,7 +630,104 @@ class CodeExplorerDialog(QDialog):
             self.line_view.selectRow(row)
             self.line_view.scrollTo(self.line_model.index(row, 0),
                                     QAbstractItemView.ScrollHint.PositionAtCenter)
+        self._update_pseudocode()
         self._update_actions()
+
+    def _update_pseudocode(self):
+        """Render the function's pseudocode when its tab is shown: a large
+        function with many calls takes a moment (their signatures are guessed)."""
+        function = self._function
+        if function is None or self.function_tabs.currentWidget() is not self.pseudocode_page:
+            return
+        if self._pseudocode_of is not function:
+            QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                text = render_pseudocode(self.index, function)
+            finally:
+                QGuiApplication.restoreOverrideCursor()
+            self._syncing = True
+            self.pseudocode_view.setPlainText(text)
+            self._syncing = False
+            self._pseudocode_of = function
+            lines = []
+            for number, line in enumerate(text.splitlines()):
+                match = _PSEUDOCODE_ADDRESS.search(line)
+                if match is not None:
+                    lines.append((int(match.group(1), 16), number))
+            self._pseudocode_lines = sorted(lines)
+        line = self._selected_line()
+        if line is not None:
+            self._reveal_in_pseudocode(line.address)
+
+    def _reveal_in_pseudocode(self, address):
+        """Put the cursor on the pseudocode line of the instruction at
+        ``address``; an instruction without its own line (folded into a later
+        one, or prologue) shows the next line."""
+        lines = self._pseudocode_lines
+        if not lines:
+            return
+        position = bisect.bisect_left(lines, (address, -1))
+        number = lines[min(position, len(lines) - 1)][1]
+        block = self.pseudocode_view.document().findBlockByNumber(number)
+        self._syncing = True
+        self.pseudocode_view.setTextCursor(QTextCursor(block))
+        self._syncing = False
+        self._highlight_pseudocode_line()
+        self.pseudocode_view.centerCursor()
+
+    def _highlight_pseudocode_line(self):
+        selection = QTextEdit.ExtraSelection()
+        color = QColor(self.palette().highlight().color())
+        color.setAlpha(70)
+        selection.format.setBackground(color)
+        selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+        selection.cursor = self.pseudocode_view.textCursor()
+        selection.cursor.clearSelection()
+        self.pseudocode_view.setExtraSelections([selection])
+
+    def _pseudocode_cursor_moved(self):
+        """Select the instruction of the pseudocode line the cursor is on, so
+        the actions (Monitor, Copy pattern …) work on it."""
+        if self._syncing:
+            return
+        self._highlight_pseudocode_line()
+        match = _PSEUDOCODE_ADDRESS.search(self.pseudocode_view.textCursor().block().text())
+        if match is None:
+            return
+        row = self.line_model.row_of(int(match.group(1), 16))
+        if row is not None:
+            self.line_view.selectRow(row)
+            self.line_view.scrollTo(self.line_model.index(row, 0),
+                                    QAbstractItemView.ScrollHint.PositionAtCenter)
+
+    def _focus_find(self):
+        if self._function is None:
+            return
+        self.function_tabs.setCurrentWidget(self.pseudocode_page)
+        self.find_input.setFocus()
+        self.find_input.selectAll()
+
+    def _find(self, backward=False, again=True):
+        """Find the text of the find bar in the pseudocode, from the cursor
+        on (``again``: after the current match), wrapping around."""
+        text = self.find_input.text()
+        view = self.pseudocode_view
+        self.find_status.setText("")
+        if not text:
+            return
+        flags = QTextDocument.FindFlag.FindBackward if backward else QTextDocument.FindFlag(0)
+        cursor = view.textCursor()
+        if not again:  # typing: the match may grow where it is
+            cursor.setPosition(cursor.selectionStart())
+            view.setTextCursor(cursor)
+        if not view.find(text, flags):
+            cursor.movePosition(QTextCursor.MoveOperation.End if backward
+                                else QTextCursor.MoveOperation.Start)
+            view.setTextCursor(cursor)
+            if not view.find(text, flags):
+                self.find_status.setText(self.translations["code.find_none"])
+                return
+        view.centerCursor()
 
     def _line_activated(self, model_index):
         line = self._line(model_index.row())

@@ -34,6 +34,14 @@ _KEYWORDS = frozenset({
     "protected", "public", "return", "set", "static", "super", "switch", "this", "throw",
     "true", "try", "typeof", "undefined", "var", "void", "while", "with", "yield",
 })
+# C numbers: 0x1f, 20, 7.5f, 1e-05
+_C_NUMBER = re.compile(r"(?:0[xX][\da-fA-F]+|\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)[fFuUlL]*(?!\w)")
+# The C the code explorer's pseudocode uses (hermes/features/pseudocode.py)
+_PSEUDOCODE_KEYWORDS = frozenset({
+    "__m128", "asm", "char", "double", "else", "float", "goto", "if", "int", "int8_t",
+    "int16_t", "int32_t", "int64_t", "return", "uint8_t", "uint16_t", "uint32_t",
+    "uint64_t", "void",
+})
 _CODE_COLORS = {
     "code_text": "#e6edf3",
     "code_keyword": "#ff7b72",
@@ -149,6 +157,68 @@ class JavaScriptHighlighter(QSyntaxHighlighter):
             position += 1
 
 
+class PseudocodeHighlighter(QSyntaxHighlighter):
+    """Highlight the C-like code shown by the native code explorer."""
+
+    def __init__(self, document, colors):
+        super().__init__(document)
+        self.set_colors(colors)
+
+    def set_colors(self, colors):
+        """Update token formats when the application's theme changes."""
+        self.formats = {}
+        for token, key in (("text", "code_text"), ("keyword", "code_keyword"),
+                           ("string", "code_string"), ("number", "code_number"),
+                           ("comment", "muted")):
+            text_format = QTextCharFormat()
+            text_format.setForeground(QColor(colors[key]))
+            if token == "keyword":
+                text_format.setFontWeight(QFont.Weight.Bold)
+            self.formats[token] = text_format
+        self.rehighlight()
+
+    def highlightBlock(self, text):  # pylint: disable=invalid-name
+        self.setFormat(0, len(text), self.formats["text"])
+        position = 0
+        while position < len(text):
+            if text.startswith("//", position):
+                self.setFormat(position, len(text) - position, self.formats["comment"])
+                break
+            if text.startswith("/*", position):
+                end = text.find("*/", position + 2)
+                end = len(text) if end < 0 else end + 2
+                self.setFormat(position, end - position, self.formats["comment"])
+                position = end
+                continue
+
+            character = text[position]
+            if character in ("'", '"'):
+                end = _closing_quote(text, position + 1, character)
+                end = len(text) if end is None else end
+                self.setFormat(position, end - position, self.formats["string"])
+                position = end
+                continue
+
+            if character.isdigit() or (character == "." and position + 1 < len(text)
+                                       and text[position + 1].isdigit()):
+                number = _C_NUMBER.match(text, position)
+                if number is not None:
+                    self.setFormat(position, number.end() - position, self.formats["number"])
+                    position = number.end()
+                    continue
+
+            if character == "_" or character.isalpha():
+                end = position + 1
+                while end < len(text) and (text[end] == "_" or text[end].isalnum()):
+                    end += 1
+                if text[position:end] in _PSEUDOCODE_KEYWORDS:
+                    self.setFormat(position, end - position, self.formats["keyword"])
+                position = end
+                continue
+
+            position += 1
+
+
 class CodeEditor(QPlainTextEdit):
     """QPlainTextEdit for code: fixed-width font, Tab indents by INDENT."""
 
@@ -228,3 +298,11 @@ def apply_code_theme(colors):
     for widget in application.allWidgets():
         if isinstance(widget, CodeEditor):
             widget.highlighter.set_colors(_CODE_COLORS)
+        highlighter = getattr(widget, "pseudocode_highlighter", None)
+        if isinstance(highlighter, PseudocodeHighlighter):
+            highlighter.set_colors(_CODE_COLORS)
+
+
+def code_theme_colors():
+    """The syntax colors of the currently applied application theme."""
+    return dict(_CODE_COLORS)

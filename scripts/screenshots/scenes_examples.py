@@ -84,6 +84,63 @@ def example_code_add_gold(studio):
     return dialog
 
 
+@scene("example-chain-add-gold", size=(1280, 820),
+       description="Example: add_gold as pseudocode with its pointer chain, and who uses g_game")
+def example_chain_add_gold(studio):
+    """add_gold open in the pseudocode tab; above it the references to g_game,
+    whose header names its module offset."""
+    # pylint: disable=protected-access
+    dialog, _index, names = _explorer(studio)
+    dialog.tabs.setCurrentIndex(1)  # the functions
+    dialog.function_filter.setText("gold")
+    add_gold = names["add_gold"]
+    row = dialog.function_model.row_of(add_gold)
+    if row is not None:
+        dialog.function_view.selectRow(row)
+    dialog._show_function(add_gold)
+    dialog.goto_input.setText("g_game")
+    dialog._goto()
+    row = dialog.ref_model.row_of(add_gold)
+    if row is not None:
+        dialog.ref_view.selectRow(row)
+        dialog.ref_view.scrollTo(dialog.ref_model.index(row, 0),
+                                 dialog.ref_view.ScrollHint.PositionAtCenter)
+    dialog.function_tabs.setCurrentWidget(dialog.pseudocode_page)
+    settle()
+    return dialog
+
+
+@scene("example-chain-dialog",
+       description="Example: the gold's pointer chain from add_gold entered by hand")
+def example_chain_dialog(studio):
+    """Pointer chain … with dummy_game.exe+<g_game> -> 0x28 -> 0x0, as read from add_gold."""
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.core.memory import parse_chain
+    from hermes.core.pointer import PointerChain
+    from hermes.features.code_explorer import load_image, parse_location
+    from hermes.platform.linux import parse_maps
+    from hermes.ui.main_window import PointerChainDialog
+
+    image = load_image(str(_dummy_game_binary()))
+    g_game = parse_location("g_game", image) - image.base
+    # The test game as this build loads it: at its image base, without relocation
+    mappings = parse_maps([f"{image.base:x}-{image.base + 0x6000:x} r-xp 00000000 08:01 1 "
+                           f"/opt/game/{DEMO_NAME}"], image_size=lambda _path: None)
+    gold = PointerChain(DEMO_NAME, g_game, (0x28, 0x0))
+
+    def resolve(text):
+        chain = parse_chain(text, mappings)
+        return chain, _PLAYER if chain == gold else None  # gold is at +0x0 of the player
+
+    window = studio.show_attached()
+    dialog = studio.keep(PointerChainDialog(resolve, "int32", window, studio.translations))
+    dialog.chain_input.setText(f"{DEMO_NAME}+0x{g_game:x} -> 0x28 -> 0x0")
+    dialog.description_input.setText("Gold")
+    dialog.show()
+    settle()
+    return dialog
+
+
 def _float_register(number, kind="float"):
     """The low 8 bytes of an xmm register holding ``number``; the rest as a game leaves it."""
     raw = struct.pack("<f", number) + b"\x00\x00\x80\x3f" if kind == "float" \

@@ -47,7 +47,12 @@ from hermes.core.scanner import (
     ScanWorker,
     ValueRefreshWorker,
 )
-from hermes.core.memory import UnknownModuleError, parse_address, write_process_value
+from hermes.core.memory import (
+    UnknownModuleError,
+    parse_address,
+    parse_chain,
+    write_process_value,
+)
 from hermes.engines import base as engine_base
 from hermes.engines.registry import ENGINES, detect_engine, engine_by_id
 from hermes.features.catalog import (
@@ -346,6 +351,99 @@ class AddressInputDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Dialog: add a pointer chain by hand
+# ---------------------------------------------------------------------------
+class PointerChainDialog(QDialog):
+    # Dialogs expose behavior through Qt signals rather than public methods.
+    # pylint: disable=too-few-public-methods
+    """Dialog for putting a pointer chain on the address list by hand.
+
+    ``resolve(text)`` returns ``(PointerChain, address or None)`` for the
+    entered chain, the address being where it leads right now; it raises
+    ValueError (UnknownModuleError) for text that is no chain.
+    """
+
+    def __init__(self, resolve, value_type, parent=None, translations=None):
+        super().__init__(parent)
+        self.translations = translations or load_translations()
+        self.setWindowTitle(self.translations["pointer_dialog.title"])
+        self.setMinimumWidth(520)
+        self._resolve = resolve
+        # (description, chain, address or None, value type) once accepted
+        self.result_entry = None
+        self._build_ui(value_type)
+
+    def _build_ui(self, value_type):
+        t = self.translations
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        hint = QLabel(t["pointer_dialog.hint"])
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        form = QFormLayout()
+        self.chain_input = QLineEdit()
+        self.chain_input.setPlaceholderText(t["pointer_dialog.placeholder"])
+        self.chain_input.textChanged.connect(lambda _text: self._show_result())
+        form.addRow(t["pointer_dialog.chain"], self.chain_input)
+        self.type_combo = QComboBox()
+        for name in VALUE_TYPES:
+            self.type_combo.addItem(name, name)
+        self.type_combo.setCurrentIndex(max(self.type_combo.findData(value_type), 0))
+        form.addRow(t["address_table.type"], self.type_combo)
+        self.description_input = QLineEdit(t["address_table.new_address"])
+        form.addRow(t["address_table.description"], self.description_input)
+        layout.addLayout(form)
+
+        # Where the chain leads now, or why it is no chain
+        self.result_label = QLabel()
+        self.result_label.setWordWrap(True)
+        self.result_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.result_label)
+
+        layout.addLayout(dialog_button_row(t, "button.add", self._accept, self.reject))
+
+    def _check(self):
+        """``(chain, address)`` of the input, or None after showing why it is no chain."""
+        t = self.translations
+        try:
+            return self._resolve(self.chain_input.text())
+        except UnknownModuleError as error:
+            message = t["address_dialog.unknown_module"].format(module=error.module)
+        except ValueError as error:
+            message = str(error)
+        self.result_label.setStyleSheet(f"color: {theme_color('danger')};")
+        self.result_label.setText(message)
+        return None
+
+    def _show_result(self):
+        if not self.chain_input.text().strip():
+            self.result_label.setText("")
+            return
+        found = self._check()
+        if found is None:
+            return
+        chain, address = found
+        self.result_label.setStyleSheet(f"color: {theme_color('muted')};")
+        if address is None:
+            self.result_label.setText(
+                self.translations["pointer_dialog.unresolved"].format(chain=chain.text()))
+        else:
+            self.result_label.setText(self.translations["pointer_dialog.resolves"].format(
+                chain=chain.text(), address=f"0x{address:X}"))
+
+    def _accept(self):
+        found = self._check()
+        if found is None:
+            self.chain_input.setFocus()
+            return
+        chain, address = found
+        description = (self.description_input.text().strip()
+                       or self.translations["address_table.new_address"])
+        self.result_entry = (description, chain, address, self.type_combo.currentData())
+        self.accept()
+
+
+# ---------------------------------------------------------------------------
 # Main Window
 # ---------------------------------------------------------------------------
 class MainWindow(QMainWindow):
@@ -578,7 +676,7 @@ class MainWindow(QMainWindow):
         self.act_native_monitor.triggered.connect(lambda: self._monitor_native_function())
 
         self.act_code_explorer = view_menu.addAction(
-            material_icon("manage_search"), self.translations["menu.code_explorer"])
+            material_icon("find_in_page"), self.translations["menu.code_explorer"])
         self.act_code_explorer.setToolTip(self.translations["code.button_tooltip"])
         self.act_code_explorer.triggered.connect(self._open_code_explorer)
 
@@ -1233,11 +1331,14 @@ class MainWindow(QMainWindow):
 
         # Table toolbar
         ctrl = QHBoxLayout()
-        btn_add = QPushButton(self.translations["address_table.add"])
-        set_button_icon(btn_add, "add")
-        btn_add.setToolTip(self.translations["address_table.add_tooltip"])
-        btn_add.clicked.connect(self._add_address_by_hand)
-        ctrl.addWidget(btn_add)
+        for key, icon, handler in (("address_table.add", "add", self._add_address_by_hand),
+                                   ("address_table.add_chain", "link",
+                                    self._add_pointer_by_hand)):
+            button = QPushButton(self.translations[key])
+            set_button_icon(button, icon)
+            button.setToolTip(self.translations[f"{key}_tooltip"])
+            button.clicked.connect(handler)
+            ctrl.addWidget(button)
         self.btn_write_value = QPushButton(self.translations["address_table.write"])
         set_button_icon(self.btn_write_value, "edit")
         self.btn_write_value.clicked.connect(self._write_value)
@@ -3115,6 +3216,48 @@ class MainWindow(QMainWindow):
              "type": value_type, "value": ""},
             label,
         )
+
+    def _add_pointer_by_hand(self):
+        """Ask for a pointer chain and put it on the address list."""
+        if self._current_pid is None:
+            QMessageBox.warning(
+                self,
+                self.translations["warning.no_process_title"],
+                self.translations["warning.select_process"],
+            )
+            return
+        pid = self._current_pid
+
+        def resolve(text):
+            try:
+                mappings = read_mappings(pid)
+            except OSError:
+                mappings = []
+            chain = parse_chain(text, mappings)
+            try:
+                with ProcessMemory(pid) as memory:
+                    address = resolve_chain(memory, module_bases(mappings), chain)
+                    # A number taken for a pointer leads to memory that is not there
+                    if address is not None and not memory.read_available(address, 1):
+                        address = None
+            except OSError:
+                address = None
+            return chain, address
+
+        value_type = self.combo_type.currentData() if self.combo_type is not None else None
+        dialog = PointerChainDialog(resolve, value_type, self, self.translations)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.result_entry is None:
+            return
+        label, chain, address, value_type = dialog.result_entry
+        saved_id = None
+        if self._process_id is not None:
+            saved_id = self._store_address(
+                self._address_repository.add_address, self._process_id,
+                label=label, value_type=value_type, address=address or 0, pointer=chain,
+            )
+        self._add_address_row(label, address, value_type, "?", saved_id=saved_id,
+                              pointer=chain)
+        self._refresh_timer.start()
 
     def _add_inspected_address(self, entry):
         """Put a field of an object in the object inspector on the address list."""

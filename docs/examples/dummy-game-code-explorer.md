@@ -225,6 +225,9 @@ The game has no engine adapter, so Hermes runs the script on the game's main thr
 
 The script keeps working after **New game**: it calls the game's code instead of writing to an address, and the game's code always finds the current player.
 
+!!! example "Next: the way to the gold"
+    [A pointer chain from the code](dummy-game-pointer-chain.md) reads the chain `g_game → 0x28 → 0x0` from `add_gold`, puts the gold on the address list so it survives **New game**, and explains how to tell a step of a chain from an offset.
+
 ## What carries over to real games
 
 - A **text** the game shows or logs (a menu entry, a message, a console command) leads to the code using it. In a game without symbols the functions are called `sub_…`; the strings, the imports (`gtk_…`, `SDL_…`, `kernel32.dll!…`) and the callers still tell what they do.

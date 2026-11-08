@@ -25,5 +25,8 @@ From now on the tracked address resolves correctly after every restart, and hook
 
 If the address lies in the program's static memory, no pointer scan is needed; the dialog says so.
 
+!!! example "The chain from the code instead"
+    The code that uses a value often shows its chain, too: the [code explorer](code-explorer.md#pseudocode) writes it next to each line. The [pointer chain example](../examples/dummy-game-pointer-chain.md) reads the chain of the test game's gold from `add_gold` and enters it with **Pointer chain …** on the [address list](addresses.md#adding-addresses) – no scan needed.
+
 !!! tip "Fewer, shorter chains"
     Prefer short chains from the game's own module over long ones through system libraries. When several chains survive filtering, keep the one with the fewest levels; repeat the filter step after a level change if in doubt.

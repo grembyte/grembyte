@@ -1,7 +1,7 @@
 """The main window: scan results, value search and the tracked addresses."""
 
 from hermes.core.pointer import PointerChain
-from studio import scene, settle
+from studio import DEMO_NAME, scene, settle
 
 # A second scan in the test game: three addresses still hold the gold.
 _RESULTS = [
@@ -45,3 +45,31 @@ def main_window(studio):
     window._scan_area.parentWidget().setSizes([360, 300])  # pylint: disable=protected-access
     settle()
     return window
+
+
+@scene("pointer-chain-dialog",
+       description="Adding the gold of the test game by its pointer chain")
+def pointer_chain_dialog(studio):
+    """The dialog of Pointer chain … with the tutorial's gold chain entered."""
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.core.memory import parse_chain
+    from hermes.platform.linux import parse_maps
+    from hermes.ui.main_window import PointerChainDialog
+    from scenes_tools import _GAME_BASE, _GOLD
+
+    # The test game as mapped in the demo: dummy_game.exe at its demo base
+    mappings = parse_maps([f"{_GAME_BASE:x}-{_GAME_BASE + 0x5000:x} r-xp 00000000 08:01 1 "
+                           f"/opt/game/{DEMO_NAME}"], image_size=lambda _path: None)
+    gold = PointerChain(DEMO_NAME, 0x4040, (0x28, 0x0))
+
+    def resolve(text):
+        chain = parse_chain(text, mappings)
+        return chain, _GOLD if chain == gold else None
+
+    window = studio.show_attached()
+    dialog = studio.keep(PointerChainDialog(resolve, "int32", window, studio.translations))
+    dialog.chain_input.setText(f"{DEMO_NAME}+0x4040 -> 0x28 -> 0x0")
+    dialog.description_input.setText("Gold")
+    dialog.show()
+    settle()
+    return dialog
