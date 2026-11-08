@@ -29,15 +29,15 @@ Candidates can be marked with ★ as [favorites](tools.md#favorites) or handed t
 
 **Monitor native function …** logs the calls of one function: its arguments, the result and the caller. For pointer arguments it compares the memory behind them before and after the call, so you see what the function changed.
 
-| | Arguments | Result |
-| --- | --- | --- |
-| Linux, x86-64 | `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` | `rax` |
-| Windows and Wine/Proton, x86-64 | `rcx`, `rdx`, `r8`, `r9`, then the stack | `rax` |
-| 32-bit programs | the stack | `eax` |
+| | Arguments | Floating-point arguments | Result |
+| --- | --- | --- | --- |
+| Linux, x86-64 | `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` | `xmm0`–`xmm7` | `rax`, or `xmm0` |
+| Windows and Wine/Proton, x86-64 | `rcx`, `rdx`, `r8`, `r9`, then the stack | `xmm0`–`xmm3` | `rax`, or `xmm0` |
+| 32-bit programs | the stack | the stack | `eax` |
 
-On x86-64 the first argument of a C++ method is `this`, the object it runs on. Floating-point arguments and writes to memory that no argument points to are not visible.
+On x86-64 the first argument of a C++ method is `this`, the object it runs on. The xmm registers appear in a call's details with both readings, as `float` and as `double`: which one is meant, the signature tells (below). Writes to memory that no argument points to are not visible.
 
-For a function in a module whose file Hermes can read (x86-64), the column **Signature (guessed)** shows which arguments the function's code reads and what callers do with its result, as the [code explorer](code-explorer.md) guesses them: `void (int rdi)` for a function taking one `int` and returning nothing. With **Guessed signature** ticked, the log shows only those arguments, typed (`int rdi=23`), a `float` or `double` argument as not seen, and no result for a `void` function; unticked, it shows the raw argument registers and `rax`. The [example with the test game](../examples/dummy-game-code-explorer.md#4-what-add_gold-takes) explains how the guess is made and how to check it.
+For a function in a module whose file Hermes can read (x86-64), the column **Signature (guessed)** shows which arguments the function's code reads and what callers do with its result, as the [code explorer](code-explorer.md) guesses them: `void (int rdi)` for a function taking one `int` and returning nothing. With **Guessed signature** ticked, the log shows only those arguments, typed (`int rdi=23`, `float xmm0=1.5`), a `float` or `double` result read from `xmm0`, and no result for a `void` function; unticked, it shows the raw argument registers and `rax`. The [example with the test game](../examples/dummy-game-code-explorer.md#4-what-add_gold-takes) explains how the guess is made and how to check it.
 
 <figure markdown="span">
   ![Native monitor](../assets/screenshots/native-monitor-dark.webp#only-dark)

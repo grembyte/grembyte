@@ -13,6 +13,9 @@ const REGISTERS = Process.arch === 'x64'
   ? ['rax', 'rbx', 'rcx', 'rdx', 'rsi', 'rdi', 'rbp', 'rsp',
      'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15']
   : ['eax', 'ebx', 'ecx', 'edx', 'esi', 'edi', 'ebp', 'esp'];
+// The xmm registers floating point arguments arrive in (x86-64: System V
+// passes eight, Windows four); 32-bit code passes them on the stack.
+const VECTORS = Process.arch === 'x64' ? (WINDOWS ? 4 : 8) : 0;
 
 const monitors = new Map();   // id -> monitor
 let pending = [];
@@ -22,6 +25,22 @@ let reportedCalls = -1;       // calls of all monitors at the last flush
 
 function isPointer(value) {
   return value.compare(MIN_POINTER) >= 0 && value.compare(MAX_POINTER) < 0;
+}
+
+function vectorBytes(context, index) {
+  // The low 8 bytes of xmm<index> as hex: a float in the first 4, a double in all 8.
+  const bytes = new Uint8Array(context[`xmm${index}`], 0, 8);
+  let text = '';
+  for (const byte of bytes)
+    text += byte.toString(16).padStart(2, '0');
+  return text;
+}
+
+function vectors(context) {
+  const list = [];
+  for (let i = 0; i < VECTORS; i++)
+    list.push(vectorBytes(context, i));
+  return list;
 }
 
 function readRegion(address, size) {
@@ -163,7 +182,8 @@ function probe(monitor) {
         const register = ptr(context[name].toString());
         return [name, value(register, isPointer(register)
           ? readRegion(register, MAX_STRING + 1) : null)];
-      })
+      }),
+      vectors: vectors(context)
     });
   });
 }
@@ -185,7 +205,7 @@ function attach(monitor) {
           ? readRegion(argument, monitor.dump) : null);
       }
       this.call = { values, regions, time: now, thread: this.threadId, depth: this.depth,
-                    caller: this.returnAddress };
+                    caller: this.returnAddress, vectors: vectors(this.context) };
     },
     onLeave(retval) {
       const call = this.call;
@@ -201,6 +221,8 @@ function attach(monitor) {
         depth: call.depth,
         args: call.values.map((argument, i) => value(argument, call.regions[i])),
         result: value(result, isPointer(result) ? readRegion(result, MAX_STRING + 1) : null),
+        vectors: call.vectors,
+        vectorResult: VECTORS > 0 ? vectorBytes(this.context, 0) : null,
         caller: call.caller.toString(),
         changes: found.list,
         moreChanges: found.more

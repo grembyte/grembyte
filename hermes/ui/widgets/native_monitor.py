@@ -31,8 +31,10 @@ from hermes.features.native_monitor import (
     NativeMonitorWorker,
     argument_name,
     change_numbers,
+    float_text,
     parse_location,
     signed,
+    vector_numbers,
 )
 from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import DocsHint, SelectableText
@@ -91,7 +93,11 @@ def value_text(value):
 
 
 def typed_text(value, kind):
-    """A register value as the argument type of a guessed signature reads it."""
+    """A register value as the argument type of a guessed signature reads it:
+    a general register's {"value"}, or an xmm register's {"vector"} bytes."""
+    if "vector" in value:
+        single, double = vector_numbers(value["vector"])
+        return float_text(single if kind == "float" else double)
     number = int(value["value"], 16)
     if kind == "uint8":
         return str(number & 0xff)
@@ -105,14 +111,21 @@ def typed_text(value, kind):
 def signature_values(signature, call, platform, arch):
     """(name, type, value or None, used) per argument of ``signature``, and
     the result's (type, value or None): the registers of ``call`` the
-    arguments arrive in. None: not seen (an xmm register) or not captured."""
+    arguments arrive in. None: not captured (more arguments than the monitor
+    reads, or an xmm register of a call logged without them)."""
     captured = {argument_name(index, platform, arch): value
                 for index, value in enumerate(call.get("args", []))}
-    arguments = [(parameter.register, parameter.type,
-                  None if parameter.register.startswith("xmm")
-                  else captured.get(parameter.register), parameter.used)
-                 for parameter in signature.parameters]
-    result = None if signature.returns in ("void", "float", "double") else call.get("result")
+    for index, vector in enumerate(call.get("vectors") or []):
+        captured[f"xmm{index}"] = {"vector": vector}
+    arguments = [(parameter.register, parameter.type, captured.get(parameter.register),
+                  parameter.used) for parameter in signature.parameters]
+    if signature.returns == "void":
+        result = None
+    elif signature.returns in ("float", "double"):
+        vector = call.get("vectorResult")
+        result = {"vector": vector} if vector else None
+    else:
+        result = call.get("result")
     return arguments, (signature.returns, result)
 
 
@@ -703,6 +716,7 @@ class NativeMonitorDialog(QDialog):
             table.setItem(row, _V_VALUE, _item(value["value"], pointer))
             table.setItem(row, _V_NUMBER, _item(str(signed(value["value"]))))
             table.setItem(row, _V_MEANING, _item(meaning, tooltip=meaning))
+        self._fill_vectors(call)
         if "registers" in call:
             return
         row = table.rowCount()
@@ -715,6 +729,24 @@ class NativeMonitorDialog(QDialog):
                                               call.get("callerWhere")) if text)
         table.setItem(row, _V_MEANING, _item(caller, tooltip=caller))
 
+    def _fill_vectors(self, call):
+        """Rows for the xmm registers of a call: the low bytes as float and as double."""
+        table = self.values_table
+        vectors = list(enumerate(call.get("vectors") or []))
+        if call.get("vectorResult"):
+            vectors.append((None, call["vectorResult"]))
+        for index, vector in vectors:
+            single, double = vector_numbers(vector)
+            name = f"xmm{index}" if index is not None else \
+                f"{self.translations['monitor.column_result']} (xmm0)"
+            row = table.rowCount()
+            table.insertRow(row)
+            table.setItem(row, _V_NAME, _item(name))
+            table.setItem(row, _V_VALUE, _item(vector))
+            table.setItem(row, _V_NUMBER, _item(
+                f"float {float_text(single)} · double {float_text(double)}"))
+            table.setItem(row, _V_MEANING, _item(""))
+
     def _fill_typed_values(self, signature, call, platform, arch):
         """The values table by a guessed signature: its arguments, typed, and the result."""
         table = self.values_table
@@ -724,24 +756,22 @@ class NativeMonitorDialog(QDialog):
             label = f"{name} ({kind})" if used else \
                 f"{name} ({kind}, {self.translations['native_monitor.unused']})"
             if value is None:
-                missing = "native_monitor.not_seen" if name.startswith("xmm") \
-                    else "native_monitor.not_captured"
-                rows.append((label, None, self.translations[missing]))
+                rows.append((label, None, self.translations["native_monitor.not_captured"]))
             else:
                 rows.append((label, value, typed_text(value, kind)))
         result_label = f"{self.translations['monitor.column_result']} ({returns})"
         if returns == "void":
             rows.append((result_label, None, "—"))
         elif result is None:
-            rows.append((result_label, None, self.translations["native_monitor.not_seen"]))
+            rows.append((result_label, None, self.translations["native_monitor.not_captured"]))
         else:
             rows.append((result_label, result, typed_text(result, returns)))
         for label, value, number in rows:
             row = table.rowCount()
             table.insertRow(row)
             table.setItem(row, _V_NAME, _item(label))
-            if value is None:
-                table.setItem(row, _V_VALUE, _item(""))
+            if value is None or "vector" in value:
+                table.setItem(row, _V_VALUE, _item("" if value is None else value["vector"]))
                 table.setItem(row, _V_NUMBER, _item(number))
                 table.setItem(row, _V_MEANING, _item(""))
                 continue

@@ -46,6 +46,14 @@ __attribute__((noinline)) void rename_hero(struct Hero *self, const char *name) 
     strncpy(self->name, name, sizeof self->name - 1);
 }
 
+/* Floating point arguments and result arrive in xmm registers */
+static float speed = 1.0f;
+
+__attribute__((noinline)) float set_speed(float factor, double bonus) {
+    speed = factor * 2.0f + (float)bonus;
+    return speed;
+}
+
 int main(void) {
     printf("%d 0\n", getpid());
     fflush(stdout);
@@ -56,6 +64,8 @@ int main(void) {
             roll_abilities(&hero, value);
         else if (strcmp(cmd, "rename") == 0)
             rename_hero(&hero, value ? "Minsc" : "Boo");
+        else if (strcmp(cmd, "speed") == 0)
+            hero.level = (int)set_speed(value / 2.0f, 0.25);
         printf("%d 0\n", hero.strength);
         fflush(stdout);
     }
@@ -233,6 +243,43 @@ def test_native_monitor_window_shows_calls_and_changed_fields(tmp_path, qt_app, 
         assert dialog.log.data(dialog.log.index(1, 2)) == "rename_hero"
         dialog.changes_check.setChecked(True)
         assert dialog.log.rowCount() == 2  # both changed the hero
+    finally:
+        dialog.close()
+        target.close()
+
+
+@requires_target
+def test_native_monitor_shows_float_arguments_and_results(tmp_path, qt_app, translations):
+    # pylint: disable=import-outside-toplevel
+    from hermes.ui.widgets.native_monitor import NativeMonitorDialog
+
+    target = _Target(_build(tmp_path))
+    dialog = NativeMonitorDialog(translations, target.pid)
+    try:
+        dialog.location_input.setText("set_speed")
+        dialog.add_button.click()
+        _wait_for(qt_app, lambda: dialog.functions_table.item(0, 5) is not None
+                  and dialog.functions_table.item(0, 5).text()
+                  not in ("", translations["native_monitor.signature_guessing"]))
+        assert dialog.functions_table.item(0, 5).text() == "float (float xmm0, double xmm1)"
+        target.send("speed", 3)  # set_speed(1.5f, 0.25) returns 3.25f
+        _wait_for(qt_app, lambda: dialog.log.rowCount() == 1)
+        assert dialog.log.data(dialog.log.index(0, 3)) == "float xmm0=1.5, double xmm1=0.25"
+        assert dialog.log.data(dialog.log.index(0, 4)) == "3.25"
+        dialog.log_view.selectRow(0)
+        table = dialog.values_table
+        rows = [(table.item(row, 0).text(), table.item(row, 2).text())
+                for row in range(table.rowCount())]
+        assert rows[:3] == [("xmm0 (float)", "1.5"), ("xmm1 (double)", "0.25"),
+                            (f"{translations['monitor.column_result']} (float)", "3.25")]
+
+        # Raw: the xmm registers with both readings, after the general ones
+        dialog.signature_check.setChecked(False)
+        dialog.log_view.selectRow(0)
+        rows = {table.item(row, 0).text(): table.item(row, 2).text()
+                for row in range(table.rowCount())}
+        assert rows["xmm0"].startswith("float 1.5 · double ")
+        assert rows["xmm1"].endswith("double 0.25")
     finally:
         dialog.close()
         target.close()

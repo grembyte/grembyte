@@ -635,7 +635,6 @@
   "native_monitor.use_signature": "Guessed signature",
   "native_monitor.use_signature_tooltip": "Show only the arguments the function's code reads, typed, and no result for a void function. Unticked: the raw argument registers and rax.",
   "native_monitor.unused": "unused",
-  "native_monitor.not_seen": "not seen (an xmm register)",
   "native_monitor.not_captured": "not captured: raise “Arguments” and add the function again",
   "code.button_tooltip": "Strings, references and functions of a module of the game, read from its file: from a text the game shows to the code using it",
   "code.title": "Code explorer",

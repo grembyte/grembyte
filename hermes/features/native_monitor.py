@@ -6,8 +6,10 @@ interceptor on the function's first instruction reports every call with
 
 - its first arguments, as the platform's calling convention passes them
   (x86-64 Linux: rdi, rsi, rdx, rcx, r8, r9; Windows/Wine: rcx, rdx, r8, r9,
-  then the stack). Floating point arguments (xmm registers) are not seen;
-- the return value (rax);
+  then the stack), and the low 8 bytes of the xmm registers floating point
+  arguments arrive in (``vectors``: xmm0-xmm7 on Linux, xmm0-xmm3 on
+  Windows, as hex; a float is the first 4 bytes, a double all 8);
+- the return value (rax, and xmm0 as ``vectorResult`` for a float or double);
 - the caller (the return address);
 - what changed in memory: for every argument that points to readable
   memory, ``dump`` bytes there are copied when the call begins and compared
@@ -37,6 +39,7 @@ game: the agent refuses hooks whose patched bytes would overlap.
 """
 
 import re
+import struct
 
 import frida
 from PySide6.QtCore import Signal  # pylint: disable=import-error,no-name-in-module
@@ -74,6 +77,19 @@ _REGISTERS = {
     "windows": ("rcx", "rdx", "r8", "r9"),
     "linux": ("rdi", "rsi", "rdx", "rcx", "r8", "r9"),
 }
+
+
+def vector_numbers(hex_text):
+    """(float, double) of the low 8 bytes of an xmm register (see ``vectors``)."""
+    raw = bytes.fromhex(hex_text)
+    return struct.unpack("<f", raw[:4])[0], struct.unpack("<d", raw[:8])[0]
+
+
+def float_text(number):
+    """A float or double as a log shows it: short, without needless digits."""
+    if number != number or number in (float("inf"), float("-inf")):
+        return str(number)
+    return f"{number:.7g}"
 
 
 def argument_name(index, platform, arch="x64"):

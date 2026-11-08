@@ -635,7 +635,6 @@
   "native_monitor.use_signature": "Geschätzte Signatur",
   "native_monitor.use_signature_tooltip": "Nur die Argumente zeigen, die der Code der Funktion liest, mit Typ, und bei einer void-Funktion kein Ergebnis. Abgewählt: die rohen Argument-Register und rax.",
   "native_monitor.unused": "unbenutzt",
-  "native_monitor.not_seen": "nicht sichtbar (ein xmm-Register)",
   "native_monitor.not_captured": "nicht erfasst: „Argumente“ erhöhen und die Funktion neu hinzufügen",
   "code.button_tooltip": "Strings, Verweise und Funktionen eines Moduls des Spiels, aus seiner Datei gelesen: von einem Text des Spiels zum Code, der ihn verwendet",
   "code.title": "Code-Explorer",

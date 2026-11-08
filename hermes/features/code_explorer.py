@@ -558,8 +558,10 @@ def _register(instruction, register_id):
 
 
 def _vector_type(mnemonic):
-    """float or double, from an SSE instruction's name."""
-    if mnemonic.endswith(("ss", "ps")) or "ss2" in mnemonic or "ps2" in mnemonic:
+    """float or double, from an SSE instruction's name: a conversion reads
+    the type before the 2 (cvtsd2ss reads a double), others the one they end in."""
+    source = mnemonic.split("2", 1)[0] if "2" in mnemonic else mnemonic
+    if source.endswith(("ss", "ps")):
         return "float"
     return "double"
 

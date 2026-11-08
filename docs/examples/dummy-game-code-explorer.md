@@ -121,7 +121,7 @@ So `add_gold` is `void add_gold(int amount)`, in a script `n.fn(at, "void", ["in
 
 ### Hermes guesses it too
 
-The code explorer does this reading for every function it opens: the line above the disassembly says *Guessed from the code: void add_gold(int rdi)*. The [native function monitor](../guide/native-tools.md#native-function-monitor) uses the same guess: its column **Signature (guessed)** reads `void (int rdi)`, the log shows `int rdi=23` instead of four registers, and the result `—` instead of whatever `rax` happens to hold. **Copy script** writes the guess into the `n.fn` line (step 5).
+The code explorer does this reading for every function it opens: the line above the disassembly says *Guessed from the code: void add_gold(int rdi)*. The [native function monitor](../guide/native-tools.md#native-function-monitor) uses the same guess: its column **Signature (guessed)** reads `void (int rdi)`, the log shows `int rdi=23` instead of four registers, and the result `—` instead of whatever `rax` happens to hold. For `change_mana` (**Cast spell**, and every second while the mana regenerates) it reads `void (float xmm0)`, and the log shows the amount: `float xmm0=-7.5`, or `0.13`. **Copy script** writes the guess into the `n.fn` line (step 5).
 
 It is a guess from the code in address order, so the ways above to check it still matter: a function that only passes an argument on to another one (a tail call) shows fewer arguments than it takes, and one that callers reach only through a pointer (like `on_treasure`, a GTK callback) gets its return type from its own code, marked with `?`. Untick **Guessed signature** in the monitor to see the raw registers again.
 
