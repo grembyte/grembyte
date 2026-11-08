@@ -205,5 +205,5 @@ That is why a value a function needs after a call sits in `rbx` or `r12`–`r15`
 
 ## Further reading
 
-- [x86 and amd64 instruction reference](https://www.felixcloutier.com/x86/): every instruction with its exact effect, from Intel's manuals.
+- [Intel 64 and IA-32 Architectures Software Developer's Manual](https://intel.github.io/SDM/sdm.html): Intel's own reference, with every instruction and its exact effect.
 - [Compiler Explorer](https://godbolt.org/): type C or C++ and see the assembly a compiler makes of it; the best way to learn what code looks like.
