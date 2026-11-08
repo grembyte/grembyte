@@ -20,7 +20,7 @@ The game runs noticeably slower while it is followed.
   <figcaption>Candidates after a baseline and a scenario, with how often each ran.</figcaption>
 </figure>
 
-Candidates can be marked with ★ as [favorites](tools.md#favorites) or handed to the monitor. A function found this way can be called from a [script](scripts.md#scripts-in-native-games) through `ctx.native`.
+Candidates can be marked with ★ as [favorites](tools.md#favorites) or handed to the monitor. A function found this way can be called from a [script](scripts.md#scripts-in-native-games) through `ctx.native`. The [code explorer](code-explorer.md) shows what it does and who calls it.
 
 !!! warning
     Stalker rewrites the code of the traced threads while it runs. Hermes asks before it starts, since this can slow down or, rarely, crash a game.
@@ -36,6 +36,8 @@ Candidates can be marked with ★ as [favorites](tools.md#favorites) or handed t
 | 32-bit programs | the stack | `eax` |
 
 On x86-64 the first argument of a C++ method is `this`, the object it runs on. Floating-point arguments and writes to memory that no argument points to are not visible.
+
+For a function in a module whose file Hermes can read (x86-64), the column **Signature (guessed)** shows which arguments the function's code reads and what callers do with its result, as the [code explorer](code-explorer.md) guesses them: `void (int rdi)` for a function taking one `int` and returning nothing. With **Guessed signature** ticked, the log shows only those arguments, typed (`int rdi=23`), a `float` or `double` argument as not seen, and no result for a `void` function; unticked, it shows the raw argument registers and `rax`. The [example with the test game](../examples/dummy-game-code-explorer.md#4-what-add_gold-takes) explains how the guess is made and how to check it.
 
 <figure markdown="span">
   ![Native monitor](../assets/screenshots/native-monitor-dark.webp#only-dark)

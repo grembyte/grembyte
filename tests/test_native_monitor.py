@@ -193,6 +193,21 @@ def test_native_monitor_window_shows_calls_and_changed_fields(tmp_path, qt_app, 
         _wait_for(qt_app, lambda: dialog.log.rowCount() == 1)
         assert dialog.functions_table.item(0, 2).text() == "1"
         assert dialog.log.data(dialog.log.index(0, 2)) == "roll_abilities"
+        # The signature guessed from the code: the hero and the seed; main
+        # ignores the result, so the guess is void
+        _wait_for(qt_app, lambda: dialog.functions_table.item(0, 5).text()
+                  not in ("", translations["native_monitor.signature_guessing"]))
+        assert dialog.functions_table.item(0, 5).text() == "void (pointer rdi, int rsi)"
+        assert dialog.log.data(dialog.log.index(0, 3)).startswith("pointer rdi=0x")
+        assert dialog.log.data(dialog.log.index(0, 3)).endswith(', int rsi=15')
+        assert dialog.log.data(dialog.log.index(0, 4)) == "—"
+        dialog.log_view.selectRow(0)
+        assert dialog.values_table.item(0, 0).text() == "rdi (pointer)"
+        assert dialog.values_table.item(1, 2).text() == "15"
+        assert dialog.values_table.item(2, 2).text() == "—"
+
+        # The raw registers, as before the guess
+        dialog.signature_check.setChecked(False)
         assert 'rdi=0x' in dialog.log.data(dialog.log.index(0, 3))
         assert 'rsi=15' in dialog.log.data(dialog.log.index(0, 3))
         assert dialog.log.data(dialog.log.index(0, 4)) == "31"
@@ -310,6 +325,7 @@ def test_window_offers_the_function_around_an_instruction(tmp_path, qt_app, tran
         return item.text() if item is not None else ""
 
     try:
+        dialog.signature_check.setChecked(False)  # the raw result
         # Where the function starts: a probe there, removed again
         dialog.kind_combo.setCurrentIndex(2)  # a single instruction
         dialog.location_input.setText("rename_hero")

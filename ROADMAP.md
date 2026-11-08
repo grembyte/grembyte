@@ -50,8 +50,10 @@ usually lie next to it.
 
 ### 4. Entry points through strings, RTTI and symbols
 
-- **String references:** find texts such as "Not enough gold" or "GoldAmount" in memory,
-  then the code locations that refer to them. That often yields the right function directly.
+- **String references:** done for the files of native modules (the
+  [code explorer](docs/guide/code-explorer.md)): strings, the instructions and pointers
+  referring to them, functions and callers. Open: strings only present at run time (built or
+  decrypted in memory), and Mono/IL2CPP metadata strings.
 - **C++ RTTI:** type names (MSVC `.?AV…@@`, Itanium `typeinfo`) lead to vtables, i.e. to
   class names for objects in memory. An address then becomes "`CPlayerStats`+0x48".
 - **Symbols:** native Linux games are often not fully stripped. The native trace and monitor
@@ -70,7 +72,8 @@ addresses cannot yet. Open for native scripts:
 
 - A frame function of the script's own choosing, for games that export none of the known ones
   (SDL linked in statically, only `IDXGISwapChain::Present` through its vtable).
-- Building the pattern for a function from the native trace or monitor, instead of by hand.
+- Building the pattern for a function found by the native trace or monitor in one click (the
+  code explorer has it; the trace and monitor windows could open it there).
 - Only tried in Underkeep (own engine, SDL3, under Proton) and a test program so far.
 
 ### 6. Register hooks at any code address

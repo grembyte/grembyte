@@ -98,6 +98,7 @@ from hermes.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
 from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog
 from hermes.ui.widgets.method_call import MethodCallDialog
 from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+from hermes.ui.widgets.code_explorer import CodeExplorerDialog
 from hermes.ui.widgets.native_monitor import NativeMonitorDialog
 from hermes.ui.widgets.native_trace import NativeTraceDialog
 from hermes.ui.widgets.trace import TraceDialog
@@ -399,6 +400,7 @@ class MainWindow(QMainWindow):
         self._trace_dialog = None
         self._native_trace_dialog = None
         self._native_monitor = None
+        self._code_explorer = None
         self._sessions_dialog = None
         self._log_dialog = None
         # The engine adapter of the attached game, once its runtime is found.
@@ -574,6 +576,11 @@ class MainWindow(QMainWindow):
         self.act_native_monitor = view_menu.addAction(
             material_icon("monitor_heart"), self.translations["menu.native_monitor"])
         self.act_native_monitor.triggered.connect(lambda: self._monitor_native_function())
+
+        self.act_code_explorer = view_menu.addAction(
+            material_icon("manage_search"), self.translations["menu.code_explorer"])
+        self.act_code_explorer.setToolTip(self.translations["code.button_tooltip"])
+        self.act_code_explorer.triggered.connect(self._open_code_explorer)
 
         view_menu.addSeparator()
 
@@ -1794,6 +1801,24 @@ class MainWindow(QMainWindow):
         trace.raise_()
         trace.activateWindow()
 
+    def _open_code_explorer(self):
+        """Show the strings, references and functions of a module of the game.
+
+        It reads the module's file, not the game: no native tools risk, and it
+        also works without a process (Open file …).
+        """
+        explorer = self._code_explorer
+        if explorer is None:
+            explorer = CodeExplorerDialog(self.translations, self._current_pid, parent=self)
+            explorer.memory_requested.connect(self._open_memory_viewer)
+            explorer.monitor_requested.connect(self._monitor_native_address)
+            explorer.finished.connect(lambda _result: setattr(self, "_code_explorer", None))
+            explorer.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._code_explorer = explorer
+        explorer.show()
+        explorer.raise_()
+        explorer.activateWindow()
+
     def _open_gas_attributes(self):
         """Show the player's GAS attributes (Unreal games); one window at a time."""
         dialog = self._gas_dialog
@@ -1971,7 +1996,7 @@ class MainWindow(QMainWindow):
     def _close_catalog(self):
         """Close the catalog, the traces and the method monitor (process gone or switched)."""
         for name in ("_assemblies_dialog", "_catalog", "_trace_dialog", "_native_trace_dialog",
-                     "_method_monitor", "_native_monitor", "_method_call"):
+                     "_method_monitor", "_native_monitor", "_method_call", "_code_explorer"):
             dialog = getattr(self, name)
             if dialog is not None:
                 dialog.close()

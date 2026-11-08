@@ -67,6 +67,14 @@ It runs on **Linux**, including Windows games under **Wine and Proton**, and on 
 
     [:octicons-arrow-right-24: Scripts](guide/scripts.md)
 
+-   :material-file-search-outline:{ .lg .middle } **Explore native code**
+
+    ---
+
+    From a text the game shows to the code using it: strings, references, functions and callers of any executable, and byte patterns that still find the code after an update.
+
+    [:octicons-arrow-right-24: Code explorer](guide/code-explorer.md)
+
 </div>
 
 ## Where to start

@@ -8,8 +8,11 @@ workers would signal, with data in the format they emit.
 
 import json
 import struct
+import subprocess
+import tempfile
 import time
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
@@ -361,6 +364,25 @@ def _monitor_calls():
     return calls
 
 
+class _SignatureWorkerStub(QObject):
+    """Stands in for the monitor's SignatureWorker: the scene sets the signatures."""
+
+    found = Signal(int, object)
+    finished = Signal()
+
+    def __init__(self, *_args, **_kwargs):
+        super().__init__()
+
+    def start(self):
+        self.finished.emit()
+
+    def isRunning(self):  # pylint: disable=invalid-name
+        return False
+
+    def wait(self, _milliseconds=None):
+        return True
+
+
 @scene("native-monitor", size=(1180, 820),
        description="Native function monitor: calls with arguments, result, caller and changes")
 def native_monitor(studio):
@@ -369,14 +391,26 @@ def native_monitor(studio):
     from hermes.features.native_trace import NativeFunction
     from hermes.ui.widgets import native_monitor as module
 
+    from hermes.features.code_explorer import Parameter, Signature
+
     with _Patched(module, NativeMonitorWorker=_AgentWorkerStub,
                   is_wine_process=lambda _pid: False):
         dialog = module.NativeMonitorDialog(studio.translations, DEMO_PID)
     studio.keep(dialog)
-    for monitor_id, (offset, name) in ((1, (0x1b10, "spend_gold")), (2, (0x1a40, "buy_item"))):
-        dialog.add_function(NativeFunction(_GAME_BASE + offset, DEMO_NAME, offset, name))
-        dialog._on_added(monitor_id, {"address": _offset(offset), "kind": "function",
-                                      "where": f"{DEMO_NAME}+{offset:#x}", "symbol": name})
+    # The demo game has no file to guess from: its signatures as the code explorer gives them
+    signatures = {
+        1: Signature("sysv", (Parameter("rdi", "pointer"), Parameter("rsi", "int"),
+                              Parameter("rdx", "pointer")), "int"),
+        2: Signature("sysv", (Parameter("rdi", "pointer"), Parameter("rsi", "int"),
+                              Parameter("rdx", "int")), "uint8"),
+    }
+    with _Patched(module, SignatureWorker=_SignatureWorkerStub):
+        for monitor_id, (offset, name) in ((1, (0x1b10, "spend_gold")),
+                                           (2, (0x1a40, "buy_item"))):
+            dialog.add_function(NativeFunction(_GAME_BASE + offset, DEMO_NAME, offset, name))
+            dialog._on_added(monitor_id, {"address": _offset(offset), "kind": "function",
+                                          "where": f"{DEMO_NAME}+{offset:#x}", "symbol": name})
+            dialog._on_signature(monitor_id, signatures[monitor_id])
     dialog._on_calls(_monitor_calls(), {1: {"calls": 3, "skipped": 0},
                                         2: {"calls": 3, "skipped": 0}})
     dialog.functions_table.selectRow(0)
@@ -385,6 +419,66 @@ def native_monitor(studio):
     # Room for both monitored functions, and for the changed bytes' columns
     dialog.functions_table.parentWidget().parentWidget().setSizes([170, 300, 250])
     dialog.changes_table.parentWidget().parentWidget().setSizes([400, 700])
+    settle()
+    return dialog
+
+
+# --------------------------------------------------------------------------
+# Code explorer
+# --------------------------------------------------------------------------
+_DUMMY_BINARY = None
+
+
+def _dummy_game_binary():
+    """test_app/dummy_game.c built as the tutorial builds it, once per run.
+
+    Without position-independent code, as GCC on Fedora builds it, so the
+    addresses match the example page (docs/examples/dummy-game-code-explorer.md).
+    Needs gcc and the GTK 3 development files.
+    """
+    global _DUMMY_BINARY  # pylint: disable=global-statement
+    if _DUMMY_BINARY is None:
+        root = Path(__file__).resolve().parents[2]
+        folder = Path(tempfile.mkdtemp(prefix="hermes-dummy-game-"))
+        binary = folder / DEMO_NAME
+        flags = subprocess.run(["pkg-config", "--cflags", "--libs", "gtk+-3.0"], check=True,
+                               capture_output=True, text=True).stdout.split()
+        subprocess.run(["gcc", "-O2", "-fno-pie", "-no-pie",
+                        str(root / "test_app" / "dummy_game.c"), "-o", str(binary), *flags],
+                       check=True)
+        _DUMMY_BINARY = binary
+    return _DUMMY_BINARY
+
+
+@scene("code-explorer", size=(1280, 820),
+       description="Code explorer: a button's text, the handler it is connected to, its calls")
+def code_explorer(studio):
+    """The test game: "treasure" among the strings, on_treasure open with its
+    call of add_gold selected, and the instruction that hands on_treasure to GTK."""
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.features.code_explorer import CodeIndex, load_image
+    from hermes.ui.widgets import code_explorer as module
+
+    path = _dummy_game_binary()
+    dialog = module.CodeExplorerDialog(studio.translations)
+    studio.keep(dialog)
+    index = CodeIndex(load_image(str(path)))
+    choice = module.ModuleChoice(DEMO_NAME, str(path), index.image.base, program=True)
+    dialog.modules = [choice]
+    dialog.module_combo.clear()
+    dialog.module_combo.addItem(choice.name, choice)
+    dialog.module = choice
+    dialog._on_built(index)
+
+    names = {name: address for address, name in index.image.names.items()}
+    dialog.string_filter.setText("treasure")
+    dialog.string_view.selectRow(0)
+    handler = names["on_treasure"]
+    call = next(line.address for line in index.disassemble(index.function_starting(handler))
+                if line.comment == "add_gold")
+    dialog._show_function(handler, call)
+    dialog._show_references(handler)
+    dialog.ref_view.selectRow(0)
     settle()
     return dialog
 

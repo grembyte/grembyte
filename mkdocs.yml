@@ -96,6 +96,7 @@ nav:
       - Hook templates: guide/templates.md
       - Scripts: guide/scripts.md
       - Native trace and monitor: guide/native-tools.md
+      - Code explorer: guide/code-explorer.md
       - Memory, sessions and logs: guide/tools.md
       - Settings and themes: guide/settings.md
       - Saving, export and import: guide/data.md
@@ -109,6 +110,7 @@ nav:
       - Scans and pointer scan: examples/hermesquest-scans.md
       - Hooks: examples/hermesquest-hooks.md
       - Scripts: examples/hermesquest-scripts.md
+      - Code explorer (test game): examples/dummy-game-code-explorer.md
       - JavaScript in Hermes: examples/javascript.md
   - Wine and Proton: wine-proton.md
   - Reference:

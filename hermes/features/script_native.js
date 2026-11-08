@@ -20,7 +20,10 @@ const NATIVE_FRAME_FUNCTIONS = [
   'SDL_PollEvent', 'SDL_PumpEvents', 'SDL_GL_SwapWindow',
   'glfwPollEvents', 'glfwSwapBuffers',
   'PeekMessageW', 'PeekMessageA', 'SwapBuffers', 'wglSwapBuffers',
-  'glXSwapBuffers', 'eglSwapBuffers', 'vkQueuePresentKHR'
+  'glXSwapBuffers', 'eglSwapBuffers', 'vkQueuePresentKHR',
+  // GTK and other GLib programs: returns after each event, at least every
+  // time a timer fires
+  'g_main_context_iteration'
 ];
 // How long a job may wait for the game thread (ms)
 const NATIVE_MAIN_TIMEOUT = 3000;

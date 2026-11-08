@@ -1,6 +1,6 @@
 """Window of the native function monitor: monitored functions and their calls."""
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QThread, Signal  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 
 from hermes.platform import is_wine_process
+from hermes.features.code_explorer import index_for, module_at
 from hermes.features.native_monitor import (
     AUTO,
     DEFAULT_ARGUMENTS,
@@ -49,11 +50,11 @@ _SMALL = 0x10000
 _TOP = 0x800000000000
 
 # Columns of the monitored functions, the call log, the values and the changes.
-_F_FUNCTION, _F_LOCATION, _F_CALLS, _F_SKIPPED, _F_STATUS = range(5)
+_F_FUNCTION, _F_LOCATION, _F_CALLS, _F_SKIPPED, _F_STATUS, _F_SIGNATURE = range(6)
 _FUNCTION_COLUMNS = (
     "native_monitor.column_function", "native_monitor.column_location",
     "native_monitor.column_calls", "native_monitor.column_skipped",
-    "native_monitor.column_status",
+    "native_monitor.column_status", "native_monitor.column_signature",
 )
 _C_TIME, _C_THREAD, _C_FUNCTION, _C_ARGS, _C_RESULT, _C_CALLER, _C_CHANGES = range(7)
 _CALL_COLUMNS = (
@@ -89,6 +90,32 @@ def value_text(value):
     return text
 
 
+def typed_text(value, kind):
+    """A register value as the argument type of a guessed signature reads it."""
+    number = int(value["value"], 16)
+    if kind == "uint8":
+        return str(number & 0xff)
+    if kind in ("int", "int16"):
+        bits = 32 if kind == "int" else 16
+        number &= (1 << bits) - 1
+        return str(number - (1 << bits) if number >> (bits - 1) else number)
+    return value_text(value)
+
+
+def signature_values(signature, call, platform, arch):
+    """(name, type, value or None, used) per argument of ``signature``, and
+    the result's (type, value or None): the registers of ``call`` the
+    arguments arrive in. None: not seen (an xmm register) or not captured."""
+    captured = {argument_name(index, platform, arch): value
+                for index, value in enumerate(call.get("args", []))}
+    arguments = [(parameter.register, parameter.type,
+                  None if parameter.register.startswith("xmm")
+                  else captured.get(parameter.register), parameter.used)
+                 for parameter in signature.parameters]
+    result = None if signature.returns in ("void", "float", "double") else call.get("result")
+    return arguments, (signature.returns, result)
+
+
 def registers_text(call):
     """The registers of an instruction pass that point somewhere or hold small numbers."""
     return ", ".join(f"{name}={value_text(value)}" for name, value in call["registers"])
@@ -113,6 +140,9 @@ class NativeCallModel(QAbstractTableModel):
         self.names = {}
         self.platform = None
         self.arch = None
+        # monitor id -> Signature guessed from the code; shown while use_signatures
+        self.signatures = {}
+        self.use_signatures = True
 
     def rowCount(self, parent=QModelIndex()):  # pylint: disable=invalid-name
         return 0 if parent.isValid() else len(self.calls)
@@ -125,9 +155,20 @@ class NativeCallModel(QAbstractTableModel):
             return self.translations[_CALL_COLUMNS[section]]
         return None
 
+    def signature_of(self, call):
+        if not self.use_signatures or "registers" in call:
+            return None
+        return self.signatures.get(call.get("monitorId"))
+
     def arguments_text(self, call):
         if "registers" in call:
             return registers_text(call)
+        signature = self.signature_of(call)
+        if signature is not None:
+            arguments, _result = signature_values(signature, call, self.platform, self.arch)
+            return ", ".join(
+                f"{kind} {name}=" + ("?" if value is None else typed_text(value, kind))
+                for name, kind, value, used in arguments if used)
         return ", ".join(f"{argument_name(index, self.platform, self.arch)}={value_text(value)}"
                          for index, value in enumerate(call.get("args", [])))
 
@@ -148,6 +189,12 @@ class NativeCallModel(QAbstractTableModel):
         if "registers" in call:
             return "—" if column in (_C_RESULT, _C_CHANGES) else ""
         if column == _C_RESULT:
+            signature = self.signature_of(call)
+            if signature is not None:
+                kind, value = signature_values(signature, call, self.platform, self.arch)[1]
+                if kind == "void":
+                    return "—"
+                return "?" if value is None else typed_text(value, kind)
             return value_text(call["result"])
         if column == _C_CALLER:
             return caller_text(call)
@@ -203,6 +250,27 @@ def _item(text, address=None, tooltip=None):
     if tooltip:
         item.setToolTip(tooltip)
     return item
+
+
+class SignatureWorker(QThread):
+    """Guess a monitored function's signature from its module's file (see
+    CodeIndex.signature); indexing a large module takes seconds the first time."""
+
+    found = Signal(int, object)  # monitor id, Signature or None
+
+    def __init__(self, pid, monitor_id, address, parent=None):
+        super().__init__(parent)
+        self.pid, self.monitor_id, self.address = pid, monitor_id, address
+
+    def run(self):
+        signature = None
+        try:
+            choice, file_address = module_at(self.pid, self.address)
+            if choice is not None:
+                signature = index_for(choice.path).signature(file_address)
+        except (OSError, ValueError, MemoryError):
+            signature = None
+        self.found.emit(self.monitor_id, signature)
 
 
 class NativeMonitorDialog(QDialog):
@@ -321,6 +389,11 @@ class NativeMonitorDialog(QDialog):
         self.changes_check.setToolTip(t["native_monitor.changes_only_tooltip"])
         self.changes_check.toggled.connect(lambda _checked: self._show_calls())
         log_bar.addWidget(self.changes_check)
+        self.signature_check = QCheckBox(t["native_monitor.use_signature"])
+        self.signature_check.setToolTip(t["native_monitor.use_signature_tooltip"])
+        self.signature_check.setChecked(True)
+        self.signature_check.toggled.connect(self._use_signatures)
+        log_bar.addWidget(self.signature_check)
         self.pause_button = QPushButton(t["monitor.pause"])
         set_button_icon(self.pause_button, "pause")
         self.pause_button.setCheckable(True)
@@ -440,7 +513,7 @@ class NativeMonitorDialog(QDialog):
         row = self.functions_table.rowCount()
         self.functions_table.insertRow(row)
         self.functions_table.setItem(row, _F_FUNCTION, _item(label, tooltip=tooltip))
-        for column in (_F_LOCATION, _F_CALLS, _F_SKIPPED):
+        for column in (_F_LOCATION, _F_CALLS, _F_SKIPPED, _F_SIGNATURE):
             self.functions_table.setItem(row, column, _item(""))
         self.functions_table.setItem(row, _F_STATUS, _item(
             self.translations["native_monitor.status_adding"]))
@@ -482,11 +555,38 @@ class NativeMonitorDialog(QDialog):
         self.functions_table.item(row, _F_STATUS).setText(
             self.translations[f"native_monitor.status_{kind}"])
         self.status_label.setText("")
+        if kind == FUNCTION and info.get("address"):
+            self.functions_table.item(row, _F_SIGNATURE).setText(
+                self.translations["native_monitor.signature_guessing"])
+            worker = SignatureWorker(self.pid, monitor_id, int(info["address"], 16))
+            worker.found.connect(self._on_signature)
+            keep_until_finished(worker)
+            worker.start()
         if info.get("function"):
             state["function"] = (info["function"], info["functionName"])
             self.status_label.setText(self.translations["native_monitor.inside_function"].format(
                 function=info["functionName"]))
         self._update_buttons()
+
+    def _on_signature(self, monitor_id, signature):
+        row = self._row_of(monitor_id)
+        if row is None:
+            return
+        item = self.functions_table.item(row, _F_SIGNATURE)
+        if signature is None:
+            item.setText(self.translations["native_monitor.signature_unknown"])
+            return
+        self.log.signatures[monitor_id] = signature
+        text = signature.text()
+        item.setText(text)
+        item.setToolTip(self.translations["native_monitor.signature_tooltip"].format(
+            signature=signature.text(self._monitors[monitor_id]["label"])))
+        self._show_calls()
+
+    def _use_signatures(self, checked):
+        self.log.use_signatures = checked
+        self._show_calls()
+        self._show_call(self.log_view.currentIndex())
 
     def _on_add_failed(self, monitor_id, message):
         row = self._row_of(monitor_id)
@@ -583,6 +683,10 @@ class NativeMonitorDialog(QDialog):
         if call is None:
             return
         platform, arch = self._worker.platform, self._worker.arch
+        signature = self.log.signature_of(call)
+        if signature is not None:
+            self._fill_typed_values(signature, call, platform, arch)
+            return
         if "registers" in call:
             rows = [tuple(register) for register in call["registers"]]
         else:
@@ -601,6 +705,52 @@ class NativeMonitorDialog(QDialog):
             table.setItem(row, _V_MEANING, _item(meaning, tooltip=meaning))
         if "registers" in call:
             return
+        row = table.rowCount()
+        table.insertRow(row)
+        table.setItem(row, _V_NAME, _item(self.translations["monitor.column_caller"]))
+        table.setItem(row, _V_VALUE, _item(call.get("caller", ""),
+                                           int(call.get("caller", "0x0"), 16)))
+        table.setItem(row, _V_NUMBER, _item(""))
+        caller = " · ".join(text for text in (call.get("callerSymbol"),
+                                              call.get("callerWhere")) if text)
+        table.setItem(row, _V_MEANING, _item(caller, tooltip=caller))
+
+    def _fill_typed_values(self, signature, call, platform, arch):
+        """The values table by a guessed signature: its arguments, typed, and the result."""
+        table = self.values_table
+        arguments, (returns, result) = signature_values(signature, call, platform, arch)
+        rows = []
+        for name, kind, value, used in arguments:
+            label = f"{name} ({kind})" if used else \
+                f"{name} ({kind}, {self.translations['native_monitor.unused']})"
+            if value is None:
+                missing = "native_monitor.not_seen" if name.startswith("xmm") \
+                    else "native_monitor.not_captured"
+                rows.append((label, None, self.translations[missing]))
+            else:
+                rows.append((label, value, typed_text(value, kind)))
+        result_label = f"{self.translations['monitor.column_result']} ({returns})"
+        if returns == "void":
+            rows.append((result_label, None, "—"))
+        elif result is None:
+            rows.append((result_label, None, self.translations["native_monitor.not_seen"]))
+        else:
+            rows.append((result_label, result, typed_text(result, returns)))
+        for label, value, number in rows:
+            row = table.rowCount()
+            table.insertRow(row)
+            table.setItem(row, _V_NAME, _item(label))
+            if value is None:
+                table.setItem(row, _V_VALUE, _item(""))
+                table.setItem(row, _V_NUMBER, _item(number))
+                table.setItem(row, _V_MEANING, _item(""))
+                continue
+            raw = int(value["value"], 16)
+            meaning = (f'"{value["text"]}"' if value.get("text") else value.get("where", ""))
+            table.setItem(row, _V_VALUE, _item(value["value"], raw if _SMALL <= raw < _TOP
+                                               else None))
+            table.setItem(row, _V_NUMBER, _item(number))
+            table.setItem(row, _V_MEANING, _item(meaning, tooltip=meaning))
         row = table.rowCount()
         table.insertRow(row)
         table.setItem(row, _V_NAME, _item(self.translations["monitor.column_caller"]))
