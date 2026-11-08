@@ -4,6 +4,9 @@ Hermes Hook is a desktop application for inspecting and changing the memory of r
 
 It runs on **Linux**, including Windows games under **Wine and Proton**, and on **Windows**. For Unity (Mono and IL2CPP) and Unreal Engine games it also understands the game's own classes and methods.
 
+!!! info "Alpha stage"
+    Hermes Hook is still in an early alpha stage. Features, the user interface and the format of saved game data can still change between releases, and some games or setups may not work yet. Bug reports and game reports are welcome on [GitHub](https://github.com/winterhafen/hermes-hook/issues).
+
 <figure markdown="span">
   ![Hermes Hook main window with scan results and tracked addresses](assets/screenshots/main-window-dark.webp#only-dark)
   ![Hermes Hook main window with scan results and tracked addresses](assets/screenshots/main-window-light.webp#only-light)
@@ -13,7 +16,7 @@ It runs on **Linux**, including Windows games under **Wine and Proton**, and on 
 !!! warning "Single-player only"
     This tool is intended solely for educational, research and single-player game modding purposes. It is not designed or intended to bypass anti-cheat mechanisms or to be used in online multiplayer games. The developer assumes no responsibility or liability for any account bans, suspensions or damages resulting from the use or misuse of this software.
 
-    Restoring memory modifications that a game removed can be detected by anti-tamper systems (such as Arxan) and, when used online, will inevitably result in account bans or soft bans. Use it at your own risk.
+    Restoring memory modifications that a game removed can be detected by anti-tamper systems (such as Arxan) and, when used online, carries a considerable risk of account bans or soft bans. Use it at your own risk.
 
 ## What it does
 

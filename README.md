@@ -8,7 +8,7 @@ Hermes Hook is a desktop application for inspecting and manipulating the memory 
 
 This tool is intended solely for educational, research, and single-player game modding purposes. It is not designed or intended to bypass anti-cheat mechanisms or be used in online multiplayer games. The developer assumes no responsibility or liability for any account bans, suspensions, or damages resulting from the use or misuse of this software.
 
-Use of the feature for restoring memory modifications may be detected by anti-tamper systems (such as Arxan) and, when used online, will inevitably result in account bans or soft bans. Use it at your own risk.
+Use of the feature for restoring memory modifications may be detected by anti-tamper systems (such as Arxan) and, when used online, carries a considerable risk of account bans or soft bans. Use it at your own risk.
 
 ## Features
 

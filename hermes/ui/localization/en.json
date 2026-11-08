@@ -156,7 +156,7 @@
   "settings.hook_short_jump_tooltip": "When a write sits in a tiny function with less than 5 bytes before the next one, the hook jumps with 2 bytes to int3 padding nearby and from there to its code. The padding is found by a heuristic; if it guesses wrong, the game crashes. Applies to hooks installed afterwards.",
   "settings.hook_repatch": "Hooks: patch hooks the game removed again",
   "settings.hook_repatch_tooltip": "Some games with anti-tamper protection check their code and restore changed places; the hook then stops applying. Hermes checks every second whether the jump to the hook is still there and, with this setting, patches it again once the original code is back. Writes in the up to one second until then are not manipulated. Applies to all hooks right away.",
-  "settings.hook_repatch_warning": "‼ Warning: Anti-tamper systems such as Arxan can detect re-patching. Online use will inevitably result in account bans or soft bans. Use at your own risk.",
+  "settings.hook_repatch_warning": "‼ Warning: Anti-tamper systems such as Arxan can detect re-patching. Online use carries a considerable risk of account bans or soft bans. Use at your own risk.",
   "settings.hook_profiling": "Hooks: measure their cost",
   "settings.hook_profiling_tooltip": "Measures every write at a hooked site: calls per second, how many the hooks skip (e.g. enemies), how long the game thread waits for the hook agent and how long its code runs. Shown in the tooltip of the \"Applied\" column and in hermes.log. Costs about 1 µs per call itself. Applies right away.",
   "settings.trace_sequence": "Trace: entries in the sequence",

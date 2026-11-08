@@ -104,14 +104,74 @@ This fetches the latest changes. If they changed the dependencies, running `pyth
 - Python 3.11 or newer, with `venv` and `pip`
 - On Linux a graphical session with X11 or Wayland
 
-On Debian or Ubuntu, Python and the tools come from the distribution if needed:
+The Python dependencies, PySide6 (Qt) among them, are installed with `pip` from `pyproject.toml` into the virtual environment; Qt itself comes with PySide6. What has to come from the system is Python and, on Linux, a few X11/XCB libraries that Qt's `xcb` platform plugin loads. Desktop installations usually have most of them, but `libxcb-cursor` is often missing, and Qt 6 needs it for the `xcb` plugin.
 
-```bash
-sudo apt update
-sudo apt install python3 python3-venv python3-pip
-```
+### System packages on Linux
 
-The Python dependencies, PySide6 among them, are installed with `pip` from `pyproject.toml`. If Qt reports a missing platform plugin at start, add the distribution's Qt/XCB runtime packages.
+=== "Debian, Ubuntu, Linux Mint"
+
+    ```bash
+    sudo apt update
+    sudo apt install python3 python3-venv python3-pip
+    sudo apt install libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+        libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xkb1 \
+        libegl1 libgl1 libfontconfig1 libdbus-1-3
+    ```
+
+=== "Fedora"
+
+    ```bash
+    sudo dnf install python3 python3-pip
+    sudo dnf install xcb-util-cursor xcb-util-wm xcb-util-image xcb-util-keysyms \
+        xcb-util-renderutil libxkbcommon-x11 mesa-libEGL mesa-libGL fontconfig dbus-libs
+    ```
+
+=== "Arch, Manjaro"
+
+    ```bash
+    sudo pacman -S --needed python python-pip
+    sudo pacman -S --needed xcb-util-cursor xcb-util-wm xcb-util-image xcb-util-keysyms \
+        xcb-util-renderutil libxkbcommon-x11 libglvnd fontconfig dbus
+    ```
+
+=== "openSUSE"
+
+    ```bash
+    sudo zypper install python3 python3-pip
+    sudo zypper install libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+        libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xkb1 \
+        libEGL1 libGL1 fontconfig libdbus-1-3
+    ```
+
+    On Leap the default `python3` can be older than 3.11; install a newer one, e.g. `python311`, and create the virtual environment with `python3.11 -m venv .venv`.
+
+On a Wayland session Qt uses its `wayland` plugin, whose libraries every Wayland desktop already has. The XCB packages are still worth installing: Qt falls back to `xcb` (through XWayland) when the Wayland plugin cannot start. If Hermes still does not start, see [Troubleshooting](#troubleshooting).
+
+On Windows nothing besides Python is needed: install it from <https://www.python.org/downloads/windows/> (tick *Add python.exe to PATH*) or with `winget install --id Python.Python.3.13 -e`.
+
+### Supported platforms
+
+**Tested**: Hermes Hook is developed on these systems, and every release is tried on them:
+
+| System | Version | Notes |
+| --- | --- | --- |
+| Fedora Linux | 44 | KDE Plasma on Wayland, Python 3.14; native games and Windows games under Wine/Proton |
+| Windows | 11 26H2 | |
+
+**Expected to work, not tested**: these meet the requirements above, but nobody checks them regularly. Problems specific to them may go unnoticed until someone reports them:
+
+| System | Version | Notes |
+| --- | --- | --- |
+| Debian | 12 and newer | Python 3.11 from the distribution |
+| Ubuntu, Linux Mint | Ubuntu 24.04 / Mint 22 and newer | Ubuntu 22.04 ships Python 3.10, which is too old |
+| Arch Linux, Manjaro | current | |
+| openSUSE | Tumbleweed; Leap with Python 3.11 or newer | |
+| Other Linux distributions | | with Python 3.11+ and the libraries above |
+| Windows | 10 22H2 | |
+
+**Not supported**: macOS, 32-bit systems and ARM computers (Hermes reads x86 and x86-64 code).
+
+If Hermes runs on a system that is not tested, or does not, a [bug report](https://github.com/winterhafen/hermes-hook/issues) or a short note helps.
 
 ## Install
 
@@ -187,3 +247,75 @@ HERMES_LANGUAGE=de hermes
 At the first start Hermes creates its SQLite database, where it keeps addresses, hooks, templates, scripts and settings per game. [Files and environment](../reference/files.md) lists where it lives and how to move it.
 
 On Linux, continue with the [permissions](permissions.md) Hermes needs to read another process's memory.
+
+## Troubleshooting
+
+### A Python module is missing
+
+```text
+ModuleNotFoundError: No module named 'PySide6'
+```
+
+(or `frida`, `capstone`, `sqlalchemy`, `hermes`, …) almost always means that Python runs outside the virtual environment, or that the install step did not finish.
+
+1. Check which Python runs. With the environment activated, the path must end in the project's `.venv`:
+
+    ```bash
+    python -c "import sys; print(sys.prefix)"
+    ```
+
+    If it does not, activate it (`source .venv/bin/activate`, on Windows `.venv\Scripts\activate`) or start Hermes with `./.venv/bin/python -m hermes`. The menu entry and the shortcut use `.venv` by themselves.
+
+2. Install again and read the end of the output; an error there names the package that failed:
+
+    ```bash
+    python -m pip install -e .
+    ```
+
+3. Check the dependencies:
+
+    ```bash
+    python -m pip check
+    python -c "import PySide6, frida, capstone, psutil, numpy, sqlalchemy; print('ok')"
+    ```
+
+A failed `pip install` usually comes from a Python that is too old (`python --version`, at least 3.11) or a version so new that a package has no prebuilt wheel for it yet. Then create the environment with an older Python, e.g. `python3.13 -m venv .venv`, after deleting the old `.venv`. After moving the project directory, also delete `.venv` and install again: a virtual environment does not survive being moved.
+
+### Qt cannot load a platform plugin
+
+```text
+qt.qpa.plugin: From 6.5.0, xcb-cursor0 or libxcb-cursor0 is needed to load the Qt xcb platform plugin.
+qt.qpa.plugin: Could not load the Qt platform plugin "xcb" in "" even though it was found.
+This application failed to start because no Qt platform plugin could be initialized.
+```
+
+The plugin is there, but a system library it needs is missing. Install the [system packages](#system-packages-on-linux) for your distribution first. If that does not help:
+
+1. Let Qt report what fails:
+
+    ```bash
+    QT_DEBUG_PLUGINS=1 hermes
+    ```
+
+    The output names the plugin and the library that could not be loaded (`Cannot load library …: libxcb-cursor.so.0: cannot open shared object file`).
+
+2. List every library of the `xcb` plugin that is not found:
+
+    ```bash
+    ldd .venv/lib/python3*/site-packages/PySide6/Qt/plugins/platforms/libqxcb.so | grep "not found"
+    ```
+
+    Search your package manager for the missing file name, e.g. `dnf provides '*/libxcb-cursor.so.0'`, `apt-file search libxcb-cursor.so.0` or `pacman -F libxcb-cursor.so.0`.
+
+3. Try the other platform plugin. On Wayland, `wayland` and `xcb` are both possible:
+
+    ```bash
+    QT_QPA_PLATFORM=wayland hermes
+    QT_QPA_PLATFORM=xcb hermes
+    ```
+
+    Remove a `QT_QPA_PLATFORM` set in your shell profile or environment that names a plugin your session does not have.
+
+A message `Could not find the Qt platform plugin "…" in ""` (*find*, not *load*) means that PySide6 itself is incomplete: install it again with `python -m pip install --force-reinstall PySide6-Essentials`.
+
+If neither helps, open a [bug report](https://github.com/winterhafen/hermes-hook/issues) with the output of `QT_DEBUG_PLUGINS=1 hermes`, your distribution and its version.

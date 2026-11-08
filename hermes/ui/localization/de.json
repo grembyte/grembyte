@@ -156,7 +156,7 @@
   "settings.hook_short_jump_tooltip": "Liegt ein Schreibbefehl in einer winzigen Funktion mit weniger als 5 Bytes bis zur nächsten, springt der Hook mit 2 Bytes zu int3-Füllbytes in der Nähe und von dort zu seinem Code. Die Füllbytes werden per Heuristik gefunden; liegt sie falsch, stürzt das Spiel ab. Gilt für danach installierte Hooks.",
   "settings.hook_repatch": "Hooks: vom Spiel entfernte Hooks neu setzen",
   "settings.hook_repatch_tooltip": "Manche Spiele mit Kopierschutz prüfen ihren Code und stellen veränderte Stellen wieder her; der Hook greift dann nicht mehr. Hermes prüft jede Sekunde, ob der Sprung zum Hook noch da ist, und setzt ihn mit dieser Einstellung neu, sobald der Originalcode zurück ist. Bis dahin vergehen bis zu einer Sekunde, in der Schreibzugriffe nicht manipuliert werden. Gilt sofort für alle Hooks.",
-  "settings.hook_repatch_warning": "‼ Achtung: Anti-Tamper-Systeme wie Arxan können das erneute Setzen erkennen. Bei Online-Nutzung kommt es unweigerlich zu Kontosperren oder Softbans. Nur auf eigene Gefahr verwenden.",
+  "settings.hook_repatch_warning": "‼ Achtung: Anti-Tamper-Systeme wie Arxan können das erneute Setzen erkennen. Bei Online-Nutzung besteht ein erhebliches Risiko von Kontosperren oder Softbans. Nur auf eigene Gefahr verwenden.",
   "settings.hook_profiling": "Hooks: Laufzeit messen",
   "settings.hook_profiling_tooltip": "Misst jeden Schreibzugriff an einer Hook-Stelle: Aufrufe pro Sekunde, wie viele die Hooks überspringen (z. B. Gegner), wie lange der Spiel-Thread auf den Hook-Agent wartet und wie lange dessen Code läuft. Steht im Tooltip der Spalte „Anwendungen“ und in hermes.log. Kostet selbst etwa 1 µs pro Aufruf. Gilt sofort.",
   "settings.trace_sequence": "Trace: Einträge in der Reihenfolge",

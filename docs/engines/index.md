@@ -4,9 +4,11 @@ Memory scans, the write watch, hooks and the native tools work with any game. Fo
 
 Hermes recognises the engine when it attaches; the status bar names it.
 
-## What each engine offers
+## Hermes tools per engine
 
-| Tool | Unity (Mono) | Unity (IL2CPP) | Unreal Engine |
+Which of Hermes Hook's engine tools are available for games built on each engine. The table is about Hermes, not about the features of the engines themselves.
+
+| Hermes tool | Unity (Mono) | Unity (IL2CPP) | Unreal Engine |
 | --- | :---: | :---: | :---: |
 | [Catalog](#catalog) of classes and methods | :material-check: | :material-check: | :material-check: |
 | [Assemblies / packages](#assemblies) | :material-check: | :material-check: | :material-check: |

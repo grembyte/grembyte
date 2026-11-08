@@ -35,16 +35,6 @@ A string is not always loaded by the code directly. Tables of names (commands, s
 | **Monitor** | Logs the calls of the function, or the runs of the selected instruction, in the [native function monitor](native-tools.md#native-function-monitor). Needs the game attached. |
 | **Memory** | Shows what the selected instruction refers to in the [memory viewer](tools.md). Needs the game attached. |
 
-## Example: why a debug menu does nothing
-
-Underkeep has a hidden debug menu whose buttons have no effect. In the explorer:
-
-1. The string `heal party` (the button's label) has one reference, in the function building the menu. Next to the label that function loads a second string, `heal_party`.
-2. `heal_party` has a second reference: a function registering console commands, each name with a handler.
-3. The handler's first instruction calls a function that only loads `"This command is available only in debug mode."` and returns false: the release build switches the commands off there.
-
-**Copy script** on that function gives the pattern a script needs to find it in every version of the game that leaves it alone; the script then makes it return true.
-
 ## Limits
 
 - Functions come from the executable's exception directory (64-bit PE), its symbols (ELF), its exports and the targets of calls; names from its symbols, exports and imports. Code reached only through tables of addresses may show no function; **Go to** still finds its references.
