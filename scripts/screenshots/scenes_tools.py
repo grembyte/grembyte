@@ -17,6 +17,8 @@ from types import SimpleNamespace
 
 from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
 
+from hermes import __version__
+
 from studio import DEMO_NAME, DEMO_PID, scene, settle
 
 # The test game as Linux maps it: the program, then its heap with the gold.
@@ -624,7 +626,7 @@ def _activity_entries():
     day = datetime.now().strftime("%Y-%m-%d")
     entries = [
         ("21:02:41.118", "app_started", {
-            "pid": 30412, "hermes": "0.5.0", "python": "3.13.7", "frida": "17.24.3",
+            "pid": 30412, "hermes": __version__, "python": "3.13.7", "frida": "17.24.3",
             "qt": "6.9.2", "pyside": "6.9.2", "system": "Fedora Linux 44",
             "kernel": "6.17.4-300.fc44.x86_64", "machine": "x86_64", "session": "wayland",
             "desktop": "KDE", "argv": []}),
