@@ -656,6 +656,8 @@
   "code.goto_placeholder": "Adresse, Modul+0x… oder Symbol",
   "code.goto_tooltip": "Code öffnet seine Funktion, Daten zeigen, wer auf sie verweist. Adressen der Datei (z. B. 0x140257270) oder des Moduls im Spiel.",
   "code.goto_unknown": "„{text}“ ist keine Adresse, kein Modul-Offset und kein Symbol dieses Moduls",
+  "code.goto_managed": "„{text}“ ist eine Methode aus verwaltetem Code (C#): Mono übersetzt sie erst, während das Spiel läuft, in Speicher, der zu keiner Datei gehört. Der Code-Explorer kann sie deshalb nicht zeigen, der Katalog, das Fenster „Aufrufe“ (aus ihrem IL-Code) und der Methoden-Monitor schon.",
+  "code.goto_outside": "{text} liegt in keiner Datei dieses Moduls: Code, der erst zur Laufzeit übersetzt wird (eine C#-Methode in Mono-Spielen), der Heap oder ein anderes Modul. Das passende Modul wählen, oder für C#-Code Katalog und Methoden-Monitor nutzen.",
   "code.strings": "Strings",
   "code.functions": "Funktionen",
   "code.string_filter": "Strings nach Wörtern filtern …",

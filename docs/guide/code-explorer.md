@@ -78,4 +78,5 @@ A string is not always loaded by the code directly. Tables of names (commands, s
 
 - Functions come from the executable's exception directory (64-bit PE), its symbols (ELF), its exports and the targets of calls; names from its symbols, exports and imports. Code reached only through tables of addresses may show no function; **Go to** still finds its references.
 - The disassembly is a linear sweep: data inside the code section (jump tables) shows as odd instructions.
+- Code a runtime compiles while the game runs is in no file and not in the explorer: the C# methods of Mono games (the write watch names them, e.g. `Scripts:GivePlayerMoney+0x61`), scripts of other virtual machines. For C# use the [catalog, the calls and the method monitor](../engines/unity-mono.md); IL2CPP games compile C# ahead of time into `GameAssembly`, which the explorer does read.
 - Packed or encrypted executables (some copy protections) hold no readable code in their file.

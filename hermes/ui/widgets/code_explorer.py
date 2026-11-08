@@ -545,8 +545,14 @@ class CodeExplorerDialog(QDialog):
         address = parse_location(self.goto_input.text(), self.index.image, self.module.base,
                                  self.module.name)
         if address is None:
-            self.status_label.setText(self.translations["code.goto_unknown"].format(
-                text=self.goto_input.text().strip()))
+            text = self.goto_input.text().strip()
+            if ":" in text and not text.lower().startswith("0x"):
+                key = "code.goto_managed"  # Class:Method, as the watch names JIT code
+            elif re.fullmatch(r"0x[0-9a-fA-F]+|[0-9a-fA-F]{6,}", text):
+                key = "code.goto_outside"
+            else:
+                key = "code.goto_unknown"
+            self.status_label.setText(self.translations[key].format(text=text))
             return
         self._navigate(address)
 

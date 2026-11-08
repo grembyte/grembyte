@@ -23,6 +23,11 @@ const mono = (() => {
     // Cooperative: these may take Mono's locks or run a garbage collection,
     // so they must not hold the agent's lock that game threads wait for.
     const blocking = (name, ret, args) => new NativeFunction(address(name), ret, args);
+    // Game code: its exceptions go to the process's handlers, where Mono turns
+    // a null access into a NullReferenceException and a write watch takes its
+    // trap (Frida's default would abort the call with "breakpoint triggered")
+    const gameCode = (name, ret, args) =>
+      new NativeFunction(address(name), ret, args, { exceptions: 'propagate' });
     const free = module.findExportByName('mono_free');
     return {
       module,
@@ -94,7 +99,7 @@ const mono = (() => {
       invoke: optional(() => ({
         methodFromName: exported('mono_class_get_method_from_name', 'pointer',
           ['pointer', 'pointer', 'int']),
-        runtimeInvoke: blocking('mono_runtime_invoke', 'pointer',
+        runtimeInvoke: gameCode('mono_runtime_invoke', 'pointer',
           ['pointer', 'pointer', 'pointer', 'pointer']),
         // Unity runs its script methods through it: a way onto its main thread.
         runtimeInvokeAddress: address('mono_runtime_invoke'),

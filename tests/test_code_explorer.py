@@ -207,6 +207,14 @@ def test_the_window_leads_from_a_string_to_its_function_and_back(tmp_path, qt_ap
         assert f"(counter, game+0x{counter - dialog.index.image.base:x})" in \
             dialog.refs_label.text()
 
+        # A C# method as the write watch names JIT code, and an address outside the file
+        dialog.goto_input.setText("Scripts:GivePlayerMoney+0x61")
+        dialog._goto()
+        assert "managed code (C#)" in dialog.status_label.text()
+        dialog.goto_input.setText("0x7f3a1c2044b0")
+        dialog._goto()
+        assert "lies in no file of this module" in dialog.status_label.text()
+
         dialog.string_filter.setText("marker debug")
         assert dialog.string_model.rowCount() == 1
         dialog._string_activated(dialog.string_model.index(0, 0))

@@ -656,6 +656,8 @@
   "code.goto_placeholder": "Address, module+0x… or symbol",
   "code.goto_tooltip": "Code opens its function, data shows who refers to it. Addresses are the file's (e.g. 0x140257270) or the module's in the game.",
   "code.goto_unknown": "\"{text}\" is no address, module offset or symbol of this module",
+  "code.goto_managed": "\"{text}\" is a method of managed code (C#): Mono compiles it while the game runs, into memory that belongs to no file, so the code explorer cannot show it. The catalog, the window Calls (from its IL code) and the method monitor can.",
+  "code.goto_outside": "{text} lies in no file of this module: code compiled while the game runs (a C# method in Mono games), the heap or another module. Choose its module, or use the catalog and the method monitor for C# code.",
   "code.strings": "Strings",
   "code.functions": "Functions",
   "code.string_filter": "Filter strings by words …",
