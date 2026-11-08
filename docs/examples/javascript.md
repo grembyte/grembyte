@@ -80,6 +80,8 @@ ctx.log(`${enemy.Name} has ${enemy.Stats.Health.toFixed(1)} health`);
 // Goblin has 7.5 health
 ```
 
+To test, take apart or clean up texts – names with a running number, numbers in a label – use [regular expressions](../reference/regex.md): `obj.name.replace(/_\d+$/, "")`.
+
 ### True and false
 
 Comparisons give `true` or `false`:

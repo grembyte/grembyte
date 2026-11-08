@@ -2,6 +2,9 @@
 
 This example uses the [code explorer](../guide/code-explorer.md) on the small test game of the [tutorial](../getting-started/first-hook.md), `test_app/dummy_game.c`. It goes from a button's text to the function that pays out gold, and ends with a native script that gives 500 gold through that function. It takes about ten minutes and needs no knowledge of assembly beyond reading along.
 
+!!! tip "Reading assembly"
+    The [assembly quick reference](../reference/assembly.md) explains registers, operands and the instructions this page shows, and how to read a function line by line – `add_gold` and `on_treasure` included.
+
 The test game is a native C program without an engine, like a game with an engine of its own. Hermes has no catalog of classes for it: the way in is its machine code.
 
 ## Build and start the game
@@ -101,7 +104,7 @@ Select the first line of `add_gold` and click **Monitor**. The [native function 
 
 ## 4. What add_gold takes
 
-To call a function from a script, `ctx.native.fn` needs its return type and argument types. A game without debug information states them nowhere; they are read from the machine code. That works well, because the calling convention fixes where arguments arrive:
+To call a function from a script, `ctx.native.fn` needs its return type and argument types. (Registers, their 32- and 8-bit names and the instructions below are explained in the [assembly quick reference](../reference/assembly.md).) A game without debug information states them nowhere; they are read from the machine code. That works well, because the calling convention fixes where arguments arrive:
 
 | | Linux (System V, x86-64) | Windows and Wine/Proton (x64) |
 | --- | --- | --- |

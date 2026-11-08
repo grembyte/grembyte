@@ -117,6 +117,8 @@ nav:
       - Files and environment: reference/files.md
       - Hook context (ctx): reference/hook-context.md
       - Script context (ctx): reference/script-context.md
+      - Assembly (x86-64): reference/assembly.md
+      - Regular expressions: reference/regex.md
   - Development:
       - development/index.md
       - Architecture: development/architecture.md

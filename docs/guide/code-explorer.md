@@ -15,7 +15,7 @@ It is the static counterpart of the [native trace and monitor](native-tools.md):
 
 ## From a string to the code
 
-Most ways into unknown code start with a text: a menu entry, a message, a log line, a console command.
+Most ways into unknown code start with a text: a menu entry, a message, a log line, a console command. New to assembly? The [assembly quick reference](../reference/assembly.md) explains what the disassembly shows.
 
 1. Choose the **module**. The game's executable comes first, then the modules in its folder. Indexing a large executable takes a few seconds; the window keeps the result while Hermes runs.
 2. Type words of the text into the filter of the **Strings** tab and select the string. The references list shows every instruction that loads its address, with the function it is in.
