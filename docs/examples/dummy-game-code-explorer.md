@@ -41,6 +41,12 @@ Further down, the same function connects every button to its handler. The commen
 0x400a5b  call 0x400450                 g_signal_connect_data
 ```
 
+<figure markdown="span">
+  ![The string <code>Find treasure (+20-30 gold)</code> has one reference, in <code>on_activate</code>](../assets/screenshots/example-code-button-dark.webp#only-dark)
+  ![The string <code>Find treasure (+20-30 gold)</code> has one reference, in <code>on_activate</code>](../assets/screenshots/example-code-button-light.webp#only-light)
+  <figcaption>The string <code>Find treasure (+20-30 gold)</code> has one reference, in <code>on_activate</code>. Further down in that function, <code>on_treasure</code> is handed to <code>g_signal_connect_data</code> for <code>"clicked"</code>.</figcaption>
+</figure>
+
 "When *clicked*, call `on_treasure`." The names come from the program's symbols and imports; in a stripped game the handler would read `sub_400c40`, which leads to the same place.
 
 ## 2. What the handler does
@@ -53,6 +59,12 @@ Double-click the line with `on_treasure`. The function is short:
 0x400c69  call 0x4006d0                 add_gold
 0x400c72  jmp 0x4007b0                  refresh_ui
 ```
+
+<figure markdown="span">
+  ![<code>on_treasure</code> calls <code>rand</code>, then <code>add_gold</code> with the result, then <code>refresh_ui</code>](../assets/screenshots/code-explorer-dark.webp#only-dark)
+  ![<code>on_treasure</code> calls <code>rand</code>, then <code>add_gold</code> with the result, then <code>refresh_ui</code>](../assets/screenshots/code-explorer-light.webp#only-light)
+  <figcaption><code>on_treasure</code> calls <code>rand</code>, then <code>add_gold</code> with the result, then <code>refresh_ui</code>. Above it, the instruction in <code>on_activate</code> that refers to it.</figcaption>
+</figure>
 
 It rolls a random number, calls `add_gold` with it and refreshes the window. Double-click the `add_gold` line:
 
@@ -67,12 +79,25 @@ Four instructions, and they are the pointer chain of the tutorial: read the glob
 
 **Callers** lists two calls of `add_gold`: from `on_treasure` and from `on_gold_add` (the **Gold +100** button). **Back** returns to the previous function.
 
+<figure markdown="span">
+  ![<code>add_gold</code> in the <strong>Functions</strong> tab: four instructions, its signature guessed from them, and its two callers above](../assets/screenshots/example-code-add-gold-dark.webp#only-dark)
+  ![<code>add_gold</code> in the <strong>Functions</strong> tab: four instructions, its signature guessed from them, and its two callers above](../assets/screenshots/example-code-add-gold-light.webp#only-light)
+  <figcaption><code>add_gold</code> in the <strong>Functions</strong> tab: four instructions, its signature guessed from them, and its two callers above.</figcaption>
+</figure>
+
+
 !!! tip "Who else uses the player?"
     **Go to** `g_game` lists every instruction that reads the global: `add_gold`, `remove_gold`, `change_mana`, `add_experience`, `refresh_ui`, `new_player` … – a map of everything that touches the player.
 
 ## 3. Watch it run
 
 Select the first line of `add_gold` and click **Monitor**. The [native function monitor](../guide/native-tools.md#native-function-monitor) opens with the function. Click **Find treasure** in the game: each click logs a call whose first argument is the amount, between 20 and 30.
+
+<figure markdown="span">
+  ![<code>add_gold</code> and <code>change_mana</code> in the native function monitor, with their guessed signatures: the gold of <strong>Find treasure</strong> and <strong>Gold +100</strong>, the mana of a spell and of every second](../assets/screenshots/example-monitor-dark.webp#only-dark)
+  ![<code>add_gold</code> and <code>change_mana</code> in the native function monitor, with their guessed signatures: the gold of <strong>Find treasure</strong> and <strong>Gold +100</strong>, the mana of a spell and of every second](../assets/screenshots/example-monitor-light.webp#only-light)
+  <figcaption><code>add_gold</code> and <code>change_mana</code> in the native function monitor, with their guessed signatures: the gold of <strong>Find treasure</strong> and <strong>Gold +100</strong>, the mana of a spell and of every second.</figcaption>
+</figure>
 
 ## 4. What add_gold takes
 
@@ -186,6 +211,12 @@ return `Gold: ${gGame.readPointer().add(0x28).readPointer().readS32()}`;
 No engine adapter: scripts run natively each time g_main_context_iteration returns on the game's main thread.
 = "Gold: 600"
 ```
+
+<figure markdown="span">
+  ![The script in the <strong>Scripts</strong> tab, run twice: each run gives 500 gold through <code>add_gold</code>](../assets/screenshots/example-script-dark.webp#only-dark)
+  ![The script in the <strong>Scripts</strong> tab, run twice: each run gives 500 gold through <code>add_gold</code>](../assets/screenshots/example-script-light.webp#only-light)
+  <figcaption>The script in the <strong>Scripts</strong> tab, run twice: each run gives 500 gold through <code>add_gold</code>. The first run says where native scripts run in this game.</figcaption>
+</figure>
 
 The game has no engine adapter, so Hermes runs the script on the game's main thread when GTK's main loop returns from an event (see [scripts in native games](../guide/scripts.md#scripts-in-native-games)). `n.rip(addGoldAt, 3, 7)` reads the RIP-relative address in `mov rax, [rip + …]`: the displacement starts at byte 3 of the 7-byte instruction. For an instruction like that, **Copy script** writes this line itself.
 

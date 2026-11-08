@@ -110,7 +110,7 @@ nav:
       - Scans and pointer scan: examples/hermesquest-scans.md
       - Hooks: examples/hermesquest-hooks.md
       - Scripts: examples/hermesquest-scripts.md
-      - Code explorer (test game): examples/dummy-game-code-explorer.md
+      - Code explorer: examples/dummy-game-code-explorer.md
       - JavaScript in Hermes: examples/javascript.md
   - Wine and Proton: wine-proton.md
   - Reference:
