@@ -16,7 +16,7 @@ Use of the feature for restoring memory modifications may be detected by anti-ta
 - **Tracked addresses** with live values, writing and freezing
 - **Pointer scan** that finds the value again after the game restarts
 - **Write and read watch**: which code writes or reads an address
-- **Hooks** on write instructions: multiply, fix, clamp or compute values in JavaScript, reinstalled at every start
+- **Hooks** on write instructions: multiply, fix, clamp or compute values in JavaScript; module-based hooks are reinstalled when their write site still matches, while JIT-code hooks need a pointer chain to be saved across restarts
 - **Hook templates**, testable without a game, and a debug window for hooks
 - **Scripts** that call game code on a schedule or by hand
 - **Native trace and function monitor** for any engine

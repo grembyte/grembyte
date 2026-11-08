@@ -32,5 +32,7 @@ The watch (and hooks) run through Frida by default. **Settings → Backend (watc
 
 The status bar shows the backend in use.
 
+With `ptrace`, a watchpoint can cover 1, 2, 4 or 8 bytes only when its address is aligned to that size. Hermes rejects an unaligned address instead of setting the watchpoint.
+
 !!! warning "Anti-tamper and debug registers"
     Some anti-tamper protections detect the debug registers that watchpoints use; Dark Souls III crashed. Hermes points it out when a game ends shortly after debug registers were used.

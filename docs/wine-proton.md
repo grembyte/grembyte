@@ -1,6 +1,6 @@
 # Wine and Proton
 
-Hermes works with Windows games running under Wine or Steam's Proton on Linux. Scans, writes and the pointer scan read the game's memory as with any process. For everything that runs code in the game – watch, hooks, the engine tools, scripts – Hermes needs Frida inside the game, and that works differently under Wine.
+Hermes works with Windows games running under Wine or Steam's Proton on Linux. Scans, writes and the pointer scan read the game's memory as with any process. For write watches and value hooks, Frida is the default, but the Linux `ptrace` backend can do both without injecting into the game; Hermes selects it automatically for 32-bit Wine/Proton games. Engine tools, native trace and monitor, and scripts use Frida inside the game and need its Windows gadget.
 
 ## The Frida gadget
 

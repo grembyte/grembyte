@@ -1,6 +1,6 @@
 # Hooks
 
-A hook intercepts every write at one instruction of the game and changes the value written: with a multiplier, a fixed value, bounds, or a JavaScript function of your own. Hooks are stored per program and installed again the next time it starts.
+A value hook changes writes to a target address: with the Frida backend it intercepts writes at a specific instruction; with `ptrace` it watches the address and corrects its value after each write. Hooks are stored per program. Module-based write sites are reinstalled when you attach after a restart; JIT-code hooks need a pointer chain to be saved and found again.
 
 <figure markdown="span">
   ![Hooks tab](../assets/screenshots/hooks-tab-dark.webp#only-dark)
@@ -25,7 +25,7 @@ Further options in the dialog:
 :   For hooks without a pointer chain: how many return addresses identify a caller that writes the target (default `1`, at most `4`, `off` learns no callers). See [after a restart](#after-a-restart).
 
 **Hardware breakpoint (code unchanged)**
-:   Leaves the game's code as it is and uses one of the debug registers instead. Useful where code must not change; some anti-tamper protections detect debug registers, though.
+:   With the Frida backend, leaves the game's code as it is and uses one of the debug registers to break at the write instruction. Useful where code must not change; some anti-tamper protections detect debug registers, though. This is different from the `ptrace` backend, which watches the target data address.
 
 ## The Hooks tab
 
@@ -33,7 +33,7 @@ Several hooks can be selected at once (Ctrl/Shift-click): **Pause**, **Debug** a
 
 Below the table a log shows what hook scripts write with `ctx.log` or `console.log`, and the errors of hooks, also without debug mode (at most 100 lines per 0.1 s; more are counted as dropped).
 
-When a hook is removed, when you select another process and when Hermes exits, the original bytes are restored.
+For Frida hooks, when a hook is removed, when you select another process and when Hermes exits, the original code bytes are restored. `ptrace` hooks do not patch game code.
 
 ## Debugging hooks
 
@@ -48,19 +48,21 @@ Debug mode costs time in the game; with very many calls the agent drops entries 
 
 ## After a restart
 
-Hooks are stored per program, as module + offset of the write instruction. When the program is attached again after a restart, Hermes installs the stored hooks automatically. If the bytes at that location changed, e.g. after an update of the game, the hook is not installed.
+Module-based hooks are stored per program as module + offset of the write instruction. When the program is attached again after a restart, Hermes reinstalls them if the bytes at that location still match. If they changed, e.g. after a game update, the hook is not installed.
 
 If the write instruction lies in no module – e.g. in Mono/Unity JIT code, which is generated anew and elsewhere at every start – it depends on the target:
 
 - **With a pointer chain** the hook is stored with the bytes of the write instruction and the surrounding code. In Mono games it also remembers the C# method of the write: after a restart Mono compiles that method and the hook is installed in it right away. Otherwise, or if that fails, the hook is in **Training**: Hermes watches the chain's target with a hardware watchpoint of its own and installs the hook at the first write from matching code. It takes effect from the next write on. The tooltip of the status column shows how many writes from other code were discarded. At most three hooks can train at a time; hooks installed as a hardware breakpoint take one of these three slots each.
-- **Without a pointer chain** the hook cannot be stored, because its target is unknown after a restart.
+- **JIT code without a pointer chain** cannot be stored as a value hook, because its write site and target cannot be found again after a restart.
 
 The original target address is no longer valid after a restart. How the hook recognises the right writes depends on how it was created:
 
 - **With a pointer chain**: the hook resolves the chain at every write and only acts on the address it leads to at that moment. This is the most reliable variant.
-- **Without a pointer chain**: while running, the hook learns the callers, i.e. the return addresses on the stack, that write the target address. After a restart it only acts on writes from these callers. More caller levels help when the player and other objects are changed through the same helper function. If a learned caller also writes other addresses, Hermes points it out.
+- **Without a pointer chain on a module-based write site**: while running, the hook learns the callers, i.e. the return addresses on the stack, that write the target address. After a restart it only acts on writes from these callers. More caller levels help when the player and other objects are changed through the same helper function. If a learned caller also writes other addresses, Hermes points it out.
 
 ## How a hook works
+
+### Frida backend
 
 The write watch reports the instruction *after* the write (hardware watchpoints fire afterwards). From it Hermes determines the actual write instruction and replaces it with a jump into a code cave:
 
@@ -75,6 +77,12 @@ jmp back
 Since Hermes only works with the old and the new value, it does not matter whether the game uses `add [mem], reg`, `mov [mem], reg` or `sub`. If the same instruction is also used for other objects (e.g. the enemies' gold), the hook only acts on its target: the watched address, the address of its pointer chain or, after a restart without a chain, the learned callers. Several hooks can share a write instruction; they run in the order they were created.
 
 `before` and `after` are C functions (a Frida CModule): they check the target address and, on Windows and under Wine, the learned callers, and run the built-in manipulations themselves, so a hooked write costs a fraction of a microsecond. On Linux the callers are checked in JavaScript. Only scripts of your own, debug mode, caller learning and pointer chains run in JavaScript. The agent's JavaScript runs one thread at a time: a game thread that has to wait there can drop frames.
+
+### ptrace backend
+
+`ptrace` does not patch the write instruction. It sets a hardware data watchpoint on the target address. After the game stores a value, the thread stops; Hermes reads the new value, runs the transform in its local JavaScript engine, and writes the result back before resuming the thread. The game's unmodified value is briefly present in memory.
+
+This backend watches addresses rather than instructions: shared code is distinguished by the watched address, and a hook needs a fixed address or a pointer chain. It supports at most four distinct watched addresses and does not provide JIT training, caller learning or per-call hook debug events. See the [backend comparison](write-watch.md#backends-frida-or-ptrace).
 
 ## Limitations
 

@@ -1,6 +1,6 @@
 # Hermes Hook
 
-Hermes Hook is a desktop application for inspecting and changing the memory of running games. It finds values such as gold or health, shows which code writes them, and hooks that code so every write is changed the way you want: a multiplier, a fixed value, bounds, or a JavaScript function of your own. Hooks, addresses and scripts are stored per game and come back the next time it starts.
+Hermes Hook is a desktop application for inspecting and changing the memory of running games. It finds values such as gold or health, shows which code writes them, and hooks that code so every write is changed the way you want: a multiplier, a fixed value, bounds, or a JavaScript function of your own. Hooks, addresses and scripts are stored per game and reloaded when you attach again. Whether hooks and addresses can follow the same game data after a restart depends on their location and, where needed, a pointer chain or learned callers.
 
 It runs on **Linux**, including Windows games under **Wine and Proton**, and on **Windows**. For Unity (Mono and IL2CPP) and Unreal Engine games it also understands the game's own classes and methods.
 
@@ -50,7 +50,7 @@ It runs on **Linux**, including Windows games under **Wine and Proton**, and on 
 
     ---
 
-    Change every write at that instruction: multiply, fix, clamp or compute the value in JavaScript. Hooks are reinstalled automatically.
+    Change every write at that instruction: multiply, fix, clamp or compute the value in JavaScript. Module-based hooks are reinstalled when their write site still matches; hooks on JIT code need a pointer chain to be saved across restarts.
 
     [:octicons-arrow-right-24: Hooks](guide/hooks.md)
 
