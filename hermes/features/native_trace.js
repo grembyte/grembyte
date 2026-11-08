@@ -296,19 +296,6 @@ function isGameModule(module, gameFolder) {
   return module.path.toLowerCase().startsWith(gameFolder);
 }
 
-function programModule() {
-  // The game's executable. Under Wine Frida's Process.mainModule is just the
-  // first module it lists (e.g. netapi32.dll); Windows itself knows better.
-  if (WINDOWS) {
-    const getModuleHandle = new NativeFunction(
-      Process.getModuleByName('kernel32.dll').getExportByName('GetModuleHandleW'),
-      'pointer', ['pointer']);
-    const module = Process.findModuleByAddress(getModuleHandle(NULL));
-    if (module !== null)
-      return module;
-  }
-  return Process.mainModule;
-}
 
 function threadLoads(ids, seconds) {
   // Windows: {id: share of a CPU} over ``seconds``, from GetThreadTimes (in

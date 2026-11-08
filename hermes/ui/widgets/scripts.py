@@ -648,6 +648,11 @@ class ScriptPanel(QGroupBox):
         error = messages.describe(run["error"]) if run.get("error") else None
         label = state["spec"].label or f"#{script_id}"
         time = datetime.fromtimestamp(run.get("time", 0) / 1000).strftime("%H:%M:%S")
+        thread = run.get("gameThread")
+        if thread:
+            key = "scripts.native_thread" if thread.get("main") else "scripts.native_thread_other"
+            self._log(f"{time} " + self.translations[key].format(
+                name=thread.get("name", "?"), thread=thread.get("thread", "?")))
         for entry in run.get("logs") or []:
             if isinstance(entry, dict):
                 self._log(f"{time} {label}: {entry.get('text', '')}",

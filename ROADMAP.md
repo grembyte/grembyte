@@ -64,6 +64,15 @@ For native code, build a pattern (AOB) from the bytes around the write instructi
 wildcards for addresses and offsets, and search for it again automatically after a game
 update. For JIT code the method identity already does this; for native games it is missing.
 
+Scripts can already find code by such a pattern (`ctx.native.scan`, see
+[scripts in native games](docs/guide/scripts.md#scripts-in-native-games)); hooks and tracked
+addresses cannot yet. Open for native scripts:
+
+- A frame function of the script's own choosing, for games that export none of the known ones
+  (SDL linked in statically, only `IDXGISwapChain::Present` through its vtable).
+- Building the pattern for a function from the native trace or monitor, instead of by hand.
+- Only tried in Underkeep (own engine, SDL3, under Proton) and a test program so far.
+
 ### 6. Register hooks at any code address
 
 Today a hook needs a write instruction: it relocates the write and hands old and new value

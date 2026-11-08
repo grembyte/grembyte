@@ -27,6 +27,9 @@ API themselves.
 ``allocateCode(size)``
     Executable memory that is never freed, not even when the agent unloads
     (``VirtualAlloc``, or ``mmap``): for code game threads may still run.
+``programModule()``
+    The game's executable as a Frida module. Under Wine ``Process.mainModule``
+    is just the first module Frida lists; ``GetModuleHandleW(NULL)`` knows.
 """
 
 from hermes.agent.source import MESSAGES_SOURCE, load_agent_source

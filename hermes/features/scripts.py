@@ -10,6 +10,12 @@ runs is its ``mode``:
 ``"repeat"``  every ``seconds``; the next run is timed when one has ended
 ``"manual"``  only when asked (``run_now``)
 
+A game without an engine adapter (a native game with an engine of its own)
+has no such entry: there the agent runs scripts when a function the game
+calls every frame returns, e.g. ``SDL_PollEvent`` on its main thread (see
+hermes/features/script_native.js); the first run reports which one
+(``gameThread`` of 'script-run').
+
 The body gets one ``ctx`` object:
 
     ctx.find("ClassName")   a live object of that class or a subclass
@@ -45,6 +51,12 @@ The body gets one ``ctx`` object:
                      name of the first set matching, or null
     ctx.findClass("ClassName")   Unreal: the class itself, e.g. for a
                      TSubclassOf parameter: ctx.findClass("ItFo_Potion_Health_03")
+    ctx.native       machine code, in any game: module(name?) (the executable
+                     by default, also under Wine), scan(pattern, module?)
+                     (the one address of "48 8B ?? 05"-style bytes; none or
+                     several is an error), scanAll, rip(address, dispOffset,
+                     length) (an x64 RIP-relative operand's target) and
+                     fn(address, ret, args, abi?) (a NativeFunction)
     ctx.args         the values of the script's parameters by name (see below)
     ctx.lang         the app language ("de" or "en")
     ctx.log(...)     output shown in the script log

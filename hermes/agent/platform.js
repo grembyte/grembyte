@@ -202,3 +202,25 @@ function allocateCode(size) {
     throw hermesError('error.platform.code_alloc', { size });
   return memory;
 }
+
+let programModuleFound = null;
+
+function programModule() {
+  // The game's executable. Under Wine Frida's Process.mainModule is just the
+  // first module it lists (e.g. netapi32.dll or uxtheme.dll); Windows itself
+  // knows better.
+  if (programModuleFound !== null)
+    return programModuleFound;
+  if (Process.platform === 'windows') {
+    const getModuleHandle = new NativeFunction(
+      Process.getModuleByName('kernel32.dll').getExportByName('GetModuleHandleW'),
+      'pointer', ['pointer']);
+    const module = Process.findModuleByAddress(getModuleHandle(NULL));
+    if (module !== null) {
+      programModuleFound = module;
+      return module;
+    }
+  }
+  programModuleFound = Process.mainModule;
+  return programModuleFound;
+}

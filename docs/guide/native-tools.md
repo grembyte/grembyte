@@ -20,7 +20,7 @@ The game runs noticeably slower while it is followed.
   <figcaption>Candidates after a baseline and a scenario, with how often each ran.</figcaption>
 </figure>
 
-Candidates can be marked with ★ as [favorites](tools.md#favorites) or handed to the monitor.
+Candidates can be marked with ★ as [favorites](tools.md#favorites) or handed to the monitor. A function found this way can be called from a [script](scripts.md#scripts-in-native-games) through `ctx.native`.
 
 !!! warning
     Stalker rewrites the code of the traced threads while it runs. Hermes asks before it starts, since this can slow down or, rarely, crash a game.

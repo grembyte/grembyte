@@ -8,7 +8,7 @@ Scripts are JavaScript function bodies that run on the game's main thread and ca
   <figcaption>Scripts for an Unreal game with their schedule, and the script log below.</figcaption>
 </figure>
 
-Scripts reach game objects and methods through the engine adapters, so they need a [Unity or Unreal game](../engines/index.md).
+Scripts reach game objects and methods through the engine adapters of [Unity and Unreal games](../engines/index.md). In a game without an adapter – a native game with an engine of its own – they work on machine code instead: see [Scripts in native games](#scripts-in-native-games).
 
 ## When a script runs
 
@@ -49,3 +49,23 @@ ctx.log(`run ${ctx.runs + 1}, total ${ctx.state.total}`);
 ```
 
 Scripts are different from [hook templates](templates.md): a template changes one value at one write, a script runs on its own and calls the game.
+
+## Scripts in native games
+
+Without an engine adapter Hermes looks for a function the game calls every frame on its main thread and runs scripts each time it returns. It hooks the ones the game exports, in this order: `SDL_PollEvent`, `SDL_PumpEvents`, `SDL_GL_SwapWindow`, `glfwPollEvents`, `glfwSwapBuffers`, `PeekMessageW`, `PeekMessageA`, `SwapBuffers`, `wglSwapBuffers`, `glXSwapBuffers`, `eglSwapBuffers`, `vkQueuePresentKHR`. The first of them that runs on the main thread within half a second is kept (if none does, the first that runs on another thread). The first run logs which one it is. A game that exports none of them, for example one with SDL linked in statically, gets an error instead.
+
+There are no class or method names to go by, so `ctx.native` finds code by its bytes: a pattern of the function's first instructions, with `??` for the bytes that change between builds (addresses, offsets). A pattern survives game updates that leave the function alone, unlike a fixed address. Patterns come from a disassembler or from the [native tools](native-tools.md). The [script context reference](../reference/script-context.md#native-code-ctxnative) lists the functions.
+
+```js title="Open the hidden debug menu (Underkeep, own engine, under Proton)"
+const n = ctx.native;
+// OpenPage(int page, bool replace): push rbp / sub rsp, 0x20 / cmp [menu], 0 / mov ebp, ecx / je
+const openPageAt = n.scan("40 55 48 83 EC 20 83 3D ?? ?? ?? ?? 00 8B E9 0F 84");
+// The cmp at +6 reads the menu object: +0 state (0: closed), +4 page
+const menu = n.rip(openPageAt.add(6), 2, 7);
+if (menu.readS32() === 0) return "Open the in-game menu first (Esc)";
+n.fn(openPageAt, "void", ["int", "uint8"])(11, 0);
+return "Debug menu opened";
+```
+
+Native scripts run with Frida's full JavaScript API: memory is read and written through `NativePointer` (`menu.add(4).readS32()`), and `Process`, `Module` and `Memory` are available as in any Frida script. A wrong call can crash the game: check a function's parameters in the disassembly first, and try the script by hand before giving it a timer.
+

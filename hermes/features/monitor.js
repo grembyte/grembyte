@@ -2297,7 +2297,7 @@ function flushHooks() {
 
 // --- Scripts: game code run by time (see hermes/features/scripts.py) -------------
 // A script is a function body run with ``ctx`` on the game thread (see
-// engine.onMainThread): once some seconds after it is added, every some
+// onGameThread in script_native.js): once some seconds after it is added, every some
 // seconds, or only when asked (``mode``: once, repeat, manual). A repeating
 // script waits for its run to end before the next is timed. ``args`` are
 // ctx.args of the timed runs (its parameters' defaults), ``options`` the
@@ -2374,6 +2374,7 @@ function scriptContext(script, logs, args) {
     call: staticCall,
     static: staticField,
     gas: scriptGas,
+    native: nativeContext,
     lang: HERMES_LANGUAGE,
     args,
     log: (...items) => { logs.push(formatScriptLog(items)); },
@@ -2406,12 +2407,13 @@ function runScript(script, args = null) {
     send({ kind: 'script-run', scriptId: script.id, time: started, runs: script.runs,
            result: error === null ? result.text : '',
            target: error === null ? result.target : undefined, logs,
+           gameThread: nativeThreadNews(),
            error: error === null ? null
              : (error && error.stack ? `${error}\n${error.stack}` : String(error)) });
     if (script.mode === 'repeat' || script.mode === 'once')
       timeScript(script);
   };
-  engine.onMainThread(() => scriptResult(script.fn(ctx))).then(
+  onGameThread(() => scriptResult(script.fn(ctx))).then(
     result => report(result, null), error => report(undefined, error));
   return true;
 }
@@ -2423,7 +2425,7 @@ function scriptOptions(id, name) {
   const fn = script.options.get(name);
   if (fn === undefined)
     throw hermesError('error.monitor.no_options', { name });
-  return engine.onMainThread(() => {
+  return onGameThread(() => {
     const list = fn(scriptContext(script, [], { ...script.args }));
     if (!Array.isArray(list))
       throw hermesError('error.monitor.options_array', { name });
@@ -2591,6 +2593,7 @@ rpc.exports = {
     clearInterval(flushTimer);
     for (const id of Array.from(scripts.keys()))
       removeScript(id);
+    disposeNative();
     for (const id of Array.from(monitors.keys()))
       removeMonitor(id);
     for (const id of Array.from(methodHooks.keys()))
