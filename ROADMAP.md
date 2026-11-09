@@ -10,6 +10,43 @@ while building it is in the [implementation notes](docs/development/implementati
 
 Sorted by benefit relative to effort.
 
+### Next: code explorer and pseudocode
+
+To be tackled next, in this order. Matching PDBs are rarely shipped with games, so names
+have to come from the file itself or from the engine's own reflection.
+
+1. **Names without PDB**
+   - **IL2CPP and Unreal:** the adapters already know the names: IL2CPP metadata maps each
+     C# method to its address in `GameAssembly`, Unreal's `UFunction` points to its native
+     function (`exec…`). Hand them to the explorer as symbols.
+   - **C++ RTTI** (see point 4): MSVC `.?AV…@@` type descriptors in PE files and Itanium
+     `_ZTS`/`_ZTV` in ELF lead to vtables; name them and their virtual methods
+     (`CGameSprite::vf12`). Works for Windows builds under Proton without symbols, e.g.
+     `Baldur.exe`.
+2. **Own names and structure fields**
+   - Rename functions, globals and arguments by hand, saved per module (ELF build ID, PE
+     time stamp and checksum) and shown everywhere: disassembly, pseudocode, callers,
+     trace, write watch.
+   - Name structure fields: `*(int16_t *)(rbx + 0x790)` becomes `rbx->strength`; fits the
+     pointer chains the pseudocode already shows.
+   - "Who writes this field?": all instructions writing `[reg + offset]`, the static
+     counterpart of the write watch, also finding writes that do not run at the moment.
+3. **More readable pseudocode**
+   - `if`/`else` and loops from the control flow graph instead of `goto` (if-then,
+     if-else, backward jump as `while`/`do`).
+   - `switch` from jump tables; also removes the odd instructions the linear sweep shows
+     for them.
+   - Local variables: `[rsp+0x28]` becomes `var_28`.
+4. **Link to the running game**
+   - Mark the functions the native trace saw running, with their call count.
+   - Show the register and argument values of a monitor hit in the pseudocode.
+5. **Smaller additions**
+   - Copy a function's pseudocode to the clipboard.
+   - The control flow graph as a graph view.
+   - Carry names from a game's Linux build over to its Windows build through shared strings
+     and the call graph (a small BinDiff; mainly for Baldur's Gate EE, whose Linux build is
+     not stripped).
+
 ### 1. Native call diff trace: follow-ups
 
 The native trace and the native function monitor exist (see the
@@ -120,8 +157,9 @@ JavaScript:
 
 ### Recommendation
 
-**2 (accesses of an instruction)** is the next larger step independent of any engine and uses
-much of what exists. Among the adapters, the call graph from Blueprint bytecode is left for
+The **code explorer and pseudocode** list above comes next, starting with names without PDB.
+After that, **2 (accesses of an instruction)** is the next larger step independent of any
+engine and uses much of what exists. Among the adapters, the call graph from Blueprint bytecode is left for
 **Unreal**, and the call dialog for **IL2CPP**.
 
 ## Engines
