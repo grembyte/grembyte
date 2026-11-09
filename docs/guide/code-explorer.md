@@ -80,9 +80,27 @@ The explorer uses names wherever available: in the function list, references,
 disassembly, pseudocode and **Go to**. ELF files supply their symbol tables;
 PE files supply exports and imports.
 
+### Class names from C++ RTTI
+
+Polymorphic C++ classes keep their names in the file for `typeid` and
+`dynamic_cast`, even in stripped builds without symbols. The explorer reads this
+run-time type information (MSVC in PE files, GCC/Clang in ELF files) and names
+each class's **vtable** and the **virtual methods** in it by their slot:
+`CGameSprite::vftable`, `CGameSprite::vf12`. Underkeep's `underkeep.exe`, for
+example, gives 163 classes this way.
+
+- A method several classes share without overriding it keeps the name of the most
+  basic class (the one with the shortest vtable).
+- A function found in different slots (a shared stub such as `_purecall`, or
+  identical code the linker folded together) gets no name.
+- With multiple inheritance the further vtables are named by their offset in the
+  object (`Both::vftable@0x10`); only the first one names methods.
+- Template arguments are shown as `<…>`, so instances of a template share their name.
+- Names from symbols, exports and PDBs take precedence.
+
 ## Limits
 
-- Functions come from the executable's exception directory (64-bit PE), its symbols (ELF), its exports and the targets of calls; names from its symbols, exports and imports. Code reached only through tables of addresses may show no function; **Go to** still finds its references.
+- Functions come from the executable's exception directory (64-bit PE), its symbols (ELF), its exports and the targets of calls; names from its symbols, exports, imports and C++ RTTI. Code reached only through tables of addresses may show no function; **Go to** still finds its references.
 - The disassembly is a linear sweep: data inside the code section (jump tables) shows as odd instructions.
 - Code a runtime compiles while the game runs is in no file and not in the explorer: the C# methods of Mono games (the write watch names them, e.g. `Scripts:GivePlayerMoney+0x61`), scripts of other virtual machines. For C# use the [catalog, the calls and the method monitor](../engines/unity-mono.md); IL2CPP games compile C# ahead of time into `GameAssembly`, which the explorer does read.
 - Packed or encrypted executables (some copy protections) hold no readable code in their file.

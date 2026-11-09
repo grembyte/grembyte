@@ -14,7 +14,8 @@ hermes/features/script_native.js).
     function, the exports, and the imports by their slot in the import
     address table; matching local PDB names through DbgHelp on Windows.
     ELF: the functions and objects of the symbol tables, and
-    the imports by their GOT slot. x86 and x86-64 only.
+    the imports by their GOT slot. Both: vtables and virtual methods named
+    from C++ RTTI (hermes/features/rtti.py). x86 and x86-64 only.
 ``CodeIndex(image)``
     Disassembles the code sections once (Capstone, linear sweep), notes
     every address an instruction refers to (RIP-relative operands, branch
@@ -40,6 +41,7 @@ from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs  # pylint: disable=
 from hermes.core import messages
 from hermes.platform import is_wine_process, main_module, read_mappings
 from hermes.platform.symbols import load_pe_symbols
+from hermes.features.rtti import rtti_names
 
 # Kinds of references
 CALL, JUMP, DATA, POINTER = "call", "jump", "data", "pointer"
@@ -272,7 +274,14 @@ def _load_pe(path, data, symbol_path=None):
     if wide:
         _pe_functions(image, directory(3))
     _pe_symbols(image, symbol_path)
+    _add_rtti(image)
     return image
+
+
+def _add_rtti(image):
+    """Names of vtables and virtual methods from C++ RTTI, after the module's own."""
+    for address, name in rtti_names(image).items():
+        image.names.setdefault(address, name)
 
 
 def _pe_symbols(image, symbol_path=None):
@@ -429,6 +438,7 @@ def _load_elf(path, data):
     _elf_symbols(image, headers, wide)
     image.relocations = _elf_relocations(image, headers, wide)
     _elf_imports(image, headers, wide)
+    _add_rtti(image)
     return image
 
 

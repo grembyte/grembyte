@@ -16,13 +16,12 @@ To be tackled next, in this order. Matching PDBs are rarely shipped with games, 
 have to come from the file itself or from the engine's own reflection.
 
 1. **Names without PDB**
+   - **C++ RTTI:** done (see the [code explorer](docs/guide/code-explorer.md#class-names-from-c-rtti)):
+     vtables and virtual methods named from MSVC and Itanium RTTI. Open: template
+     arguments (shown as `<…>`), names of classes for objects in memory (point 4).
    - **IL2CPP and Unreal:** the adapters already know the names: IL2CPP metadata maps each
      C# method to its address in `GameAssembly`, Unreal's `UFunction` points to its native
      function (`exec…`). Hand them to the explorer as symbols.
-   - **C++ RTTI** (see point 4): MSVC `.?AV…@@` type descriptors in PE files and Itanium
-     `_ZTS`/`_ZTV` in ELF lead to vtables; name them and their virtual methods
-     (`CGameSprite::vf12`). Works for Windows builds under Proton without symbols, e.g.
-     `Baldur.exe`.
 2. **Own names and structure fields**
    - Rename functions, globals and arguments by hand, saved per module (ELF build ID, PE
      time stamp and checksum) and shown everywhere: disassembly, pseudocode, callers,
