@@ -1824,7 +1824,10 @@ const unreal = (() => {
       throw hermesError('error.unreal.no_process_event', { count: found.length });
     processEvent = {
       address: found[0],
-      call: new NativeFunction(found[0], 'void', ['pointer', 'pointer', 'pointer'])
+      // Exceptions go to the process's handlers: a write watch takes its trap
+      // and the call runs to its end (Frida's default would abort it)
+      call: new NativeFunction(found[0], 'void', ['pointer', 'pointer', 'pointer'],
+                               { exceptions: 'propagate' })
     };
     return processEvent;
   }

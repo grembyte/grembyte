@@ -1,6 +1,7 @@
 """Scripts in a native game: the game thread without an engine, and ctx.native
 (see hermes/features/script_native.js)."""
 
+import json
 import subprocess
 
 from hermes.features.scripts import ScriptSpec
@@ -100,8 +101,6 @@ return JSON.stringify({
 @requires_target
 def test_native_script_runs_on_the_main_thread_and_finds_code_by_bytes(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    import json
-
     from hermes.features.scripts import ScriptWorker
 
     target = _Target(_build(tmp_path))
@@ -173,6 +172,114 @@ int main(void) { printf("%d 0\n", getpid()); fflush(stdout); for (;;) pause(); }
         # libc exports none of the frame functions: an error, not a hang
         assert "no frame function" in messages.describe(runs[0]["error"])
     finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+def _menu_address(binary, marker):
+    """Where the global ``menu`` lies in the running game: as far from
+    ``marker_a`` (whose address the game prints) as in the file."""
+    symbols = subprocess.run(["nm", str(binary)], check=True, capture_output=True,
+                             text=True).stdout
+    found = {line.split()[-1]: int(line.split()[0], 16) for line in symbols.splitlines()
+             if line.split()[-1] in ("menu", "marker_a")}
+    return marker + found["menu"] - found["marker_a"]
+
+
+@requires_target
+def test_a_script_calls_game_code_that_a_write_watch_traps(tmp_path, qt_app):
+    """A hardware watchpoint on what the called game code writes: the watch
+    takes the trap and the call runs to its end (Frida's default would abort
+    it with "breakpoint triggered")."""
+    # pylint: disable=import-outside-toplevel
+    import frida
+
+    from hermes.features.scripts import ScriptWorker
+    from hermes.features.write_watch import _build_agent_source
+
+    binary = _build(tmp_path)
+    target = _Target(binary)
+    page = _menu_address(binary, target.address) + 4
+    worker = ScriptWorker(target.pid)
+    runs, failed, hits = [], [], []
+    worker.script_ran.connect(lambda _id, run: runs.append(run))
+    worker.script_failed.connect(lambda _id, message: failed.append(message))
+    worker.worker_failed.connect(failed.append)
+    session = None
+    try:
+        session = frida.attach(target.pid)
+        watch = session.create_script(_build_agent_source(page, 4))
+        watch.on("message", lambda message, _data: hits.extend(
+            message.get("payload", {}).get("hits", [])
+            if message.get("type") == "send" else []))
+        watch.load()
+        worker.start()
+        script_id = worker.add_script(ScriptSpec(source=r"""
+const game = ctx.native.module();
+ctx.native.fn(game.getSymbolByName("open_page"), "void", ["int", "uint8"])(7, 0);
+return game.getSymbolByName("menu").add(4).readS32();
+""", mode="manual"))
+        worker.run_now(script_id)
+        _wait_for(qt_app, lambda: runs or failed, timeout=10)
+        assert not failed
+        assert runs[0]["error"] is None, runs[0]["error"]
+        assert runs[0]["result"] == "7"
+        _wait_for(qt_app, lambda: hits, timeout=5)  # the watch saw open_page's write
+        watch.exports_sync.stop()
+        watch.unload()
+    finally:
+        if session is not None:
+            session.detach()
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_a_script_reads_and_writes_what_an_access_watch_traps(tmp_path, qt_app):
+    """A hardware watchpoint on reads and writes of what the script itself
+    reads and writes: the accesses happen, no "breakpoint triggered"."""
+    # pylint: disable=import-outside-toplevel
+    import frida
+
+    from hermes.features.scripts import ScriptWorker
+    from hermes.features.write_watch import _build_agent_source
+
+    binary = _build(tmp_path)
+    target = _Target(binary)
+    page = _menu_address(binary, target.address) + 4
+    worker = ScriptWorker(target.pid)
+    runs, failed = [], []
+    worker.script_ran.connect(lambda _id, run: runs.append(run))
+    worker.script_failed.connect(lambda _id, message: failed.append(message))
+    worker.worker_failed.connect(failed.append)
+    session = None
+    try:
+        session = frida.attach(target.pid)
+        watch = session.create_script(_build_agent_source(page, 4, reads=True))
+        watch.load()
+        worker.start()
+        script_id = worker.add_script(ScriptSpec(source=r"""
+const page = ctx.native.module().getSymbolByName("menu").add(4);
+page.writeS32(42);
+const first = page.readS32();
+page.writeByteArray([0x2b, 0x00, 0x00, 0x00]);
+const bytes = Array.from(new Uint8Array(page.readByteArray(4)));
+page.writeU32(page.readU32() + 1);
+return JSON.stringify({ first, bytes, last: page.readS32() });
+""", mode="manual"))
+        worker.run_now(script_id)
+        _wait_for(qt_app, lambda: runs or failed, timeout=10)
+        assert not failed
+        assert runs[0]["error"] is None, runs[0]["error"]
+        assert json.loads(json.loads(runs[0]["result"])) == \
+            {"first": 42, "bytes": [0x2b, 0, 0, 0], "last": 44}
+        watch.exports_sync.stop()
+        watch.unload()
+    finally:
+        if session is not None:
+            session.detach()
         worker.requestInterruption()
         worker.wait(5000)
         target.close()

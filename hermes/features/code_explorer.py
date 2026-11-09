@@ -12,7 +12,8 @@ hermes/features/script_native.js).
     The module's sections, functions and names (``Image``). PE: the
     exception directory's functions (x64), chained parts belonging to their
     function, the exports, and the imports by their slot in the import
-    address table. ELF: the functions and objects of the symbol tables, and
+    address table; matching local PDB names through DbgHelp on Windows.
+    ELF: the functions and objects of the symbol tables, and
     the imports by their GOT slot. x86 and x86-64 only.
 ``CodeIndex(image)``
     Disassembles the code sections once (Capstone, linear sweep), notes
@@ -38,6 +39,7 @@ from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs  # pylint: disable=
 
 from hermes.core import messages
 from hermes.platform import is_wine_process, main_module, read_mappings
+from hermes.platform.symbols import load_pe_symbols
 
 # Kinds of references
 CALL, JUMP, DATA, POINTER = "call", "jump", "data", "pointer"
@@ -212,13 +214,15 @@ class Image:
 
 # --- Reading the file -----------------------------------------------------------
 
-def load_image(path):
-    """The Image of the PE or ELF file at ``path``; raises LocalizedValueError
-    for anything else."""
+def load_image(path, symbol_path=None):
+    """Read a PE or ELF file, optionally searching a local PDB folder on Windows.
+
+    Raises LocalizedValueError for other formats.
+    """
     with open(path, "rb") as file:
         data = file.read()
     if data[:2] == b"MZ":
-        return _load_pe(path, data)
+        return _load_pe(path, data, symbol_path)
     if data[:4] == b"\x7fELF":
         return _load_elf(path, data)
     raise messages.LocalizedValueError("error.code.format", path=path)
@@ -231,7 +235,7 @@ def _unpack(fmt, data, offset):
         raise messages.LocalizedValueError("error.code.truncated") from None
 
 
-def _load_pe(path, data):
+def _load_pe(path, data, symbol_path=None):
     # pylint: disable=too-many-locals
     header = _unpack("<I", data, 0x3c)[0]
     if data[header:header + 4] != b"PE\0\0":
@@ -267,7 +271,14 @@ def _load_pe(path, data):
     _pe_imports(image, directory(1))
     if wide:
         _pe_functions(image, directory(3))
+    _pe_symbols(image, symbol_path)
     return image
+
+
+def _pe_symbols(image, symbol_path=None):
+    names = load_pe_symbols(image.path, image.base, image.end - image.base, symbol_path)
+    for address, name in names.items():
+        image.names.setdefault(address, name)
 
 
 def _pe_offset(image, rva):
@@ -585,10 +596,12 @@ class CodeIndex:
     def __init__(self, image, progress=None):
         self.image = image
         self.mode = CS_MODE_64 if image.bits == 64 else CS_MODE_32
-        self._absolute_ok = image.base >= _ABSOLUTE_FLOOR
+        # Numbers in instructions may be addresses (not in a position-independent ELF)
+        self.absolute_addresses = image.base >= _ABSOLUTE_FLOOR
         self._refs = {}
         self._call_targets = set()
         self._clobbers = {}  # call target -> register families it may change
+        self._signatures = {}  # function start -> Signature or None
         self.strings = []  # (address, text, "ascii" or "utf16"), by address
         self._string_at = {}
         self._report = progress or (lambda _fraction: False)
@@ -625,7 +638,7 @@ class CodeIndex:
                 if address >= next_check:
                     self._check(0.8 * (done + address - section.address) / total)
                     next_check = address + 0x40000
-                found = _operand_target(address, size, mnemonic, operands, self._absolute_ok)
+                found = _operand_target(address, size, mnemonic, operands, self.absolute_addresses)
                 if found is None:
                     continue
                 target, kind = found
@@ -651,7 +664,7 @@ class CodeIndex:
                 if mnemonic in ("endbr64", "endbr32", "nop"):
                     continue
                 if mnemonic in ("jmp", "bnd jmp"):
-                    found = _operand_target(address, size, "mov", operands, self._absolute_ok)
+                    found = _operand_target(address, size, "mov", operands, self.absolute_addresses)
                     if found is not None and found[0] in image.imports:
                         image.names[target] = image.imports[found[0]]
                 break
@@ -661,7 +674,7 @@ class CodeIndex:
         self._check(0.8)
         width = 8 if image.bits == 64 else 4
         fmt = "<Q" if width == 8 else "<I"
-        if self._absolute_ok:
+        if self.absolute_addresses:
             for section in image.sections:
                 if section.executable or not section.raw_size or \
                         section.name.startswith(_NO_POINTERS):
@@ -829,7 +842,7 @@ class CodeIndex:
         lines = []
         for address, size, mnemonic, operands in disassembler.disasm_lite(code, function.start):
             raw = code[address - function.start:address - function.start + size]
-            found = _operand_target(address, size, mnemonic, operands, self._absolute_ok)
+            found = _operand_target(address, size, mnemonic, operands, self.absolute_addresses)
             target = found[0] if found and image.contains(found[0]) else None
             lines.append(Line(address, raw, f"{mnemonic} {operands}".strip(), target,
                               self.describe(target) if target is not None else ""))
@@ -871,14 +884,14 @@ class CodeIndex:
             immediate = int.from_bytes(raw[instruction.imm_offset:instruction.imm_offset
                                            + instruction.imm_size], "little")
             if (relative and instruction.imm_size >= 4) or \
-                    (self._absolute_ok and instruction.imm_size >= 4
+                    (self.absolute_addresses and instruction.imm_size >= 4
                      and self.image.contains(immediate)):
                 wild.update(range(instruction.imm_offset,
                                   instruction.imm_offset + instruction.imm_size))
         if instruction.disp_size == 4 and instruction.disp_offset:
             displacement = int.from_bytes(raw[instruction.disp_offset:instruction.disp_offset + 4],
                                           "little")
-            if "rip" in instruction.op_str or (self._absolute_ok
+            if "rip" in instruction.op_str or (self.absolute_addresses
                                                and self.image.contains(displacement)):
                 wild.update(range(instruction.disp_offset, instruction.disp_offset + 4))
         return ["??" if index in wild else f"{byte:02X}" for index, byte in enumerate(raw)]
@@ -901,7 +914,7 @@ class CodeIndex:
         """(offset, size) of an address in the module that the instruction at
         ``address`` holds as a displacement or immediate, or None (a module
         loaded at a fixed address: 32-bit games, ELF without PIE)."""
-        if not self._absolute_ok:
+        if not self.absolute_addresses:
             return None
         disassembler = Cs(CS_ARCH_X86, self.mode)
         disassembler.detail = True
@@ -939,6 +952,12 @@ class CodeIndex:
         arguments a function only passes on unread (a tail call) are not
         seen.
         """
+        if address in self._signatures:
+            return self._signatures[address]
+        self._signatures[address] = signature = self._guess_signature(address)
+        return signature
+
+    def _guess_signature(self, address):
         function = self.function_starting(address)
         if function is None or self.image.bits != 64:
             return None
@@ -980,7 +999,8 @@ class CodeIndex:
             return Parameter(register, read["vector"] or "double")
         return Parameter(register, _integer_type(read["width"]))
 
-    def _instructions(self, start, end, limit=MAX_LINES):
+    def instructions(self, start, end, limit=MAX_LINES):
+        """Capstone instructions with details from ``start`` to ``end``."""
         disassembler = Cs(CS_ARCH_X86, self.mode)
         disassembler.detail = True
         code = self.image.read(start, end - start)
@@ -995,7 +1015,7 @@ class CodeIndex:
         from capstone.x86 import X86_OP_REG  # pylint: disable=import-error,import-outside-toplevel
         written = set()
         reads = {}
-        for instruction in self._instructions(function.start, function.end):
+        for instruction in self.instructions(function.start, function.end):
             mnemonic = instruction.mnemonic
             operands = instruction.operands
             read_ids, write_ids = instruction.regs_access()
@@ -1043,7 +1063,7 @@ class CodeIndex:
         if section is None or not section.executable:
             result = _VOLATILE
         else:
-            for count, callee in enumerate(self._instructions(target[0], target[0] + 0x200)):
+            for count, callee in enumerate(self.instructions(target[0], target[0] + 0x200)):
                 if callee.mnemonic in ("call", "jmp") or count >= _HELPER_SIZE:
                     result = _VOLATILE
                     break
@@ -1060,7 +1080,7 @@ class CodeIndex:
         """(type, decided by callers) of what the function returns."""
         callers = [ref.address for ref in self.references(function.start) if ref.kind == CALL]
         if callers:
-            results = [self._result_read(caller) for caller in callers[:_CALLERS_CHECKED]]
+            results = [self.call_result(caller) for caller in callers[:_CALLERS_CHECKED]]
             results = [result for result in results if result is not None]
             if not results:
                 return "void", True
@@ -1068,7 +1088,7 @@ class CodeIndex:
         # Called only through pointers. Ending in a jump to another function
         # (a tail call), it returns what that one returns
         if depth < 3:
-            for instruction in self._instructions(function.start, function.end):
+            for instruction in self.instructions(function.start, function.end):
                 target = _operand_target(instruction.address, instruction.size,
                                          instruction.mnemonic, instruction.op_str, False)
                 if instruction.mnemonic == "jmp" and target is not None and \
@@ -1076,20 +1096,29 @@ class CodeIndex:
                     callee = self.function_starting(target[0])
                     if callee is not None:
                         return self._return_type(callee, depth + 1)[0], False
-        # Does the function set rax at all?
-        for instruction in self._instructions(function.start, function.end):
+        # Which of rax and xmm0 does the function set last before it returns?
+        # (A float set early, e.g. for a call, is no return value.)
+        last = returned = None
+        for instruction in self.instructions(function.start, function.end):
+            if instruction.mnemonic == "call":
+                last = None  # what a call leaves there is the callee's
+                continue
             for register_id in instruction.regs_access()[1]:
                 found = _register(instruction, register_id)
                 if found is not None and found[0] in ("rax", "xmm0"):
-                    return ("double" if found[0] == "xmm0" else "int"), False
-        return "void", False
+                    last = found[0]
+            if instruction.mnemonic == "ret" and last is not None:
+                returned = last
+        if returned is None:
+            return "void", False
+        return ("double" if returned == "xmm0" else "int"), False
 
-    def _result_read(self, call_address):
+    def call_result(self, call_address):
         """(family, width, type) of the result the caller at ``call_address``
         reads right after the call, or None if it ignores it."""
         from capstone.x86 import X86_OP_MEM  # pylint: disable=import-error,import-outside-toplevel
-        instructions = self._instructions(call_address, call_address + 16 * _RESULT_WINDOW,
-                                          limit=_RESULT_WINDOW + 1)
+        instructions = self.instructions(call_address, call_address + 16 * _RESULT_WINDOW,
+                                         limit=_RESULT_WINDOW + 1)
         written = set()
         for position, instruction in enumerate(instructions):
             if position == 0:

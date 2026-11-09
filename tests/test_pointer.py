@@ -169,6 +169,30 @@ def test_memory_behind_mapped_files_that_are_no_modules_is_not_static():
     assert chain_for_static_address(mappings, 0x21010) is None
 
 
+def test_a_wine_executable_with_anonymous_sections_is_a_module():
+    # Underkeep under Proton: Wine copied the code and .bss into anonymous
+    # memory, so no mapping of the file is executable
+    exe = "/games/Underkeep/underkeep.exe"
+    mappings = parse_maps([
+        f"140000000-140001000 r--p 00000000 00:24 7 {exe}",
+        "140001000-1402fa000 r-xp 00000000 00:00 0",
+        "1402fa000-14036e000 r--p 00000000 00:00 0",
+        f"14036e000-140376000 rw-p 0036d000 00:24 7 {exe}",
+        "140376000-14044d000 rw-p 00000000 00:00 0",
+        f"140464000-140465000 r--p 0038b000 00:24 7 {exe}",
+        "140465000-140483000 r--p 00000000 00:00 0",
+        "140483000-140500000 rw-p 00000000 00:00 0",  # behind the image: heap
+        "6ffffcd20000-6ffffcd21000 r--p 00000000 00:24 8 /games/Underkeep/notes.txt",
+    ], image_size=lambda path: 0x483000 if path == exe else None)
+
+    assert module_bases(mappings) == {"underkeep.exe": 0x140000000}
+    assert static_regions(mappings) == [(0x14036e000, 0x140376000, "underkeep.exe"),
+                                        (0x140376000, 0x14044d000, "underkeep.exe")]
+    assert chain_for_static_address(mappings, 0x14043E6B0) == \
+        PointerChain("underkeep.exe", 0x43E6B0)
+    assert chain_for_static_address(mappings, 0x140490000) is None
+
+
 @requires_target
 def test_static_address_survives_a_restart(binary):
     first = _Target(binary)
@@ -549,6 +573,53 @@ def test_address_list_survives_restart(binary, qt_app, sessions, monkeypatch):
         second.close()
         _delete_window(window)
 
+
+
+@requires_target
+def test_a_pointer_chain_entered_by_hand_follows_the_value(binary, qt_app, sessions,
+                                                          monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui import main_window
+
+    expected = _gold_chain(binary)
+    # Typed as "module+0x… -> 0x… : 0x…", in place of the user
+    typed = expected.text().replace(" → ", " -> ", 1).replace(" → ", " : ")
+
+    class Typing(main_window.PointerChainDialog):  # pylint: disable=too-few-public-methods
+        def exec(self):
+            self.chain_input.setText(typed)
+            self.description_input.setText("Gold")
+            self._accept()
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(main_window, "PointerChainDialog", Typing)
+    monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
+    monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
+    window = main_window.MainWindow("de")
+    window._refresh_timer.stop()
+    process_id = HookRepository(sessions).get_or_create_process("target", str(binary))
+    target = _Target(binary)
+    try:
+        window._current_pid = target.pid
+        window._process_id = process_id
+        window._add_pointer_by_hand()
+        window._refresh_timer.stop()
+        assert window.addr_table.item(0, 0).text() == "Gold"
+        assert window.addr_table.item(0, 1).text() == f"0x{target.gold:X}"
+        assert window.addr_table.item(0, 5).text() == expected.text()
+        window._refresh_memory_values()
+        _wait(qt_app, lambda: window._refresh_worker is None)
+        assert window.addr_table.item(0, 3).text() == "1234"
+        saved = AddressRepository(sessions).list_addresses(process_id)
+        assert [(entry.label, entry.pointer) for entry in saved] == \
+            [("Gold", expected.to_json())]
+    finally:
+        target.close()
+        _delete_window(window)
 
 
 def _add_gold_write_offset(binary):
@@ -937,3 +1008,19 @@ def test_worker_finishing_after_its_dialog_was_deleted_is_harmless(qt_app, monke
     worker.wait(5000)
     _wait(qt_app, lambda: worker not in workers.running_workers())
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_the_extent_of_a_pe_image_comes_from_its_header(tmp_path):
+    header = bytearray(0x200)
+    header[:2] = b"MZ"
+    struct.pack_into("<I", header, 0x3C, 0x80)
+    header[0x80:0x84] = b"PE\0\0"
+    struct.pack_into("<I", header, 0x80 + 24 + 56, 0x483000)  # SizeOfImage
+    image = tmp_path / "game.exe"
+    image.write_bytes(bytes(header))
+    other = tmp_path / "other.dll"
+    other.write_bytes(b"not a PE file")
+
+    assert linux._image_size(str(image)) == 0x483000  # pylint: disable=protected-access
+    assert linux._image_size(str(other)) is None  # pylint: disable=protected-access
+    assert linux._image_size(str(tmp_path / "missing.dll")) is None  # pylint: disable=protected-access

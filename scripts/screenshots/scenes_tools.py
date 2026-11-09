@@ -485,6 +485,52 @@ def code_explorer(studio):
     return dialog
 
 
+@scene("code-explorer-pseudocode", size=(1280, 820),
+       description="Code explorer: refresh_ui as pseudocode, with pointer chains")
+def code_explorer_pseudocode(studio):
+    """refresh_ui of the test game in the pseudocode tab, at the line that
+    reads the gold through g_game → 0x28 → 0x0."""
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.features.code_explorer import CodeIndex, load_image
+    from hermes.ui.widgets import code_explorer as module
+
+    path = _dummy_game_binary()
+    dialog = module.CodeExplorerDialog(studio.translations)
+    studio.keep(dialog)
+    index = CodeIndex(load_image(str(path)))
+    choice = module.ModuleChoice(DEMO_NAME, str(path), index.image.base, program=True)
+    dialog.modules = [choice]
+    dialog.module_combo.clear()
+    dialog.module_combo.addItem(choice.name, choice)
+    dialog.module = choice
+    dialog._on_built(index)
+    # At its final size, so the selected line can be put in the middle
+    dialog.resize(1280, 820)
+    dialog.show()
+    settle()
+
+    names = {name: address for address, name in index.image.names.items()}
+    dialog.tabs.setCurrentIndex(1)  # the functions
+    dialog.function_filter.setText("refresh")
+    refresh_ui = names["refresh_ui"]
+    row = dialog.function_model.row_of(refresh_ui)
+    if row is not None:
+        dialog.function_view.selectRow(row)
+    # The call of snprintf for the gold
+    call = next(line.address for line in index.disassemble(index.function_starting(refresh_ui))
+                if line.comment == "snprintf")
+    dialog._show_function(refresh_ui, call)
+    dialog._show_callers()
+    dialog.ref_view.selectRow(0)
+    dialog.function_tabs.setCurrentWidget(dialog.pseudocode_page)
+    # More room for the code than for the callers
+    dialog.ref_view.parentWidget().parentWidget().setSizes([170, 610])
+    settle()
+    dialog.pseudocode_view.centerCursor()
+    settle()
+    return dialog
+
+
 # --------------------------------------------------------------------------
 # Memory viewer
 # --------------------------------------------------------------------------

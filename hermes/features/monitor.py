@@ -90,7 +90,8 @@ from hermes.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_sess
 from hermes.agent.source import load_agent_source
 
 
-_AGENT_SOURCE = (ENGINE_AGENT_SOURCE + load_agent_source(__file__, "script_native.js")
+_AGENT_SOURCE = (ENGINE_AGENT_SOURCE + load_agent_source(__file__, "script_memory.js")
+                 + load_agent_source(__file__, "script_native.js")
                  + load_agent_source(__file__))
 
 

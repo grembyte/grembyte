@@ -112,6 +112,7 @@ nav:
       - Hooks: examples/hermesquest-hooks.md
       - Scripts: examples/hermesquest-scripts.md
       - Code explorer: examples/dummy-game-code-explorer.md
+      - Pointer chain from the code: examples/dummy-game-pointer-chain.md
       - JavaScript in Hermes: examples/javascript.md
   - Wine and Proton: wine-proton.md
   - Reference:

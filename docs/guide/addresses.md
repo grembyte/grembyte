@@ -12,7 +12,20 @@ The **Tracked addresses** tab keeps the addresses you work with, with a descript
 
 - **Track** in the scan results, or a double-click on a result.
 - **+ Address …** for an address you know, e.g. from another tool.
+- **Pointer chain …** for a value reached through pointers, e.g. `game.exe+0x43E600 -> 0x28 -> 0x0`: start at an address in a module (`module+offset`, also with further offsets), then each step reads the pointer at the address so far and adds its offset. Separate the steps with `->`, `=>`, `:` or `→` (as the [pointer scan](pointer-scan.md) and the [code explorer](code-explorer.md#pseudocode) show chains). The dialog shows where the chain leads now; the entry follows it again with every refresh and after a restart.
 - From the object inspector, the hooks tab and scripts, which can hand addresses over.
+
+<figure markdown="span">
+  ![Adding a pointer chain](../assets/screenshots/pointer-chain-dialog-dark.webp#only-dark)
+  ![Adding a pointer chain](../assets/screenshots/pointer-chain-dialog-light.webp#only-light)
+  <figcaption><strong>Pointer chain …</strong> with the gold of the test game: below the input, where the chain leads now.</figcaption>
+</figure>
+
+!!! note "Plus or arrow"
+    `game.exe+0x43E600+0xB0` is the address `0xB0` bytes behind `game.exe+0x43E600`. `game.exe+0x43E600 -> 0xB0` reads the pointer stored at `game.exe+0x43E600` and adds `0xB0` to it. If a register held the object's address itself (`rcx` = `game.exe+0x43E600`), its field is at the sum; only if the object's address was read from there is it an arrow.
+
+!!! example "Step by step with the test game"
+    The [pointer chain example](../examples/dummy-game-pointer-chain.md) reads the chain of the gold from the game's code, enters it with **Pointer chain …**, and explains with a simple picture how to tell a step of a chain from an offset.
 
 Double-click the description to rename an entry. If an address lies in the program's static memory (a global variable), Hermes stores it as module + offset right away; it stays valid after a restart without a pointer scan.
 

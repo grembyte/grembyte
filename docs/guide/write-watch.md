@@ -19,6 +19,8 @@ Then do in the game what changes the value. Each code location gets one row, wit
 
 Select a writing row and click **Create hook** to [hook](hooks.md) it. Hooks can only be set on writing instructions.
 
+Hooks and [scripts](scripts.md) keep working while a watch is set: a game method a script calls, or a value it reads or writes itself (`ptr.writeS32(…)`), runs to its end, and the watch lists the access like any other.
+
 ## Backends: Frida or ptrace
 
 The watch (and hooks) run through Frida by default. **Settings → Backend (watch & hooks)** switches to ptrace, which needs no injection into the game:

@@ -304,13 +304,17 @@ function nativeRip(address, dispOffset, length) {
 
 function nativeFunction(address, returnType, argTypes, abi) {
   // A callable native function (Frida's NativeFunction); ``abi`` only when
-  // it is not the platform's (win64 under Wine, sysv on Linux)
+  // it is not the platform's (win64 under Wine, sysv on Linux). Exceptions
+  // in the call go to the process's handlers: a write watch on what the
+  // game code writes takes its trap there and the call runs to its end
+  // (Frida's default would abort it midway with "breakpoint triggered").
   const at = nativeAddress(address, 'fn');
   if (!Array.isArray(argTypes))
     throw hermesError('error.native.arg_types');
-  return abi === undefined || abi === null
-    ? new NativeFunction(at, returnType, argTypes)
-    : new NativeFunction(at, returnType, argTypes, abi);
+  const options = { exceptions: 'propagate' };
+  if (abi !== undefined && abi !== null)
+    options.abi = abi;
+  return new NativeFunction(at, returnType, argTypes, options);
 }
 
 const nativeContext = Object.freeze({

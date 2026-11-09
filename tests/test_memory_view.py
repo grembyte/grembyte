@@ -8,7 +8,14 @@ import struct
 
 import pytest
 
-from hermes.core.memory import UnknownModuleError, describe_address, parse_address, read_memory
+from hermes.core.memory import (
+    UnknownModuleError,
+    describe_address,
+    parse_address,
+    parse_chain,
+    read_memory,
+)
+from hermes.core.pointer import PointerChain
 from hermes.platform import read_mappings
 from hermes.platform.linux import parse_maps
 
@@ -186,3 +193,68 @@ def test_address_dialog_parses_hex_and_module_addresses(qt_app):
     dialog.description_input.setText("Gold")
     dialog._accept()
     assert dialog.result_entry == ("Gold", 0x401F0, "int16")
+
+
+_GAME_MAPS = ["40000-41000 r-xp 00000000 08:01 1 /opt/game/game",
+              "41000-42000 rw-p 00001000 08:01 1 /opt/game/game"]
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("game+0x1f0 -> 0x28 -> 0x0", PointerChain("game", 0x1F0, (0x28, 0))),
+    ("game+0x1f0=>28=>0", PointerChain("game", 0x1F0, (0x28, 0))),
+    ("game+0x1f0 : 0x28 : -8", PointerChain("game", 0x1F0, (0x28, -8))),
+    ("game+0x1f0 → 0x28 → 0x0", PointerChain("game", 0x1F0, (0x28, 0))),  # as Hermes shows it
+    ("game+0x100+0xf0 -> +0x28", PointerChain("game", 0x1F0, (0x28,))),
+    ("0x411f0 -> 0x28", PointerChain("game", 0x11F0, (0x28,))),  # an address in the module
+    ("game+0x1f0", PointerChain("game", 0x1F0, ())),
+])
+def test_parse_chain(text, expected):
+    assert parse_chain(text, parse_maps(_GAME_MAPS)) == expected
+
+
+@pytest.mark.parametrize("text", ["", "game+0x1f0 ->", "-> 0x28", "game+0x1f0 -> 0x28 -> zz",
+                                  "game+0x1f0 -> -> 8", "0x90000 -> 0x28"])
+def test_parse_chain_rejects_what_is_no_chain(text):
+    with pytest.raises(ValueError):
+        parse_chain(text, parse_maps(_GAME_MAPS))
+
+
+def test_parse_chain_names_the_unknown_module():
+    with pytest.raises(UnknownModuleError) as raised:
+        parse_chain("other.so+0x10 -> 0x8", parse_maps(_GAME_MAPS))
+    assert raised.value.module == "other.so"
+
+
+def test_pointer_chain_dialog_shows_where_the_chain_leads(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from hermes.ui.localization import load_translations
+    from hermes.ui.main_window import PointerChainDialog
+
+    translations = load_translations("en")
+    mappings = parse_maps(_GAME_MAPS)
+    leads = {PointerChain("game", 0x1F0, (0x28, 0)): 0x7F0010}
+
+    def resolve(text):
+        chain = parse_chain(text, mappings)
+        return chain, leads.get(chain)
+
+    dialog = PointerChainDialog(resolve, "int32", translations=translations)
+    assert dialog.type_combo.currentData() == "int32"
+
+    dialog.chain_input.setText("game+0x1f0 ->")
+    assert "Not a pointer chain" in dialog.result_label.text()
+    dialog._accept()
+    assert dialog.result_entry is None
+
+    dialog.chain_input.setText("other+0x10 -> 8")
+    assert "“other”" in dialog.result_label.text()
+
+    dialog.chain_input.setText("game+0x1f0 -> 0x40")
+    assert "leads nowhere right now" in dialog.result_label.text()
+
+    dialog.chain_input.setText("game+0x1f0 => 0x28 : 0")
+    assert dialog.result_label.text() == "game+0x1f0 → 0x28 → 0x0 leads to 0x7F0010 now."
+    dialog.description_input.setText("Strength")
+    dialog._accept()
+    assert dialog.result_entry == ("Strength", PointerChain("game", 0x1F0, (0x28, 0)),
+                                   0x7F0010, "int32")

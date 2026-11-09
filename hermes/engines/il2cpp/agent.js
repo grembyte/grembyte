@@ -16,6 +16,11 @@ const il2cpp = (() => {
 
   function bind(found) {
     const fn = (name, ret, args) => new NativeFunction(found.getExportByName(name), ret, args);
+    // Game code: its exceptions go to the process's handlers, where IL2CPP
+    // turns a null access into a NullReferenceException and a write watch
+    // takes its trap (Frida's default would abort it: "breakpoint triggered")
+    const gameCode = (name, ret, args) => new NativeFunction(
+      found.getExportByName(name), ret, args, { exceptions: 'propagate' });
     const ntdll = Process.platform === 'windows' ? Process.findModuleByName('ntdll.dll') : null;
     const lookup = ntdll === null ? null : ntdll.findExportByName('RtlLookupFunctionEntry');
     return {
@@ -68,7 +73,7 @@ const il2cpp = (() => {
         methodFromName: fn('il2cpp_class_get_method_from_name', 'pointer',
           ['pointer', 'pointer', 'int']),
         virtualMethod: fn('il2cpp_object_get_virtual_method', 'pointer', ['pointer', 'pointer']),
-        runtimeInvoke: fn('il2cpp_runtime_invoke', 'pointer',
+        runtimeInvoke: gameCode('il2cpp_runtime_invoke', 'pointer',
           ['pointer', 'pointer', 'pointer', 'pointer']),
         runtimeInvokeAddress: found.getExportByName('il2cpp_runtime_invoke'),
         classFromName: fn('il2cpp_class_from_name', 'pointer', ['pointer', 'pointer', 'pointer']),

@@ -92,19 +92,64 @@ def test_javascript_tokens_use_theme_colors(qt_app):
         editor.close()
 
 
+def test_pseudocode_tokens_use_theme_colors(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PySide6.QtWidgets import QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.ui.styles.themes import ThemeManager
+    from hermes.ui.widgets.code_editor import PseudocodeHighlighter
+
+    colors = ThemeManager(user_theme_dir="/tmp/no-hermes-themes").load_theme(
+        "Solarized-Light")["colors"]
+    editor = QPlainTextEdit("if (int32_t int32_1 = 42) {\n    return int32_1; // result\n}")
+    PseudocodeHighlighter(editor.document(), colors)
+    try:
+        editor.document().firstBlock().layout()
+
+        def color_at(block_number, token):
+            block = editor.document().findBlockByNumber(block_number)
+            position = block.text().index(token)
+            return next(format_range.format.foreground().color().name()
+                        for format_range in block.layout().formats()
+                        if format_range.start <= position
+                        < format_range.start + format_range.length)
+
+        assert color_at(0, "if") == colors["code_keyword"]
+        assert color_at(0, "int32_t") == colors["code_keyword"]
+        assert color_at(0, "42") == colors["code_number"]
+        assert color_at(1, "// result") == colors["muted"]
+    finally:
+        editor.close()
+
+
 def test_existing_code_editor_rehighlights_after_theme_change(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument
+    from PySide6.QtWidgets import QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
+
     from hermes.ui.styles.themes import ThemeManager
-    from hermes.ui.widgets.code_editor import CodeEditor, apply_code_theme
+    from hermes.ui.widgets.code_editor import (
+        CodeEditor,
+        PseudocodeHighlighter,
+        apply_code_theme,
+        code_theme_colors,
+    )
 
     manager = ThemeManager(user_theme_dir="/tmp/no-hermes-themes")
     editor = CodeEditor("return 12;")
+    pseudocode = QPlainTextEdit("return 12;")
+    pseudocode.pseudocode_highlighter = PseudocodeHighlighter(
+        pseudocode.document(), code_theme_colors())
     try:
         apply_code_theme(manager.load_theme("Solarized-Dark")["colors"])
         block = editor.document().firstBlock()
         keyword = next(format_range for format_range in block.layout().formats()
                        if format_range.start == 0)
         assert keyword.format.foreground().color().name() == "#cb4b16"
+        block = pseudocode.document().firstBlock()
+        keyword = next(format_range for format_range in block.layout().formats()
+                       if format_range.start == 0)
+        assert keyword.format.foreground().color().name() == "#cb4b16"
     finally:
         apply_code_theme(manager.load_theme("Github-Dark")["colors"])
         editor.close()
+        pseudocode.close()
