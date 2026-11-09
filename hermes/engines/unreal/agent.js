@@ -621,6 +621,33 @@ const unreal = (() => {
     return result;
   }
 
+  function nativeSymbols() {
+    // [[address, 'Class::execName'], ...] of the native UFunctions' exec
+    // thunks, for the code explorer. Blueprint functions share the script
+    // interpreter as their Func and are left out.
+    const result = [];
+    const seen = new Set();
+    for (const group of packageIndex().values()) {
+      for (const klass of group.classes) {
+        try {
+          for (const fn of functionsOf(klass.address)) {
+            const info = functionInfo(fn.address);
+            if (!(info.flags & FUNC_NATIVE) || info.code.isNull())
+              continue;
+            const key = info.code.toString();
+            if (seen.has(key))
+              continue;
+            seen.add(key);
+            result.push([key, `${klass.name}::exec${fn.name}`]);
+          }
+        } catch (_error) {
+          // freed meanwhile (a Blueprint unloaded)
+        }
+      }
+    }
+    return result;
+  }
+
   function methodsByToken(assembly, tokens) {
     // [{ className, method, entry, flags, implFlags }] for the trace; method
     // is the UFunction.
@@ -2521,6 +2548,7 @@ const unreal = (() => {
     assemblies,
     classes,
     methodsByToken,
+    nativeSymbols,
     checkAll: methods => methods.map(() => false),
     compileAll,
     describeAll: addresses => addresses.map(() => null),

@@ -80,6 +80,24 @@ The explorer uses names wherever available: in the function list, references,
 disassembly, pseudocode and **Go to**. ELF files supply their symbol tables;
 PE files supply exports and imports.
 
+### Names from the engine
+
+IL2CPP and Unreal games compile their code ahead of time into a module the
+explorer reads, and their engines know what that code is called. With the game
+attached, **Engine names** asks the engine adapter and names the module's code:
+
+- **IL2CPP:** every C# method in `GameAssembly` as `Namespace.Class:Method`.
+  Code several methods share (identical code folded by the linker, shared
+  generic code) is named after one of them, with the number of the others:
+  `List:Clear [+12]`.
+- **Unreal:** every native `UFunction`'s exec thunk as `Class::execName`, the
+  wrapper Blueprint calls go through into C++. Blueprint functions run in the
+  script interpreter and have no code of their own.
+
+The names are added to the module loaded in the explorer and stay until it is
+closed; names from the file (symbols, exports) keep priority. Mono games are
+not covered: their C# code is compiled while the game runs and lies in no file.
+
 ### Class names from C++ RTTI
 
 Polymorphic C++ classes keep their names in the file for `typeid` and

@@ -8,6 +8,10 @@ rpc.exports = {
   methodBodies(assembly, tokens) {
     return engine.methodBodies(assembly, tokens);
   },
+  nativeSymbols() {
+    // [[address, name], ...] of compiled engine code (IL2CPP, Unreal)
+    return engine.nativeSymbols();
+  },
   resolveTokens(assembly, tokens) {
     return engine.resolveTokens(assembly, tokens);
   }

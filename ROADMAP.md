@@ -19,9 +19,10 @@ have to come from the file itself or from the engine's own reflection.
    - **C++ RTTI:** done (see the [code explorer](docs/guide/code-explorer.md#class-names-from-c-rtti)):
      vtables and virtual methods named from MSVC and Itanium RTTI. Open: template
      arguments (shown as `<…>`), names of classes for objects in memory (point 4).
-   - **IL2CPP and Unreal:** the adapters already know the names: IL2CPP metadata maps each
-     C# method to its address in `GameAssembly`, Unreal's `UFunction` points to its native
-     function (`exec…`). Hand them to the explorer as symbols.
+   - **IL2CPP and Unreal:** done (see the [code explorer](docs/guide/code-explorer.md#names-from-the-engine)):
+     **Engine names** adds IL2CPP methods and Unreal exec thunks. Open: a test in
+     V Rising and Avowed; remember the names per module build so they are there
+     without the game.
 2. **Own names and structure fields**
    - Rename functions, globals and arguments by hand, saved per module (ELF build ID, PE
      time stamp and checksum) and shown everywhere: disassembly, pseudocode, callers,

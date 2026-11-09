@@ -240,6 +240,51 @@ class CatalogWorker(QThread):
         return classes
 
 
+class EngineSymbolsWorker(QThread):
+    """Ask the game's engine adapter for the names of its compiled code.
+
+    IL2CPP names every C# method's code in GameAssembly, Unreal every native
+    UFunction's exec thunk (see ``nativeSymbols`` in the adapters).
+    ``found`` carries [(address in the process, name), ...].
+    """
+
+    found = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, pid, parent=None, engine=None):
+        super().__init__(parent)
+        self.pid = pid
+        self.engine = resolve_engine(pid, engine)
+
+    @sessions.tracked(sessions.CATALOG)
+    def run(self):
+        session = None
+        script = None
+        try:
+            session = attach_session(self.pid)
+            sessions.SESSIONS.set_frida_session(self, session)
+            script = session.create_script(AGENT_SOURCE)
+            script.load()
+            symbols = [(int(address, 16), name)
+                       for address, name in script.exports_sync.native_symbols()]
+            if not self.isInterruptionRequested():
+                self.found.emit(symbols)
+        except FRIDA_ERRORS + (frida.RPCException, OSError, RuntimeError, ValueError) as error:
+            if not self.isInterruptionRequested():
+                self.failed.emit(messages.describe(error))
+        finally:
+            if script is not None:
+                try:
+                    script.unload()
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
+            if session is not None:
+                try:
+                    session.detach()
+                except CLEANUP_ERRORS as error:
+                    logs.cleanup_failed(error)
+
+
 class CachedCatalogWorker(QThread):
     """Read the catalog of a game that is not running from the catalog cache.
 

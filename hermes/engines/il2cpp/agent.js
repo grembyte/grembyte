@@ -616,6 +616,23 @@ const il2cpp = (() => {
     return { start, size: found === null ? 1 : found.size };
   }
 
+  function nativeSymbols() {
+    // [[address, 'Ns.Class:Method'], ...] of every method's code in
+    // GameAssembly, for the code explorer. Code several methods share
+    // (folded or shared generic code) is named after the first one, with
+    // the number of the others.
+    requireRuntime();
+    const t = codeTable();
+    if (t === null)
+      return [];
+    const result = [];
+    for (const [offset, entry] of t.entries) {
+      const shared = entry.shared > 0 ? ` [+${entry.shared}]` : '';
+      result.push([module.base.add(offset).toString(), methodLabel(entry.method) + shared]);
+    }
+    return result;
+  }
+
   function resolve(identity) {
     requireRuntime();
     const method = methodByToken(imageNamed(identity.image), identity.token);
@@ -1234,6 +1251,7 @@ const il2cpp = (() => {
     assemblies,
     classes,
     methodsByToken,
+    nativeSymbols,
     // Ahead-of-time code: nothing hangs, nothing to compile or undo.
     checkAll: methods => methods.map(() => false),
     compileAll: methods => methods.map(codeOf),
