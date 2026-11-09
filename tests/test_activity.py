@@ -305,6 +305,31 @@ def test_clicks_actions_and_windows_are_recorded(activity_file, qt_app):
     assert click["window"] == "Nativer Trace" and click["widget"] == "QPushButton"
 
 
+def test_clearing_a_filter_with_its_clear_button_is_recorded(activity_file, qt_app):
+    # The clear button's action is created by Qt; asking its tool button for
+    # defaultAction() invalidated the action's wrapper and the click raised.
+    # pylint: disable=import-outside-toplevel
+    from PySide6.QtGui import QAction  # pylint: disable=no-name-in-module
+    from PySide6.QtWidgets import QLineEdit  # pylint: disable=no-name-in-module
+
+    from hermes.ui.activity_recorder import UiRecorder
+
+    recorder = UiRecorder()
+    try:
+        line = QLineEdit()
+        line.setClearButtonEnabled(True)
+        line.setText("Gold")
+        line.show()
+        qt_app.processEvents()
+        recorder.scan()
+        line.findChild(QAction).trigger()
+        qt_app.processEvents()
+        line.close()
+    finally:
+        recorder.stop()
+    assert _events(activity_file, "action")
+
+
 def test_the_log_window_shows_the_activity(activity_file, qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from hermes.ui.widgets.log_view import LogDialog

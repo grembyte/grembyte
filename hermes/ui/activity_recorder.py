@@ -11,7 +11,7 @@ wrappers for Qt objects that are being deleted; accessing those wrappers
 crashed Hermes in the Qt binding's object wrapper.
 """
 
-from PySide6.QtCore import QObject, Qt, QTimer  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QObject, Qt, QTimer, Slot  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractButton,
     QAbstractItemView,
@@ -98,7 +98,11 @@ class UiRecorder(QObject):
     def _connect(self, widget):
         if isinstance(widget, QAbstractButton):
             # A tool button showing an action: the action records the click.
-            if isinstance(widget, QToolButton) and widget.defaultAction() is not None:
+            # Not defaultAction(): in PySide 6.12 that call invalidates the
+            # wrapper of an action Qt created (a line edit's clear button), and
+            # the next click on it raised "already deleted". setDefaultAction
+            # adds the action to actions(), which is safe.
+            if isinstance(widget, QToolButton) and widget.actions():
                 return
             if not self._marked(widget):
                 # The text before the click: the window's own slot may change it first.
@@ -120,7 +124,15 @@ class UiRecorder(QObject):
         if action is None or action.isSeparator() or action.menu() is not None:
             return
         if not self._marked(action):
-            action.triggered.connect(lambda checked, act=action: self._triggered(act, checked))
+            # The sender, not a wrapper kept from the scan: that one may be
+            # invalid by the time the action fires.
+            action.triggered.connect(self._action_triggered)
+
+    @Slot(bool)
+    def _action_triggered(self, checked):
+        action = self.sender()
+        if action is not None:
+            self._triggered(action, checked)
 
     @staticmethod
     def _clicked(button, checked):
