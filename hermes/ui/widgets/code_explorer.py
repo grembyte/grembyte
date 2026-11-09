@@ -9,6 +9,7 @@ the process.
 import bisect
 import os
 import re
+import sys
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPoint, Qt, QThread, Signal  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
@@ -69,13 +70,14 @@ class CodeIndexWorker(QThread):
     built = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, path, parent=None):
+    def __init__(self, path, parent=None, *, symbol_path=None):
         super().__init__(parent)
         self.path = path
+        self.symbol_path = symbol_path
 
     def run(self):
         try:
-            image = load_image(self.path)
+            image = load_image(self.path, symbol_path=self.symbol_path)
             index = CodeIndex(image, progress=self._progress)
         except InterruptedError:
             return
@@ -242,6 +244,13 @@ class CodeExplorerDialog(QDialog):
         self.open_button.setToolTip(t["code.open_file_tooltip"])
         self.open_button.clicked.connect(self._open_file)
         source.addWidget(self.open_button)
+        self.symbols_button = QPushButton()
+        set_button_icon(self.symbols_button, "folder_open")
+        self.symbols_button.setToolTip(t["code.symbols_tooltip"])
+        self.symbols_button.setAccessibleName(t["code.symbols"])
+        self.symbols_button.setVisible(sys.platform == "win32")
+        self.symbols_button.clicked.connect(self._open_symbols)
+        source.addWidget(self.symbols_button)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setMaximumWidth(180)
@@ -450,20 +459,28 @@ class CodeExplorerDialog(QDialog):
         self.module_combo.setCurrentIndex(position)
         self._load(self.modules[position])
 
-    def _load(self, choice):
+    def _open_symbols(self):
+        if self.module is None or self.index is None or self.index.image.format != "pe":
+            return
+        folder = QFileDialog.getExistingDirectory(
+            self, self.translations["code.symbols"], os.path.dirname(self.module.path))
+        if folder:
+            self._load(self.module, symbol_path=folder)
+
+    def _load(self, choice, symbol_path=None):
         self._stop_worker()
         self.module = choice
         self.index = None
         self._history.clear()
         self._clear_views()
-        cached = cached_index(choice.path)
+        cached = cached_index(choice.path) if symbol_path is None else None
         if cached is not None:
             self._on_built(cached)
             return
         self.progress.setValue(0)
         self.progress.show()
         self.status_label.setText(self.translations["code.loading"].format(path=choice.path))
-        worker = CodeIndexWorker(choice.path)
+        worker = CodeIndexWorker(choice.path, symbol_path=symbol_path)
         worker.progress.connect(self.progress.setValue)
         worker.built.connect(self._on_built)
         worker.failed.connect(self._on_failed)
@@ -494,7 +511,8 @@ class CodeExplorerDialog(QDialog):
         self.status_label.setText(self.translations["code.loaded"].format(
             module=self.module.name, format=image.format.upper(), bits=image.bits,
             base=f"0x{image.base:x}", functions=len(index.functions),
-            strings=len(index.strings), references=index.reference_count))
+            strings=len(index.strings), references=index.reference_count,
+            symbols=len(image.names)))
         self._update_actions()
 
     def _on_failed(self, message):
@@ -764,6 +782,7 @@ class CodeExplorerDialog(QDialog):
 
     def _update_actions(self):
         has_function = self.index is not None and self._function is not None
+        self.symbols_button.setEnabled(self.index is not None and self.index.image.format == "pe")
         for button in (self.callers_button, self.pattern_button, self.script_button):
             button.setEnabled(has_function)
         attached = has_function and self.module is not None and self.module.base is not None

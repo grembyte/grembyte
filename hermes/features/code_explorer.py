@@ -12,7 +12,8 @@ hermes/features/script_native.js).
     The module's sections, functions and names (``Image``). PE: the
     exception directory's functions (x64), chained parts belonging to their
     function, the exports, and the imports by their slot in the import
-    address table. ELF: the functions and objects of the symbol tables, and
+    address table; matching local PDB names through DbgHelp on Windows.
+    ELF: the functions and objects of the symbol tables, and
     the imports by their GOT slot. x86 and x86-64 only.
 ``CodeIndex(image)``
     Disassembles the code sections once (Capstone, linear sweep), notes
@@ -38,6 +39,7 @@ from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs  # pylint: disable=
 
 from hermes.core import messages
 from hermes.platform import is_wine_process, main_module, read_mappings
+from hermes.platform.symbols import load_pe_symbols
 
 # Kinds of references
 CALL, JUMP, DATA, POINTER = "call", "jump", "data", "pointer"
@@ -212,13 +214,15 @@ class Image:
 
 # --- Reading the file -----------------------------------------------------------
 
-def load_image(path):
-    """The Image of the PE or ELF file at ``path``; raises LocalizedValueError
-    for anything else."""
+def load_image(path, symbol_path=None):
+    """Read a PE or ELF file, optionally searching a local PDB folder on Windows.
+
+    Raises LocalizedValueError for other formats.
+    """
     with open(path, "rb") as file:
         data = file.read()
     if data[:2] == b"MZ":
-        return _load_pe(path, data)
+        return _load_pe(path, data, symbol_path)
     if data[:4] == b"\x7fELF":
         return _load_elf(path, data)
     raise messages.LocalizedValueError("error.code.format", path=path)
@@ -231,7 +235,7 @@ def _unpack(fmt, data, offset):
         raise messages.LocalizedValueError("error.code.truncated") from None
 
 
-def _load_pe(path, data):
+def _load_pe(path, data, symbol_path=None):
     # pylint: disable=too-many-locals
     header = _unpack("<I", data, 0x3c)[0]
     if data[header:header + 4] != b"PE\0\0":
@@ -267,7 +271,14 @@ def _load_pe(path, data):
     _pe_imports(image, directory(1))
     if wide:
         _pe_functions(image, directory(3))
+    _pe_symbols(image, symbol_path)
     return image
+
+
+def _pe_symbols(image, symbol_path=None):
+    names = load_pe_symbols(image.path, image.base, image.end - image.base, symbol_path)
+    for address, name in names.items():
+        image.names.setdefault(address, name)
 
 
 def _pe_offset(image, rva):
