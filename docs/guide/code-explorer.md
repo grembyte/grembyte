@@ -74,24 +74,11 @@ A string is not always loaded by the code directly. Tables of names (commands, s
 | **Monitor** | Logs the calls of the function, or the runs of the selected instruction, in the [native function monitor](native-tools.md#native-function-monitor). Needs the game attached. |
 | **Memory** | Shows what the selected instruction refers to in the [memory viewer](tools.md). Needs the game attached. |
 
-## Symbol names and PDB files
+## Symbol names
 
 The explorer uses names wherever available: in the function list, references,
 disassembly, pseudocode and **Go to**. ELF files supply their symbol tables;
 PE files supply exports and imports.
-
-On Windows, the explorer also uses DbgHelp to read matching local PDB symbols.
-Put the PDB beside its executable or DLL before opening the module, or use the
-**Symbol folder** button beside **Open file** to select a folder containing PDBs.
-Selecting a folder rebuilds the module even if it was already cached. Keep the
-PDB's original filename; its identity and age must match the executable's build.
-The status line reports the number of named addresses, including exports.
-
-This reads files in Hermes, without injecting into or pausing the game. It does
-not use symbol servers or download symbols. Missing, mismatched or unreadable
-PDBs leave the normal export names and `sub_...` placeholders intact. This is
-name support, not recovery of PDB types, source lines or local variables.
-PDB loading currently requires Windows; ELF symbol tables work on both platforms.
 
 ## Limits
 
