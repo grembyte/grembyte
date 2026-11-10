@@ -23,6 +23,16 @@ have to come from the file itself or from the engine's own reflection.
      **Engine names** adds IL2CPP methods and Unreal exec thunks. Open: a test in
      V Rising and Avowed; remember the names per module build so they are there
      without the game.
+   - **Unreal property descriptors:** strings like `PrimaryAttackPower` (Queen's Domain)
+     show only as "pointer in .rdata": the pointer is the `NameUTF8` field of a UHT
+     `FPropertyParams` record that the engine reads once at start-up to build its
+     reflection, so no code uses the string. Recognise these records and show
+     "UPROPERTY PrimaryAttackPower, float, offset 0x…" instead. UE4 layout (to verify per
+     version): +0x00 name, +0x08 RepNotify name or 0, +0x10 PropertyFlags (8 bytes),
+     +0x18 EPropertyGenFlags (type, 1 byte), +0x1c ObjectFlags, +0x20 ArrayDim,
+     +0x24 offset in the object. Follow the record up through the `PropPointers` array and
+     `FClassParams` to `Z_Construct_UClass_…` to name the owning class, and link to the
+     object inspector so the value can be read on a live object.
 2. **Own names and structure fields**
    - Rename functions, globals and arguments by hand, saved per module (ELF build ID, PE
      time stamp and checksum) and shown everywhere: disassembly, pseudocode, callers,
