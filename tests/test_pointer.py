@@ -1209,3 +1209,112 @@ def test_pointer_dialog_shows_the_most_promising_chains_first(qt_app, sessions):
     assert "+40  starts in: Main module" in tooltip and "+10  all offsets up to 0x100" in tooltip
     dialog.table.selectRow(0)
     assert dialog._selected_chain() == best
+
+
+def test_pointer_dialogs_pin_to_the_main_window_one_at_a_time(qt_app, sessions):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import os
+
+    from PySide6.QtWidgets import QMainWindow  # pylint: disable=no-name-in-module
+
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets.pointer_scan import PointerScanDialog, PointerScanDock
+
+    translations = load_translations("en")
+    repository = AddressRepository(sessions)
+    process_id = HookRepository(sessions).get_or_create_process("python", "/usr/bin/python")
+    window = QMainWindow()
+    window.show()
+    dock = PointerScanDock(window)
+    dialogs = []
+    for label in ("Gold", "Mana"):
+        entry_id = repository.add_address(process_id, label=label, value_type="int32",
+                                          address=0x20000)
+        entry = {"id": entry_id, "label": label, "address": 0x20000, "type": "int32"}
+        dialog = PointerScanDialog(translations, repository, os.getpid(), entry, window)
+        dialog.finished.connect(lambda _result, d=dialog: dock.release(d))
+        dialogs.append(dialog)
+    gold, mana = dialogs
+    asked = []
+    gold.pin_toggled.connect(asked.append)
+
+    gold.btn_pin.click()
+    assert asked == [True]
+    dock.pin(gold)
+    assert dock.dialog() is gold and dock.isVisible() and not gold.isWindow()
+    assert "Gold" in dock.windowTitle() and gold.btn_pin.text() == translations["pointer.unpin"]
+
+    dock.pin(mana)  # one at a time: Gold floats again
+    assert dock.dialog() is mana and gold.isWindow() and gold.isVisible()
+    assert not gold.btn_pin.isChecked() and mana.btn_pin.isChecked()
+
+    dock.unpin(mana)
+    assert dock.dialog() is None and not dock.isVisible() and mana.isWindow()
+
+    dock.pin(mana)
+    mana.reject()  # e.g. "Use pointer" or the entry was removed
+    assert dock.dialog() is None and not dock.isVisible()
+
+    finished = []
+    gold.finished.connect(finished.append)
+    dock.pin(gold)
+    dock.close()  # the dock's own close button
+    assert finished and dock.dialog() is None
+    window.close()
+
+
+@requires_target
+def test_the_main_window_remembers_pinned_pointer_dialogs(binary, qt_app, sessions,
+                                                          monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui import main_window
+
+    monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
+    monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
+    target = _Target(binary)
+
+    class FakeSelection:  # pylint: disable=too-few-public-methods
+        selected_pid, selected_name, selected_path = target.pid, "target", "/opt/target"
+
+        def __init__(self, *_args):
+            pass
+
+        @staticmethod
+        def exec():
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(main_window, "ProcessSelectDialog", FakeSelection)
+    window = main_window.MainWindow("en")
+    try:
+        window._open_process_dialog()
+        window._refresh_timer.stop()
+        window._add_tracked_address({"address": hex(target.gold), "address_value": target.gold,
+                                     "type": "int32", "value": "1234"})
+        entry_id = window._address_meta(0)["id"]
+        window._open_pointer_scan(0)
+        dialog = window._pointer_dialogs[entry_id]
+        assert dialog.isWindow()
+
+        dialog.btn_pin.click()
+        assert window._pointer_dock.dialog() is dialog and not dialog.isWindow()
+        dialog.reject()
+        qt_app.processEvents()
+        assert entry_id not in window._pointer_dialogs and window._pointer_dock.dialog() is None
+
+        window._open_pointer_scan(0)  # opens docked again
+        dialog = window._pointer_dialogs[entry_id]
+        assert window._pointer_dock.dialog() is dialog
+        dialog.btn_pin.click()  # detached: the next one floats
+        assert dialog.isWindow() and window._pointer_dock.dialog() is None
+        dialog.reject()
+        window._open_pointer_scan(0)
+        assert window._pointer_dialogs[entry_id].isWindow()
+    finally:
+        window.close()
+        target.close()

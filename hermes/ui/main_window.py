@@ -98,7 +98,7 @@ from hermes.ui.widgets.settings_dialog import SettingsDialog
 from hermes.ui.widgets.theme_dialog import ThemeDialog
 from hermes.core import activity, logs, messages, sessions
 from hermes.core import settings as app_settings
-from hermes.ui import workers
+from hermes.ui import window_state, workers
 from hermes.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
 from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog
 from hermes.ui.widgets.method_call import MethodCallDialog
@@ -107,7 +107,7 @@ from hermes.ui.widgets.code_explorer import CodeExplorerDialog
 from hermes.ui.widgets.native_monitor import NativeMonitorDialog
 from hermes.ui.widgets.native_trace import NativeTraceDialog
 from hermes.ui.widgets.trace import TraceDialog
-from hermes.ui.widgets.pointer_scan import PointerScanDialog
+from hermes.ui.widgets.pointer_scan import PointerScanDialog, PointerScanDock
 from hermes.ui.widgets.templates import TemplateDialog
 from hermes.ui.widgets.write_watch import WriteWatchDialog
 
@@ -127,6 +127,8 @@ CLOSING_WORKER_TIMEOUT_MS = 3_000
 WRITE_WATCH_STOP_TIMEOUT_MS = 3000
 # Scan results beyond this many rows are kept but not shown in the table.
 RESULT_DISPLAY_LIMIT = 1000
+# Whether pointer scan dialogs open docked in the main window.
+_POINTER_PINNED_KEY = "pointer_scan/pinned"
 
 # The app icon (window and taskbar, see hermes.main; toolbar)
 ICON_PATH = Path(__file__).parent / "resources" / "favicon.svg"
@@ -491,6 +493,8 @@ class MainWindow(QMainWindow):
         self._address_keys = itertools.count(1)
         self._filling_addresses = False
         self._pointer_dialogs = {}
+        # Holds a pinned pointer scan dialog (PointerScanDock), once used.
+        self._pointer_dock = None
         self._memory_viewer = None
         self._catalog = None
         self._method_monitor = None
@@ -1601,6 +1605,9 @@ class MainWindow(QMainWindow):
         }
         dialog = self._pointer_dialogs.get(meta["id"])
         if dialog is not None:
+            if self._pointer_dock is not None and self._pointer_dock.dialog() is dialog:
+                self._pointer_dock.pin(dialog)
+                return
             dialog.show()
             dialog.raise_()
             dialog.activateWindow()
@@ -1617,8 +1624,27 @@ class MainWindow(QMainWindow):
             lambda chains: dialog.show_adopted(self._add_pointer_entries(entry_id, chains))
         )
         dialog.finished.connect(lambda _result: self._pointer_dialogs.pop(entry_id, None))
+        dialog.finished.connect(lambda _result: self._pointer_dock_for().release(dialog))
+        dialog.pin_toggled.connect(lambda pinned: self._pin_pointer_dialog(dialog, pinned))
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        dialog.show()
+        if window_state.settings().value(_POINTER_PINNED_KEY, False, type=bool):
+            self._pointer_dock_for().pin(dialog)
+        else:
+            dialog.show()
+
+    def _pointer_dock_for(self):
+        """The dock for pointer scan dialogs, created on first use."""
+        if self._pointer_dock is None:
+            self._pointer_dock = PointerScanDock(self)
+        return self._pointer_dock
+
+    def _pin_pointer_dialog(self, dialog, pinned):
+        """Dock a pointer scan dialog at the side, or float it; remembered for the next."""
+        window_state.settings().setValue(_POINTER_PINNED_KEY, pinned)
+        if pinned:
+            self._pointer_dock_for().pin(dialog)
+        else:
+            self._pointer_dock_for().unpin(dialog)
 
     def _selected_scan_address(self):
         """Return the address of the selected scan result, or None."""
