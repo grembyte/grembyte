@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QCheckBox,
     QDialog,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 from sqlalchemy.exc import SQLAlchemyError
 
-from hermes.core import logs
+from hermes.core import logs, memory_regions
 from hermes.core.pointer import (
     PointerMap,
     ScanCancelled,
@@ -28,8 +29,14 @@ from hermes.core.pointer import (
     module_bases,
     resolve_chain,
 )
-from hermes.platform import ProcessMemory, main_module, read_mappings
+from hermes.platform import (
+    ProcessMemory,
+    main_module,
+    read_mappings,
+    thread_stack_pointers,
+)
 from hermes.db.repository.addresses import SavedPointerScan
+from hermes.ui import window_state
 from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import DocsHint, WrappedLabel
 from hermes.ui.widgets.spin_boxes import SpinBox
@@ -46,6 +53,20 @@ ADOPT_LIMIT = 500
 # How long closing the dialog waits for a cancelled scan.
 STOP_TIMEOUT_MS = 5000
 
+# Modules listed in the tooltip of a memory category at most.
+_TOOLTIP_MODULES = 25
+# The memory categories chosen last (see hermes.core.memory_regions).
+_CATEGORIES_KEY = "pointer_scan/categories"
+
+
+def _remembered_categories():
+    """The categories chosen last, else the defaults."""
+    stored = window_state.settings().value(_CATEGORIES_KEY)
+    if not isinstance(stored, str) or not stored:
+        return set(memory_regions.DEFAULT_CATEGORIES)
+    chosen = set(stored.split(",")) & set(memory_regions.CATEGORIES)
+    return chosen or set(memory_regions.DEFAULT_CATEGORIES)
+
 
 class PointerScanWorker(QThread):
     """Run a pointer scan, or filter candidates, outside the GUI thread."""
@@ -56,8 +77,11 @@ class PointerScanWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, pid, target, *, chains=None, max_depth=5, max_offset=0x1000,
-                 max_results=10000, base_modules=None, aligned_values=True, parent=None):
+                 max_results=10000, categories=None, main_module=None, aligned_values=True,
+                 parent=None):
         # pylint: disable=too-many-arguments
+        """``categories`` (see hermes.core.memory_regions) limit the memory read
+        and the modules chains may start in; None reads all writable memory."""
         super().__init__(parent)
         logs.log_failures(self)
         self.pid = pid
@@ -66,8 +90,11 @@ class PointerScanWorker(QThread):
         self.max_depth = max_depth
         self.max_offset = max_offset
         self.max_results = max_results
-        self.base_modules = base_modules
+        self.categories = categories
+        self.main_module = main_module
         self.aligned_values = aligned_values
+        # Modules chains may start in, from ``categories`` (set by the scan).
+        self.base_modules = None
         # Chain length up to which the results are complete if the scan
         # stopped at its memory limit, else None (set by the scan).
         self.complete_depth = None
@@ -93,6 +120,7 @@ class PointerScanWorker(QThread):
             progress=lambda percent: self.progress.emit("reading", percent),
             cancelled=self.isInterruptionRequested,
             aligned_values=self.aligned_values,
+            select=None if self.categories is None else self._select,
         )
         chains = pointer_map.find_chains(
             self.target,
@@ -105,6 +133,12 @@ class PointerScanWorker(QThread):
         )
         self.complete_depth = pointer_map.complete_depth
         return chains
+
+    def _select(self, mappings):
+        regions = memory_regions.classify(mappings, self.main_module,
+                                          thread_stack_pointers(self.pid))
+        ranges, self.base_modules = memory_regions.selection(regions, self.categories)
+        return ranges
 
     def _filter(self):
         bases = module_bases(read_mappings(self.pid))
@@ -158,6 +192,7 @@ class PointerScanDialog(QDialog):
         self._static_chain = None
         self._main_module = main_module(pid)
         self._build_ui()
+        self._show_regions()
         self._check_static(entry["address"])
         self._show_candidates()
 
@@ -207,13 +242,23 @@ class PointerScanDialog(QDialog):
         self.results_input.setValue(10000)
         self.results_input.setToolTip(self.translations["pointer.max_results_tooltip"])
         form.addRow(self.translations["pointer.max_results"], self.results_input)
-        self.main_module_only = QCheckBox(self.translations["pointer.main_module_only"].format(
-            module=self._main_module or "?"
-        ))
-        self.main_module_only.setToolTip(self.translations["pointer.main_module_only_tooltip"])
-        self.main_module_only.setChecked(self._main_module is not None)
-        self.main_module_only.setEnabled(self._main_module is not None)
-        form.addRow("", self.main_module_only)
+        # Memory regions: where chains may start, and what lies between
+        chosen = _remembered_categories()
+        self.region_boxes = {}
+        for label, categories in (
+                ("pointer.regions_start", memory_regions.MODULE_CATEGORIES),
+                ("pointer.regions_between", memory_regions.DYNAMIC_CATEGORIES)):
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 0)
+            for position, category in enumerate(categories):
+                box = QCheckBox()
+                box.setChecked(category in chosen
+                               or category in memory_regions.REQUIRED_CATEGORIES)
+                box.setEnabled(category not in memory_regions.REQUIRED_CATEGORIES)
+                box.toggled.connect(self._remember_categories)
+                self.region_boxes[category] = box
+                grid.addWidget(box, position // 3, position % 3)
+            form.addRow(self.translations[label], grid)
         self.aligned_values = QCheckBox(self.translations["pointer.aligned_values"])
         self.aligned_values.setToolTip(self.translations["pointer.aligned_values_tooltip"])
         self.aligned_values.setChecked(True)
@@ -345,6 +390,8 @@ class PointerScanDialog(QDialog):
             self.btn_static.setVisible(False)
             self.status_label.setText(self.translations["pointer.process_exited"])
         else:
+            self._main_module = main_module(pid)
+            self._show_regions()
             self.status_label.setText(self.translations["pointer.process_attached"])
         self._update_buttons()
 
@@ -370,6 +417,46 @@ class PointerScanDialog(QDialog):
         for button in (self.btn_scan, self.btn_filter):
             button.style().unpolish(button)
             button.style().polish(button)
+
+    def _show_regions(self):
+        """Label each memory category with its size and list its modules."""
+        summary = None
+        if self.pid is not None:
+            try:
+                mappings = read_mappings(self.pid)
+                summary = memory_regions.summarize(memory_regions.classify(
+                    mappings, self._main_module, thread_stack_pointers(self.pid)))
+            except OSError:
+                summary = None
+        t = self.translations
+        for category, box in self.region_boxes.items():
+            name = t[f"pointer.region.{category}"]
+            tooltip = t[f"pointer.region.{category}_tooltip"]
+            if summary is not None:
+                entry = summary[category]
+                size = t["pointer.region_size"].format(size=entry.size / 2**20)
+                if category == memory_regions.MAIN and entry.modules:
+                    name += f" ({entry.modules[0]}, {size})"
+                elif category in memory_regions.MODULE_CATEGORIES:
+                    name += " (" + t["pointer.region_modules"].format(
+                        count=len(entry.modules), size=size) + ")"
+                else:
+                    name += f" ({size})"
+                if entry.modules and category != memory_regions.MAIN:
+                    shown = entry.modules[:_TOOLTIP_MODULES]
+                    tooltip += "\n\n" + ", ".join(shown)
+                    if len(entry.modules) > len(shown):
+                        tooltip += " " + t["pointer.region_more"].format(
+                            count=len(entry.modules) - len(shown))
+            box.setText(name)
+            box.setToolTip(tooltip)
+
+    def _chosen_categories(self):
+        return {category for category, box in self.region_boxes.items() if box.isChecked()}
+
+    def _remember_categories(self):
+        window_state.settings().setValue(
+            _CATEGORIES_KEY, ",".join(sorted(self._chosen_categories())))
 
     def _selected_chains(self):
         """The chains of the selected rows, in table order."""
@@ -446,12 +533,10 @@ class PointerScanDialog(QDialog):
             "max_depth": self.depth_input.value(),
             "max_offset": max_offset,
         }
-        base_modules = (
-            {self._main_module} if self.main_module_only.isChecked() else None
-        )
         max_results = self.results_input.value()
         worker = PointerScanWorker(
-            self.pid, target, max_results=max_results, base_modules=base_modules,
+            self.pid, target, max_results=max_results,
+            categories=self._chosen_categories(), main_module=self._main_module,
             aligned_values=self.aligned_values.isChecked(), **settings
         )
         self._start(worker, lambda chains: self._scan_done(

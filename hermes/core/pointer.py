@@ -199,27 +199,34 @@ class PointerMap:
         return len(self.values)
 
     @classmethod
-    def build(cls, pid, progress=None, cancelled=None, aligned_values=True):
+    def build(cls, pid, progress=None, cancelled=None, aligned_values=True, select=None):
+        # pylint: disable=too-many-arguments
         """Read the process memory; ``progress(percent)`` reports the reading.
 
         With ``aligned_values`` only multiples of the pointer size count.
+        ``select(mappings)`` may return the sorted ``[(start, end)]`` to read
+        instead of all writable memory (see hermes.core.memory_regions);
+        pointers into other memory are left out then, too.
         """
         size_of_pointer = pointer_size(pid)
         dtype = "<u8" if size_of_pointer == 8 else "<u4"
         mappings = read_mappings(pid)
-        writable = sorted((m for m in mappings if m.writable), key=lambda m: m.start)
-        starts = np.array([m.start for m in writable], dtype=np.uint64)
-        ends = np.array([m.end for m in writable], dtype=np.uint64)
-        total = sum(m.end - m.start for m in writable) or 1
+        if select is not None:
+            ranges = select(mappings)
+        else:
+            ranges = sorted((m.start, m.end) for m in mappings if m.writable)
+        starts = np.array([start for start, _end in ranges], dtype=np.uint64)
+        ends = np.array([end for _start, end in ranges], dtype=np.uint64)
+        total = sum(end - start for start, end in ranges) or 1
         done = 0
         values, locations = [], []
         with ProcessMemory(pid) as memory:
-            for mapping in writable:
-                position = mapping.start
-                while position < mapping.end:
+            for range_start, range_end in ranges:
+                position = range_start
+                while position < range_end:
                     if cancelled is not None and cancelled():
                         raise ScanCancelled()
-                    size = min(_CHUNK_SIZE, mapping.end - position)
+                    size = min(_CHUNK_SIZE, range_end - position)
                     block = memory.read_available(position, size)
                     count = len(block) // size_of_pointer
                     if count:

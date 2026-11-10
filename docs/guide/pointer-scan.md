@@ -25,6 +25,24 @@ From now on the tracked address resolves correctly after every restart, and hook
 
 If the address lies in the program's static memory, no pointer scan is needed; the dialog says so.
 
+## Memory regions
+
+The dialog sorts the program's writable memory into groups, each with its size; the tooltip lists the modules in it.
+
+**Chains start in** the static memory of modules:
+
+| Group | What it holds | Default |
+|---|---|---|
+| Main module | The program itself | on |
+| Game modules | Other modules in the game's folder | on |
+| Engine modules | Engine runtimes and middleware: UnityPlayer, GameAssembly, Mono, Unreal's engine modules, PhysX, FMOD, Steam … | on |
+| System modules | The system, Wine and the drivers: libc, ntdll, kernel32, Mesa … | off |
+| Other modules | Everything else, e.g. Steam's overlay | off |
+
+**Chains pass through** the heap, which is always searched, and the thread stacks (off by default). Stack contents change all the time; leaving them out gives fewer chance hits and a faster scan. On Linux, Wine included, a thread's stack is the memory around its stack pointer, on Windows the memory above its guard page.
+
+Turn on system or other modules only if no chain from the game's own modules survives a restart. The choice is kept for the next scan.
+
 ## Candidates
 
 The chains found are saved for the entry as candidates, so they can still be filtered after the game was restarted.

@@ -43,7 +43,7 @@ Tracked, the value visibly counts up in the address list until it reaches 50.
 Press **N**: the game builds a new player, and all tracked addresses now point into memory the game no longer uses. A **pointer chain** finds the value again. Mana is a good target, because you can find it again right after a new game.
 
 1. Right-click "Mana" → **Find pointers …**.
-2. Untick **Only chains starting in HermesQuest.x86_64**. In a Unity game the program file is only a small launcher; the chains start in the Mono runtime (`libmonobdwgc-2.0.so`, or `mono-2.0-bdwgc.dll` on Windows) or in `UnityPlayer`.
+2. Keep **Engine modules** ticked under **Chains start in** (it is by default). In a Unity game the program file is only a small launcher; the chains start in the Mono runtime (`libmonobdwgc-2.0.so`, or `mono-2.0-bdwgc.dll` on Windows) or in `UnityPlayer`.
 3. Click **New scan**. It finds many candidates.
 4. Press **N** in the game. Find mana again as above: spawn a rat, cast, **Exact value** `42.5` rounded, then **Decreased by …** `7.5` ± `0.5`.
 5. In the pointer dialog click **Take from scan**, then **Filter with this address**. Chains that only matched by chance drop out.

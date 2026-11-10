@@ -295,6 +295,26 @@ def test_chains_can_be_limited_to_the_main_module(binary):
         target.close()
 
 
+@requires_target
+def test_a_scan_by_memory_category_skips_system_modules_and_stacks(binary):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.core import memory_regions
+    from hermes.ui.widgets.pointer_scan import PointerScanWorker
+
+    target = _Target(binary)
+    try:
+        worker = PointerScanWorker(
+            target.pid, target.gold, max_depth=4, max_offset=0x100,
+            categories=memory_regions.DEFAULT_CATEGORIES, main_module=main_module(target.pid))
+        chains = worker._scan()
+
+        assert _gold_chain(binary) in chains
+        assert {chain.module for chain in chains} == {"target"}  # libc is a system module
+        assert worker.base_modules == {"target"}
+    finally:
+        target.close()
+
+
 def test_pointer_map_ignores_unaligned_values_by_default(monkeypatch):
     mappings = [Mapping(0x1000, 0x1020, "rw-p", writable=True)]
     memory = struct.pack("<4Q", 0x1008, 0x1004, 0x2000, 0)
@@ -1100,3 +1120,35 @@ def test_pointer_dialog_adopts_the_selected_candidates_and_removes_the_scan(
     assert dialog.table.rowCount() == 0 and not dialog.btn_clear.isEnabled()
     assert dialog.status_label.text() == translations["pointer.scan_cleared"]
     assert repository.list_addresses(process_id)[0].id == entry_id  # the entry stays
+
+
+def test_pointer_dialog_offers_memory_categories_and_remembers_them(qt_app, sessions):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import os
+
+    from hermes.core import memory_regions
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+
+    translations = load_translations("en")
+    repository = AddressRepository(sessions)
+    process_id = HookRepository(sessions).get_or_create_process("python", "/usr/bin/python")
+    entry_id = repository.add_address(process_id, label="x", value_type="int32",
+                                      address=0x20000)
+    entry = {"id": entry_id, "label": "x", "address": 0x20000, "type": "int32"}
+    dialog = PointerScanDialog(translations, repository, os.getpid(), entry)
+    boxes = dialog.region_boxes
+
+    assert dialog._chosen_categories() == memory_regions.DEFAULT_CATEGORIES
+    assert boxes["heap"].isChecked() and not boxes["heap"].isEnabled()
+    assert not boxes["stack"].isChecked() and not boxes["system"].isChecked()
+    # sizes and modules are shown: python's libraries are system modules
+    assert boxes["system"].text().startswith(translations["pointer.region.system"] + " (")
+    assert "MB" in boxes["system"].text() and "libc" in boxes["system"].toolTip()
+
+    boxes["stack"].setChecked(True)
+    boxes["engine"].setChecked(False)
+    again = PointerScanDialog(translations, repository, os.getpid(), entry)
+    assert again._chosen_categories() == {"main", "game", "heap", "stack"}

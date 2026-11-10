@@ -180,6 +180,41 @@ class ProcessMemory:
                                    size=len(data))
 
 
+def thread_stack_pointers(pid, proc_root="/proc", attempts=3):
+    """Return the stack pointer of each thread of ``pid`` that could be read.
+
+    /proc/<pid>/task/<tid>/syscall ends with the stack and instruction
+    pointer of a thread that is not running: waiting in a system call, or
+    "-1 sp pc" outside one. Wine's threads are Linux threads too. A thread
+    that is running just then reads as "running" and is tried again, up to
+    ``attempts`` times.
+    """
+    tasks = Path(proc_root) / str(pid) / "task"
+    try:
+        pending = [entry.name for entry in tasks.iterdir()]
+    except OSError:
+        return []
+    pointers = []
+    for _attempt in range(attempts):
+        running = []
+        for tid in pending:
+            try:
+                fields = (tasks / tid / "syscall").read_text(encoding="ascii").split()
+            except (OSError, UnicodeDecodeError):
+                continue
+            if fields and fields[0] == "running":
+                running.append(tid)
+            elif len(fields) >= 3:
+                try:
+                    pointers.append(int(fields[-2], 16))
+                except ValueError:
+                    continue
+        if not running:
+            break
+        pending = running
+    return pointers
+
+
 def process_start_time(pid, proc_root="/proc"):
     """Return when ``pid`` was started (clock ticks after boot), or None.
 
