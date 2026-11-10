@@ -331,7 +331,30 @@ def test_pointer_map_ignores_unaligned_values_by_default(monkeypatch):
     monkeypatch.setattr(pointer_module, "ProcessMemory", linux.ProcessMemory)
 
     assert PointerMap.build(123).values.tolist() == [0x1008]
-    assert PointerMap.build(123, aligned_values=False).values.tolist() == [0x1004, 0x1008]
+    assert PointerMap.build(123, value_alignment=1).values.tolist() == [0x1004, 0x1008]
+
+
+def test_pointer_map_finds_pointers_at_4_byte_steps_across_blocks(monkeypatch):
+    # 8-byte pointers at 0x1004 (packed) and 0x100c, which spans two blocks
+    mappings = [Mapping(0x1000, 0x1020, "rw-p", writable=True)]
+    memory = struct.pack("<I2QI2Q", 0, 0x1010, 0x1018, 0, 0, 0)[:0x20]
+
+    def fake_open(path, mode="r", **_kwargs):
+        assert path == "/proc/123/mem" and mode == "rb"
+        return io.BytesIO(b"\0" * 0x1000 + memory)
+
+    monkeypatch.setattr(pointer_module, "read_mappings", lambda _pid: mappings)
+    monkeypatch.setattr(pointer_module, "pointer_size", lambda _pid: 8)
+    monkeypatch.setattr(pointer_module, "_CHUNK_SIZE", 0x10)
+    monkeypatch.setattr(builtins, "open", fake_open)
+    monkeypatch.setattr(pointer_module, "ProcessMemory", linux.ProcessMemory)
+
+    assert PointerMap.build(123).values.tolist() == []
+    pointer_map = PointerMap.build(123, location_step=4)
+    assert pointer_map.values.tolist() == [0x1010, 0x1018]
+    assert pointer_map.locations.tolist() == [0x1004, 0x100C]
+    with pytest.raises(ValueError):
+        PointerMap.build(123, location_step=3)
 
 
 def test_pointer_map_of_a_32_bit_program_reads_4_byte_pointers(monkeypatch):

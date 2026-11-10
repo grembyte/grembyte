@@ -199,17 +199,29 @@ class PointerMap:
         return len(self.values)
 
     @classmethod
-    def build(cls, pid, progress=None, cancelled=None, aligned_values=True, select=None):
-        # pylint: disable=too-many-arguments
+    def build(cls, pid, progress=None, cancelled=None, select=None, location_step=None,
+              value_alignment=None):
+        # pylint: disable=too-many-arguments,too-many-locals
         """Read the process memory; ``progress(percent)`` reports the reading.
 
-        With ``aligned_values`` only multiples of the pointer size count.
         ``select(mappings)`` may return the sorted ``[(start, end)]`` to read
         instead of all writable memory (see hermes.core.memory_regions);
         pointers into other memory are left out then, too.
+
+        Pointers are looked for every ``location_step`` bytes, and only values
+        that are multiples of ``value_alignment`` count (1: any value); both
+        default to the pointer size. A step of 4 in a 64-bit program also
+        finds pointers in packed structures, at twice the work.
         """
         size_of_pointer = pointer_size(pid)
         dtype = "<u8" if size_of_pointer == 8 else "<u4"
+        step = location_step or size_of_pointer
+        if size_of_pointer % step:
+            raise ValueError(f"location step {step} does not divide the pointer size")
+        alignment = np.uint64(value_alignment or size_of_pointer)
+        # Bytes read past a block, for pointers that start in it at a step
+        # smaller than the pointer size.
+        overlap = size_of_pointer - step
         mappings = read_mappings(pid)
         if select is not None:
             ranges = select(mappings)
@@ -227,21 +239,35 @@ class PointerMap:
                     if cancelled is not None and cancelled():
                         raise ScanCancelled()
                     size = min(_CHUNK_SIZE, range_end - position)
-                    block = memory.read_available(position, size)
-                    count = len(block) // size_of_pointer
-                    if count:
-                        words = np.frombuffer(block, dtype=dtype, count=count).astype(np.uint64)
+                    block = memory.read_available(
+                        position, size + min(overlap, range_end - position - size))
+                    block_values, block_locations = [], []
+                    for shift in range(0, size_of_pointer, step):
+                        count = min((len(block) - shift) // size_of_pointer,
+                                    (size - shift + size_of_pointer - 1) // size_of_pointer)
+                        if count <= 0:
+                            continue
+                        words = np.frombuffer(block, dtype=dtype, count=count,
+                                              offset=shift).astype(np.uint64)
                         index = np.searchsorted(starts, words, side="right") - 1
                         valid = (index >= 0) & (words < ends[np.maximum(index, 0)])
-                        if aligned_values:
-                            valid &= words % np.uint64(size_of_pointer) == 0
+                        if alignment > 1:
+                            valid &= words % alignment == 0
                         hits = np.flatnonzero(valid)
                         if hits.size:
-                            values.append(words[hits])
-                            locations.append(
-                                np.uint64(position)
+                            block_values.append(words[hits])
+                            block_locations.append(
+                                np.uint64(position + shift)
                                 + hits.astype(np.uint64) * np.uint64(size_of_pointer)
                             )
+                    if len(block_values) > 1:
+                        # Interleaved shifts: back into address order
+                        joined = np.concatenate(block_locations)
+                        order = np.argsort(joined, kind="stable")
+                        block_locations = [joined[order]]
+                        block_values = [np.concatenate(block_values)[order]]
+                    values += block_values
+                    locations += block_locations
                     position += size
                     done += size
                     if progress is not None:

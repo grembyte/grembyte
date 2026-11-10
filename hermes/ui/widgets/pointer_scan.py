@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt, QThread, Signal  # pylint: disable=import-error,n
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDialog,
     QFormLayout,
     QGridLayout,
@@ -78,11 +79,12 @@ class PointerScanWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, pid, target, *, chains=None, max_depth=5, max_offset=0x1000,
-                 max_results=10000, categories=None, main_module=None, aligned_values=True,
-                 parent=None):
+                 max_results=10000, categories=None, main_module=None, location_step=None,
+                 value_alignment=None, parent=None):
         # pylint: disable=too-many-arguments
         """``categories`` (see hermes.core.memory_regions) limit the memory read
-        and the modules chains may start in; None reads all writable memory."""
+        and the modules chains may start in; None reads all writable memory.
+        ``location_step`` and ``value_alignment`` see ``PointerMap.build``."""
         super().__init__(parent)
         logs.log_failures(self)
         self.pid = pid
@@ -93,7 +95,8 @@ class PointerScanWorker(QThread):
         self.max_results = max_results
         self.categories = categories
         self.main_module = main_module
-        self.aligned_values = aligned_values
+        self.location_step = location_step
+        self.value_alignment = value_alignment
         # Modules chains may start in, from ``categories`` (set by the scan).
         self.base_modules = None
         # Chain length up to which the results are complete if the scan
@@ -120,7 +123,8 @@ class PointerScanWorker(QThread):
             self.pid,
             progress=lambda percent: self.progress.emit("reading", percent),
             cancelled=self.isInterruptionRequested,
-            aligned_values=self.aligned_values,
+            location_step=self.location_step,
+            value_alignment=self.value_alignment,
             select=None if self.categories is None else self._select,
         )
         chains = pointer_map.find_chains(
@@ -264,10 +268,24 @@ class PointerScanDialog(QDialog):
                 self.region_boxes[category] = box
                 grid.addWidget(box, position // 3, position % 3)
             form.addRow(self.translations[label], grid)
-        self.aligned_values = QCheckBox(self.translations["pointer.aligned_values"])
-        self.aligned_values.setToolTip(self.translations["pointer.aligned_values_tooltip"])
-        self.aligned_values.setChecked(True)
-        form.addRow("", self.aligned_values)
+        # Where pointers lie and where they point to, in bytes
+        size = self._pointer_size()
+        self.location_step = QComboBox()
+        for step in (8, 4):
+            if step <= size:
+                self.location_step.addItem(
+                    self.translations["pointer.alignment_bytes"].format(bytes=step), step)
+        self.location_step.setCurrentIndex(self.location_step.findData(size))
+        self.location_step.setToolTip(self.translations["pointer.location_step_tooltip"])
+        form.addRow(self.translations["pointer.location_step"], self.location_step)
+        self.value_alignment = QComboBox()
+        for alignment in (16, 8, 4, 1):
+            label = (self.translations["pointer.alignment_any"] if alignment == 1
+                     else self.translations["pointer.alignment_bytes"].format(bytes=alignment))
+            self.value_alignment.addItem(label, alignment)
+        self.value_alignment.setCurrentIndex(self.value_alignment.findData(size))
+        self.value_alignment.setToolTip(self.translations["pointer.value_alignment_tooltip"])
+        form.addRow(self.translations["pointer.value_alignment"], self.value_alignment)
         layout.addLayout(form)
 
         actions = QHBoxLayout()
@@ -358,8 +376,11 @@ class PointerScanDialog(QDialog):
     def _rank(self):
         """Score the candidates (see hermes.core.chain_score), best first."""
         chains = [] if self._scan is None else self._scan.chains
-        size = pointer_size(self.pid) if self.pid is not None else 8
-        self._ranking = chain_score.ranked(chains, self._module_categories, size)
+        self._ranking = chain_score.ranked(chains, self._module_categories,
+                                           self._pointer_size())
+
+    def _pointer_size(self):
+        return pointer_size(self.pid)
 
     def _score_tooltip(self, result):
         t = self.translations
@@ -571,7 +592,8 @@ class PointerScanDialog(QDialog):
         worker = PointerScanWorker(
             self.pid, target, max_results=max_results,
             categories=self._chosen_categories(), main_module=self._main_module,
-            aligned_values=self.aligned_values.isChecked(), **settings
+            location_step=self.location_step.currentData(),
+            value_alignment=self.value_alignment.currentData(), **settings
         )
         self._start(worker, lambda chains: self._scan_done(
             chains, settings, max_results, worker.complete_depth

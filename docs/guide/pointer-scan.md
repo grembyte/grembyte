@@ -43,6 +43,13 @@ The dialog sorts the program's writable memory into groups, each with its size; 
 
 Turn on system or other modules only if no chain from the game's own modules survives a restart. The choice is kept for the next scan.
 
+## Alignment
+
+Two settings decide what counts as a pointer:
+
+- **Pointers lie at** multiples of 8 bytes in 64-bit programs, as compilers place them. Multiples of 4 also find pointers in packed structures (`#pragma pack`), but the scan reads twice as many values and finds more chance hits.
+- **Pointers point to** multiples of 8 bytes by default: real pointers to objects almost always are, numbers that merely look like an address usually are not. Multiples of 16 cut chance hits further; **any address** finds chains through a pointer into the middle of a structure (`&object->value`).
+
 ## Candidates
 
 The chains found are saved for the entry as candidates, so they can still be filtered after the game was restarted.

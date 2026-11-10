@@ -10,7 +10,9 @@ Every pointer of a chain except the last lies at an aligned address (the
 scan reads aligned words), which is the previous pointer value plus its
 offset. So a pointer value is aligned exactly when the offset after it is a
 multiple of the pointer size; the last offset leads to the value itself and
-does not count.
+does not count. A scan at 4-byte steps (``location_step``) also finds
+pointers at addresses that are not multiples of 8; there the points go to
+chains whose offsets are, which is the best the chain itself tells.
 """
 
 from dataclasses import dataclass
