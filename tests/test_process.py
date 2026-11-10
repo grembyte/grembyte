@@ -3,7 +3,12 @@
 import os
 import subprocess
 
-from hermes.platform.linux import is_wine_process, process_start_time, program_bits
+from hermes.platform.linux import (
+    is_wine_process,
+    main_module,
+    process_start_time,
+    program_bits,
+)
 from tests.test_hooks import linux_only
 
 
@@ -62,6 +67,22 @@ def test_detects_wine_and_proton_loaders(tmp_path):
     assert not is_wine_process(5, tmp_path)
     assert not is_wine_process(6, tmp_path)
     assert not is_wine_process(os.getpid())
+
+
+@linux_only
+def test_the_main_module_of_a_wine_program_is_its_exe(tmp_path, monkeypatch):
+    # /proc/<pid>/exe is Wine's loader; the game is the .exe it maps
+    import hermes.platform.wine  # pylint: disable=import-outside-toplevel
+
+    _link_exe(tmp_path, 1, "/steam/Proton/files/lib/wine/x86_64-unix/wine64-preloader")
+    _link_exe(tmp_path, 2, "/games/PillarsOfEternity")
+    _link_exe(tmp_path, 3, "/usr/bin/wine64")
+    programs = {1: ("/games/BG/Baldur.exe", 64), 3: (None, None)}
+    monkeypatch.setattr(hermes.platform.wine, "wine_program", programs.get)
+
+    assert main_module(1, tmp_path) == "Baldur.exe"
+    assert main_module(2, tmp_path) == "PillarsOfEternity"
+    assert main_module(3, tmp_path) is None
 
 
 @linux_only

@@ -349,10 +349,35 @@ def test_pointer_size_follows_the_program_and_is_kept_per_start(monkeypatch):
 
         @staticmethod
         def read_pointer(address, size):
-            return {(0x100, 4): 0x2000}.get((address, size))
+            return {(0x100, 4): 0x20000}.get((address, size))
 
     chain = PointerChain("game", 0x100, (0x8,))
-    assert resolve_chain(Memory(), {"game": 0}, chain) == 0x2008
+    assert resolve_chain(Memory(), {"game": 0}, chain) == 0x20008
+
+
+def test_a_chain_through_a_freed_object_resolves_to_nothing(monkeypatch):
+    # The game freed the object: its pointer slot holds leftovers that point
+    # outside user space (and do not fit an SQLite integer)
+    monkeypatch.setattr(pointer_module, "pointer_size", lambda pid: 8)
+    slots = {0x1000: 0xFEEEFEEEFEEEFEEE, 0x1008: 0x8, 0x1010: 0x7FFF_FFFF_F000,
+             0x1018: 0x20000}
+
+    class Memory:  # pylint: disable=too-few-public-methods
+        pid = 5
+
+        @staticmethod
+        def read_pointer(address, size):
+            return slots.get(address) if size == 8 else None
+
+    def resolve(base_offset, *offsets):
+        return resolve_chain(Memory(), {"game": 0x1000},
+                             PointerChain("game", base_offset, offsets))
+
+    assert resolve(0x0, 0x10) is None          # garbage above user space
+    assert resolve(0x8, 0x10) is None          # a small number, no pointer
+    assert resolve(0x10, 0x2000) is None       # the offset leaves user space
+    assert resolve(0x18, -0x20000) is None     # ... or goes below it
+    assert resolve(0x18, 0x10) == 0x20010
 
 
 @requires_target
