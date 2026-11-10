@@ -16,6 +16,8 @@ hermes/features/script_native.js).
     ELF: the functions and objects of the symbol tables, and
     the imports by their GOT slot. Both: vtables and virtual methods named
     from C++ RTTI (hermes/features/rtti.py). x86 and x86-64 only.
+``add_runtime_names(image, symbols, module_base)``
+    Names an engine adapter knows (IL2CPP methods, Unreal exec thunks).
 ``CodeIndex(image)``
     Disassembles the code sections once (Capstone, linear sweep), notes
     every address an instruction refers to (RIP-relative operands, branch
@@ -1358,6 +1360,41 @@ def parse_location(text, image, module_base=None, module_name=None):
                 return address
         return None
     return _name_address(image, text)
+
+
+def add_runtime_names(image, symbols, module_base):
+    """Add names known by address in the process, e.g. from an engine adapter.
+
+    ``symbols`` holds (runtime address, name); those outside ``image``'s code
+    are skipped, names the file has already stay. Returns how many were added.
+    """
+    added = 0
+    for address, name in symbols:
+        address = address - module_base + image.base
+        section = image.section_at(address)
+        if section is None or not section.executable or address in image.names:
+            continue
+        image.names[address] = name
+        added += 1
+    return added
+
+
+def module_of_symbols(modules, symbols):
+    """The ModuleChoice most of ``symbols`` (runtime address, name) lie in:
+    the loaded module with the highest base at or below each address."""
+    loaded = sorted((choice.base, position) for position, choice in enumerate(modules)
+                    if choice.base is not None)
+    if not loaded:
+        return None
+    bases = [base for base, _position in loaded]
+    counts = {}
+    for address, _name in symbols:
+        found = bisect.bisect_right(bases, address) - 1
+        if found >= 0:
+            counts[loaded[found][1]] = counts.get(loaded[found][1], 0) + 1
+    if not counts:
+        return None
+    return modules[max(counts, key=counts.get)]
 
 
 def _name_address(image, name):

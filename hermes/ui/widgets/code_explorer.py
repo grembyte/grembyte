@@ -47,12 +47,16 @@ from hermes.features.code_explorer import (
     CodeIndex,
     Function,
     ModuleChoice,
+    add_runtime_names,
     cached_index,
+    module_of_symbols,
     load_image,
     parse_location,
     process_modules,
     remember_index,
 )
+from hermes.engines.registry import detect_engine
+from hermes.features.catalog import EngineSymbolsWorker
 from hermes.features.pseudocode import render as render_pseudocode
 from hermes.ui.widgets.code_editor import PseudocodeHighlighter, code_theme_colors
 from hermes.ui.widgets.icons import set_button_icon
@@ -215,6 +219,8 @@ class CodeExplorerDialog(QDialog):
         self.index = None
         self.module = None
         self._worker = None
+        self._names_worker = None
+        self._pending_names = None  # (module path, symbols) to add once it is loaded
         self._history = []
         self._function = None
         self._lines = []
@@ -251,6 +257,15 @@ class CodeExplorerDialog(QDialog):
         self.symbols_button.setVisible(sys.platform == "win32")
         self.symbols_button.clicked.connect(self._open_symbols)
         source.addWidget(self.symbols_button)
+        # Names the engine knows for its compiled code (IL2CPP, Unreal)
+        self._engine = detect_engine(self.pid) if self.pid else None
+        self.engine_names_button = QPushButton(t["code.engine_names"])
+        set_button_icon(self.engine_names_button, "data_object")
+        self.engine_names_button.setToolTip(t["code.engine_names_tooltip"])
+        self.engine_names_button.setVisible(
+            self._engine is not None and self._engine.id in ("il2cpp", "unreal"))
+        self.engine_names_button.clicked.connect(self._load_engine_names)
+        source.addWidget(self.engine_names_button)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setMaximumWidth(180)
@@ -475,7 +490,7 @@ class CodeExplorerDialog(QDialog):
         self._clear_views()
         cached = cached_index(choice.path) if symbol_path is None else None
         if cached is not None:
-            self._on_built(cached)
+            self._index_ready(cached)
             return
         self.progress.setValue(0)
         self.progress.show()
@@ -495,11 +510,60 @@ class CodeExplorerDialog(QDialog):
             self._worker.requestInterruption()
             self._worker = None
 
+    def _load_engine_names(self):
+        if self.index is None or self.module is None or self.module.base is None:
+            return
+        self.engine_names_button.setEnabled(False)
+        self.status_label.setText(self.translations["code.engine_names_loading"])
+        worker = EngineSymbolsWorker(self.pid, engine=self._engine)
+        worker.found.connect(self._on_engine_names)
+        worker.failed.connect(self._on_engine_names_failed)
+        self._names_worker = worker
+        keep_until_finished(worker)
+        worker.start()
+
+    def _on_engine_names(self, symbols):
+        if self.sender() is not self._names_worker or self.index is None:
+            return
+        self._names_worker = None
+        # The names belong to one module (GameAssembly, the game's executable),
+        # not necessarily the one shown: open that one first
+        target = module_of_symbols(self.modules, symbols)
+        if target is not None and target != self.module:
+            self._pending_names = (target.path, symbols)
+            self.module_combo.setCurrentIndex(self.modules.index(target))
+            self._load(target)
+            return
+        self._apply_engine_names(symbols)
+
+    def _apply_engine_names(self, symbols):
+        added = add_runtime_names(self.index.image, symbols, self.module.base)
+        self._show_index(self.index)
+        self.status_label.setText(self.translations["code.engine_names_added"].format(
+            added=added, known=len(symbols), module=self.module.name))
+
+    def _on_engine_names_failed(self, message):
+        if self.sender() is not self._names_worker:
+            return
+        self._names_worker = None
+        self._update_actions()
+        self.status_label.setText(
+            self.translations["code.engine_names_failed"].format(message=message))
+
     def _on_built(self, index):
         if self.sender() is not None and self.sender() is not self._worker:
             return
         self._worker = None
+        self._index_ready(index)
+
+    def _index_ready(self, index):
         self.progress.hide()
+        self._show_index(index)
+        pending, self._pending_names = self._pending_names, None
+        if pending is not None and pending[0] == self.module.path:
+            self._apply_engine_names(pending[1])
+
+    def _show_index(self, index):
         self.index = index
         image = index.image
         self.string_model.set_rows([(address, (f"0x{address:x}", text))
@@ -783,6 +847,9 @@ class CodeExplorerDialog(QDialog):
     def _update_actions(self):
         has_function = self.index is not None and self._function is not None
         self.symbols_button.setEnabled(self.index is not None and self.index.image.format == "pe")
+        self.engine_names_button.setEnabled(
+            self.index is not None and self.module is not None and self.module.base is not None
+            and self._names_worker is None)
         for button in (self.callers_button, self.pattern_button, self.script_button):
             button.setEnabled(has_function)
         attached = has_function and self.module is not None and self.module.base is not None

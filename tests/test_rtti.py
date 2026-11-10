@@ -1,4 +1,5 @@
-"""Class names from C++ RTTI (see hermes/features/rtti.py)."""
+"""Class names from C++ RTTI and engine names for the code explorer
+(see hermes/features/rtti.py and add_runtime_names)."""
 
 import shutil
 import struct
@@ -6,7 +7,14 @@ import subprocess
 
 import pytest
 
-from hermes.features.code_explorer import Image, Section, load_image
+from hermes.features.code_explorer import (
+    Image,
+    ModuleChoice,
+    Section,
+    add_runtime_names,
+    load_image,
+    module_of_symbols,
+)
 from hermes.features.rtti import itanium_class_name, msvc_class_name, rtti_names
 
 _SOURCE = r"""
@@ -119,3 +127,27 @@ def test_a_method_in_different_slots_gets_no_name():
     names = rtti_names(image)
     assert base + 0x1000 not in names and base + 0x1020 not in names
     assert names[base + 0x1010] == "Game::CGameSprite::vf1"
+
+
+def test_engine_names_are_added_by_runtime_address():
+    image, base = _msvc_image(True)
+    image.names[base + 0x1010] = "exported"
+    loaded = 0x7ff600000000
+    symbols = [(loaded + 0x1000, "Game.Player:AddGold"),
+               (loaded + 0x1010, "Game.Player:Other"),   # named already
+               (loaded + 0x2300, "Game.Data:NotCode"),    # data, no code
+               (0x1234, "Elsewhere:InAnotherModule")]
+    assert add_runtime_names(image, symbols, loaded) == 1
+    assert image.names[base + 0x1000] == "Game.Player:AddGold"
+    assert image.names[base + 0x1010] == "exported"
+
+
+def test_engine_names_find_the_module_they_belong_to():
+    modules = [ModuleChoice("VRising.exe", "/g/VRising.exe", 0x140000000, True),
+               ModuleChoice("GameAssembly.dll", "/g/GameAssembly.dll", 0x6fffebbb0000),
+               ModuleChoice("baselib.dll", "/g/baselib.dll", 0x6fffebb30000),
+               ModuleChoice("game.dll", "/g/game.dll", None)]
+    symbols = [(0x6fffebbb0000 + 0x1000 * n, f"Game:M{n}") for n in range(5)]
+    symbols.append((0x140001000, "Main"))
+    assert module_of_symbols(modules, symbols).name == "GameAssembly.dll"
+    assert module_of_symbols(modules, [(0x1000, "below every module")]) is None

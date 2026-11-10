@@ -1838,6 +1838,8 @@ gpointer run_batch (gpointer data) {
     id: 'mono',
     refresh, locate, name, describe, identify, compile, assemblies, classes, methodsByToken,
     methodBodies, resolveTokens,
+    // JIT code lies in no module file: nothing for the code explorer
+    nativeSymbols: () => [],
     checkAll, compileAll, describeAll, cancelBatches, batchesRunning, prepare,
     // compileAll changes nothing in the game that would need undoing
     releaseCode() {},
