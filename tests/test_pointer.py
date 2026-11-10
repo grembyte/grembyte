@@ -1152,3 +1152,37 @@ def test_pointer_dialog_offers_memory_categories_and_remembers_them(qt_app, sess
     boxes["engine"].setChecked(False)
     again = PointerScanDialog(translations, repository, os.getpid(), entry)
     assert again._chosen_categories() == {"main", "game", "heap", "stack"}
+
+
+def test_pointer_dialog_shows_the_most_promising_chains_first(qt_app, sessions):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import os
+
+    from hermes.db.repository.addresses import AddressRepository, SavedPointerScan
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+
+    translations = load_translations("en")
+    repository = AddressRepository(sessions)
+    process_id = HookRepository(sessions).get_or_create_process("python", "/usr/bin/python")
+    entry_id = repository.add_address(process_id, label="x", value_type="int32",
+                                      address=0x20000)
+    main = main_module(os.getpid())
+    libc = next(m.module for m in read_mappings(os.getpid())
+                if m.module and m.module.startswith("libc.so"))
+    long_jumps = PointerChain(main, 0x10, (0xF80, 0xE40))
+    from_libc = PointerChain(libc, 0x10, (0x20, 0x18))
+    best = PointerChain(main, 0x10, (0x20, 0x18))
+    repository.save_pointer_scan(
+        entry_id, SavedPointerScan([from_libc, long_jumps, best], 3, 0x1000, 0))
+    entry = {"id": entry_id, "label": "x", "address": 0x20000, "type": "int32"}
+
+    dialog = PointerScanDialog(translations, repository, os.getpid(), entry)
+
+    assert dialog.candidates() == [best, long_jumps, from_libc]
+    assert [dialog.table.item(row, 0).text() for row in range(3)] == ["70", "60", "30"]
+    tooltip = dialog.table.item(0, 0).toolTip()
+    assert "+40  starts in: Main module" in tooltip and "+10  all offsets up to 0x100" in tooltip
+    dialog.table.selectRow(0)
+    assert dialog._selected_chain() == best

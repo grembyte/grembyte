@@ -21,12 +21,13 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 from sqlalchemy.exc import SQLAlchemyError
 
-from hermes.core import logs, memory_regions
+from hermes.core import chain_score, logs, memory_regions
 from hermes.core.pointer import (
     PointerMap,
     ScanCancelled,
     chain_for_static_address,
     module_bases,
+    pointer_size,
     resolve_chain,
 )
 from hermes.platform import (
@@ -187,6 +188,10 @@ class PointerScanDialog(QDialog):
         self.chain = None
         self._worker = None
         self._scan = self._load_scan()
+        # Candidates with their Score, best first (see _rank).
+        self._ranking = []
+        # Memory category per module of the process, for the scores.
+        self._module_categories = {}
         self.setWindowTitle(translations["pointer.title"].format(label=entry["label"]))
         self.resize(820, 620)
         self._static_chain = None
@@ -288,8 +293,9 @@ class PointerScanDialog(QDialog):
         self.status_label = WrappedLabel("")
         layout.addWidget(self.status_label)
 
-        self.table = QTableWidget(0, 3)
+        self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels([
+            self.translations["pointer.column_score"],
             self.translations["pointer.column_base"],
             self.translations["pointer.column_offsets"],
             self.translations["pointer.column_depth"],
@@ -303,8 +309,9 @@ class PointerScanDialog(QDialog):
         set_row_height(self.table)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         resizable_columns(self.table)
         copy_menu(self.table, self.translations)
         self.table.itemSelectionChanged.connect(self._update_buttons)
@@ -345,21 +352,46 @@ class PointerScanDialog(QDialog):
             return None
 
     def candidates(self):
-        """Return the current candidate chains."""
-        return [] if self._scan is None else list(self._scan.chains)
+        """Return the current candidate chains, the most promising first."""
+        return [chain for chain, _score in self._ranking]
+
+    def _rank(self):
+        """Score the candidates (see hermes.core.chain_score), best first."""
+        chains = [] if self._scan is None else self._scan.chains
+        size = pointer_size(self.pid) if self.pid is not None else 8
+        self._ranking = chain_score.ranked(chains, self._module_categories, size)
+
+    def _score_tooltip(self, result):
+        t = self.translations
+        lines = []
+        for reason, points, detail in result.parts:
+            if reason == "start":
+                text = t["pointer.score_start"].format(group=t[f"pointer.region.{detail}"])
+            elif reason == "length":
+                text = t["pointer.score_length"].format(count=detail)
+            elif reason == "offsets":
+                text = t["pointer.score_offsets"].format(limit=f"{detail:#x}")
+            else:
+                text = t["pointer.score_aligned"]
+            lines.append(f"{points:+d}  {text}")
+        return "\n".join(lines)
 
     def _show_candidates(self, message=None):
+        self._rank()
         chains = self.candidates()
         self.table.setRowCount(0)
-        for chain in chains[:DISPLAY_LIMIT]:
+        for chain, result in self._ranking[:DISPLAY_LIMIT]:
             row = self.table.rowCount()
             self.table.insertRow(row)
-            base = QTableWidgetItem(f"{chain.module}+0x{chain.base_offset:x}")
-            base.setData(Qt.ItemDataRole.UserRole, chain)
-            self.table.setItem(row, 0, base)
+            score = QTableWidgetItem(str(result.total))
+            score.setData(Qt.ItemDataRole.UserRole, chain)
+            score.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            score.setToolTip(self._score_tooltip(result))
+            self.table.setItem(row, 0, score)
+            self.table.setItem(row, 1, QTableWidgetItem(f"{chain.module}+0x{chain.base_offset:x}"))
             offsets = " → ".join(f"{offset:#x}" for offset in chain.offsets) or "—"
-            self.table.setItem(row, 1, QTableWidgetItem(offsets))
-            self.table.setItem(row, 2, QTableWidgetItem(str(len(chain.offsets))))
+            self.table.setItem(row, 2, QTableWidgetItem(offsets))
+            self.table.setItem(row, 3, QTableWidgetItem(str(len(chain.offsets))))
         if message is None:
             if self._scan is None:
                 message = self.translations["pointer.no_scan"]
@@ -392,7 +424,7 @@ class PointerScanDialog(QDialog):
         else:
             self._main_module = main_module(pid)
             self._show_regions()
-            self.status_label.setText(self.translations["pointer.process_attached"])
+            self._show_candidates(self.translations["pointer.process_attached"])
         self._update_buttons()
 
     def _update_buttons(self):
@@ -426,6 +458,8 @@ class PointerScanDialog(QDialog):
                 mappings = read_mappings(self.pid)
                 summary = memory_regions.summarize(memory_regions.classify(
                     mappings, self._main_module, thread_stack_pointers(self.pid)))
+                self._module_categories = memory_regions.module_categories(
+                    mappings, self._main_module)
             except OSError:
                 summary = None
         t = self.translations

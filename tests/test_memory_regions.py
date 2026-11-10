@@ -1,7 +1,8 @@
 """Categories of writable memory for the pointer scan (hermes/core/memory_regions.py)."""
 
 import os
-import threading
+import subprocess
+import sys
 
 from hermes.core import memory_regions
 from hermes.core.memory_regions import (
@@ -162,23 +163,29 @@ def test_classify_splits_the_heap_around_stacks():
         (0x401000, 0x402000), (0x1000000, 0x1400000), (0x7f0000000000, 0x7f0000001000)]
 
 
+_WAITING_THREADS = """
+import threading, sys
+stop = threading.Event()
+for _ in range(3):
+    threading.Thread(target=stop.wait, daemon=True).start()
+print("ready", flush=True)
+sys.stdin.readline()
+"""
+
+
 @linux_only
 def test_thread_stack_pointers_lie_on_the_threads_stacks():
-    stop = threading.Event()
-    threads = [threading.Thread(target=stop.wait) for _ in range(3)]
-    for thread in threads:
-        thread.start()
+    # A process of its own: the test process has threads that come and go
+    child = subprocess.Popen([sys.executable, "-c", _WAITING_THREADS],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     try:
-        pointers = thread_stack_pointers(os.getpid())
-        mappings = read_mappings(os.getpid())
-        stacks = stack_ranges(mappings, pointers)
+        assert child.stdout.readline().strip() == "ready"
+        pointers = thread_stack_pointers(child.pid)
+        stacks = stack_ranges(read_mappings(child.pid), pointers)
     finally:
-        stop.set()
-        for thread in threads:
-            thread.join()
+        child.communicate("\n")
 
-    # The waiting threads at least; the test's own thread is running.
-    assert len(pointers) >= 3
+    assert len(pointers) == 4  # the main thread and the three waiting ones
     assert all(any(start <= pointer < end for start, end in stacks) for pointer in pointers)
 
 

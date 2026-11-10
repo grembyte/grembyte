@@ -47,6 +47,17 @@ Turn on system or other modules only if no chain from the game's own modules sur
 
 The chains found are saved for the entry as candidates, so they can still be filtered after the game was restarted.
 
+The table lists the most promising candidates first, by their **Score**; its tooltip shows how it adds up:
+
+| Feature | Points |
+|---|---|
+| Starts in the main module / a game module / an engine module | +40 / +30 / +20 |
+| Chain length 1 / 2 / 3 / 4 / 5 / 6 and more | +20 / +10 / 0 / −5 / −10 / −15 |
+| All offsets up to 0x100 (else up to 0x400) | +10 (+5) |
+| All pointers aligned: each points to the start of an object, not into its middle | +10 |
+
+The score only sorts; whether a chain is stable shows when you filter after a restart. **Add all to address list** takes the best 500.
+
 - **Add all to address list** adds every candidate as an entry of its own; after a restart the list shows which ones still lead to a sensible value. With several rows selected, the button reads **Add selected to address list** and adds only those.
 - **Remove saved candidates** deletes them once a stable chain is in use. The entry and its pointer stay; a new scan finds candidates again.
 
