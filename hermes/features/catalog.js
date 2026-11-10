@@ -12,6 +12,10 @@ rpc.exports = {
     // [[address, name], ...] of compiled engine code (IL2CPP, Unreal)
     return engine.nativeSymbols();
   },
+  staticAreas(requests) {
+    // Where classes keep their static fields (Mono), for the pointer scan
+    return engine.staticAreas(requests);
+  },
   resolveTokens(assembly, tokens) {
     return engine.resolveTokens(assembly, tokens);
   }

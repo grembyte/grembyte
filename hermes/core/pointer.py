@@ -30,6 +30,14 @@ itself; static memory of other modules then ends no chain and is not followed.
 
 A first scan usually finds many chains. Chains that still lead to the value
 after the game was restarted (``filter_chains``) are the stable ones.
+
+In Mono games the static fields of C# classes lie in no module: Mono keeps
+each class's static data in a block of its own, which stays put while the
+game runs. Such a block can be a chain base too (``static_areas``), named
+``mono:<assembly>:<class>`` (``managed_base``) instead of a module. Its
+address is only known by asking the runtime, so it is looked up once per run
+of the game and remembered here (``remember_managed_bases``);
+``chain_bases`` has module and managed bases alike for ``resolve_chain``.
 """
 
 from dataclasses import dataclass
@@ -69,8 +77,13 @@ class PointerChain:
     offsets: tuple = ()
 
     def text(self):
-        """Readable form, e.g. ``game+0x2a1f0 → 0x18 → 0x40``."""
-        parts = [f"{self.module}+0x{self.base_offset:x}"]
+        """Readable form, e.g. ``game+0x2a1f0 → 0x18 → 0x40``.
+
+        Managed bases read ``[Assembly-CSharp] Game.GameState+0x18``.
+        """
+        managed = split_managed(self.module)
+        base = self.module if managed is None else f"[{managed[0]}] {managed[1]}"
+        parts = [f"{base}+0x{self.base_offset:x}"]
         parts += [f"{offset:#x}" if offset >= 0 else f"-{-offset:#x}" for offset in self.offsets]
         return " → ".join(parts)
 
@@ -82,6 +95,61 @@ class PointerChain:
     def from_json(cls, data):
         return cls(data["module"], int(data["base_offset"]),
                    tuple(int(offset) for offset in data.get("offsets", ())))
+
+
+MANAGED_PREFIX = "mono:"
+
+
+def managed_base(assembly, class_name):
+    """The chain base name of the static data of a class (see the module doc)."""
+    return f"{MANAGED_PREFIX}{assembly}:{class_name}"
+
+
+def split_managed(name):
+    """``(assembly, class)`` of a managed base name, else None."""
+    if not name.startswith(MANAGED_PREFIX):
+        return None
+    assembly, separator, class_name = name[len(MANAGED_PREFIX):].partition(":")
+    return (assembly, class_name) if separator and assembly and class_name else None
+
+
+# pid -> (start time, {managed base name: address}) of the running game
+_managed_bases = {}
+
+
+def remember_managed_bases(pid, bases):
+    """Keep the addresses of managed bases (``{name: address}``) for this run of ``pid``."""
+    started = process_start_time(pid)
+    known = _managed_bases.get(pid)
+    merged = dict(known[1]) if known is not None and known[0] == started else {}
+    merged.update(bases)
+    _managed_bases[pid] = (started, merged)
+
+
+def managed_bases(pid):
+    """The managed bases remembered for the current run of ``pid``."""
+    known = _managed_bases.get(pid)
+    if known is None or pid is None or known[0] != process_start_time(pid):
+        return {}
+    return dict(known[1])
+
+
+def missing_managed_bases(pid, chains):
+    """``{assembly: {class, ...}}`` of the managed bases of ``chains`` not known yet."""
+    known = managed_bases(pid)
+    missing = {}
+    for chain in chains:
+        managed = split_managed(chain.module)
+        if managed is not None and chain.module not in known:
+            missing.setdefault(managed[0], set()).add(managed[1])
+    return missing
+
+
+def chain_bases(pid, mappings):
+    """Bases ``resolve_chain`` finds chains by: the modules', then the managed ones."""
+    bases = module_bases(mappings)
+    bases.update(managed_bases(pid))
+    return bases
 
 
 def module_bases(mappings):
@@ -100,6 +168,23 @@ def static_regions(mappings):
         for mapping in sorted(mappings, key=lambda m: m.start)
         if mapping.writable and mapping.module is not None
     ]
+
+
+def _separate_areas(areas, regions):
+    """The ``areas`` that overlap neither ``regions`` nor each other, as regions.
+
+    Static data of a class lies on the heap; one that would lie in a module's
+    memory or in another area could not tell where a chain starts.
+    """
+    taken = sorted((start, end) for start, end, _name in regions)
+    result = []
+    for start, end, name in sorted(areas):
+        if any(low < end and start < high for low, high in taken):
+            continue
+        taken.append((start, end))
+        taken.sort()
+        result.append((start, end, name))
+    return result
 
 
 def static_location(regions, address):
@@ -179,7 +264,10 @@ def chain_for_static_address(mappings, address):
 class PointerMap:
     """All aligned pointers into writable memory, sorted by value."""
 
-    def __init__(self, values, locations, mappings, location_rank=None):
+    def __init__(self, values, locations, mappings, location_rank=None, static_areas=()):
+        # pylint: disable=too-many-arguments
+        """``static_areas`` ``[(start, end, name)]`` are further chain bases
+        (managed static data, see the module doc)."""
         self.values = values
         self.locations = locations
         # Position of each pointer when sorted by location (computed if None).
@@ -187,6 +275,9 @@ class PointerMap:
         self.mappings = mappings
         self.bases = module_bases(mappings)
         regions = static_regions(mappings)
+        regions = sorted(regions + _separate_areas(static_areas, regions))
+        self.bases.update((name, start) for start, _end, name in static_areas
+                          if any(region[2] == name for region in regions))
         self._static_starts = np.array([r[0] for r in regions], dtype=np.uint64)
         self._static_ends = np.array([r[1] for r in regions], dtype=np.uint64)
         self._static_modules = [r[2] for r in regions]
@@ -200,7 +291,7 @@ class PointerMap:
 
     @classmethod
     def build(cls, pid, progress=None, cancelled=None, select=None, location_step=None,
-              value_alignment=None):
+              value_alignment=None, static_areas=()):
         # pylint: disable=too-many-arguments,too-many-locals
         """Read the process memory; ``progress(percent)`` reports the reading.
 
@@ -212,6 +303,7 @@ class PointerMap:
         that are multiples of ``value_alignment`` count (1: any value); both
         default to the pointer size. A step of 4 in a 64-bit program also
         finds pointers in packed structures, at twice the work.
+        ``static_areas`` see ``__init__``.
         """
         size_of_pointer = pointer_size(pid)
         dtype = "<u8" if size_of_pointer == 8 else "<u4"
@@ -285,7 +377,7 @@ class PointerMap:
             values = np.empty(0, dtype=np.uint64)
             locations = np.empty(0, dtype=np.uint64)
             location_rank = np.empty(0, dtype=np.uint32)
-        return cls(values, locations, mappings, location_rank)
+        return cls(values, locations, mappings, location_rank, static_areas)
 
     def static_modules(self, locations):
         """Return the module index per location, -1 for dynamic memory."""
@@ -570,6 +662,6 @@ class _SearchGraph:
 
 def filter_chains(pid, chains, target):
     """Return the chains that lead to ``target`` in the (restarted) process."""
-    bases = module_bases(read_mappings(pid))
+    bases = chain_bases(pid, read_mappings(pid))
     with ProcessMemory(pid) as memory:
         return [chain for chain in chains if resolve_chain(memory, bases, chain) == target]

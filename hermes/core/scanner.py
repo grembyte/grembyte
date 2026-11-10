@@ -10,7 +10,7 @@ from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-na
 
 from hermes.core import logs
 from hermes.core.messages import LocalizedValueError
-from hermes.core.pointer import module_bases, resolve_chain
+from hermes.core.pointer import chain_bases, resolve_chain
 from hermes.platform import ProcessMemory, read_mappings
 from hermes.core.value_types import AUTO_VALUE_TYPES, VALUE_TYPES
 from hermes.core.value_types import value_type as lookup_value_type
@@ -724,7 +724,7 @@ class ValueRefreshWorker(QThread):
         try:
             bases = None
             if any(entry.get("pointer") is not None for entry in self.entries):
-                bases = module_bases(read_mappings(self.pid))
+                bases = chain_bases(self.pid, read_mappings(self.pid))
             with ProcessMemory(self.pid) as memory:
                 for entry in self.entries:
                     if self.isInterruptionRequested():

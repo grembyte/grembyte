@@ -1997,12 +1997,41 @@ function dynamicTarget(hook, write) {
   return { target: address };
 }
 
+// A chain based on a class's static data (Mono, see hermes.core.pointer)
+const MANAGED_PREFIX = 'mono:';
+// How long a managed base that could not be found is not looked for again
+const MANAGED_RETRY_MS = 1000;
+
+function managedBase(pointer) {
+  // The static data of the chain's class, found through the engine on this
+  // thread (a game thread Mono knows), or null for now.
+  const now = Date.now();
+  if (pointer.triedAt !== undefined && now - pointer.triedAt < MANAGED_RETRY_MS)
+    return null;
+  pointer.triedAt = now;
+  const rest = pointer.module.substring(MANAGED_PREFIX.length);
+  const colon = rest.indexOf(':');
+  if (colon <= 0)
+    return null;
+  try {
+    return engine.staticBase(rest.substring(0, colon), rest.substring(colon + 1));
+  } catch (_error) {
+    return null;
+  }
+}
+
 function resolvePointer(pointer) {
   if (pointer.base === null) {
-    const module = Process.findModuleByName(pointer.module);
-    if (module === null)
-      return null;
-    pointer.base = module.base;
+    if (pointer.module.startsWith(MANAGED_PREFIX)) {
+      pointer.base = managedBase(pointer);
+      if (pointer.base === null)
+        return null;
+    } else {
+      const module = Process.findModuleByName(pointer.module);
+      if (module === null)
+        return null;
+      pointer.base = module.base;
+    }
   }
   try {
     let address = pointer.base.add(pointer.baseOffset);

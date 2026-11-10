@@ -24,14 +24,16 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 from sqlalchemy.exc import SQLAlchemyError
 
-from hermes.core import chain_score, logs, memory_regions
+from hermes.core import chain_score, logs, memory_regions, messages
 from hermes.core.pointer import (
     PointerMap,
     ScanCancelled,
     chain_for_static_address,
-    module_bases,
+    chain_bases,
+    missing_managed_bases,
     pointer_size,
     resolve_chain,
+    split_managed,
 )
 from hermes.platform import (
     ProcessMemory,
@@ -40,6 +42,7 @@ from hermes.platform import (
     thread_stack_pointers,
 )
 from hermes.db.repository.addresses import SavedPointerScan
+from hermes.features import managed_statics
 from hermes.ui import window_state
 from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import DocsHint, WrappedLabel
@@ -59,17 +62,22 @@ STOP_TIMEOUT_MS = 5000
 
 # Modules listed in the tooltip of a memory category at most.
 _TOOLTIP_MODULES = 25
-# The memory categories chosen last (see hermes.core.memory_regions).
+# The memory categories chosen last (see hermes.core.memory_regions), apart
+# for Mono games with marked assemblies, whose defaults differ.
 _CATEGORIES_KEY = "pointer_scan/categories"
+_ASSEMBLY_CATEGORIES_KEY = "pointer_scan/categories_assemblies"
 
 
-def _remembered_categories():
+def _remembered_categories(with_assemblies):
     """The categories chosen last, else the defaults."""
-    stored = window_state.settings().value(_CATEGORIES_KEY)
+    key, default = ((_ASSEMBLY_CATEGORIES_KEY, memory_regions.ASSEMBLY_DEFAULT_CATEGORIES)
+                    if with_assemblies else
+                    (_CATEGORIES_KEY, memory_regions.DEFAULT_CATEGORIES))
+    stored = window_state.settings().value(key)
     if not isinstance(stored, str) or not stored:
-        return set(memory_regions.DEFAULT_CATEGORIES)
+        return set(default)
     chosen = set(stored.split(",")) & set(memory_regions.CATEGORIES)
-    return chosen or set(memory_regions.DEFAULT_CATEGORIES)
+    return chosen or set(default)
 
 
 class PointerScanWorker(QThread):
@@ -82,11 +90,13 @@ class PointerScanWorker(QThread):
 
     def __init__(self, pid, target, *, chains=None, max_depth=5, max_offset=0x1000,
                  max_results=10000, categories=None, main_module=None, location_step=None,
-                 value_alignment=None, parent=None):
+                 value_alignment=None, assemblies=(), parent=None):
         # pylint: disable=too-many-arguments
         """``categories`` (see hermes.core.memory_regions) limit the memory read
         and the modules chains may start in; None reads all writable memory.
-        ``location_step`` and ``value_alignment`` see ``PointerMap.build``."""
+        ``location_step`` and ``value_alignment`` see ``PointerMap.build``.
+        With the category ``assemblies``, chains may also start in the static
+        data of the classes of ``assemblies`` (Mono)."""
         super().__init__(parent)
         logs.log_failures(self)
         self.pid = pid
@@ -99,8 +109,11 @@ class PointerScanWorker(QThread):
         self.main_module = main_module
         self.location_step = location_step
         self.value_alignment = value_alignment
+        self.assemblies = tuple(assemblies)
         # Modules chains may start in, from ``categories`` (set by the scan).
         self.base_modules = None
+        # The StaticAreas of ``assemblies`` (set by the scan).
+        self.static_areas = []
         # Chain length up to which the results are complete if the scan
         # stopped at its memory limit, else None (set by the scan).
         self.complete_depth = None
@@ -113,14 +126,18 @@ class PointerScanWorker(QThread):
                 result = self._filter()
         except ScanCancelled:
             return
-        except (OSError, ValueError, MemoryError) as error:
+        except managed_statics.READ_ERRORS + (MemoryError,) as error:
             if not self.isInterruptionRequested():
-                self.failed.emit(str(error))
+                self.failed.emit(messages.describe(error))
             return
         if result is not None and not self.isInterruptionRequested():
             self.chains_ready.emit(result)
 
     def _scan(self):
+        if (self.categories is not None and memory_regions.ASSEMBLIES in self.categories
+                and self.assemblies):
+            self.static_areas = managed_statics.read_static_areas(
+                self.pid, {assembly: None for assembly in self.assemblies})
         pointer_map = PointerMap.build(
             self.pid,
             progress=lambda percent: self.progress.emit("reading", percent),
@@ -128,6 +145,8 @@ class PointerScanWorker(QThread):
             location_step=self.location_step,
             value_alignment=self.value_alignment,
             select=None if self.categories is None else self._select,
+            static_areas=[(area.address, area.address + area.size, area.name)
+                          for area in self.static_areas],
         )
         chains = pointer_map.find_chains(
             self.target,
@@ -145,10 +164,14 @@ class PointerScanWorker(QThread):
         regions = memory_regions.classify(mappings, self.main_module,
                                           thread_stack_pointers(self.pid))
         ranges, self.base_modules = memory_regions.selection(regions, self.categories)
+        self.base_modules |= {area.name for area in self.static_areas}
         return ranges
 
     def _filter(self):
-        bases = module_bases(read_mappings(self.pid))
+        missing = missing_managed_bases(self.pid, self.chains)
+        if missing:
+            managed_statics.read_static_areas(self.pid, missing)
+        bases = chain_bases(self.pid, read_mappings(self.pid))
         kept = []
         with ProcessMemory(self.pid) as memory:
             for index, chain in enumerate(self.chains):
@@ -185,9 +208,12 @@ class PointerScanDialog(QDialog):
     pin_toggled = Signal(bool)
 
     def __init__(self, translations, repository, pid, entry, parent=None,
-                 address_source=None):
+                 address_source=None, assemblies=None):
         # pylint: disable=too-many-arguments
+        """``assemblies``: the assemblies marked for a Mono game (their classes'
+        static fields can start chains), None for other games."""
         super().__init__(parent)
+        self.assemblies = None if assemblies is None else tuple(sorted(assemblies))
         self.setModal(False)
         self.address_source = address_source
         self.translations = translations
@@ -201,6 +227,8 @@ class PointerScanDialog(QDialog):
         self._ranking = []
         # Memory category per module of the process, for the scores.
         self._module_categories = {}
+        # The StaticAreas of the last scan by base name, to name their fields.
+        self._areas = {}
         self.setWindowTitle(translations["pointer.title"].format(label=entry["label"]))
         self.resize(820, 620)
         self._static_chain = None
@@ -257,10 +285,12 @@ class PointerScanDialog(QDialog):
         self.results_input.setToolTip(self.translations["pointer.max_results_tooltip"])
         form.addRow(self.translations["pointer.max_results"], self.results_input)
         # Memory regions: where chains may start, and what lies between
-        chosen = _remembered_categories()
+        chosen = _remembered_categories(bool(self.assemblies))
         self.region_boxes = {}
+        starts = [category for category in memory_regions.START_CATEGORIES
+                  if category != memory_regions.ASSEMBLIES or self.assemblies is not None]
         for label, categories in (
-                ("pointer.regions_start", memory_regions.MODULE_CATEGORIES),
+                ("pointer.regions_start", starts),
                 ("pointer.regions_between", memory_regions.DYNAMIC_CATEGORIES)):
             grid = QGridLayout()
             grid.setContentsMargins(0, 0, 0, 0)
@@ -268,7 +298,9 @@ class PointerScanDialog(QDialog):
                 box = QCheckBox()
                 box.setChecked(category in chosen
                                or category in memory_regions.REQUIRED_CATEGORIES)
-                box.setEnabled(category not in memory_regions.REQUIRED_CATEGORIES)
+                box.setEnabled(category not in memory_regions.REQUIRED_CATEGORIES
+                               and (category != memory_regions.ASSEMBLIES
+                                    or bool(self.assemblies)))
                 box.toggled.connect(self._remember_categories)
                 self.region_boxes[category] = box
                 grid.addWidget(box, position // 3, position % 3)
@@ -387,8 +419,21 @@ class PointerScanDialog(QDialog):
     def _rank(self):
         """Score the candidates (see hermes.core.chain_score), best first."""
         chains = [] if self._scan is None else self._scan.chains
-        self._ranking = chain_score.ranked(chains, self._module_categories,
-                                           self._pointer_size())
+        categories = dict(self._module_categories)
+        categories.update((chain.module, memory_regions.ASSEMBLIES) for chain in chains
+                          if split_managed(chain.module) is not None)
+        self._ranking = chain_score.ranked(chains, categories, self._pointer_size())
+
+    def _base_text(self, chain):
+        """The base of ``chain`` as the table shows it; a static field by its name."""
+        managed = split_managed(chain.module)
+        if managed is None:
+            return f"{chain.module}+0x{chain.base_offset:x}"
+        area = self._areas.get(chain.module)
+        field = area.field_at(chain.base_offset) if area is not None else None
+        if field is not None:
+            return f"[{managed[0]}] {managed[1]}.{field}"
+        return f"[{managed[0]}] {managed[1]}+0x{chain.base_offset:x}"
 
     def _pointer_size(self):
         return pointer_size(self.pid)
@@ -420,7 +465,7 @@ class PointerScanDialog(QDialog):
             score.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             score.setToolTip(self._score_tooltip(result))
             self.table.setItem(row, 0, score)
-            self.table.setItem(row, 1, QTableWidgetItem(f"{chain.module}+0x{chain.base_offset:x}"))
+            self.table.setItem(row, 1, QTableWidgetItem(self._base_text(chain)))
             offsets = " → ".join(f"{offset:#x}" for offset in chain.offsets) or "—"
             self.table.setItem(row, 2, QTableWidgetItem(offsets))
             self.table.setItem(row, 3, QTableWidgetItem(str(len(chain.offsets))))
@@ -498,7 +543,9 @@ class PointerScanDialog(QDialog):
         for category, box in self.region_boxes.items():
             name = t[f"pointer.region.{category}"]
             tooltip = t[f"pointer.region.{category}_tooltip"]
-            if summary is not None:
+            if category == memory_regions.ASSEMBLIES:
+                name, tooltip = self._assemblies_text(name, tooltip)
+            elif summary is not None:
                 entry = summary[category]
                 size = t["pointer.region_size"].format(size=entry.size / 2**20)
                 if category == memory_regions.MAIN and entry.modules:
@@ -517,12 +564,29 @@ class PointerScanDialog(QDialog):
             box.setText(name)
             box.setToolTip(tooltip)
 
+    def _assemblies_text(self, name, tooltip):
+        """Label and tooltip of the marked assemblies: their names, after a
+        scan the number and size of their classes' static data."""
+        t = self.translations
+        if not self.assemblies:
+            return name + " (" + t["pointer.region.assemblies_none"] + ")", tooltip
+        if self._areas:
+            size = t["pointer.region_size"].format(
+                size=sum(area.size for area in self._areas.values()) / 2**20)
+            name += " (" + t["pointer.region_classes"].format(
+                count=len(self._areas), size=size) + ")"
+        else:
+            shown = ", ".join(self.assemblies[:2])
+            name += f" ({shown}{', …' if len(self.assemblies) > 2 else ''})"
+        return name, tooltip + "\n\n" + ", ".join(self.assemblies)
+
     def _chosen_categories(self):
         return {category for category, box in self.region_boxes.items() if box.isChecked()}
 
     def _remember_categories(self):
         window_state.settings().setValue(
-            _CATEGORIES_KEY, ",".join(sorted(self._chosen_categories())))
+            _ASSEMBLY_CATEGORIES_KEY if self.assemblies else _CATEGORIES_KEY,
+            ",".join(sorted(self._chosen_categories())))
 
     def _selected_chains(self):
         """The chains of the selected rows, in table order."""
@@ -604,10 +668,11 @@ class PointerScanDialog(QDialog):
             self.pid, target, max_results=max_results,
             categories=self._chosen_categories(), main_module=self._main_module,
             location_step=self.location_step.currentData(),
-            value_alignment=self.value_alignment.currentData(), **settings
+            value_alignment=self.value_alignment.currentData(),
+            assemblies=self.assemblies or (), **settings
         )
         self._start(worker, lambda chains: self._scan_done(
-            chains, settings, max_results, worker.complete_depth
+            chains, settings, max_results, worker.complete_depth, worker.static_areas
         ))
 
     def start_filter(self):
@@ -651,7 +716,11 @@ class PointerScanDialog(QDialog):
             self.status_label.setText(self.translations[f"pointer.{phase}"])
         self.progress.setValue(value)
 
-    def _scan_done(self, chains, settings, max_results, complete_depth):
+    def _scan_done(self, chains, settings, max_results, complete_depth, static_areas=()):
+        # pylint: disable=too-many-arguments
+        if static_areas:
+            self._areas = {area.name: area for area in static_areas}
+            self._show_regions()
         self._scan = SavedPointerScan(chains, settings["max_depth"], settings["max_offset"], 0)
         self._save()
         message = self.translations["pointer.found"].format(count=len(chains))

@@ -136,6 +136,32 @@ def test_chain_text_and_json():
     assert PointerChain("libc.so.6", 0x10).text() == "libc.so.6+0x10"
 
 
+def test_managed_bases_name_a_class_of_an_assembly(monkeypatch):
+    # pylint: disable=protected-access
+    monkeypatch.setattr(pointer_module, "_managed_bases", {})
+    monkeypatch.setattr(pointer_module, "process_start_time", lambda pid: 7)
+    name = pointer_module.managed_base("Assembly-CSharp", "Game.State/Inner")
+    chain = PointerChain(name, 0x18, (0x20,))
+
+    assert pointer_module.split_managed(name) == ("Assembly-CSharp", "Game.State/Inner")
+    assert pointer_module.split_managed("game.exe") is None
+    assert pointer_module.split_managed("mono:broken") is None
+    assert chain.text() == "[Assembly-CSharp] Game.State/Inner+0x18 → 0x20"
+    assert PointerChain.from_json(chain.to_json()) == chain
+
+    native = PointerChain("game.exe", 0x10, ())
+    assert pointer_module.missing_managed_bases(5, [chain, native]) == {
+        "Assembly-CSharp": {"Game.State/Inner"}}
+    pointer_module.remember_managed_bases(5, {name: 0x7000})
+    assert pointer_module.missing_managed_bases(5, [chain]) == {}
+    assert pointer_module.chain_bases(5, [Mapping(0x400000, 0x401000, "r-xp", "/g/game.exe",
+                                                  "game.exe")]) == {
+        "game.exe": 0x400000, name: 0x7000}
+    # a new run of the game has its own
+    monkeypatch.setattr(pointer_module, "process_start_time", lambda pid: 8)
+    assert pointer_module.managed_bases(5) == {}
+
+
 def test_static_regions_include_bss_behind_a_module():
     mappings = parse_maps([
         "1000-2000 r--p 00000000 08:01 1 /opt/game/game",
@@ -1318,3 +1344,103 @@ def test_the_main_window_remembers_pinned_pointer_dialogs(binary, qt_app, sessio
     finally:
         window.close()
         target.close()
+
+
+def test_pointer_dialog_offers_marked_assemblies_in_mono_games(qt_app, sessions):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import os
+
+    from hermes.core import memory_regions
+    from hermes.db.repository.addresses import AddressRepository, SavedPointerScan
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.features.managed_statics import StaticArea
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+
+    translations = load_translations("en")
+    repository = AddressRepository(sessions)
+    process_id = HookRepository(sessions).get_or_create_process("python", "/usr/bin/python")
+    entry_id = repository.add_address(process_id, label="x", value_type="int32",
+                                      address=0x20000)
+    managed = PointerChain("mono:Assembly-CSharp:Game.GameState", 0x18, (0x20,))
+    repository.save_pointer_scan(entry_id, SavedPointerScan([managed], 3, 0x1000, 0))
+    entry = {"id": entry_id, "label": "x", "address": 0x20000, "type": "int32"}
+
+    def dialog(assemblies):
+        return PointerScanDialog(translations, repository, os.getpid(), entry,
+                                 assemblies=assemblies)
+
+    # Other engines: no such category
+    assert "assemblies" not in dialog(None).region_boxes
+    # Mono without marked assemblies: shown, but nothing to choose
+    unmarked = dialog(())
+    box = unmarked.region_boxes["assemblies"]
+    assert not box.isEnabled() and translations["pointer.region.assemblies_none"] in box.text()
+
+    marked = dialog(["UnityScripts", "Assembly-CSharp"])
+    boxes = marked.region_boxes
+    assert marked._chosen_categories() == memory_regions.ASSEMBLY_DEFAULT_CATEGORIES
+    assert boxes["assemblies"].isEnabled() and not boxes["engine"].isChecked()
+    assert "Assembly-CSharp, UnityScripts" in boxes["assemblies"].text()
+    # A managed base scores like the main module and reads as its class.
+    assert marked.table.item(0, 0).text() == "80"  # 40 + 20 (one step) + 10 + 10
+    assert marked.table.item(0, 1).text() == "[Assembly-CSharp] Game.GameState+0x18"
+    # After a scan its classes are known: the field is named, the size shown.
+    area = StaticArea("Assembly-CSharp", "Game.GameState", 0x7f0000000000, 0x40,
+                      (("s_Instance", 0x18),))
+    marked._scan_done([managed], {"max_depth": 3, "max_offset": 0x1000}, 10000, None, [area])
+    assert marked.table.item(0, 1).text() == "[Assembly-CSharp] Game.GameState.s_Instance"
+    assert "1 classes" in boxes["assemblies"].text()
+
+    # The choice is kept apart from the one for other games.
+    boxes["engine"].setChecked(True)
+    assert dialog(["Assembly-CSharp"])._chosen_categories() == (
+        memory_regions.ASSEMBLY_DEFAULT_CATEGORIES | {"engine"})
+    assert dialog(None)._chosen_categories() == memory_regions.DEFAULT_CATEGORIES
+
+
+def test_the_main_window_looks_up_static_fields_saved_chains_need(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import os
+
+    from hermes.core import pointer
+    from hermes.ui import main_window
+
+    started = []
+
+    class FakeWorker:  # pylint: disable=too-few-public-methods
+        def __init__(self, pid, requests):
+            self.pid, self.requests = pid, requests
+            self.failed = self.finished = self
+            self.slots = []
+
+        def connect(self, slot):
+            self.slots.append(slot)
+
+        def start(self):
+            started.append(self)
+
+    monkeypatch.setattr(main_window, "StaticBasesWorker", FakeWorker)
+    monkeypatch.setattr(main_window.workers, "keep_until_finished", lambda _worker: None)
+    window = main_window.MainWindow("en")
+    try:
+        window._current_pid = os.getpid()
+        chains = [PointerChain("mono:Assembly-CSharp:Game.Loop", 0, (0x20,)),
+                  PointerChain("mono:Assembly-CSharp:Game.Combat", 0, ()),
+                  PointerChain("libc.so.6", 0x10, (0x8,))]
+        window._request_static_bases(chains)
+        assert [w.requests for w in started] == [
+            {"Assembly-CSharp": {"Game.Loop", "Game.Combat"}}]
+        window._request_static_bases(chains)  # one at a time
+        assert len(started) == 1
+
+        window._static_bases_worker = None  # finished, found nothing yet
+        window._request_static_bases(chains)
+        assert len(started) == 1  # not again right away
+        window._static_bases_next = 0
+        pointer.remember_managed_bases(os.getpid(), {"mono:Assembly-CSharp:Game.Loop": 0x1000})
+        window._request_static_bases(chains)
+        assert started[-1].requests == {"Assembly-CSharp": {"Game.Combat"}}
+    finally:
+        pointer._managed_bases.pop(os.getpid(), None)
+        window.close()

@@ -34,14 +34,27 @@ The dialog sorts the program's writable memory into groups, each with its size; 
 | Group | What it holds | Default |
 |---|---|---|
 | Main module | The program itself | on |
+| Marked assemblies | Mono games: the static fields of the C# classes in the assemblies marked under **Assemblies** | on, once assemblies are marked |
 | Game modules | Other modules in the game's folder | on |
-| Engine modules | Engine runtimes and middleware: UnityPlayer, GameAssembly, Mono, Unreal's engine modules, PhysX, FMOD, Steam … | on |
+| Engine modules | Engine runtimes and middleware: UnityPlayer, GameAssembly, Mono, Unreal's engine modules, PhysX, FMOD, Steam … | on, off once assemblies are marked |
 | System modules | The system, Wine and the drivers: libc, ntdll, kernel32, Mesa … | off |
 | Other modules | Everything else, e.g. Steam's overlay | off |
 
 **Chains pass through** the heap, which is always searched, and the thread stacks (off by default). Stack contents change all the time; leaving them out gives fewer chance hits and a faster scan. On Linux, Wine included, a thread's stack is the memory around its stack pointer, on Windows the memory above its guard page.
 
 Turn on system or other modules only if no chain from the game's own modules survives a restart. The choice is kept for the next scan.
+
+### Mono games: static fields as chain bases
+
+In a Unity game with Mono, the program and its libraries hold hardly any of the game's data. The static fields of its C# classes, where singletons such as a game state keep their instance, lie on the heap: Mono gives each class a block of its own, which stays put while the game runs. Without them a chain has to find its way there through Mono's own tables, and since these point to each other in countless ways, a scan finds hundreds of thousands of candidates.
+
+With the game's assemblies marked under **Assemblies**, **Marked assemblies** makes these blocks chain bases. The chains are few, short and readable, e.g.
+
+```
+[Assembly-CSharp] GameState.s_Instance → 0x5d0 → 0x1f0
+```
+
+Hermes looks the blocks up through the Mono runtime at the start of the scan, and again after each restart of the game for the classes the saved chains need. Until it has, such an entry on the address list shows as not resolved. A class whose static constructor has not run yet has no block; it is looked for again every 30 seconds.
 
 ## Alignment
 

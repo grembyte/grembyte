@@ -16,6 +16,10 @@ by who wrote them:
     /lib, Wine's and Proton's own DLLs, Windows' system folder.
 ``unknown``
     Modules none of the rules fits (Steam's overlay in the home folder, ...).
+``assemblies``
+    Not a module: the static fields of the C# classes in the assemblies
+    marked for a Mono game, which Mono keeps on the heap (see
+    hermes.features.managed_statics).
 
 All other writable memory lies between the steps of a chain:
 
@@ -46,11 +50,18 @@ UNKNOWN = "unknown"
 HEAP = "heap"
 STACK = "stack"
 
+ASSEMBLIES = "assemblies"
+
 MODULE_CATEGORIES = (MAIN, GAME, ENGINE, SYSTEM, UNKNOWN)
+# Where chains may start, in the order the scan dialog shows them
+START_CATEGORIES = (MAIN, ASSEMBLIES, GAME, ENGINE, SYSTEM, UNKNOWN)
 DYNAMIC_CATEGORIES = (HEAP, STACK)
-CATEGORIES = MODULE_CATEGORIES + DYNAMIC_CATEGORIES
+CATEGORIES = START_CATEGORIES + DYNAMIC_CATEGORIES
 # What a scan uses unless chosen otherwise.
 DEFAULT_CATEGORIES = frozenset((MAIN, GAME, ENGINE, HEAP))
+# ... in a Mono game with marked assemblies: their classes' static fields
+# instead of the engine's tables.
+ASSEMBLY_DEFAULT_CATEGORIES = frozenset((MAIN, ASSEMBLIES, GAME, HEAP))
 # Without the heap hardly any chain has more than one step.
 REQUIRED_CATEGORIES = frozenset((HEAP,))
 

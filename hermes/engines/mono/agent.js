@@ -133,6 +133,8 @@ const mono = (() => {
         classVtable: blocking('mono_class_vtable', 'pointer', ['pointer', 'pointer']),
         fieldData: exported('mono_vtable_get_static_field_data', 'pointer', ['pointer'])
       })),
+      // The size of a class's static data, for the pointer scan's chain bases.
+      staticSize: optional(() => exported('mono_class_data_size', 'int', ['pointer'])),
       // Only for passing strings to game code.
       stringNew: optional(() => blocking('mono_string_new', 'pointer', ['pointer', 'pointer'])),
       // Storing a reference in an object tells the garbage collector.
@@ -1208,6 +1210,93 @@ gpointer run_batch (gpointer data) {
     return data.isNull() ? null : data;
   }
 
+  function ownStaticFields(t, klass) {
+    // [[name, offset], ...] of the static fields ``klass`` itself keeps in
+    // its static data (no constants, no thread statics).
+    const fields = [];
+    const iterator = Memory.alloc(Process.pointerSize);
+    iterator.writePointer(NULL);
+    for (let field = t.classFields(klass, iterator); !field.isNull();
+      field = t.classFields(klass, iterator)) {
+      const flags = t.fieldFlags(field);
+      const offset = t.fieldOffset(field);
+      if ((flags & FIELD_STATIC) !== 0 && (flags & FIELD_LITERAL) === 0
+          && offset !== SPECIAL_STATIC_OFFSET)
+        fields.push([t.fieldName(field).readUtf8String(), offset]);
+    }
+    return fields;
+  }
+
+  async function classStaticAreas(requests) {
+    // For the pointer scan: where the classes of assemblies keep their
+    // static fields, as chain bases that a restart does not move. ``requests``
+    // is [[assembly, class names or null for all], ...]; the answer
+    // [[assembly, class, address, size, [[field, offset], ...]], ...] for
+    // the classes with static data. Generic definitions have none of their
+    // own (each instance has), so they are left out. Reading a class's
+    // static data creates its vtable, never runs its static constructor.
+    const c = catalogApi();
+    const t = typesApi();
+    if (api.statics === null)
+      throw hermesError('error.mono.no_statics');
+    return onMonoThread(domain => {
+      const result = [];
+      for (const [assembly, wanted] of requests) {
+        let image;
+        try {
+          image = imageNamed(c, assembly);
+        } catch (_error) {
+          continue;  // not loaded (yet)
+        }
+        const names = wanted === null ? null : new Set(wanted);
+        const rows = c.tableRows(image, TYPEDEF_TABLE);
+        for (let row = 2; row <= rows; row++) {
+          const klass = c.classGet(image, TYPEDEF_TOKEN | row);
+          if (klass.isNull())
+            continue;
+          const className = cString(c.typeName(c.classType(klass)));
+          if (className === null || className.endsWith('>')
+              || (names !== null && !names.has(className)))
+            continue;
+          const fields = ownStaticFields(t, klass);
+          if (fields.length === 0)
+            continue;
+          const vtable = api.statics.classVtable(domain, klass);
+          const data = vtable.isNull() ? NULL : api.statics.fieldData(vtable);
+          if (data.isNull())
+            continue;
+          const known = api.staticSize === null ? 0 : api.staticSize(klass);
+          const size = known > 0 ? known
+            : Math.max(...fields.map(([, offset]) => offset)) + Process.pointerSize;
+          result.push([assembly, className, data.toString(), size, fields]);
+        }
+      }
+      return result;
+    });
+  }
+
+  function staticBase(assembly, className) {
+    // The static data of a class by its catalog name, for a pointer chain
+    // based on it (see staticAreas), or null. On a thread Mono knows, e.g. a
+    // game thread in a hook.
+    if (!refresh() || api.statics === null || api.catalog === null)
+      return null;
+    const c = api.catalog;
+    let image;
+    try {
+      image = imageNamed(c, assembly);
+    } catch (_error) {
+      return null;
+    }
+    const rows = c.tableRows(image, TYPEDEF_TABLE);
+    for (let row = 2; row <= rows; row++) {
+      const klass = c.classGet(image, TYPEDEF_TOKEN | row);
+      if (!klass.isNull() && cString(c.typeName(c.classType(klass))) === className)
+        return staticData(klass);
+    }
+    return null;
+  }
+
   // --- Unity object names ----------------------------------------------------
   // GameObjects and components keep their name on Unity's native side; the
   // managed object only holds a pointer to it (m_CachedPtr). Reading it means
@@ -1843,7 +1932,8 @@ gpointer run_batch (gpointer data) {
     checkAll, compileAll, describeAll, cancelBatches, batchesRunning, prepare,
     // compileAll changes nothing in the game that would need undoing
     releaseCode() {},
-    objectClassName, classOf, layout, staticData, onRuntimeThread: onMonoThread, unityName,
+    objectClassName, classOf, layout, staticData, staticAreas: classStaticAreas, staticBase,
+    onRuntimeThread: onMonoThread, unityName,
     onMainThread, drainMain, properties, getProperty, methods, signatureOf, findClass,
     findMethod, findObject, findObjects, newString, invoke, classChain, writeReference, resolve: resolveMethod,
     virtualMethod: (object, method) => api.invoke.virtualMethod(object, method)

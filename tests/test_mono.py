@@ -135,7 +135,8 @@ static Class classes[17] = {
       .rank = 1, .element = &classes[9], .element_size = 8 },
     { .type = { "System.InvalidOperationException", 0x12 }, .image = &corlib,
       .parent = &classes[2], .field_count = 1, .fields = { { "_message", &t_string, 0x10 } } },
-    { .type = { "Game.Loop", 0x12 }, .image = &game, .parent = &classes[2] },
+    { .type = { "Game.Loop", 0x12 }, .image = &game, .parent = &classes[2],
+      .field_count = 1, .fields = { { "Current", &t_combat, 0, 0x10 } } },
     /* [ComImport]: Mono hangs on Linux compiling code that uses it */
     { .type = { "UnityEngine.KnownFolders", 0x12 }, .image = &unity, .parent = &classes[2],
       .type_flags = 0x1000 },
@@ -144,6 +145,7 @@ static Class classes[17] = {
       .parent = &classes[2], .instance = 1 },
 };
 static VTable vt_combat = { &classes[3] }, vt_info = { &classes[6] }, vt_ints = { &classes[7] },
+    vt_loop = { &classes[13] },
     vt_game_object = { &classes[10] }, vt_components = { &classes[11] },
     vt_exception = { &classes[12] };
 /* Unity objects: the name lives on Unity's native side, in no field. */
@@ -579,14 +581,28 @@ const char *mono_field_get_name(Field *field) { return field->name; }
 void *mono_field_get_type(Field *field) { return field->type; }
 uint32_t mono_field_get_offset(Field *field) { return field->offset; }
 uint32_t mono_field_get_flags(Field *field) { return field->flags; }
-/* Game.Combat's static data: Instances (offset 0) */
-static int32_t combat_statics[1] = { 7 };
+/* Static data lives on the heap, like Mono's: Game.Combat's Instances
+   (offset 0) and Game.Loop's Current (offset 0, the last Game.Combat made). */
+static int32_t *combat_statics;
+static void **loop_statics;
+static void make_statics(void) {
+    if (combat_statics == NULL) {
+        combat_statics = calloc(1, sizeof *combat_statics);
+        *combat_statics = 7;
+        loop_statics = calloc(1, sizeof *loop_statics);
+    }
+}
 void *mono_class_vtable(void *domain, Class *k) {
     (void)domain;
-    return k == &classes[3] ? &vt_combat : NULL;
+    make_statics();
+    return k == &classes[3] ? &vt_combat : k == &classes[13] ? &vt_loop : NULL;
 }
 void *mono_vtable_get_static_field_data(VTable *vtable) {
-    return vtable == &vt_combat ? combat_statics : NULL;
+    return vtable == &vt_combat ? (void *)combat_statics
+        : vtable == &vt_loop ? (void *)loop_statics : NULL;
+}
+int mono_class_data_size(Class *k) {
+    return k == &classes[3] ? 4 : k == &classes[13] ? 8 : 0;
 }
 void *mono_class_get_parent(Class *k) { return k->parent; }
 int mono_class_get_rank(Class *k) { return k->rank; }
@@ -608,6 +624,8 @@ void *fake_combat(const char *name) {
         live_combats[live_count] = combat;
         live_game_objects[live_count++] = game_object;
     }
+    make_statics();
+    *loop_statics = combat;
     return combat;
 }
 void *fake_string(const char *ascii) {
@@ -2633,3 +2651,89 @@ def test_monitor_marks_static_methods(qt_app, translations):  # pylint: disable=
     assert model.data(model.index(0, 3), Qt.ItemDataRole.ForegroundRole) is not None
     assert model.data(model.index(1, 3)) == ""
     assert model.data(model.index(1, 3), Qt.ItemDataRole.ForegroundRole) is None
+
+
+def _hero_health(pid):
+    """Where Game.Loop.Current (the last Game.Combat made) keeps its Health."""
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.managed_statics import read_static_areas
+    from hermes.platform import ProcessMemory
+
+    areas = read_static_areas(pid, {"Assembly-CSharp": ["Game.Loop"]})
+    with ProcessMemory(pid) as memory:
+        return memory.read_pointer(areas[0].address, 8) + 0x20
+
+
+@requires_target
+def test_static_areas_of_marked_assemblies(tmp_path):
+    # pylint: disable=import-outside-toplevel
+    from hermes.core.pointer import chain_bases, managed_bases
+    from hermes.features.managed_statics import StaticArea, read_static_areas
+    from hermes.platform import ProcessMemory, read_mappings
+
+    target = _MonoTarget(_build(tmp_path))
+    try:
+        target.send("roll", 3)
+        areas = read_static_areas(target.pid, {"Assembly-CSharp": None, "Missing": None})
+
+        # Generic definitions and classes without static data are left out.
+        assert [(a.assembly, a.class_name, a.size, a.fields) for a in areas] == [
+            ("Assembly-CSharp", "Game.Combat", 4, (("Instances", 0),)),
+            ("Assembly-CSharp", "Game.Loop", 8, (("Current", 0),))]
+        combat = areas[0]
+        assert isinstance(combat, StaticArea) and combat.name == "mono:Assembly-CSharp:Game.Combat"
+        assert combat.field_at(0) == "Instances" and combat.field_at(4) is None
+        with ProcessMemory(target.pid) as memory:
+            assert int.from_bytes(memory.read(combat.address, 4), "little") == 7
+        # on the heap, in no module
+        assert not any(m.start <= combat.address < m.end and m.module is not None
+                       for m in read_mappings(target.pid))
+        # remembered for this run of the game
+        assert managed_bases(target.pid) == {area.name: area.address for area in areas}
+        assert chain_bases(target.pid, read_mappings(target.pid))[combat.name] == combat.address
+    finally:
+        target.close()
+    assert managed_bases(target.pid) == {}
+
+
+@requires_target
+def test_pointer_scan_starts_in_static_fields_and_filters_after_a_restart(tmp_path):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.core import memory_regions, pointer
+    from hermes.platform import main_module
+    from hermes.ui.widgets.pointer_scan import PointerScanWorker
+
+    binary = _build(tmp_path)
+    expected = PointerChain("mono:Assembly-CSharp:Game.Loop", 0, (0x20,))
+    first = _MonoTarget(binary)
+    try:
+        first.send("roll", 3)
+        health = _hero_health(first.pid)
+
+        def scan(categories):
+            worker = PointerScanWorker(
+                first.pid, health, max_depth=2, max_offset=0x100, categories=categories,
+                main_module=main_module(first.pid), assemblies=("Assembly-CSharp",))
+            return worker, worker._scan()
+
+        worker, chains = scan({memory_regions.ASSEMBLIES, memory_regions.HEAP})
+        assert expected in chains
+        assert all(chain.module.startswith("mono:") for chain in chains)
+        assert [area.class_name for area in worker.static_areas] == ["Game.Combat", "Game.Loop"]
+        assert expected.text() == "[Assembly-CSharp] Game.Loop+0x0 → 0x20"
+        # Without the category the static data is no chain base.
+        _worker, chains_without = scan(memory_regions.DEFAULT_CATEGORIES)
+        assert expected not in chains_without
+    finally:
+        first.close()
+
+    second = _MonoTarget(binary)
+    try:
+        second.send("roll", 5)
+        second.send("roll", 6)  # another Hero: the static field moved on
+        health = _hero_health(second.pid)
+        # The filter looks the bases up itself for the new run of the game.
+        pointer._managed_bases.pop(second.pid, None)
+        assert expected in PointerScanWorker(second.pid, health, chains=chains)._filter()
+    finally:
+        second.close()

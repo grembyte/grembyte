@@ -22,6 +22,7 @@ from hermes.core import memory_regions
 # Points by the memory category the chain starts in.
 START_POINTS = {
     memory_regions.MAIN: 40,
+    memory_regions.ASSEMBLIES: 40,
     memory_regions.GAME: 30,
     memory_regions.ENGINE: 20,
     memory_regions.SYSTEM: 0,
