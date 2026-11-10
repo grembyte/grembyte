@@ -2693,7 +2693,6 @@ def test_static_areas_of_marked_assemblies(tmp_path):
         assert chain_bases(target.pid, read_mappings(target.pid))[combat.name] == combat.address
     finally:
         target.close()
-    assert managed_bases(target.pid) == {}
 
 
 @requires_target

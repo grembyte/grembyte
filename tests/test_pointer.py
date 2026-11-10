@@ -2,6 +2,7 @@
 
 import builtins
 import io
+import os
 import struct
 import subprocess
 
@@ -176,6 +177,66 @@ def test_static_regions_include_bss_behind_a_module():
     assert module_bases(mappings) == {"game": 0x1000}
     assert chain_for_static_address(mappings, 0x4010) == PointerChain("game", 0x3010)
     assert chain_for_static_address(mappings, 0x8010) is None
+
+
+def test_bss_ends_where_the_module_does():
+    # The kernel merged the .bss of Frida's agent with heap behind it.
+    lines = [
+        "1000-2000 r-xp 00000000 00:01 7 /memfd:frida-agent-64.so (deleted)",
+        "2000-3000 rw-p 00001000 00:01 7 /memfd:frida-agent-64.so (deleted)",
+        "3000-9000 rw-p 00000000 00:00 0",            # .bss up to 0x5000, then heap
+        "a000-b000 r-xp 00000000 08:01 1 /opt/game/libgone.so",
+        "b000-c000 rw-p 00000000 00:00 0",            # its end is unknown
+    ]
+    ends = {0x1000: 0x5000, 0xa000: None}
+
+    mappings = parse_maps(lines, module_end=ends.get)
+
+    assert static_regions(mappings) == [(0x2000, 0x3000, "memfd:frida-agent-64.so (deleted)"),
+                                        (0x3000, 0x5000, "memfd:frida-agent-64.so (deleted)")]
+    assert [(m.start, m.end, m.module) for m in mappings if not m.path] == [
+        (0x3000, 0x5000, "memfd:frida-agent-64.so (deleted)"), (0x5000, 0x9000, None),
+        (0xb000, 0xc000, None)]
+    assert chain_for_static_address(mappings, 0x6000) is None
+
+
+def test_elf_end_reads_the_loadable_segments():
+    # pylint: disable=protected-access
+    header = bytearray(64)
+    header[:5] = b"\x7fELF\x02"
+    struct.pack_into("<Q", header, 0x20, 64)          # program headers right behind
+    struct.pack_into("<HH", header, 0x36, 56, 3)
+    segments = b"".join(struct.pack("<IIQQQQQQ", kind, 0, 0, vaddr, vaddr, 0, size, 0x1000)
+                        for kind, vaddr, size in ((1, 0, 0x1800), (6, 0x40, 0x100),
+                                                  (1, 0x3000, 0x2345)))
+    image = bytes(header) + segments
+
+    def read(address, size):
+        return image[address - 0x7000:address - 0x7000 + size]
+
+    assert linux.elf_end(read, 0x7000) == 0x7000 + 0x6000
+    assert linux.elf_end(lambda _address, _size: b"MZ" + bytes(62), 0x7000) is None
+
+
+@pytest.mark.skipif(not hasattr(linux, "read_mappings"), reason="Linux only")
+def test_a_dll_a_native_program_maps_is_no_module(tmp_path):
+    # Mono maps its assemblies: data, not images as under Wine.
+    import mmap  # pylint: disable=import-outside-toplevel
+
+    image = bytearray(0x3000)
+    image[:2] = b"MZ"
+    struct.pack_into("<I", image, 0x3C, 0x40)
+    image[0x40:0x44] = b"PE\0\0"
+    struct.pack_into("<I", image, 0x40 + 24 + 56, 0x100000)  # SizeOfImage
+    path = tmp_path / "Assembly-CSharp.dll"
+    path.write_bytes(bytes(image))
+    with open(path, "rb") as file, mmap.mmap(file.fileno(), 0, prot=mmap.PROT_READ):
+        mappings = read_mappings(os.getpid())
+        assert any(m.path == str(path) for m in mappings)
+        assert not any(m.module == "Assembly-CSharp.dll" for m in mappings)
+    # The same lines from a Wine process: an image over its whole extent
+    lines = [f"7f0000000000-7f0000003000 r--p 00000000 08:01 9 {path}"]
+    assert parse_maps(lines)[0].module == "Assembly-CSharp.dll"
 
 
 def test_memory_behind_mapped_files_that_are_no_modules_is_not_static():
