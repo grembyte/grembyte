@@ -9,6 +9,7 @@ from PySide6.QtCore import Signal  # pylint: disable=import-error,no-name-in-mod
 from PySide6.QtGui import QFontDatabase  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QCheckBox,
+    QComboBox,
     QDialog,
     QFormLayout,
     QHBoxLayout,
@@ -39,6 +40,7 @@ from hermes.features.method_call import (
     struct_field_names,
     supported,
 )
+from hermes.features.catalog import csharp_name
 from hermes.features.monitor import MethodMonitorWorker
 from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.inspection import Inspections
@@ -47,8 +49,6 @@ from hermes.ui.widgets.method_monitor import stop_worker
 
 # The arguments last typed per method (its signature), for this run of Hermes
 _last_arguments = {}
-# How many of an enum's names the empty argument field shows
-_PLACEHOLDER_NAMES = 4
 
 
 def placeholder_key(param_type):
@@ -62,8 +62,6 @@ def placeholder_key(param_type):
         return "call.placeholder_guid"
     if is_number_struct(param_type):
         return "call.placeholder_struct_fields"
-    if param_type.get("enumValues"):
-        return "call.placeholder_enum_values"
     if param_type.get("enumName"):
         return "call.placeholder_enum"
     if param_type.get("engine") == ENGINE_NAME:
@@ -79,6 +77,22 @@ def placeholder_key(param_type):
     if kind in REFERENCES:
         return "call.placeholder_object"
     return "call.placeholder_address"
+
+
+def _type_name(name):
+    """A type's name as shown: Mono's nested classes (Outer/Inner) as C#
+    writes them; Unreal's paths stay."""
+    return name if name.startswith("/") else csharp_name(name)
+
+
+def _editor_text(editor):
+    """What an argument editor holds, as parse_argument reads it."""
+    if isinstance(editor, QCheckBox):
+        return "true" if editor.isChecked() else "false"
+    if isinstance(editor, QComboBox):
+        index = editor.findText(editor.currentText())
+        return editor.itemData(index) if index >= 0 else editor.currentText().strip()
+    return editor.text()
 
 
 class MethodCallDialog(QDialog):
@@ -272,7 +286,7 @@ class MethodCallDialog(QDialog):
 
     def _param_label(self, param):
         param_type = param["type"]
-        name = param_type.get("enumName") or param_type["name"]
+        name = _type_name(param_type.get("enumName") or param_type["name"])
         if param.get("out"):
             name += " (out)"
         elif param_type.get("byref"):
@@ -284,26 +298,37 @@ class MethodCallDialog(QDialog):
         if is_bool(param_type) and ("engine" in param_type or not param_type.get("byref")):
             editor = QCheckBox()
             editor.setChecked(last == "true")
+        elif param_type.get("enumValues") and supported(param_type):
+            editor = self._enum_editor(param_type, last)
         else:
             editor = QLineEdit(last or "")
-            values = param_type.get("enumValues") or {}
             fields = struct_field_names(param_type) if is_number_struct(param_type) else []
             editor.setPlaceholderText(t[placeholder_key(param_type)].format(
-                type=param_type.get("enumName") or param_type["name"],
-                values=", ".join(list(values.values())[:_PLACEHOLDER_NAMES])
-                + (", …" if len(values) > _PLACEHOLDER_NAMES else ""),
+                type=_type_name(param_type.get("enumName") or param_type["name"]),
                 fields=" ".join(fields),
                 fields_example="; ".join(f"{name}={i + 1}" for i, name in enumerate(fields[:2]))))
-            if values:
-                editor.setToolTip("\n".join(f"{value} = {name}" for value, name in values.items()))
             editor.setEnabled(supported(param_type))
             editor.returnPressed.connect(self.call)
         self._editors.append(editor)
         return editor
 
+    def _enum_editor(self, param_type, last):
+        """A choice of the enum's names, shown with their values ("Minor (1)");
+        a number can be typed in, too."""
+        editor = QComboBox()
+        editor.setEditable(True)
+        editor.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        for value, name in param_type["enumValues"].items():
+            editor.addItem(f"{name} ({value})", name)
+        editor.setCurrentIndex(editor.findData(last) if last else -1)
+        if editor.currentIndex() < 0:
+            editor.setEditText(last or "")
+        editor.lineEdit().setPlaceholderText(self.translations["call.placeholder_enum_choice"])
+        editor.lineEdit().returnPressed.connect(self.call)
+        return editor
+
     def _texts(self):
-        return [("true" if editor.isChecked() else "false") if isinstance(editor, QCheckBox)
-                else editor.text() for editor in self._editors]
+        return [_editor_text(editor) for editor in self._editors]
 
     # --- Calling -----------------------------------------------------------------
     def call(self):

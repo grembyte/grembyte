@@ -21,7 +21,7 @@ Hermes supports Unreal Engine 4.23 and later, 64-bit, natively and under Proton.
 | --- | --- |
 | `FString`, `FName` | text |
 | `bool` | checkbox |
-| enums | by name |
+| enums | chosen from their names, or as a number |
 | structs of numbers (`FVector`, …) | `1 2 3` or `X=1; Z=3` |
 | outputs | nothing; shown after the call |
 

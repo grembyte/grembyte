@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 from hermes.engines import base as engine_base
 from hermes.engines.registry import resolve_engine
 from hermes.features.assemblies import missing_assemblies
-from hermes.features.catalog import CachedCatalogWorker, CatalogWorker
+from hermes.features.catalog import CachedCatalogWorker, CatalogWorker, csharp_name
 from hermes.features.favorites import CATALOG
 from hermes.features.method_call import call_capability
 from hermes.ui.widgets.call_graph import CallGraphDialog
@@ -68,12 +68,15 @@ TYPE_PREFIX = "type:"
 
 
 def matches(words, method):
-    """Whether every search word occurs in the method's class, name or assembly.
+    """Whether every search word occurs in the method's class, name or assembly,
+    as the table shows them.
 
     A word ``type:<type>`` occurs in its parameter or return types instead.
     """
-    text = f"{method.class_name}:{method.name} {method.assembly}".lower()
-    types = f"{method.parameters} {method.return_type}".lower()
+    # As the table shows them (nested Mono classes as C# writes them)
+    name = csharp_name(f"{method.class_name}:{method.name}", method.engine)
+    text = f"{name} {method.assembly}".lower()
+    types = csharp_name(f"{method.parameters} {method.return_type}", method.engine).lower()
     return all(word_occurs(word[len(TYPE_PREFIX):], types) if word.startswith(TYPE_PREFIX)
                else word_occurs(word, text) for word in words)
 
@@ -119,9 +122,9 @@ class CatalogModel(FavoriteColumn, QAbstractTableModel):
         method = self.visible[index.row()]
         return (
             None,
-            method.class_name,
-            f"{method.name} {method.parameters}",
-            method.return_type,
+            csharp_name(method.class_name, method.engine),
+            csharp_name(f"{method.name} {method.parameters}", method.engine),
+            csharp_name(method.return_type, method.engine),
             "✓" if method.static else "",
             method.assembly,
         )[index.column()]
@@ -529,8 +532,8 @@ class CatalogDialog(QDialog):
             self.details_label.setText("")
             return
         self.details_label.setText(self.translations["catalog.details"].format(
-            signature=method.signature,
-            returns=method.return_type or "?",
+            signature=csharp_name(method.signature, method.engine),
+            returns=csharp_name(method.return_type, method.engine) or "?",
             kind=self.translations["catalog.static" if method.static else "catalog.instance"],
             token=f"0x{method.token:08x}",
             assembly=method.assembly,

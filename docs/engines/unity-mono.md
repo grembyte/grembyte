@@ -10,6 +10,7 @@ Everything in the [engine overview](index.md) is available:
 - The **method monitor** logs calls with arguments and results; **method hooks** change arguments, fields or results with templates of their own.
 - The **call graph** shows which methods a method calls and which call it, from the IL code.
 - The **object inspector** shows the fields of C# objects, and **Call method** runs a static method on the game's main thread.
+  An enum argument is chosen from the enum's names, e.g. `StrongholdAdventure.Type`: `Minor (1)`, `Average (2)` …; a number can be typed in, too. Nested classes read as C# writes them (`StrongholdAdventure.Type`), not as Mono does (`StrongholdAdventure/Type`).
 
 !!! tip "Try it on HermesQuest"
     HermesQuest is a small Unity Mono role-playing game made for trying out Hermes – the running example of the [Examples](../examples/index.md) section. Download it for [Linux](https://github.com/winterhafen/hermes-hook/releases/download/v0.5.0-alpha/HermesQuest-RPG-Linux) or [Windows](https://github.com/winterhafen/hermes-hook/releases/download/v0.5.0-alpha/HermesQuest-RPG-Windows.zip) (also for Wine/Proton); both are zip archives. The examples walk through scans, pointer scans, value and method hooks and scripts on it.

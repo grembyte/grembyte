@@ -1222,7 +1222,7 @@
   "call.placeholder_integer": "Integer ({type})",
   "call.placeholder_float": "Decimal number ({type})",
   "call.placeholder_enum": "Numeric value of {type}",
-  "call.placeholder_enum_values": "{values} or a numeric value",
+  "call.placeholder_enum_choice": "Choose a value or type a number",
   "call.placeholder_object": "null or address of an object (0x…)",
   "call.placeholder_address": "Address (0x…)",
   "call.placeholder_struct": "Struct {type}: not supported (only structs of numbers and System.Guid)",

@@ -133,6 +133,8 @@ const mono = (() => {
         classVtable: blocking('mono_class_vtable', 'pointer', ['pointer', 'pointer']),
         fieldData: exported('mono_vtable_get_static_field_data', 'pointer', ['pointer'])
       })),
+      // The value of a constant (an enum's names), from the metadata.
+      constant: optional(() => exported('mono_field_get_data', 'pointer', ['pointer'])),
       // The size of a class's static data, for the pointer scan's chain bases.
       staticSize: optional(() => exported('mono_class_data_size', 'int', ['pointer'])),
       // Only for passing strings to game code.
@@ -1031,6 +1033,62 @@ gpointer run_batch (gpointer data) {
     return api.types;
   }
 
+  // class -> { "0": "None", ... } of an enum, or null
+  const enumCache = new Map();
+  const MAX_ENUM_VALUES = 1024;
+  // How a constant of an enum's base type is read
+  const CONSTANT_READERS = {
+    [TYPE.I1]: data => data.readS8(), [TYPE.U1]: data => data.readU8(),
+    [TYPE.I2]: data => data.readS16(), [TYPE.U2]: data => data.readU16(),
+    [TYPE.CHAR]: data => data.readU16(), [TYPE.BOOLEAN]: data => data.readU8(),
+    [TYPE.I4]: data => data.readS32(), [TYPE.U4]: data => data.readU32(),
+    [TYPE.I8]: data => data.readS64(), [TYPE.U8]: data => data.readU64()
+  };
+
+  function blobData(blob) {
+    // The data of a metadata blob, after its compressed length (ECMA-335 II.23.2).
+    const first = blob.readU8();
+    if ((first & 0x80) === 0)
+      return blob.add(1);
+    return blob.add((first & 0xc0) === 0x80 ? 2 : 4);
+  }
+
+  function enumValues(t, klass, baseKind) {
+    // { "1": "Minor", ... }: the names of an enum by their value, from its
+    // constants (cached); null if they cannot be read.
+    const key = klass.toString();
+    if (enumCache.has(key))
+      return enumCache.get(key);
+    const read = CONSTANT_READERS[baseKind];
+    let result = null;
+    if (api.constant !== null && read !== undefined) {
+      result = {};
+      const iterator = Memory.alloc(Process.pointerSize);
+      iterator.writePointer(NULL);
+      let count = 0;
+      for (let field = t.classFields(klass, iterator); !field.isNull() && count < MAX_ENUM_VALUES;
+        field = t.classFields(klass, iterator)) {
+        const flags = t.fieldFlags(field);
+        if ((flags & FIELD_STATIC) === 0 || (flags & FIELD_LITERAL) === 0)
+          continue;
+        const blob = api.constant(field);
+        if (blob.isNull())
+          continue;
+        const value = read(blobData(blob)).toString();
+        // The first name of a value wins (enums may give one several names)
+        if (!(value in result))
+          result[value] = t.fieldName(field).readUtf8String();
+        count++;
+      }
+      if (Object.keys(result).length === 0)
+        result = null;
+    }
+    if (enumCache.size >= MAX_CACHE)
+      enumCache.clear();
+    enumCache.set(key, result);
+    return result;
+  }
+
   function typeInfo(t, type) {
     // { kind, byref, name, enumName?, structSize? }: enums become their base
     // type, value types that are no enum are structs ('VALUETYPE').
@@ -1044,6 +1102,9 @@ gpointer run_batch (gpointer data) {
       if (!klass.isNull() && t.isEnum(klass) !== 0) {
         info.enumName = info.name;
         info.kind = t.typeKind(t.enumBase(klass));
+        const values = enumValues(t, klass, info.kind);
+        if (values !== null)
+          info.enumValues = values;
       } else if (!klass.isNull() && t.isValueType(klass) !== 0) {
         info.kind = TYPE.VALUETYPE;
         info.structSize = t.valueSize(klass, NULL);

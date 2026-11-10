@@ -70,19 +70,32 @@ def test_arguments_are_read_by_their_type():
         parse_argument(attribute, "Charm")
 
 
-def test_enum_names_are_the_hint_of_an_empty_argument(qt_app, translations):
-    # pylint: disable=import-outside-toplevel,unused-argument
+def test_enums_with_known_names_are_chosen_from_a_list(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from hermes.ui.widgets import method_call
     from hermes.ui.widgets.method_call import MethodCallDialog
 
     dialog = MethodCallDialog.__new__(MethodCallDialog)  # pylint: disable=no-value-for-parameter
-    dialog.translations, dialog._editors = translations, []  # pylint: disable=protected-access
-    values = {"0": "Might", "1": "Constitution", "2": "Dexterity", "3": "Perception",
-              "4": "Intellect"}
-    editor = dialog._editor(_type(U1, "EPrimaryAttribute", enumName="EPrimaryAttribute",
-                                  enumValues=values), None)  # pylint: disable=protected-access
-    assert editor.placeholderText() == (
-        "Might, Constitution, Dexterity, Perception, … oder Zahlenwert")
-    assert editor.toolTip().splitlines()[2] == "2 = Dexterity"
+    dialog.translations, dialog._editors = translations, []
+    values = {"0": "Might", "1": "Constitution", "2": "Dexterity"}
+    attribute = _type(U1, "EPrimaryAttribute", enumName="EPrimaryAttribute", enumValues=values)
+
+    editor = dialog._editor(attribute, None)
+    assert [editor.itemText(i) for i in range(editor.count())] == [
+        "Might (0)", "Constitution (1)", "Dexterity (2)"]
+    assert editor.currentText() == "" and editor.lineEdit().placeholderText() == (
+        translations["call.placeholder_enum_choice"])
+    editor.setCurrentIndex(2)
+    assert method_call._editor_text(editor) == "Dexterity"
+    assert parse_argument(attribute, method_call._editor_text(editor)) == 2
+    editor.setEditText(" 7 ")  # a value without a name
+    assert parse_argument(attribute, method_call._editor_text(editor)) == 7
+    # The last choice comes back, a number typed in too.
+    assert dialog._editor(attribute, "Constitution").currentText() == "Constitution (1)"
+    assert dialog._editor(attribute, "7").currentText() == "7"
+    # Mono's nested classes read as C# writes them, Unreal's paths stay.
+    assert method_call._type_name("StrongholdAdventure/Type") == "StrongholdAdventure.Type"
+    assert method_call._type_name("/Script/Engine.Actor") == "/Script/Engine.Actor"
 
 
 def test_unreal_types_are_typed_in_as_text_and_bools():

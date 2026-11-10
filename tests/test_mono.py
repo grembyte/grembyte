@@ -117,8 +117,11 @@ static Class classes[17] = {
     { .type = { "Game.Combat", 0x12 }, .image = &game, .parent = &classes[9],
       .field_count = 2,
       .fields = { { "Health", &t_int, 0x20 }, { "Instances", &t_int, 0, 0x10 } } },
+    /* Its constants (static literal fields); the offset picks the value's blob */
     { .type = { "Game.DamageType", 0x11 }, .image = &game, .is_enum = 1, .base = &t_int,
-      .is_valuetype = 1 },
+      .is_valuetype = 1, .field_count = 3,
+      .fields = { { "Physical", &t_damage, 0, 0x50 }, { "Fire", &t_damage, 1, 0x50 },
+                  { "Frost", &t_damage, 2, 0x50 } } },
     { .type = { "System.Int32", 0x08 }, .image = &corlib, .is_valuetype = 1 },
     { .type = { "Game.DamageInfo", 0x12 }, .image = &game, .parent = &classes[2],
       .field_count = 5,
@@ -581,6 +584,11 @@ const char *mono_field_get_name(Field *field) { return field->name; }
 void *mono_field_get_type(Field *field) { return field->type; }
 uint32_t mono_field_get_offset(Field *field) { return field->offset; }
 uint32_t mono_field_get_flags(Field *field) { return field->flags; }
+/* A constant's value as Mono gives it: a metadata blob, length first */
+static const uint8_t damage_blobs[3][5] = { { 4, 0 }, { 4, 1 }, { 4, 2 } };
+const void *mono_field_get_data(Field *field) {
+    return field->flags & 0x40 ? damage_blobs[field->offset] : NULL;
+}
 /* Static data lives on the heap, like Mono's: Game.Combat's Instances
    (offset 0) and Game.Loop's Current (offset 0, the last Game.Combat made). */
 static int32_t *combat_statics;
@@ -1089,7 +1097,7 @@ def test_method_monitor_logs_arguments_caller_and_result(tmp_path, qt_app):
         args = {arg["name"]: arg["text"] for arg in call["args"]}
         assert {key: args[key] for key in ("min", "scale", "name", "crit", "type")} == {
             "min": "5", "scale": "1.5", "name": '"Fireball"', "crit": "true",
-            "type": "2 (Game.DamageType)"}
+            "type": "2 (Frost)"}
         # An out argument is shown before the method wrote it.
         assert args["roll"].startswith("&0x") and args["roll"].endswith("→ -1")
         assert call["caller"].startswith("target+0x")
@@ -1260,7 +1268,7 @@ def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
         after = info["after"]
         assert after["text"].startswith("Game.DamageInfo@0x")
         recorded = fields_of(after["snapshot"])
-        assert recorded[:3] == [("Damage", False, "12.5"), ("Type", False, "2 (Game.DamageType)"),
+        assert recorded[:3] == [("Damage", False, "12.5"), ("Type", False, "2 (Frost)"),
                                 ("Name", False, '"Slash"')]
         assert recorded[3][2].startswith('Game.Combat "Miranda"@0x')
         assert recorded[4][2].startswith("System.Int32[3]@0x")
@@ -1663,6 +1671,11 @@ def test_static_methods_are_called_on_the_main_thread(tmp_path, qt_app):
         assert answer(worker.call(count, []), then="tick") == {"result": {"text": "7"}}
         # Instance methods need an object: not callable from the dialog.
         assert "no static method" in answer(worker.describe_call(_CALC_DAMAGE))
+        # An enum parameter comes with its names, from the enum's constants.
+        roll = answer(worker.describe_call(_ROLL_DAMAGE, instance=True))
+        damage_type = next(param["type"] for param in roll["params"] if param["name"] == "type")
+        assert damage_type["enumName"] == "Game.DamageType"
+        assert damage_type["enumValues"] == {"0": "Physical", "1": "Fire", "2": "Frost"}
     finally:
         worker.requestInterruption()
         worker.wait(5000)
@@ -2744,3 +2757,25 @@ def test_pointer_scan_starts_in_static_fields_and_filters_after_a_restart(tmp_pa
         assert expected in PointerScanWorker(second.pid, health, chains=chains)._filter()
     finally:
         second.close()
+
+
+def test_catalog_shows_nested_classes_as_csharp_writes_them(qt_app, translations):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PySide6.QtCore import Qt  # pylint: disable=no-name-in-module
+
+    from hermes.engines.registry import engine_by_id
+    from hermes.features.catalog import CatalogMethod, csharp_name
+    from hermes.ui.widgets.catalog import CatalogModel, matches
+
+    method = CatalogMethod("Assembly-CSharp", "CommandLine", "StrongholdForceAdventure",
+                           "(StrongholdAdventure/Type)", "System.Void", True, 0x06001234,
+                           "CommandLine:StrongholdForceAdventure (StrongholdAdventure/Type)")
+    model = CatalogModel(translations, engine_by_id("mono"))
+    model.add([method])
+
+    shown = model.data(model.index(0, 2), Qt.ItemDataRole.DisplayRole)
+    assert shown == "StrongholdForceAdventure (StrongholdAdventure.Type)"
+    # Found as shown; the signature keeps Mono's form for hooks.
+    assert matches(["type:strongholdadventure.type"], method)
+    assert method.signature.endswith("(StrongholdAdventure/Type)")
+    assert csharp_name("/Script/Engine.Actor", "unreal") == "/Script/Engine.Actor"

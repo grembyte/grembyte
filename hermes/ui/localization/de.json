@@ -1222,7 +1222,7 @@
   "call.placeholder_integer": "Ganzzahl ({type})",
   "call.placeholder_float": "Kommazahl ({type})",
   "call.placeholder_enum": "Zahlenwert von {type}",
-  "call.placeholder_enum_values": "{values} oder Zahlenwert",
+  "call.placeholder_enum_choice": "Wert wählen oder Zahl eingeben",
   "call.placeholder_object": "null oder Adresse eines Objekts (0x…)",
   "call.placeholder_address": "Adresse (0x…)",
   "call.placeholder_struct": "Struct {type}: nicht unterstützt (nur Structs aus Zahlen und System.Guid)",

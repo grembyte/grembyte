@@ -64,6 +64,16 @@ class CatalogMethod:
                 "token": self.token, "method": self.signature}
 
 
+def csharp_name(text, engine="mono"):
+    """``text`` with Mono's nested class names as C# writes them:
+    ``StrongholdAdventure/Type`` reads ``StrongholdAdventure.Type``.
+
+    For display only; signatures keep Mono's form, by which hooks and
+    ``ctx.call`` find methods. Other engines' names (Unreal's paths) stay.
+    """
+    return text.replace("/", ".") if engine == "mono" and text else text
+
+
 def short_name(signature):
     """``Class:Method`` of ``Namespace.Class:Method (params)``."""
     class_name, _, method = signature.split(" (")[0].partition(":")
