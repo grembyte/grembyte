@@ -176,6 +176,25 @@ engine and uses much of what exists. Among the adapters, the call graph from Blu
 
 The adapter layer is described in the [architecture](docs/development/architecture.md#adding-an-engine).
 
+### Data type explorer (Mono/IL2CPP and Unreal)
+
+The catalog lists methods; the types behind them are only seen one at a time, as an
+argument in **Call method** or an object in the inspector. A type explorer would browse all
+types the adapters know, searchable like the catalog:
+
+- **Classes and structs:** fields with type and offset (inherited ones marked), base class
+  and derived classes, the methods (linking to the catalog). Static fields with their current
+  value and the address of their class's static data (as the pointer scan's chain bases).
+- **Enums:** names and values, the base type, `[Flags]` shown as such. The adapters already
+  read them for **Call method** (Mono from the constants' metadata, Unreal from `UEnum`).
+- **Unreal:** `UClass`, `UScriptStruct` and `UEnum` from reflection, with property flags
+  (`BlueprintReadWrite`, `Replicated`, ...) and the Blueprint classes of loaded packages.
+- **Links:** open a live object of the type in the object inspector (`findObjects`), copy a
+  type as a C struct for the structure view (proposal 3), and give offsets to the pointer
+  chain dialog, so `GameState.s_playerCharacter → m_Inventory → currencyTotalValue` can be
+  entered by field names instead of hex offsets.
+- Type names as C# writes them (`StrongholdAdventure.Type`), as the catalog shows them.
+
 ### More adapters
 
 | Engine | Approach | Result |
