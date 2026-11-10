@@ -52,6 +52,8 @@ _CHUNK_SIZE = 16 * 1024 * 1024
 MAX_EDGES = 20_000_000
 # Pointers looked up at once; bounds the temporary arrays of a search level.
 _EDGE_BATCH = 1_000_000
+# Neither Linux (vm.mmap_min_addr) nor Windows maps the lowest 64 KiB.
+_MIN_ADDRESS = 0x10000
 
 
 class ScanCancelled(Exception):
@@ -131,19 +133,34 @@ def pointer_size(pid):
     return size
 
 
+def user_address_limit(size):
+    """End of user space for pointers of ``size`` bytes.
+
+    x86-64 programs get the lower 47 bits on Linux and Windows alike, 32-bit
+    programs at most 4 GiB.
+    """
+    return 1 << 47 if size == 8 else 1 << 32
+
+
 def resolve_chain(memory, bases, chain):
-    """Follow ``chain`` in a process; return the final address or None."""
+    """Follow ``chain`` in a process; return the final address or None.
+
+    A step that leaves user space ends it with None: once the game frees an
+    object, its pointer slot may hold anything, and such an address can be
+    neither read, written, nor saved (SQLite integers have 63 bits).
+    """
     base = bases.get(chain.module)
     if base is None:
         return None
     size = pointer_size(getattr(memory, "pid", None))
+    limit = user_address_limit(size)
     address = base + chain.base_offset
     for offset in chain.offsets:
         pointer = memory.read_pointer(address, size)
-        if not pointer:
+        if not pointer or not _MIN_ADDRESS <= pointer < limit:
             return None
         address = pointer + offset
-    return address
+    return address if _MIN_ADDRESS <= address < limit else None
 
 
 def chain_for_static_address(mappings, address):

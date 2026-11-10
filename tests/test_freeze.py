@@ -36,19 +36,19 @@ class FakeMemory:
 
 
 def test_write_once_writes_fixed_and_pointer_entries(monkeypatch):
-    memory = FakeMemory(0x1000, 0x40, pointers={0x5000 + 0x10: 0x1020})
+    memory = FakeMemory(0x11000, 0x40, pointers={0x5000 + 0x10: 0x11020})
     monkeypatch.setattr(freeze, "read_mappings", lambda _pid: [])
     monkeypatch.setattr(freeze, "module_bases", lambda _mappings: {"game": 0x5000})
     worker = FreezeWorker(123)
-    worker.set_entry(1, FrozenValue(value_type("int16").pack(-2), address=0x1004))
+    worker.set_entry(1, FrozenValue(value_type("int16").pack(-2), address=0x11004))
     worker.set_entry(2, FrozenValue(
         value_type("uint8").pack(200), pointer=PointerChain("game", 0x10, (0x8,)),
     ))
 
     worker.write_once(memory)
 
-    assert memory.read(0x1004, 2) == value_type("int16").pack(-2)
-    assert memory.read(0x1028, 1) == bytes([200])
+    assert memory.read(0x11004, 2) == value_type("int16").pack(-2)
+    assert memory.read(0x11028, 1) == bytes([200])
 
 
 def test_write_once_skips_unresolved_pointers_and_removed_entries(monkeypatch):

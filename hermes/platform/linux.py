@@ -106,10 +106,20 @@ def read_mappings(pid):
         return parse_maps(maps_file)
 
 
-def main_module(pid):
-    """Return the module name of the program itself, or None if unknown."""
+def main_module(pid, proc_root="/proc"):
+    """Return the module name of the program itself, or None if unknown.
+
+    Under Wine /proc/<pid>/exe is Wine's loader (wine64-preloader), not the
+    game: there it is the .exe the process maps, named as ``parse_maps``
+    names modules.
+    """
+    if is_wine_process(pid, proc_root):
+        # pylint: disable-next=import-outside-toplevel
+        from hermes.platform.wine import wine_program
+        path = wine_program(pid)[0]
+        return os.path.basename(path) if path else None
     try:
-        path = os.readlink(f"/proc/{pid}/exe")
+        path = os.readlink(f"{proc_root}/{pid}/exe")
     except OSError:
         return None
     return os.path.basename(path.removesuffix(" (deleted)"))

@@ -349,10 +349,35 @@ def test_pointer_size_follows_the_program_and_is_kept_per_start(monkeypatch):
 
         @staticmethod
         def read_pointer(address, size):
-            return {(0x100, 4): 0x2000}.get((address, size))
+            return {(0x100, 4): 0x20000}.get((address, size))
 
     chain = PointerChain("game", 0x100, (0x8,))
-    assert resolve_chain(Memory(), {"game": 0}, chain) == 0x2008
+    assert resolve_chain(Memory(), {"game": 0}, chain) == 0x20008
+
+
+def test_a_chain_through_a_freed_object_resolves_to_nothing(monkeypatch):
+    # The game freed the object: its pointer slot holds leftovers that point
+    # outside user space (and do not fit an SQLite integer)
+    monkeypatch.setattr(pointer_module, "pointer_size", lambda pid: 8)
+    slots = {0x1000: 0xFEEEFEEEFEEEFEEE, 0x1008: 0x8, 0x1010: 0x7FFF_FFFF_F000,
+             0x1018: 0x20000}
+
+    class Memory:  # pylint: disable=too-few-public-methods
+        pid = 5
+
+        @staticmethod
+        def read_pointer(address, size):
+            return slots.get(address) if size == 8 else None
+
+    def resolve(base_offset, *offsets):
+        return resolve_chain(Memory(), {"game": 0x1000},
+                             PointerChain("game", base_offset, offsets))
+
+    assert resolve(0x0, 0x10) is None          # garbage above user space
+    assert resolve(0x8, 0x10) is None          # a small number, no pointer
+    assert resolve(0x10, 0x2000) is None       # the offset leaves user space
+    assert resolve(0x18, -0x20000) is None     # ... or goes below it
+    assert resolve(0x18, 0x10) == 0x20010
 
 
 @requires_target
@@ -1024,3 +1049,54 @@ def test_the_extent_of_a_pe_image_comes_from_its_header(tmp_path):
     assert linux._image_size(str(image)) == 0x483000  # pylint: disable=protected-access
     assert linux._image_size(str(other)) is None  # pylint: disable=protected-access
     assert linux._image_size(str(tmp_path / "missing.dll")) is None  # pylint: disable=protected-access
+
+
+def test_pointer_dialog_adopts_the_selected_candidates_and_removes_the_scan(
+        qt_app, sessions, monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import os
+
+    from PySide6.QtCore import QItemSelectionModel  # pylint: disable=no-name-in-module
+
+    from hermes.db.repository.addresses import AddressRepository, SavedPointerScan
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets import pointer_scan
+    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+
+    monkeypatch.setattr(pointer_scan.QMessageBox, "question",
+                        lambda *_args: pointer_scan.QMessageBox.StandardButton.Yes)
+    translations = load_translations("en")
+    repository = AddressRepository(sessions)
+    process_id = HookRepository(sessions).get_or_create_process("target", "/g/target")
+    entry_id = repository.add_address(process_id, label="Gold", value_type="int32",
+                                      address=0x20000)
+    chains = [PointerChain("game", 0x100 + 8 * n, (0x10,)) for n in range(4)]
+    repository.save_pointer_scan(entry_id, SavedPointerScan(chains, 3, 0x100, 1))
+    entry = {"id": entry_id, "label": "Gold", "address": 0x20000, "type": "int32"}
+    dialog = PointerScanDialog(translations, repository, os.getpid(), entry)
+    adopted = []
+    dialog.chains_adopted.connect(adopted.append)
+
+    assert dialog.btn_adopt.text() == translations["pointer.adopt_all"]
+    dialog.table.selectRow(1)
+    assert dialog.btn_adopt.text() == translations["pointer.adopt_all"]
+    assert dialog.btn_use.isEnabled()
+    dialog.table.selectionModel().select(
+        dialog.table.model().index(3, 0),
+        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+    assert dialog.btn_adopt.text() == translations["pointer.adopt_selected"]
+    assert not dialog.btn_use.isEnabled()  # which one to use is unclear
+    dialog.adopt_candidates()
+    assert adopted == [[chains[1], chains[3]]]
+
+    dialog.table.clearSelection()
+    dialog.adopt_candidates()
+    assert adopted[-1] == chains
+
+    assert dialog.btn_clear.isEnabled()
+    dialog.clear_scan()
+    assert repository.get_pointer_scan(entry_id) is None
+    assert dialog.table.rowCount() == 0 and not dialog.btn_clear.isEnabled()
+    assert dialog.status_label.text() == translations["pointer.scan_cleared"]
+    assert repository.list_addresses(process_id)[0].id == entry_id  # the entry stays
