@@ -547,12 +547,13 @@ class PointerScanDialog(QDialog):
                 name, tooltip = self._assemblies_text(name, tooltip)
             elif summary is not None:
                 entry = summary[category]
-                size = t["pointer.region_size"].format(size=entry.size / 2**20)
+                size = self._size_text(entry.size)
                 if category == memory_regions.MAIN and entry.modules:
                     name += f" ({entry.modules[0]}, {size})"
                 elif category in memory_regions.MODULE_CATEGORIES:
-                    name += " (" + t["pointer.region_modules"].format(
-                        count=len(entry.modules), size=size) + ")"
+                    key = "pointer.region_module" if len(entry.modules) == 1 \
+                        else "pointer.region_modules"
+                    name += " (" + t[key].format(count=len(entry.modules), size=size) + ")"
                 else:
                     name += f" ({size})"
                 if entry.modules and category != memory_regions.MAIN:
@@ -564,6 +565,14 @@ class PointerScanDialog(QDialog):
             box.setText(name)
             box.setToolTip(tooltip)
 
+    def _size_text(self, size):
+        """``size`` bytes, in KB from a kilobyte, in MB from a megabyte."""
+        if size < 2**10:
+            return self.translations["pointer.region_size_bytes"].format(size=size)
+        if size < 2**20:
+            return self.translations["pointer.region_size_kb"].format(size=size / 2**10)
+        return self.translations["pointer.region_size"].format(size=size / 2**20)
+
     def _assemblies_text(self, name, tooltip):
         """Label and tooltip of the marked assemblies: their names, after a
         scan the number and size of their classes' static data."""
@@ -571,10 +580,9 @@ class PointerScanDialog(QDialog):
         if not self.assemblies:
             return name + " (" + t["pointer.region.assemblies_none"] + ")", tooltip
         if self._areas:
-            size = t["pointer.region_size"].format(
-                size=sum(area.size for area in self._areas.values()) / 2**20)
-            name += " (" + t["pointer.region_classes"].format(
-                count=len(self._areas), size=size) + ")"
+            size = self._size_text(sum(area.size for area in self._areas.values()))
+            key = "pointer.region_class" if len(self._areas) == 1 else "pointer.region_classes"
+            name += " (" + t[key].format(count=len(self._areas), size=size) + ")"
         else:
             shown = ", ".join(self.assemblies[:2])
             name += f" ({shown}{', …' if len(self.assemblies) > 2 else ''})"

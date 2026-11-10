@@ -1451,7 +1451,7 @@ def test_pointer_dialog_offers_marked_assemblies_in_mono_games(qt_app, sessions)
                       (("s_Instance", 0x18),))
     marked._scan_done([managed], {"max_depth": 3, "max_offset": 0x1000}, 10000, None, [area])
     assert marked.table.item(0, 1).text() == "[Assembly-CSharp] Game.GameState.s_Instance"
-    assert "1 classes" in boxes["assemblies"].text()
+    assert "(1 class, 64 bytes)" in boxes["assemblies"].text()
 
     # The choice is kept apart from the one for other games.
     boxes["engine"].setChecked(True)

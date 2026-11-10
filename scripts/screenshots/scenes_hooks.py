@@ -14,6 +14,7 @@ from hermes.core.pointer import PointerChain
 from hermes.db.repository.addresses import SavedPointerScan
 from hermes.hooks.engine import HookSpec
 from hermes.hooks.transforms import TemplateTransform, TransformDefinition
+from hermes.platform import Mapping
 from hermes.ui.widgets import pointer_scan
 from hermes.ui.widgets.hooks import HookDialog
 from hermes.ui.widgets.templates import TemplateDialog
@@ -308,13 +309,15 @@ def hook_templates(studio):
 class _PointerRepository:
     """Holds the candidates of the gold after two filter rounds."""
 
+    # In the order a scan saves them (shortest first); the dialog sorts them
+    # by their score.
     CHAINS = [
+        PointerChain(DEMO_NAME, 0x4400, (0x7E8, 0x0)),
         GOLD_CHAIN,
+        PointerChain(DEMO_NAME, 0x40A0, (0x7E8, 0x28, 0x0)),
         PointerChain(DEMO_NAME, 0x4058, (0x0, 0x28, 0x0)),
-        PointerChain("libgtk-3.so.0", 0x3D2F40, (0x18, 0x30, 0x0)),
-        PointerChain("libglib-2.0.so.0", 0x12A7C8, (0x8, 0x10, 0x28, 0x0)),
-        PointerChain("libc.so.6", 0x1D2AE0, (0x5B0, 0x20, 0x28, 0x0)),
-        PointerChain("libgtk-3.so.0", 0x3D3108, (0x40, 0x18, 0x68, 0x28, 0x0)),
+        PointerChain(DEMO_NAME, 0x4130, (0x10, 0x5B0, 0x28, 0x0)),
+        PointerChain(DEMO_NAME, 0x4130, (0x14, 0x5B0, 0x28, 0x0)),
     ]
 
     @classmethod
@@ -327,19 +330,49 @@ class _PointerRepository:
         """Nothing is saved."""
 
 
-@scene("pointer-scan", size=(860, 640),
+def _module(start, size, path, permissions="rw-p"):
+    name = path.rsplit("/", 1)[-1]
+    return Mapping(start, start + size, permissions, path, name, permissions.startswith("rw"))
+
+
+def _anonymous(start, size, path=""):
+    return Mapping(start, start + size, "rw-p", path, None, True)
+
+
+_GAME_FOLDER = "/home/player/Games/dummy_game"
+_DEMO_MAPPINGS = [
+    _module(MODULE_BASE, 0x4000, f"{_GAME_FOLDER}/{DEMO_NAME}", "r-xp"),
+    _module(MODULE_BASE + 0x4000, 0x2000, f"{_GAME_FOLDER}/{DEMO_NAME}"),
+    _module(0x5615_3900_0000, 0x18000, f"{_GAME_FOLDER}/libsave.so", "r-xp"),
+    _module(0x5615_3901_8000, 0x1000, f"{_GAME_FOLDER}/libsave.so"),
+    _anonymous(0x5615_3A2C_0000, 0x21000, "[heap]"),
+    _anonymous(0x7F3A_0000_0000, 0x4000000),
+    _anonymous(0x7F3A_1C00_0000, 0x1000000),
+    _module(0x7F3A_2000_0000, 0x400000, "/usr/lib64/libgtk-3.so.0", "r-xp"),
+    _module(0x7F3A_2040_0000, 0x9000, "/usr/lib64/libgtk-3.so.0"),
+    _module(0x7F3A_2100_0000, 0x120000, "/usr/lib64/libglib-2.0.so.0", "r-xp"),
+    _module(0x7F3A_2112_0000, 0x3000, "/usr/lib64/libglib-2.0.so.0"),
+    _module(0x7F3A_2200_0000, 0x1D0000, "/usr/lib64/libc.so.6", "r-xp"),
+    _module(0x7F3A_221D_0000, 0x15000, "/usr/lib64/libc.so.6"),
+    _anonymous(0x7FFD_4E00_0000, 0x21000, "[stack]"),
+]
+
+
+@scene("pointer-scan", size=(860, 720),
        description="Pointer scan for the gold: candidates left after two restarts")
 def pointer_scan_dialog(studio):
     """The pointer scan of the gold after filtering twice; the stable chain is selected."""
     window = studio.show_attached()
-    # Read no process: the demo program does not run.
+    # Read no process: the demo program does not run. Its memory, as the
+    # memory groups show it:
     pointer_scan.main_module = lambda _pid: DEMO_NAME
-    pointer_scan.read_mappings = lambda _pid: []
+    pointer_scan.read_mappings = lambda _pid: _DEMO_MAPPINGS
+    pointer_scan.thread_stack_pointers = lambda _pid: [0x7F3A_1C7F_E000]
+    pointer_scan.pointer_size = lambda _pid: 8
     entry = {"id": 1, "label": "Gold", "address": GOLD}
     dialog = studio.keep(pointer_scan.PointerScanDialog(
         studio.translations, _PointerRepository(), 48213, entry, window,
         address_source=lambda: GOLD))
-    dialog.main_module_only.setChecked(False)
     dialog._show_candidates(studio.translations["pointer.filtered"].format(
         before=1843, count=len(_PointerRepository.CHAINS), rounds=2))
     dialog.table.selectRow(0)
