@@ -1911,6 +1911,14 @@ def test_method_hook_replaces_the_result(tmp_path, qt_app):
         time.sleep(0.2)
         assert target.send("roll", 5) == (77, 42)
 
+        # Through an object of the class too, as static methods are called:
+        # Instances becomes 8, so 8 * 10 + 8.
+        worker.set_transform(hook_id, _method_transform(
+            'function (ctx) { ctx.this.Instances = ctx.this.Instances + 1;'
+            ' return ctx.static("Game.Combat.Instances") * 10 + ctx.this.Instances; }'))
+        time.sleep(0.2)
+        assert target.send("roll", 5) == (88, 42)
+
         # An instance field is no static one.
         worker.set_transform(hook_id, _method_transform(
             'function (ctx) { return ctx.static("Game.Combat.Health"); }'))

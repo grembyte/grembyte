@@ -29,6 +29,7 @@ Objects from `ctx.find`, `ctx.forEach` and method results are wrappers:
 | Read a field or property | `player.Health` |
 | Write a field | `player.Stats.Gold = 500` |
 | Read a field whose name clashes | `player.field("call")` |
+| Read or write a static field of the object's class (Mono, IL2CPP), the same as `ctx.static` | `gameState.s_playerCharacter` |
 | Unity: get a component of a GameObject (or of a component's GameObject) by class name, or `null` | `attacker.component("CharacterStats")` |
 
 A wrapper returned from the script is shown as the result and can be opened in the object inspector.

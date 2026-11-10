@@ -1259,19 +1259,8 @@ class ManagedObject {
     const type = field.type;
     if (type.kind === T.VALUETYPE)
       throw hermesError('error.monitor.struct_field_whole', { name });
-    let old;
-    try {
-      old = readJs(type, address);
-    } catch (_error) {
-      // shown without its old value
-    }
-    if (type.engine !== undefined)
-      engine.writeValue(type, address, value);
-    else if (REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING)
-      engine.writeReference(this.isStruct ? null : this.address, address, pointerOf(type, value));
-    else
-      writeJs(type, address, value);
-    noteChange(`${shortClass(layout.name)}.${name}`, value, old);
+    storeField(type, address, this.isStruct ? null : this.address, value,
+               `${shortClass(layout.name)}.${name}`);
   }
 
   get(name) {
@@ -1322,10 +1311,44 @@ class ManagedObject {
   }
 }
 
+function storeField(type, address, owner, value, label) {
+  // Write ``value`` to a field at ``address`` of object ``owner`` (null: a
+  // struct's, or static data, which the garbage collector scans as a root)
+  // and note the change for the hooks' statistics.
+  if (type.kind === T.VALUETYPE)
+    throw hermesError('error.monitor.struct_field_whole', { name: label });
+  let old;
+  try {
+    old = readJs(type, address);
+  } catch (_error) {
+    // shown without its old value
+  }
+  if (type.engine !== undefined)
+    engine.writeValue(type, address, value);
+  else if (REFERENCE_KINDS.has(type.kind) || type.kind === T.STRING)
+    engine.writeReference(owner, address, pointerOf(type, value));
+  else
+    writeJs(type, address, value);
+  noteChange(label, value, old);
+}
+
+function staticFieldAddress(layout, field) {
+  // Where a static field of ``layout`` lies; constants have no storage,
+  // thread statics none of the class's.
+  const data = field.storage === 'data' && engine.staticData !== undefined
+    ? engine.staticData(field.owner) : null;
+  if (data === null)
+    throw hermesError('error.monitor.static_unreadable', { name: `${layout.name}.${field.name}` });
+  return data.add(field.offset);
+}
+
 // Scripts may also write object.Health, object.IsPartyMember or
 // object.GetComponentByName("Stats"): names the wrapper does not have are
 // looked up as a field, then as a property (getter), then as a method (a
-// function calling it, as .call(name, ...args)). The wrapper's own members
+// function calling it, as .call(name, ...args)). A static field of the class
+// reads through an object too, gameState.s_playerCharacter as
+// ctx.static("GameState.s_playerCharacter"), like a static method calls
+// through one. The wrapper's own members
 // (name, className, field(), get(), call() …) come first; .field("name")
 // reads a game field of the same name.
 // Assigning works the same way: object.Health = 5 sets the field, else the
@@ -1337,6 +1360,9 @@ const shortcuts = {
     const layout = engine.layout(target.klass);
     if (layout.fields.some(field => field.name === key && !field.static))
       return target.field(key);
+    const staticField = layout.fields.find(field => field.name === key && field.static);
+    if (staticField !== undefined)
+      return readJs(staticField.type, staticFieldAddress(layout, staticField));
     if (engine.properties(target.klass).some(property => property.name === key))
       return target.get(key);
     const isStatic = methodNames(target.klass).get(key);
@@ -1354,6 +1380,12 @@ const shortcuts = {
     const layout = engine.layout(target.klass);
     if (layout.fields.some(field => field.name === key && !field.static)) {
       target.setField(key, value);
+      return true;
+    }
+    const staticField = layout.fields.find(field => field.name === key && field.static);
+    if (staticField !== undefined) {
+      storeField(staticField.type, staticFieldAddress(layout, staticField), null, value,
+                 `${shortClass(layout.name)}.${key}`);
       return true;
     }
     let setter;
@@ -1689,11 +1721,7 @@ function staticField(qualifiedName) {
   const field = layout.fields.find(candidate => candidate.name === fieldName && candidate.static);
   if (field === undefined)
     throw hermesError('error.monitor.no_static_field', { className: layout.name, name: fieldName });
-  // Constants have no storage, thread statics none of the class's.
-  const data = field.storage === 'data' ? engine.staticData(field.owner) : null;
-  if (data === null)
-    throw hermesError('error.monitor.static_unreadable', { name: `${layout.name}.${fieldName}` });
-  return readJs(field.type, data.add(field.offset));
+  return readJs(field.type, staticFieldAddress(layout, field));
 }
 
 function findObject(className, objectName = null) {
