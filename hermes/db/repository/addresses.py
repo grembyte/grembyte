@@ -99,6 +99,12 @@ class AddressRepository:
                 updated_at=scan.updated_at,
             )
 
+    def delete_pointer_scan(self, address_id):
+        """Remove the saved pointer scan of an address (the address stays)."""
+        with self._sessions() as session:
+            session.execute(delete(PointerScan).where(PointerScan.address_id == address_id))
+            session.commit()
+
     def save_pointer_scan(self, address_id, scan):
         """Create or replace the pointer scan of an address."""
         with self._sessions() as session:

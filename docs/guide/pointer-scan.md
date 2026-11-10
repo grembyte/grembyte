@@ -25,6 +25,13 @@ From now on the tracked address resolves correctly after every restart, and hook
 
 If the address lies in the program's static memory, no pointer scan is needed; the dialog says so.
 
+## Candidates
+
+The chains found are saved for the entry as candidates, so they can still be filtered after the game was restarted.
+
+- **Add all to address list** adds every candidate as an entry of its own; after a restart the list shows which ones still lead to a sensible value. With several rows selected, the button reads **Add selected to address list** and adds only those.
+- **Remove saved candidates** deletes them once a stable chain is in use. The entry and its pointer stay; a new scan finds candidates again.
+
 !!! example "The chain from the code instead"
     The code that uses a value often shows its chain, too: the [code explorer](code-explorer.md#pseudocode) writes it next to each line. The [pointer chain example](../examples/dummy-game-pointer-chain.md) reads the chain of the test game's gold from `add_gold` and enters it with **Pointer chain …** on the [address list](addresses.md#adding-addresses) – no scan needed.
 

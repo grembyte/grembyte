@@ -250,7 +250,7 @@ class PointerScanDialog(QDialog):
             self.translations["pointer.column_depth"],
         ])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
@@ -272,6 +272,12 @@ class PointerScanDialog(QDialog):
         self.btn_adopt.setToolTip(self.translations["pointer.adopt_all_tooltip"])
         self.btn_adopt.clicked.connect(self.adopt_candidates)
         bottom.addWidget(self.btn_adopt)
+        # Once a stable chain is in use, the candidates are no longer needed.
+        self.btn_clear = QPushButton(self.translations["pointer.clear_scan"])
+        set_button_icon(self.btn_clear, "delete_sweep")
+        self.btn_clear.setToolTip(self.translations["pointer.clear_scan_tooltip"])
+        self.btn_clear.clicked.connect(self.clear_scan)
+        bottom.addWidget(self.btn_clear)
         bottom.addStretch()
         close = QPushButton(self.translations["templates.close"])
         set_button_icon(close, "close")
@@ -353,18 +359,28 @@ class PointerScanDialog(QDialog):
             not running and attached and self._selected_chain() is not None
         )
         self.btn_adopt.setEnabled(not running and attached and bool(self.candidates()))
+        selected = len(self._selected_chains()) > 1
+        self.btn_adopt.setText(self.translations[
+            "pointer.adopt_selected" if selected else "pointer.adopt_all"])
+        self.btn_adopt.setToolTip(self.translations[
+            "pointer.adopt_selected_tooltip" if selected else "pointer.adopt_all_tooltip"])
+        self.btn_clear.setEnabled(not running and self._scan is not None)
         self.btn_scan.setProperty("primary", self._scan is None)
         self.btn_filter.setProperty("primary", self._scan is not None)
         for button in (self.btn_scan, self.btn_filter):
             button.style().unpolish(button)
             button.style().polish(button)
 
+    def _selected_chains(self):
+        """The chains of the selected rows, in table order."""
+        rows = sorted(index.row() for index in self.table.selectionModel().selectedRows())
+        items = (self.table.item(row, 0) for row in rows)
+        return [item.data(Qt.ItemDataRole.UserRole) for item in items if item is not None]
+
     def _selected_chain(self):
-        row = self.table.currentRow()
-        if row < 0 or not self.table.selectionModel().hasSelection():
-            return None
-        item = self.table.item(row, 0)
-        return None if item is None else item.data(Qt.ItemDataRole.UserRole)
+        """The selected chain if exactly one is selected, else None."""
+        chains = self._selected_chains()
+        return chains[0] if len(chains) == 1 else None
 
     def _check_static(self, address):
         """Show whether ``address`` is static, i.e. needs no pointer at all."""
@@ -550,8 +566,12 @@ class PointerScanDialog(QDialog):
         self._choose(chain)
 
     def adopt_candidates(self):
-        """Add the candidates to the address list, to check them after a restart."""
-        chains = self.candidates()
+        """Add the candidates to the address list, to check them after a restart.
+
+        With several rows selected only those are added.
+        """
+        selected = self._selected_chains()
+        chains = selected if len(selected) > 1 else self.candidates()
         if not chains or self._worker is not None or self.pid is None:
             return
         if len(chains) > ADOPT_LIMIT:
@@ -564,6 +584,24 @@ class PointerScanDialog(QDialog):
                 != QMessageBox.StandardButton.Yes:
             return
         self.chains_adopted.emit(chains[:ADOPT_LIMIT])
+
+    def clear_scan(self):
+        """Remove the saved candidates of this entry; its pointer stays."""
+        if self._scan is None or self._worker is not None:
+            return
+        question = self.translations["pointer.clear_scan_confirm"].format(
+            count=len(self._scan.chains))
+        if QMessageBox.question(self, self.windowTitle(), question) \
+                != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.repository.delete_pointer_scan(self.entry["id"])
+        except SQLAlchemyError as error:
+            self.status_label.setText(
+                self.translations["hooks.db_failed"].format(message=error))
+            return
+        self._scan = None
+        self._show_candidates(self.translations["pointer.scan_cleared"])
 
     def show_adopted(self, count):
         """Report how many candidates were added to the address list (None: entry gone)."""
