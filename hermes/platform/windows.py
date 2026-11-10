@@ -397,6 +397,12 @@ class ProcessMemory:
                                    address=f"{address:#x}")
 
 
+def thread_stack_pointers(pid, proc_root=None):  # pylint: disable=unused-argument
+    """None: Windows marks thread stacks with guard pages instead (see
+    hermes.core.memory_regions)."""
+    return None
+
+
 def process_start_time(pid, proc_root=None):  # pylint: disable=unused-argument
     """Return when ``pid`` was started (FILETIME), or None once it has exited.
 

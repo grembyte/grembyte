@@ -49,14 +49,58 @@ def _pe_images(regions, image_size):
     return images
 
 
-def parse_maps(lines, image_size=_image_size):  # pylint: disable=too-many-locals
+_PAGE = 0x1000
+_PT_LOAD = 1
+
+
+def elf_end(read, start):
+    """End of the ELF module loaded at ``start``, from its program headers.
+
+    ``read(address, size)`` reads the process' memory (bytes, or None). The
+    module ends where its last loadable segment does, .bss included. None if
+    no ELF header is there.
+    """
+    header = read(start, 64)
+    if not header or len(header) < 64 or header[:4] != b"\x7fELF":
+        return None
+    if header[4] == 2:      # 64-bit
+        phoff = struct.unpack_from("<Q", header, 0x20)[0]
+        entry_size, count = struct.unpack_from("<HH", header, 0x36)
+        layout, fields = "<IIQQQQQQ", (3, 6)
+    elif header[4] == 1:    # 32-bit
+        phoff = struct.unpack_from("<I", header, 0x1C)[0]
+        entry_size, count = struct.unpack_from("<HH", header, 0x2A)
+        layout, fields = "<IIIIIIII", (2, 5)
+    else:
+        return None
+    table = read(start + phoff, entry_size * count) if count else None
+    if not table or len(table) < entry_size * count or entry_size < struct.calcsize(layout):
+        return None
+    segments = []
+    for index in range(count):
+        entry = struct.unpack_from(layout, table, index * entry_size)
+        if entry[0] == _PT_LOAD:
+            segments.append((entry[fields[0]], entry[fields[1]]))
+    if not segments:
+        return None
+    low = min(address for address, _size in segments) & ~(_PAGE - 1)
+    high = max(address + size for address, size in segments)
+    return start + ((high - low + _PAGE - 1) & ~(_PAGE - 1))
+
+
+def parse_maps(lines, image_size=_image_size, module_end=None):
+    # pylint: disable=too-many-locals,too-many-branches
     """Parse the lines of /proc/<pid>/maps into Mappings.
 
     A module is a file with executable code. All its mappings belong to it,
     and so does an anonymous writable mapping right behind one of them (.bss,
-    if it does not fit the file). Other mapped files, e.g.
-    /dev/dri/renderD128 or game assets, are no modules; Frida does not know
-    them either.
+    if it does not fit the file): up to where the module ends,
+    ``module_end(start)`` of the module loaded at ``start`` (see
+    ``elf_end``). The kernel merges .bss with anonymous memory allocated
+    right behind it, heap of the game, which is no module's then. Unknown
+    (None) the mapping is no module's; without ``module_end`` all of it is.
+    Other mapped files, e.g. /dev/dri/renderD128 or game assets, are no
+    modules; Frida does not know them either.
 
     A PE image under Wine (an .exe or .dll mapped from offset 0) is a module
     over its whole extent (``image_size(path)``, its SizeOfImage): Wine
@@ -80,6 +124,8 @@ def parse_maps(lines, image_size=_image_size):  # pylint: disable=too-many-local
     modules.update(path for _start, _end, path in images)
     mappings = []
     previous = None
+    # path -> load address of the module, and the end ``module_end`` gave it
+    loaded, ends = {}, {}
     for start, end, permissions, path, _offset in sorted(regions):
         writable = (
             all(flag in permissions for flag in "rwp")
@@ -90,20 +136,55 @@ def parse_maps(lines, image_size=_image_size):  # pylint: disable=too-many-local
                      None) if not path else None
         if path in modules:
             module = os.path.basename(path)
+            loaded.setdefault(path, start)
         elif image is not None:
             module = os.path.basename(image)
         elif writable and not path and previous is not None \
                 and previous.path in modules and previous.end == start:
-            module = previous.module
+            limit = end
+            if module_end is not None:
+                if previous.path not in ends:
+                    ends[previous.path] = module_end(loaded[previous.path])
+                limit = min(end, ends[previous.path] or start)
+            if limit > start:
+                mappings.append(Mapping(start, limit, permissions, path, previous.module,
+                                        writable))
+                start = limit
+            if start == end:
+                previous = mappings[-1]
+                continue
         previous = Mapping(start, end, permissions, path, module, writable)
         mappings.append(previous)
     return mappings
 
 
 def read_mappings(pid):
-    """Return the Mappings of process ``pid``."""
+    """Return the Mappings of process ``pid``.
+
+    Where modules end is read from their ELF headers in the process' memory,
+    not from their files: those may be gone (Frida's agent is a memfd) or,
+    inside Steam's runtime container, other files on the host.
+
+    Only Wine loads PE images; a native program that maps a .dll, as Mono
+    does its assemblies, reads it as data.
+    """
     with open(f"/proc/{pid}/maps", encoding="utf-8", errors="replace") as maps_file:
-        return parse_maps(maps_file)
+        lines = maps_file.readlines()
+    image_size = _image_size if is_wine_process(pid) else (lambda _path: None)
+    try:
+        memory = open(f"/proc/{pid}/mem", "rb", buffering=0)  # pylint: disable=consider-using-with
+    except OSError:
+        return parse_maps(lines, image_size, module_end=lambda _start: None)
+
+    def read(address, size):
+        try:
+            memory.seek(address)
+            return memory.read(size)
+        except (OSError, ValueError, OverflowError):
+            return None
+
+    with memory:
+        return parse_maps(lines, image_size, module_end=lambda start: elf_end(read, start))
 
 
 def main_module(pid, proc_root="/proc"):
@@ -178,6 +259,41 @@ class ProcessMemory:
         if written != len(data):
             raise LocalizedOSError("error.platform.incomplete_write_linux", written=written,
                                    size=len(data))
+
+
+def thread_stack_pointers(pid, proc_root="/proc", attempts=3):
+    """Return the stack pointer of each thread of ``pid`` that could be read.
+
+    /proc/<pid>/task/<tid>/syscall ends with the stack and instruction
+    pointer of a thread that is not running: waiting in a system call, or
+    "-1 sp pc" outside one. Wine's threads are Linux threads too. A thread
+    that is running just then reads as "running" and is tried again, up to
+    ``attempts`` times.
+    """
+    tasks = Path(proc_root) / str(pid) / "task"
+    try:
+        pending = [entry.name for entry in tasks.iterdir()]
+    except OSError:
+        return []
+    pointers = []
+    for _attempt in range(attempts):
+        running = []
+        for tid in pending:
+            try:
+                fields = (tasks / tid / "syscall").read_text(encoding="ascii").split()
+            except (OSError, UnicodeDecodeError):
+                continue
+            if fields and fields[0] == "running":
+                running.append(tid)
+            elif len(fields) >= 3:
+                try:
+                    pointers.append(int(fields[-2], 16))
+                except ValueError:
+                    continue
+        if not running:
+            break
+        pending = running
+    return pointers
 
 
 def process_start_time(pid, proc_root="/proc"):

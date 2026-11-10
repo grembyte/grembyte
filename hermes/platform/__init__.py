@@ -19,6 +19,9 @@ regions and asks about processes through these names only:
     has exited.
 ``is_wine_process(pid)``
     Whether the program runs under Wine or Proton.
+``thread_stack_pointers(pid)``
+    Stack pointers of the program's threads, or None where the system marks
+    stacks otherwise (Windows: guard pages).
 
 Linux (linux.py) and Windows (windows.py) are implemented. wine.py reads
 the PE images of a Wine process (``wine_program``, ``wine_bits``); like the
@@ -38,6 +41,7 @@ if sys.platform.startswith("linux"):
         process_start_time,
         program_bits,
         read_mappings,
+        thread_stack_pointers,
     )
 elif sys.platform == "win32":
     from hermes.platform.windows import (
@@ -47,6 +51,7 @@ elif sys.platform == "win32":
         process_start_time,
         program_bits,
         read_mappings,
+        thread_stack_pointers,
     )
 else:
     raise ImportError(f"hermes does not support {sys.platform} yet")
@@ -59,4 +64,5 @@ __all__ = [
     "process_start_time",
     "program_bits",
     "read_mappings",
+    "thread_stack_pointers",
 ]

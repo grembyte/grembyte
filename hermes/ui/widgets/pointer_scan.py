@@ -5,8 +5,11 @@ from PySide6.QtCore import Qt, QThread, Signal  # pylint: disable=import-error,n
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDialog,
+    QDockWidget,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -17,19 +20,30 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 from sqlalchemy.exc import SQLAlchemyError
 
-from hermes.core import logs
+from hermes.core import chain_score, logs, memory_regions, messages
 from hermes.core.pointer import (
     PointerMap,
     ScanCancelled,
     chain_for_static_address,
-    module_bases,
+    chain_bases,
+    missing_managed_bases,
+    pointer_size,
     resolve_chain,
+    split_managed,
 )
-from hermes.platform import ProcessMemory, main_module, read_mappings
+from hermes.platform import (
+    ProcessMemory,
+    main_module,
+    read_mappings,
+    thread_stack_pointers,
+)
 from hermes.db.repository.addresses import SavedPointerScan
+from hermes.features import managed_statics
+from hermes.ui import window_state
 from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import DocsHint, WrappedLabel
 from hermes.ui.widgets.spin_boxes import SpinBox
@@ -46,6 +60,25 @@ ADOPT_LIMIT = 500
 # How long closing the dialog waits for a cancelled scan.
 STOP_TIMEOUT_MS = 5000
 
+# Modules listed in the tooltip of a memory category at most.
+_TOOLTIP_MODULES = 25
+# The memory categories chosen last (see hermes.core.memory_regions), apart
+# for Mono games with marked assemblies, whose defaults differ.
+_CATEGORIES_KEY = "pointer_scan/categories"
+_ASSEMBLY_CATEGORIES_KEY = "pointer_scan/categories_assemblies"
+
+
+def _remembered_categories(with_assemblies):
+    """The categories chosen last, else the defaults."""
+    key, default = ((_ASSEMBLY_CATEGORIES_KEY, memory_regions.ASSEMBLY_DEFAULT_CATEGORIES)
+                    if with_assemblies else
+                    (_CATEGORIES_KEY, memory_regions.DEFAULT_CATEGORIES))
+    stored = window_state.settings().value(key)
+    if not isinstance(stored, str) or not stored:
+        return set(default)
+    chosen = set(stored.split(",")) & set(memory_regions.CATEGORIES)
+    return chosen or set(default)
+
 
 class PointerScanWorker(QThread):
     """Run a pointer scan, or filter candidates, outside the GUI thread."""
@@ -56,8 +89,14 @@ class PointerScanWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, pid, target, *, chains=None, max_depth=5, max_offset=0x1000,
-                 max_results=10000, base_modules=None, aligned_values=True, parent=None):
+                 max_results=10000, categories=None, main_module=None, location_step=None,
+                 value_alignment=None, assemblies=(), parent=None):
         # pylint: disable=too-many-arguments
+        """``categories`` (see hermes.core.memory_regions) limit the memory read
+        and the modules chains may start in; None reads all writable memory.
+        ``location_step`` and ``value_alignment`` see ``PointerMap.build``.
+        With the category ``assemblies``, chains may also start in the static
+        data of the classes of ``assemblies`` (Mono)."""
         super().__init__(parent)
         logs.log_failures(self)
         self.pid = pid
@@ -66,8 +105,15 @@ class PointerScanWorker(QThread):
         self.max_depth = max_depth
         self.max_offset = max_offset
         self.max_results = max_results
-        self.base_modules = base_modules
-        self.aligned_values = aligned_values
+        self.categories = categories
+        self.main_module = main_module
+        self.location_step = location_step
+        self.value_alignment = value_alignment
+        self.assemblies = tuple(assemblies)
+        # Modules chains may start in, from ``categories`` (set by the scan).
+        self.base_modules = None
+        # The StaticAreas of ``assemblies`` (set by the scan).
+        self.static_areas = []
         # Chain length up to which the results are complete if the scan
         # stopped at its memory limit, else None (set by the scan).
         self.complete_depth = None
@@ -80,19 +126,27 @@ class PointerScanWorker(QThread):
                 result = self._filter()
         except ScanCancelled:
             return
-        except (OSError, ValueError, MemoryError) as error:
+        except managed_statics.READ_ERRORS + (MemoryError,) as error:
             if not self.isInterruptionRequested():
-                self.failed.emit(str(error))
+                self.failed.emit(messages.describe(error))
             return
         if result is not None and not self.isInterruptionRequested():
             self.chains_ready.emit(result)
 
     def _scan(self):
+        if (self.categories is not None and memory_regions.ASSEMBLIES in self.categories
+                and self.assemblies):
+            self.static_areas = managed_statics.read_static_areas(
+                self.pid, {assembly: None for assembly in self.assemblies})
         pointer_map = PointerMap.build(
             self.pid,
             progress=lambda percent: self.progress.emit("reading", percent),
             cancelled=self.isInterruptionRequested,
-            aligned_values=self.aligned_values,
+            location_step=self.location_step,
+            value_alignment=self.value_alignment,
+            select=None if self.categories is None else self._select,
+            static_areas=[(area.address, area.address + area.size, area.name)
+                          for area in self.static_areas],
         )
         chains = pointer_map.find_chains(
             self.target,
@@ -106,8 +160,18 @@ class PointerScanWorker(QThread):
         self.complete_depth = pointer_map.complete_depth
         return chains
 
+    def _select(self, mappings):
+        regions = memory_regions.classify(mappings, self.main_module,
+                                          thread_stack_pointers(self.pid))
+        ranges, self.base_modules = memory_regions.selection(regions, self.categories)
+        self.base_modules |= {area.name for area in self.static_areas}
+        return ranges
+
     def _filter(self):
-        bases = module_bases(read_mappings(self.pid))
+        missing = missing_managed_bases(self.pid, self.chains)
+        if missing:
+            managed_statics.read_static_areas(self.pid, missing)
+        bases = chain_bases(self.pid, read_mappings(self.pid))
         kept = []
         with ProcessMemory(self.pid) as memory:
             for index, chain in enumerate(self.chains):
@@ -139,11 +203,17 @@ class PointerScanDialog(QDialog):
     chain_chosen = Signal(object)
     # Candidates (list of PointerChain) to add to the address list as entries.
     chains_adopted = Signal(object)
+    # The pin button: True to dock the dialog in the main window, False to
+    # float it again (see PointerScanDock).
+    pin_toggled = Signal(bool)
 
     def __init__(self, translations, repository, pid, entry, parent=None,
-                 address_source=None):
+                 address_source=None, assemblies=None):
         # pylint: disable=too-many-arguments
+        """``assemblies``: the assemblies marked for a Mono game (their classes'
+        static fields can start chains), None for other games."""
         super().__init__(parent)
+        self.assemblies = None if assemblies is None else tuple(sorted(assemblies))
         self.setModal(False)
         self.address_source = address_source
         self.translations = translations
@@ -153,11 +223,18 @@ class PointerScanDialog(QDialog):
         self.chain = None
         self._worker = None
         self._scan = self._load_scan()
+        # Candidates with their Score, best first (see _rank).
+        self._ranking = []
+        # Memory category per module of the process, for the scores.
+        self._module_categories = {}
+        # The StaticAreas of the last scan by base name, to name their fields.
+        self._areas = {}
         self.setWindowTitle(translations["pointer.title"].format(label=entry["label"]))
         self.resize(820, 620)
         self._static_chain = None
         self._main_module = main_module(pid)
         self._build_ui()
+        self._show_regions()
         self._check_static(entry["address"])
         self._show_candidates()
 
@@ -207,17 +284,45 @@ class PointerScanDialog(QDialog):
         self.results_input.setValue(10000)
         self.results_input.setToolTip(self.translations["pointer.max_results_tooltip"])
         form.addRow(self.translations["pointer.max_results"], self.results_input)
-        self.main_module_only = QCheckBox(self.translations["pointer.main_module_only"].format(
-            module=self._main_module or "?"
-        ))
-        self.main_module_only.setToolTip(self.translations["pointer.main_module_only_tooltip"])
-        self.main_module_only.setChecked(self._main_module is not None)
-        self.main_module_only.setEnabled(self._main_module is not None)
-        form.addRow("", self.main_module_only)
-        self.aligned_values = QCheckBox(self.translations["pointer.aligned_values"])
-        self.aligned_values.setToolTip(self.translations["pointer.aligned_values_tooltip"])
-        self.aligned_values.setChecked(True)
-        form.addRow("", self.aligned_values)
+        # Memory regions: where chains may start, and what lies between
+        chosen = _remembered_categories(bool(self.assemblies))
+        self.region_boxes = {}
+        starts = [category for category in memory_regions.START_CATEGORIES
+                  if category != memory_regions.ASSEMBLIES or self.assemblies is not None]
+        for label, categories in (
+                ("pointer.regions_start", starts),
+                ("pointer.regions_between", memory_regions.DYNAMIC_CATEGORIES)):
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 0)
+            for position, category in enumerate(categories):
+                box = QCheckBox()
+                box.setChecked(category in chosen
+                               or category in memory_regions.REQUIRED_CATEGORIES)
+                box.setEnabled(category not in memory_regions.REQUIRED_CATEGORIES
+                               and (category != memory_regions.ASSEMBLIES
+                                    or bool(self.assemblies)))
+                box.toggled.connect(self._remember_categories)
+                self.region_boxes[category] = box
+                grid.addWidget(box, position // 3, position % 3)
+            form.addRow(self.translations[label], grid)
+        # Where pointers lie and where they point to, in bytes
+        size = self._pointer_size()
+        self.location_step = QComboBox()
+        for step in (8, 4):
+            if step <= size:
+                self.location_step.addItem(
+                    self.translations["pointer.alignment_bytes"].format(bytes=step), step)
+        self.location_step.setCurrentIndex(self.location_step.findData(size))
+        self.location_step.setToolTip(self.translations["pointer.location_step_tooltip"])
+        form.addRow(self.translations["pointer.location_step"], self.location_step)
+        self.value_alignment = QComboBox()
+        for alignment in (16, 8, 4, 1):
+            label = (self.translations["pointer.alignment_any"] if alignment == 1
+                     else self.translations["pointer.alignment_bytes"].format(bytes=alignment))
+            self.value_alignment.addItem(label, alignment)
+        self.value_alignment.setCurrentIndex(self.value_alignment.findData(size))
+        self.value_alignment.setToolTip(self.translations["pointer.value_alignment_tooltip"])
+        form.addRow(self.translations["pointer.value_alignment"], self.value_alignment)
         layout.addLayout(form)
 
         actions = QHBoxLayout()
@@ -243,8 +348,9 @@ class PointerScanDialog(QDialog):
         self.status_label = WrappedLabel("")
         layout.addWidget(self.status_label)
 
-        self.table = QTableWidget(0, 3)
+        self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels([
+            self.translations["pointer.column_score"],
             self.translations["pointer.column_base"],
             self.translations["pointer.column_offsets"],
             self.translations["pointer.column_depth"],
@@ -258,8 +364,9 @@ class PointerScanDialog(QDialog):
         set_row_height(self.table)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         resizable_columns(self.table)
         copy_menu(self.table, self.translations)
         self.table.itemSelectionChanged.connect(self._update_buttons)
@@ -279,6 +386,12 @@ class PointerScanDialog(QDialog):
         self.btn_clear.clicked.connect(self.clear_scan)
         bottom.addWidget(self.btn_clear)
         bottom.addStretch()
+        self.btn_pin = QPushButton(self.translations["pointer.pin"])
+        set_button_icon(self.btn_pin, "push_pin")
+        self.btn_pin.setCheckable(True)
+        self.btn_pin.setToolTip(self.translations["pointer.pin_tooltip"])
+        self.btn_pin.toggled.connect(self._on_pin_toggled)
+        bottom.addWidget(self.btn_pin)
         close = QPushButton(self.translations["templates.close"])
         set_button_icon(close, "close")
         close.clicked.connect(self.reject)
@@ -300,21 +413,62 @@ class PointerScanDialog(QDialog):
             return None
 
     def candidates(self):
-        """Return the current candidate chains."""
-        return [] if self._scan is None else list(self._scan.chains)
+        """Return the current candidate chains, the most promising first."""
+        return [chain for chain, _score in self._ranking]
+
+    def _rank(self):
+        """Score the candidates (see hermes.core.chain_score), best first."""
+        chains = [] if self._scan is None else self._scan.chains
+        categories = dict(self._module_categories)
+        categories.update((chain.module, memory_regions.ASSEMBLIES) for chain in chains
+                          if split_managed(chain.module) is not None)
+        self._ranking = chain_score.ranked(chains, categories, self._pointer_size())
+
+    def _base_text(self, chain):
+        """The base of ``chain`` as the table shows it; a static field by its name."""
+        managed = split_managed(chain.module)
+        if managed is None:
+            return f"{chain.module}+0x{chain.base_offset:x}"
+        area = self._areas.get(chain.module)
+        field = area.field_at(chain.base_offset) if area is not None else None
+        if field is not None:
+            return f"[{managed[0]}] {managed[1]}.{field}"
+        return f"[{managed[0]}] {managed[1]}+0x{chain.base_offset:x}"
+
+    def _pointer_size(self):
+        return pointer_size(self.pid)
+
+    def _score_tooltip(self, result):
+        t = self.translations
+        lines = []
+        for reason, points, detail in result.parts:
+            if reason == "start":
+                text = t["pointer.score_start"].format(group=t[f"pointer.region.{detail}"])
+            elif reason == "length":
+                text = t["pointer.score_length"].format(count=detail)
+            elif reason == "offsets":
+                text = t["pointer.score_offsets"].format(limit=f"{detail:#x}")
+            else:
+                text = t["pointer.score_aligned"]
+            lines.append(f"{points:+d}  {text}")
+        return "\n".join(lines)
 
     def _show_candidates(self, message=None):
+        self._rank()
         chains = self.candidates()
         self.table.setRowCount(0)
-        for chain in chains[:DISPLAY_LIMIT]:
+        for chain, result in self._ranking[:DISPLAY_LIMIT]:
             row = self.table.rowCount()
             self.table.insertRow(row)
-            base = QTableWidgetItem(f"{chain.module}+0x{chain.base_offset:x}")
-            base.setData(Qt.ItemDataRole.UserRole, chain)
-            self.table.setItem(row, 0, base)
+            score = QTableWidgetItem(str(result.total))
+            score.setData(Qt.ItemDataRole.UserRole, chain)
+            score.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            score.setToolTip(self._score_tooltip(result))
+            self.table.setItem(row, 0, score)
+            self.table.setItem(row, 1, QTableWidgetItem(self._base_text(chain)))
             offsets = " → ".join(f"{offset:#x}" for offset in chain.offsets) or "—"
-            self.table.setItem(row, 1, QTableWidgetItem(offsets))
-            self.table.setItem(row, 2, QTableWidgetItem(str(len(chain.offsets))))
+            self.table.setItem(row, 2, QTableWidgetItem(offsets))
+            self.table.setItem(row, 3, QTableWidgetItem(str(len(chain.offsets))))
         if message is None:
             if self._scan is None:
                 message = self.translations["pointer.no_scan"]
@@ -345,7 +499,9 @@ class PointerScanDialog(QDialog):
             self.btn_static.setVisible(False)
             self.status_label.setText(self.translations["pointer.process_exited"])
         else:
-            self.status_label.setText(self.translations["pointer.process_attached"])
+            self._main_module = main_module(pid)
+            self._show_regions()
+            self._show_candidates(self.translations["pointer.process_attached"])
         self._update_buttons()
 
     def _update_buttons(self):
@@ -370,6 +526,67 @@ class PointerScanDialog(QDialog):
         for button in (self.btn_scan, self.btn_filter):
             button.style().unpolish(button)
             button.style().polish(button)
+
+    def _show_regions(self):
+        """Label each memory category with its size and list its modules."""
+        summary = None
+        if self.pid is not None:
+            try:
+                mappings = read_mappings(self.pid)
+                summary = memory_regions.summarize(memory_regions.classify(
+                    mappings, self._main_module, thread_stack_pointers(self.pid)))
+                self._module_categories = memory_regions.module_categories(
+                    mappings, self._main_module)
+            except OSError:
+                summary = None
+        t = self.translations
+        for category, box in self.region_boxes.items():
+            name = t[f"pointer.region.{category}"]
+            tooltip = t[f"pointer.region.{category}_tooltip"]
+            if category == memory_regions.ASSEMBLIES:
+                name, tooltip = self._assemblies_text(name, tooltip)
+            elif summary is not None:
+                entry = summary[category]
+                size = t["pointer.region_size"].format(size=entry.size / 2**20)
+                if category == memory_regions.MAIN and entry.modules:
+                    name += f" ({entry.modules[0]}, {size})"
+                elif category in memory_regions.MODULE_CATEGORIES:
+                    name += " (" + t["pointer.region_modules"].format(
+                        count=len(entry.modules), size=size) + ")"
+                else:
+                    name += f" ({size})"
+                if entry.modules and category != memory_regions.MAIN:
+                    shown = entry.modules[:_TOOLTIP_MODULES]
+                    tooltip += "\n\n" + ", ".join(shown)
+                    if len(entry.modules) > len(shown):
+                        tooltip += " " + t["pointer.region_more"].format(
+                            count=len(entry.modules) - len(shown))
+            box.setText(name)
+            box.setToolTip(tooltip)
+
+    def _assemblies_text(self, name, tooltip):
+        """Label and tooltip of the marked assemblies: their names, after a
+        scan the number and size of their classes' static data."""
+        t = self.translations
+        if not self.assemblies:
+            return name + " (" + t["pointer.region.assemblies_none"] + ")", tooltip
+        if self._areas:
+            size = t["pointer.region_size"].format(
+                size=sum(area.size for area in self._areas.values()) / 2**20)
+            name += " (" + t["pointer.region_classes"].format(
+                count=len(self._areas), size=size) + ")"
+        else:
+            shown = ", ".join(self.assemblies[:2])
+            name += f" ({shown}{', …' if len(self.assemblies) > 2 else ''})"
+        return name, tooltip + "\n\n" + ", ".join(self.assemblies)
+
+    def _chosen_categories(self):
+        return {category for category, box in self.region_boxes.items() if box.isChecked()}
+
+    def _remember_categories(self):
+        window_state.settings().setValue(
+            _ASSEMBLY_CATEGORIES_KEY if self.assemblies else _CATEGORIES_KEY,
+            ",".join(sorted(self._chosen_categories())))
 
     def _selected_chains(self):
         """The chains of the selected rows, in table order."""
@@ -446,16 +663,16 @@ class PointerScanDialog(QDialog):
             "max_depth": self.depth_input.value(),
             "max_offset": max_offset,
         }
-        base_modules = (
-            {self._main_module} if self.main_module_only.isChecked() else None
-        )
         max_results = self.results_input.value()
         worker = PointerScanWorker(
-            self.pid, target, max_results=max_results, base_modules=base_modules,
-            aligned_values=self.aligned_values.isChecked(), **settings
+            self.pid, target, max_results=max_results,
+            categories=self._chosen_categories(), main_module=self._main_module,
+            location_step=self.location_step.currentData(),
+            value_alignment=self.value_alignment.currentData(),
+            assemblies=self.assemblies or (), **settings
         )
         self._start(worker, lambda chains: self._scan_done(
-            chains, settings, max_results, worker.complete_depth
+            chains, settings, max_results, worker.complete_depth, worker.static_areas
         ))
 
     def start_filter(self):
@@ -499,7 +716,11 @@ class PointerScanDialog(QDialog):
             self.status_label.setText(self.translations[f"pointer.{phase}"])
         self.progress.setValue(value)
 
-    def _scan_done(self, chains, settings, max_results, complete_depth):
+    def _scan_done(self, chains, settings, max_results, complete_depth, static_areas=()):
+        # pylint: disable=too-many-arguments
+        if static_areas:
+            self._areas = {area.name: area for area in static_areas}
+            self._show_regions()
         self._scan = SavedPointerScan(chains, settings["max_depth"], settings["max_offset"], 0)
         self._save()
         message = self.translations["pointer.found"].format(count=len(chains))
@@ -585,6 +806,17 @@ class PointerScanDialog(QDialog):
             return
         self.chains_adopted.emit(chains[:ADOPT_LIMIT])
 
+    def set_pinned(self, pinned):
+        """Show whether the dialog is docked, without asking to change it."""
+        self.btn_pin.blockSignals(True)
+        self.btn_pin.setChecked(pinned)
+        self.btn_pin.blockSignals(False)
+        self.btn_pin.setText(self.translations["pointer.unpin" if pinned else "pointer.pin"])
+
+    def _on_pin_toggled(self, pinned):
+        self.btn_pin.setText(self.translations["pointer.unpin" if pinned else "pointer.pin"])
+        self.pin_toggled.emit(pinned)
+
     def clear_scan(self):
         """Remove the saved candidates of this entry; its pointer stays."""
         if self._scan is None or self._worker is not None:
@@ -621,3 +853,69 @@ class PointerScanDialog(QDialog):
             self._worker.requestInterruption()
             self._worker.wait(STOP_TIMEOUT_MS)
         super().done(result)
+
+
+class PointerScanDock(QDockWidget):
+    """A side of the main window holding one pointer scan dialog.
+
+    Docked, the dialog stays next to the scanner while the value is searched
+    again after a restart; a window of its own could not be kept there, since
+    Wayland does not let programs place their windows. The dock holds one
+    dialog: pinning another floats the one before. Closing the dock closes
+    its dialog, and a dialog that finishes leaves the dock.
+    """
+
+    def __init__(self, window):
+        super().__init__(window)
+        self.setObjectName("pointer_scan_dock")
+        self.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea
+                             | Qt.DockWidgetArea.RightDockWidgetArea)
+        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable
+                         | QDockWidget.DockWidgetFeature.DockWidgetMovable)
+        self._window = window
+        window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self)
+        self.hide()
+
+    def dialog(self):
+        """The docked PointerScanDialog, or None."""
+        widget = self.widget()
+        return widget if isinstance(widget, PointerScanDialog) else None
+
+    def pin(self, dialog):
+        """Dock ``dialog`` (floating the one docked before)."""
+        current = self.dialog()
+        if current is dialog:
+            self.show()
+            return
+        if current is not None:
+            self.unpin(current)
+        dialog.setParent(self, Qt.WindowType.Widget)
+        self.setWidget(dialog)
+        self.setWindowTitle(dialog.windowTitle())
+        dialog.set_pinned(True)
+        dialog.show()
+        self.show()
+        self.raise_()
+
+    def unpin(self, dialog):
+        """Give ``dialog`` a window of its own again."""
+        if self.dialog() is not dialog:
+            return
+        self.setWidget(QWidget())
+        dialog.setParent(self._window, Qt.WindowType.Dialog)
+        dialog.set_pinned(False)
+        dialog.show()
+        self.hide()
+
+    def release(self, dialog):
+        """``dialog`` finished: empty the dock if it held it."""
+        if self.dialog() is dialog:
+            self.setWidget(QWidget())
+            self.hide()
+
+    def closeEvent(self, event):  # pylint: disable=invalid-name
+        """The dock's close button closes its dialog."""
+        dialog = self.dialog()
+        if dialog is not None:
+            dialog.reject()
+        super().closeEvent(event)

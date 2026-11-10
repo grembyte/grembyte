@@ -36,8 +36,15 @@ from hermes.ui.widgets.icons import (
 from hermes.ui.widgets.process_list import ProcessSelectDialog
 from hermes.ui.widgets.table import (
     add_copy_actions, add_delete_action, resizable_columns, set_row_height)
-from hermes.core.pointer import chain_for_static_address, module_bases, resolve_chain
+from hermes.core.pointer import (
+    chain_bases,
+    chain_for_static_address,
+    missing_managed_bases,
+    module_bases,
+    resolve_chain,
+)
 from hermes.features.freeze import FreezeWorker, FrozenValue
+from hermes.features.managed_statics import StaticBasesWorker
 from hermes.core.scanner import (
     FLOAT_ROUNDING_MODES,
     FUZZY_MODES,
@@ -98,7 +105,7 @@ from hermes.ui.widgets.settings_dialog import SettingsDialog
 from hermes.ui.widgets.theme_dialog import ThemeDialog
 from hermes.core import activity, logs, messages, sessions
 from hermes.core import settings as app_settings
-from hermes.ui import workers
+from hermes.ui import window_state, workers
 from hermes.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
 from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog
 from hermes.ui.widgets.method_call import MethodCallDialog
@@ -107,7 +114,7 @@ from hermes.ui.widgets.code_explorer import CodeExplorerDialog
 from hermes.ui.widgets.native_monitor import NativeMonitorDialog
 from hermes.ui.widgets.native_trace import NativeTraceDialog
 from hermes.ui.widgets.trace import TraceDialog
-from hermes.ui.widgets.pointer_scan import PointerScanDialog
+from hermes.ui.widgets.pointer_scan import PointerScanDialog, PointerScanDock
 from hermes.ui.widgets.templates import TemplateDialog
 from hermes.ui.widgets.write_watch import WriteWatchDialog
 
@@ -127,6 +134,11 @@ CLOSING_WORKER_TIMEOUT_MS = 3_000
 WRITE_WATCH_STOP_TIMEOUT_MS = 3000
 # Scan results beyond this many rows are kept but not shown in the table.
 RESULT_DISPLAY_LIMIT = 1000
+# How often chain bases in a class's static data are looked for again while
+# they cannot be found (the class may not have run its static constructor).
+STATIC_BASES_RETRY_S = 30
+# Whether pointer scan dialogs open docked in the main window.
+_POINTER_PINNED_KEY = "pointer_scan/pinned"
 
 # The app icon (window and taskbar, see hermes.main; toolbar)
 ICON_PATH = Path(__file__).parent / "resources" / "favicon.svg"
@@ -491,6 +503,11 @@ class MainWindow(QMainWindow):
         self._address_keys = itertools.count(1)
         self._filling_addresses = False
         self._pointer_dialogs = {}
+        # Holds a pinned pointer scan dialog (PointerScanDock), once used.
+        self._pointer_dock = None
+        # Looks up managed chain bases (see _request_static_bases)
+        self._static_bases_worker = None
+        self._static_bases_next = 0.0
         self._memory_viewer = None
         self._catalog = None
         self._method_monitor = None
@@ -1523,7 +1540,7 @@ class MainWindow(QMainWindow):
         bases, memory = None, None
         try:
             if any(entry.pointer is not None for entry in saved):
-                bases = module_bases(read_mappings(self._current_pid))
+                bases = chain_bases(self._current_pid, read_mappings(self._current_pid))
                 memory = ProcessMemory(self._current_pid)
             for entry in saved:
                 pointer = address_pointer(entry)
@@ -1601,13 +1618,18 @@ class MainWindow(QMainWindow):
         }
         dialog = self._pointer_dialogs.get(meta["id"])
         if dialog is not None:
+            if self._pointer_dock is not None and self._pointer_dock.dialog() is dialog:
+                self._pointer_dock.pin(dialog)
+                return
             dialog.show()
             dialog.raise_()
             dialog.activateWindow()
             return
+        mono = self._engine is not None and self._engine.id == "mono"
         dialog = PointerScanDialog(
             self.translations, self._address_repository, self._current_pid, entry, self,
             address_source=self._selected_scan_address,
+            assemblies=self._assembly_selection.selection if mono else None,
         )
         entry_id = meta["id"]
         self._pointer_dialogs[entry_id] = dialog
@@ -1617,8 +1639,27 @@ class MainWindow(QMainWindow):
             lambda chains: dialog.show_adopted(self._add_pointer_entries(entry_id, chains))
         )
         dialog.finished.connect(lambda _result: self._pointer_dialogs.pop(entry_id, None))
+        dialog.finished.connect(lambda _result: self._pointer_dock_for().release(dialog))
+        dialog.pin_toggled.connect(lambda pinned: self._pin_pointer_dialog(dialog, pinned))
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        dialog.show()
+        if window_state.settings().value(_POINTER_PINNED_KEY, False, type=bool):
+            self._pointer_dock_for().pin(dialog)
+        else:
+            dialog.show()
+
+    def _pointer_dock_for(self):
+        """The dock for pointer scan dialogs, created on first use."""
+        if self._pointer_dock is None:
+            self._pointer_dock = PointerScanDock(self)
+        return self._pointer_dock
+
+    def _pin_pointer_dialog(self, dialog, pinned):
+        """Dock a pointer scan dialog at the side, or float it; remembered for the next."""
+        window_state.settings().setValue(_POINTER_PINNED_KEY, pinned)
+        if pinned:
+            self._pointer_dock_for().pin(dialog)
+        else:
+            self._pointer_dock_for().unpin(dialog)
 
     def _selected_scan_address(self):
         """Return the address of the selected scan result, or None."""
@@ -1659,7 +1700,7 @@ class MainWindow(QMainWindow):
         }
         chains = [chain for chain in chains if chain not in existing]
         try:
-            bases = module_bases(read_mappings(self._current_pid))
+            bases = chain_bases(self._current_pid, read_mappings(self._current_pid))
             with ProcessMemory(self._current_pid) as memory:
                 addresses = [resolve_chain(memory, bases, chain) for chain in chains]
         except OSError:
@@ -2153,7 +2194,7 @@ class MainWindow(QMainWindow):
             try:
                 with ProcessMemory(self._current_pid) as memory:
                     address = resolve_chain(
-                        memory, module_bases(read_mappings(self._current_pid)), chain
+                        memory, chain_bases(self._current_pid, read_mappings(self._current_pid)), chain
                     )
             except OSError:
                 address = None
@@ -2260,7 +2301,7 @@ class MainWindow(QMainWindow):
             try:
                 with ProcessMemory(self._current_pid) as memory:
                     address = resolve_chain(
-                        memory, module_bases(read_mappings(self._current_pid)), spec.pointer
+                        memory, chain_bases(self._current_pid, read_mappings(self._current_pid)), spec.pointer
                     )
             except OSError:
                 address = None
@@ -3000,6 +3041,7 @@ class MainWindow(QMainWindow):
             return
 
         entries = {}
+        chains = []
         for row in self._visible_result_rows():
             item = self.result_table.item(row, 0)
             metadata = item.data(Qt.ItemDataRole.UserRole) if item else None
@@ -3016,6 +3058,7 @@ class MainWindow(QMainWindow):
                 entries[("pointer", meta["key"])] = {
                     "key": meta["key"], "pointer": meta["pointer"], "type": item2.text(),
                 }
+                chains.append(meta["pointer"])
                 continue
             try:
                 item1 = self.addr_table.item(row, 1)
@@ -3026,6 +3069,7 @@ class MainWindow(QMainWindow):
                 continue
             entries[address, item2.text()] = {"address": address, "type": item2.text()}
 
+        self._request_static_bases(chains)
         if not entries:
             return
 
@@ -3041,6 +3085,28 @@ class MainWindow(QMainWindow):
             signal.connect(_unless_dropped(self._refresh_worker, slot))
         self._refresh_worker.finished.connect(self._on_refresh_worker_finished)
         self._refresh_worker.start()
+
+    def _request_static_bases(self, chains):
+        """Look up the managed bases (Mono static data) ``chains`` need but this
+        run of the game has not told yet; the next refreshes resolve them.
+
+        A class whose static constructor has not run has none yet, so missing
+        bases are asked for again, but at most every STATIC_BASES_RETRY_S.
+        """
+        if self._static_bases_worker is not None or self._current_pid is None:
+            return
+        missing = missing_managed_bases(self._current_pid, chains)
+        now = time.monotonic()
+        if not missing or now < self._static_bases_next:
+            return
+        self._static_bases_next = now + STATIC_BASES_RETRY_S
+        worker = StaticBasesWorker(self._current_pid, missing)
+        worker.failed.connect(_unless_dropped(worker, lambda message: self.lbl_status.setText(
+            self.translations["address_table.static_bases_failed"].format(message=message))))
+        worker.finished.connect(lambda: setattr(self, "_static_bases_worker", None))
+        self._static_bases_worker = worker
+        workers.keep_until_finished(worker)
+        worker.start()
 
     def _on_refreshed_values(self, values):
         """Update both tables with values returned by the refresh worker."""

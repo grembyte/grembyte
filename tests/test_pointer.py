@@ -2,6 +2,7 @@
 
 import builtins
 import io
+import os
 import struct
 import subprocess
 
@@ -136,6 +137,32 @@ def test_chain_text_and_json():
     assert PointerChain("libc.so.6", 0x10).text() == "libc.so.6+0x10"
 
 
+def test_managed_bases_name_a_class_of_an_assembly(monkeypatch):
+    # pylint: disable=protected-access
+    monkeypatch.setattr(pointer_module, "_managed_bases", {})
+    monkeypatch.setattr(pointer_module, "process_start_time", lambda pid: 7)
+    name = pointer_module.managed_base("Assembly-CSharp", "Game.State/Inner")
+    chain = PointerChain(name, 0x18, (0x20,))
+
+    assert pointer_module.split_managed(name) == ("Assembly-CSharp", "Game.State/Inner")
+    assert pointer_module.split_managed("game.exe") is None
+    assert pointer_module.split_managed("mono:broken") is None
+    assert chain.text() == "[Assembly-CSharp] Game.State/Inner+0x18 → 0x20"
+    assert PointerChain.from_json(chain.to_json()) == chain
+
+    native = PointerChain("game.exe", 0x10, ())
+    assert pointer_module.missing_managed_bases(5, [chain, native]) == {
+        "Assembly-CSharp": {"Game.State/Inner"}}
+    pointer_module.remember_managed_bases(5, {name: 0x7000})
+    assert pointer_module.missing_managed_bases(5, [chain]) == {}
+    assert pointer_module.chain_bases(5, [Mapping(0x400000, 0x401000, "r-xp", "/g/game.exe",
+                                                  "game.exe")]) == {
+        "game.exe": 0x400000, name: 0x7000}
+    # a new run of the game has its own
+    monkeypatch.setattr(pointer_module, "process_start_time", lambda pid: 8)
+    assert pointer_module.managed_bases(5) == {}
+
+
 def test_static_regions_include_bss_behind_a_module():
     mappings = parse_maps([
         "1000-2000 r--p 00000000 08:01 1 /opt/game/game",
@@ -150,6 +177,66 @@ def test_static_regions_include_bss_behind_a_module():
     assert module_bases(mappings) == {"game": 0x1000}
     assert chain_for_static_address(mappings, 0x4010) == PointerChain("game", 0x3010)
     assert chain_for_static_address(mappings, 0x8010) is None
+
+
+def test_bss_ends_where_the_module_does():
+    # The kernel merged the .bss of Frida's agent with heap behind it.
+    lines = [
+        "1000-2000 r-xp 00000000 00:01 7 /memfd:frida-agent-64.so (deleted)",
+        "2000-3000 rw-p 00001000 00:01 7 /memfd:frida-agent-64.so (deleted)",
+        "3000-9000 rw-p 00000000 00:00 0",            # .bss up to 0x5000, then heap
+        "a000-b000 r-xp 00000000 08:01 1 /opt/game/libgone.so",
+        "b000-c000 rw-p 00000000 00:00 0",            # its end is unknown
+    ]
+    ends = {0x1000: 0x5000, 0xa000: None}
+
+    mappings = parse_maps(lines, module_end=ends.get)
+
+    assert static_regions(mappings) == [(0x2000, 0x3000, "memfd:frida-agent-64.so (deleted)"),
+                                        (0x3000, 0x5000, "memfd:frida-agent-64.so (deleted)")]
+    assert [(m.start, m.end, m.module) for m in mappings if not m.path] == [
+        (0x3000, 0x5000, "memfd:frida-agent-64.so (deleted)"), (0x5000, 0x9000, None),
+        (0xb000, 0xc000, None)]
+    assert chain_for_static_address(mappings, 0x6000) is None
+
+
+def test_elf_end_reads_the_loadable_segments():
+    # pylint: disable=protected-access
+    header = bytearray(64)
+    header[:5] = b"\x7fELF\x02"
+    struct.pack_into("<Q", header, 0x20, 64)          # program headers right behind
+    struct.pack_into("<HH", header, 0x36, 56, 3)
+    segments = b"".join(struct.pack("<IIQQQQQQ", kind, 0, 0, vaddr, vaddr, 0, size, 0x1000)
+                        for kind, vaddr, size in ((1, 0, 0x1800), (6, 0x40, 0x100),
+                                                  (1, 0x3000, 0x2345)))
+    image = bytes(header) + segments
+
+    def read(address, size):
+        return image[address - 0x7000:address - 0x7000 + size]
+
+    assert linux.elf_end(read, 0x7000) == 0x7000 + 0x6000
+    assert linux.elf_end(lambda _address, _size: b"MZ" + bytes(62), 0x7000) is None
+
+
+@pytest.mark.skipif(not hasattr(linux, "read_mappings"), reason="Linux only")
+def test_a_dll_a_native_program_maps_is_no_module(tmp_path):
+    # Mono maps its assemblies: data, not images as under Wine.
+    import mmap  # pylint: disable=import-outside-toplevel
+
+    image = bytearray(0x3000)
+    image[:2] = b"MZ"
+    struct.pack_into("<I", image, 0x3C, 0x40)
+    image[0x40:0x44] = b"PE\0\0"
+    struct.pack_into("<I", image, 0x40 + 24 + 56, 0x100000)  # SizeOfImage
+    path = tmp_path / "Assembly-CSharp.dll"
+    path.write_bytes(bytes(image))
+    with open(path, "rb") as file, mmap.mmap(file.fileno(), 0, prot=mmap.PROT_READ):
+        mappings = read_mappings(os.getpid())
+        assert any(m.path == str(path) for m in mappings)
+        assert not any(m.module == "Assembly-CSharp.dll" for m in mappings)
+    # The same lines from a Wine process: an image over its whole extent
+    lines = [f"7f0000000000-7f0000003000 r--p 00000000 08:01 9 {path}"]
+    assert parse_maps(lines)[0].module == "Assembly-CSharp.dll"
 
 
 def test_memory_behind_mapped_files_that_are_no_modules_is_not_static():
@@ -295,6 +382,26 @@ def test_chains_can_be_limited_to_the_main_module(binary):
         target.close()
 
 
+@requires_target
+def test_a_scan_by_memory_category_skips_system_modules_and_stacks(binary):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.core import memory_regions
+    from hermes.ui.widgets.pointer_scan import PointerScanWorker
+
+    target = _Target(binary)
+    try:
+        worker = PointerScanWorker(
+            target.pid, target.gold, max_depth=4, max_offset=0x100,
+            categories=memory_regions.DEFAULT_CATEGORIES, main_module=main_module(target.pid))
+        chains = worker._scan()
+
+        assert _gold_chain(binary) in chains
+        assert {chain.module for chain in chains} == {"target"}  # libc is a system module
+        assert worker.base_modules == {"target"}
+    finally:
+        target.close()
+
+
 def test_pointer_map_ignores_unaligned_values_by_default(monkeypatch):
     mappings = [Mapping(0x1000, 0x1020, "rw-p", writable=True)]
     memory = struct.pack("<4Q", 0x1008, 0x1004, 0x2000, 0)
@@ -311,7 +418,30 @@ def test_pointer_map_ignores_unaligned_values_by_default(monkeypatch):
     monkeypatch.setattr(pointer_module, "ProcessMemory", linux.ProcessMemory)
 
     assert PointerMap.build(123).values.tolist() == [0x1008]
-    assert PointerMap.build(123, aligned_values=False).values.tolist() == [0x1004, 0x1008]
+    assert PointerMap.build(123, value_alignment=1).values.tolist() == [0x1004, 0x1008]
+
+
+def test_pointer_map_finds_pointers_at_4_byte_steps_across_blocks(monkeypatch):
+    # 8-byte pointers at 0x1004 (packed) and 0x100c, which spans two blocks
+    mappings = [Mapping(0x1000, 0x1020, "rw-p", writable=True)]
+    memory = struct.pack("<I2QI2Q", 0, 0x1010, 0x1018, 0, 0, 0)[:0x20]
+
+    def fake_open(path, mode="r", **_kwargs):
+        assert path == "/proc/123/mem" and mode == "rb"
+        return io.BytesIO(b"\0" * 0x1000 + memory)
+
+    monkeypatch.setattr(pointer_module, "read_mappings", lambda _pid: mappings)
+    monkeypatch.setattr(pointer_module, "pointer_size", lambda _pid: 8)
+    monkeypatch.setattr(pointer_module, "_CHUNK_SIZE", 0x10)
+    monkeypatch.setattr(builtins, "open", fake_open)
+    monkeypatch.setattr(pointer_module, "ProcessMemory", linux.ProcessMemory)
+
+    assert PointerMap.build(123).values.tolist() == []
+    pointer_map = PointerMap.build(123, location_step=4)
+    assert pointer_map.values.tolist() == [0x1010, 0x1018]
+    assert pointer_map.locations.tolist() == [0x1004, 0x100C]
+    with pytest.raises(ValueError):
+        PointerMap.build(123, location_step=3)
 
 
 def test_pointer_map_of_a_32_bit_program_reads_4_byte_pointers(monkeypatch):
@@ -1100,3 +1230,278 @@ def test_pointer_dialog_adopts_the_selected_candidates_and_removes_the_scan(
     assert dialog.table.rowCount() == 0 and not dialog.btn_clear.isEnabled()
     assert dialog.status_label.text() == translations["pointer.scan_cleared"]
     assert repository.list_addresses(process_id)[0].id == entry_id  # the entry stays
+
+
+def test_pointer_dialog_offers_memory_categories_and_remembers_them(qt_app, sessions):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import os
+
+    from hermes.core import memory_regions
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+
+    translations = load_translations("en")
+    repository = AddressRepository(sessions)
+    process_id = HookRepository(sessions).get_or_create_process("python", "/usr/bin/python")
+    entry_id = repository.add_address(process_id, label="x", value_type="int32",
+                                      address=0x20000)
+    entry = {"id": entry_id, "label": "x", "address": 0x20000, "type": "int32"}
+    dialog = PointerScanDialog(translations, repository, os.getpid(), entry)
+    boxes = dialog.region_boxes
+
+    assert dialog._chosen_categories() == memory_regions.DEFAULT_CATEGORIES
+    assert boxes["heap"].isChecked() and not boxes["heap"].isEnabled()
+    assert not boxes["stack"].isChecked() and not boxes["system"].isChecked()
+    # sizes and modules are shown: python's libraries are system modules
+    assert boxes["system"].text().startswith(translations["pointer.region.system"] + " (")
+    assert "MB" in boxes["system"].text() and "libc" in boxes["system"].toolTip()
+
+    boxes["stack"].setChecked(True)
+    boxes["engine"].setChecked(False)
+    again = PointerScanDialog(translations, repository, os.getpid(), entry)
+    assert again._chosen_categories() == {"main", "game", "heap", "stack"}
+
+
+def test_pointer_dialog_shows_the_most_promising_chains_first(qt_app, sessions):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import os
+
+    from hermes.db.repository.addresses import AddressRepository, SavedPointerScan
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+
+    translations = load_translations("en")
+    repository = AddressRepository(sessions)
+    process_id = HookRepository(sessions).get_or_create_process("python", "/usr/bin/python")
+    entry_id = repository.add_address(process_id, label="x", value_type="int32",
+                                      address=0x20000)
+    main = main_module(os.getpid())
+    libc = next(m.module for m in read_mappings(os.getpid())
+                if m.module and m.module.startswith("libc.so"))
+    long_jumps = PointerChain(main, 0x10, (0xF80, 0xE40))
+    from_libc = PointerChain(libc, 0x10, (0x20, 0x18))
+    best = PointerChain(main, 0x10, (0x20, 0x18))
+    repository.save_pointer_scan(
+        entry_id, SavedPointerScan([from_libc, long_jumps, best], 3, 0x1000, 0))
+    entry = {"id": entry_id, "label": "x", "address": 0x20000, "type": "int32"}
+
+    dialog = PointerScanDialog(translations, repository, os.getpid(), entry)
+
+    assert dialog.candidates() == [best, long_jumps, from_libc]
+    assert [dialog.table.item(row, 0).text() for row in range(3)] == ["70", "60", "30"]
+    tooltip = dialog.table.item(0, 0).toolTip()
+    assert "+40  starts in: Main module" in tooltip and "+10  all offsets up to 0x100" in tooltip
+    dialog.table.selectRow(0)
+    assert dialog._selected_chain() == best
+
+
+def test_pointer_dialogs_pin_to_the_main_window_one_at_a_time(qt_app, sessions):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import os
+
+    from PySide6.QtWidgets import QMainWindow  # pylint: disable=no-name-in-module
+
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets.pointer_scan import PointerScanDialog, PointerScanDock
+
+    translations = load_translations("en")
+    repository = AddressRepository(sessions)
+    process_id = HookRepository(sessions).get_or_create_process("python", "/usr/bin/python")
+    window = QMainWindow()
+    window.show()
+    dock = PointerScanDock(window)
+    dialogs = []
+    for label in ("Gold", "Mana"):
+        entry_id = repository.add_address(process_id, label=label, value_type="int32",
+                                          address=0x20000)
+        entry = {"id": entry_id, "label": label, "address": 0x20000, "type": "int32"}
+        dialog = PointerScanDialog(translations, repository, os.getpid(), entry, window)
+        dialog.finished.connect(lambda _result, d=dialog: dock.release(d))
+        dialogs.append(dialog)
+    gold, mana = dialogs
+    asked = []
+    gold.pin_toggled.connect(asked.append)
+
+    gold.btn_pin.click()
+    assert asked == [True]
+    dock.pin(gold)
+    assert dock.dialog() is gold and dock.isVisible() and not gold.isWindow()
+    assert "Gold" in dock.windowTitle() and gold.btn_pin.text() == translations["pointer.unpin"]
+
+    dock.pin(mana)  # one at a time: Gold floats again
+    assert dock.dialog() is mana and gold.isWindow() and gold.isVisible()
+    assert not gold.btn_pin.isChecked() and mana.btn_pin.isChecked()
+
+    dock.unpin(mana)
+    assert dock.dialog() is None and not dock.isVisible() and mana.isWindow()
+
+    dock.pin(mana)
+    mana.reject()  # e.g. "Use pointer" or the entry was removed
+    assert dock.dialog() is None and not dock.isVisible()
+
+    finished = []
+    gold.finished.connect(finished.append)
+    dock.pin(gold)
+    dock.close()  # the dock's own close button
+    assert finished and dock.dialog() is None
+    window.close()
+
+
+@requires_target
+def test_the_main_window_remembers_pinned_pointer_dialogs(binary, qt_app, sessions,
+                                                          monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+
+    from hermes.db.repository.addresses import AddressRepository
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.ui import main_window
+
+    monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
+    monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
+    target = _Target(binary)
+
+    class FakeSelection:  # pylint: disable=too-few-public-methods
+        selected_pid, selected_name, selected_path = target.pid, "target", "/opt/target"
+
+        def __init__(self, *_args):
+            pass
+
+        @staticmethod
+        def exec():
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(main_window, "ProcessSelectDialog", FakeSelection)
+    window = main_window.MainWindow("en")
+    try:
+        window._open_process_dialog()
+        window._refresh_timer.stop()
+        window._add_tracked_address({"address": hex(target.gold), "address_value": target.gold,
+                                     "type": "int32", "value": "1234"})
+        entry_id = window._address_meta(0)["id"]
+        window._open_pointer_scan(0)
+        dialog = window._pointer_dialogs[entry_id]
+        assert dialog.isWindow()
+
+        dialog.btn_pin.click()
+        assert window._pointer_dock.dialog() is dialog and not dialog.isWindow()
+        dialog.reject()
+        qt_app.processEvents()
+        assert entry_id not in window._pointer_dialogs and window._pointer_dock.dialog() is None
+
+        window._open_pointer_scan(0)  # opens docked again
+        dialog = window._pointer_dialogs[entry_id]
+        assert window._pointer_dock.dialog() is dialog
+        dialog.btn_pin.click()  # detached: the next one floats
+        assert dialog.isWindow() and window._pointer_dock.dialog() is None
+        dialog.reject()
+        window._open_pointer_scan(0)
+        assert window._pointer_dialogs[entry_id].isWindow()
+    finally:
+        window.close()
+        target.close()
+
+
+def test_pointer_dialog_offers_marked_assemblies_in_mono_games(qt_app, sessions):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import os
+
+    from hermes.core import memory_regions
+    from hermes.db.repository.addresses import AddressRepository, SavedPointerScan
+    from hermes.db.repository.hooks import HookRepository
+    from hermes.features.managed_statics import StaticArea
+    from hermes.ui.localization import load_translations
+    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+
+    translations = load_translations("en")
+    repository = AddressRepository(sessions)
+    process_id = HookRepository(sessions).get_or_create_process("python", "/usr/bin/python")
+    entry_id = repository.add_address(process_id, label="x", value_type="int32",
+                                      address=0x20000)
+    managed = PointerChain("mono:Assembly-CSharp:Game.GameState", 0x18, (0x20,))
+    repository.save_pointer_scan(entry_id, SavedPointerScan([managed], 3, 0x1000, 0))
+    entry = {"id": entry_id, "label": "x", "address": 0x20000, "type": "int32"}
+
+    def dialog(assemblies):
+        return PointerScanDialog(translations, repository, os.getpid(), entry,
+                                 assemblies=assemblies)
+
+    # Other engines: no such category
+    assert "assemblies" not in dialog(None).region_boxes
+    # Mono without marked assemblies: shown, but nothing to choose
+    unmarked = dialog(())
+    box = unmarked.region_boxes["assemblies"]
+    assert not box.isEnabled() and translations["pointer.region.assemblies_none"] in box.text()
+
+    marked = dialog(["UnityScripts", "Assembly-CSharp"])
+    boxes = marked.region_boxes
+    assert marked._chosen_categories() == memory_regions.ASSEMBLY_DEFAULT_CATEGORIES
+    assert boxes["assemblies"].isEnabled() and not boxes["engine"].isChecked()
+    assert "Assembly-CSharp, UnityScripts" in boxes["assemblies"].text()
+    # A managed base scores like the main module and reads as its class.
+    assert marked.table.item(0, 0).text() == "80"  # 40 + 20 (one step) + 10 + 10
+    assert marked.table.item(0, 1).text() == "[Assembly-CSharp] Game.GameState+0x18"
+    # After a scan its classes are known: the field is named, the size shown.
+    area = StaticArea("Assembly-CSharp", "Game.GameState", 0x7f0000000000, 0x40,
+                      (("s_Instance", 0x18),))
+    marked._scan_done([managed], {"max_depth": 3, "max_offset": 0x1000}, 10000, None, [area])
+    assert marked.table.item(0, 1).text() == "[Assembly-CSharp] Game.GameState.s_Instance"
+    assert "1 classes" in boxes["assemblies"].text()
+
+    # The choice is kept apart from the one for other games.
+    boxes["engine"].setChecked(True)
+    assert dialog(["Assembly-CSharp"])._chosen_categories() == (
+        memory_regions.ASSEMBLY_DEFAULT_CATEGORIES | {"engine"})
+    assert dialog(None)._chosen_categories() == memory_regions.DEFAULT_CATEGORIES
+
+
+def test_the_main_window_looks_up_static_fields_saved_chains_need(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import os
+
+    from hermes.core import pointer
+    from hermes.ui import main_window
+
+    started = []
+
+    class FakeWorker:  # pylint: disable=too-few-public-methods
+        def __init__(self, pid, requests):
+            self.pid, self.requests = pid, requests
+            self.failed = self.finished = self
+            self.slots = []
+
+        def connect(self, slot):
+            self.slots.append(slot)
+
+        def start(self):
+            started.append(self)
+
+    monkeypatch.setattr(main_window, "StaticBasesWorker", FakeWorker)
+    monkeypatch.setattr(main_window.workers, "keep_until_finished", lambda _worker: None)
+    window = main_window.MainWindow("en")
+    try:
+        window._current_pid = os.getpid()
+        chains = [PointerChain("mono:Assembly-CSharp:Game.Loop", 0, (0x20,)),
+                  PointerChain("mono:Assembly-CSharp:Game.Combat", 0, ()),
+                  PointerChain("libc.so.6", 0x10, (0x8,))]
+        window._request_static_bases(chains)
+        assert [w.requests for w in started] == [
+            {"Assembly-CSharp": {"Game.Loop", "Game.Combat"}}]
+        window._request_static_bases(chains)  # one at a time
+        assert len(started) == 1
+
+        window._static_bases_worker = None  # finished, found nothing yet
+        window._request_static_bases(chains)
+        assert len(started) == 1  # not again right away
+        window._static_bases_next = 0
+        pointer.remember_managed_bases(os.getpid(), {"mono:Assembly-CSharp:Game.Loop": 0x1000})
+        window._request_static_bases(chains)
+        assert started[-1].requests == {"Assembly-CSharp": {"Game.Combat"}}
+    finally:
+        pointer._managed_bases.pop(os.getpid(), None)
+        window.close()

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from hermes.core import logs
-from hermes.core.pointer import PointerChain, module_bases, resolve_chain
+from hermes.core.pointer import PointerChain, chain_bases, resolve_chain
 from hermes.platform import ProcessMemory, read_mappings
 
 
@@ -65,7 +65,7 @@ class FreezeWorker(QThread):
         if any(entry.pointer is not None for _key, entry in entries):
             now = time.monotonic()
             if self._bases is None or now - self._bases_time >= self.MAPPINGS_INTERVAL:
-                self._bases = module_bases(read_mappings(self.pid))
+                self._bases = chain_bases(self.pid, read_mappings(self.pid))
                 self._bases_time = now
         for key, entry in entries:
             address = entry.address

@@ -16,6 +16,8 @@ Everything in the [engine overview](index.md) is available:
 
 ## Mono and value hooks
 
+The [pointer scan](../guide/pointer-scan.md#mono-games-static-fields-as-chain-bases) can start chains in the static fields of the classes in the marked assemblies, which Mono keeps on the heap.
+
 Code compiled by Mono lies in no module and moves with every start. Hermes therefore names a hit of the [write watch](../guide/write-watch.md) in JIT code by its C# method, and a [hook](../guide/hooks.md) with a pointer chain remembers that method: after a restart Mono compiles it and the hook is installed in it right away.
 
 ## Example: Pillars of Eternity

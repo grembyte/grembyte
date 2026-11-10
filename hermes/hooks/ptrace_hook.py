@@ -35,7 +35,7 @@ from PySide6.QtCore import Signal  # pylint: disable=import-error,no-name-in-mod
 
 from hermes.core import messages, sessions
 from hermes.core.memory import read_memory, write_process_bytes
-from hermes.core.pointer import resolve_chain
+from hermes.core.pointer import managed_bases, resolve_chain
 from hermes.attach.ptrace_engine import (
     PtraceWatchpointEngine,
     WATCHPOINT_SLOTS,
@@ -274,7 +274,8 @@ class PtraceHookWorker(PtraceWatchpointEngine):
                     continue
                 if memory is None:
                     memory = ProcessMemory(self.pid)
-                new_address = resolve_chain(memory, self._bases, hook["pointer"])
+                new_address = resolve_chain(
+                    memory, {**self._bases, **managed_bases(self.pid)}, hook["pointer"])
                 if new_address is None or new_address == hook["address"]:
                     continue
                 old_address = hook["address"]
@@ -339,7 +340,8 @@ class PtraceHookWorker(PtraceWatchpointEngine):
         if spec.pointer is not None:
             memory = ProcessMemory(self.pid)
             try:
-                return resolve_chain(memory, self._bases, spec.pointer)
+                return resolve_chain(
+                    memory, {**self._bases, **managed_bases(self.pid)}, spec.pointer)
             finally:
                 memory.close()
         return None
