@@ -75,9 +75,17 @@ def is_singleton(entry, is_framework):
     return entry.get("role") is not None or not is_framework(entry.get("package", ""))
 
 
-def object_text(entry):
-    """``"BP_Hero_C_0"@0x7f…``, as the scripts show objects."""
-    return f'"{entry["name"]}"@{entry["address"]}'
+def object_text(entry, class_name="?"):
+    """``"BP_Hero_C_0"@0x7f…``, as the scripts show objects; an object
+    without a name (a plain C# object) as ``Game.Inventory@0x7f…``."""
+    if not entry.get("name"):
+        return f'{class_name}@{entry["address"]}'
+    return f'{json_quote(entry["name"])}@{entry["address"]}'
+
+
+def json_quote(text):
+    """A name in quotes, one line (strings may hold line breaks)."""
+    return '"' + text.replace("\n", " ").replace("\r", " ") + '"'
 
 
 class ObjectBrowserDialog(QDialog):
@@ -89,12 +97,15 @@ class ObjectBrowserDialog(QDialog):
 
     # pylint: disable=too-many-instance-attributes
 
-    def __init__(self, translations, panel, is_framework=lambda _name: False, parent=None):
+    def __init__(self, translations, panel, is_framework=lambda _name: False, engine="unreal",
+                 parent=None):
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
         self.translations = translations
         self.panel = panel
         self.is_framework = is_framework
+        self.engine = engine
         self._worker = None
         self._pending = None  # request id of the classes asked for
         self._loading = {}  # request id -> klass whose objects were asked for
@@ -103,6 +114,8 @@ class ObjectBrowserDialog(QDialog):
         self._sent_words = []  # the filter of the classes asked for
         self._objects = 0
         self._items = {}  # klass -> its tree item
+        self._stats = None  # Mono: how long the game stood still for the last read
+        self._truncated = False
         self.setWindowTitle(translations["objects.title"])
         self.resize(900, 700)
         self._build_ui()
@@ -115,7 +128,10 @@ class ObjectBrowserDialog(QDialog):
     def _build_ui(self):
         t = self.translations
         layout = QVBoxLayout(self)
-        layout.addWidget(DocsHint(t, t["objects.hint"], "engines/unreal/#object-browser"))
+        mono = self.engine == "mono"
+        layout.addWidget(DocsHint(
+            t, t["objects.hint_mono" if mono else "objects.hint"],
+            "engines/unity-mono/#object-browser" if mono else "engines/unreal/#object-browser"))
 
         top = QHBoxLayout()
         self.package_combo = QComboBox()
@@ -140,6 +156,8 @@ class ObjectBrowserDialog(QDialog):
         self.internal_check.setToolTip(t["objects.internal_tooltip"])
         self.internal_check.toggled.connect(lambda _checked: self.refresh())
         options.addWidget(self.internal_check)
+        # Mono's liveness calculation finds no templates or reflection objects
+        self.internal_check.setVisible(not mono)
         options.addStretch()
         self.refresh_button = QPushButton(t["objects.refresh"])
         set_button_icon(self.refresh_button, "refresh")
@@ -240,6 +258,8 @@ class ObjectBrowserDialog(QDialog):
         self._pending = None
         self._classes = (answer or {}).get("classes", [])
         self._objects = (answer or {}).get("objects", 0)
+        self._stats = (answer or {}).get("stats")
+        self._truncated = bool((answer or {}).get("truncated"))
         self._answered_words = self._sent_words
         self._fill_packages()
         self._fill()
@@ -259,8 +279,9 @@ class ObjectBrowserDialog(QDialog):
         if item is None:
             return
         item.takeChildren()
+        class_name = (item.data(0, _CLASS) or {}).get("name", "?")
         for entry in (answer or {}).get("instances", []):
-            child = QTreeWidgetItem([object_text(entry), "", "", ""])
+            child = QTreeWidgetItem([object_text(entry, class_name), "", "", ""])
             child.setData(0, _OBJECT, entry)
             if entry.get("outer"):
                 child.setToolTip(_NAME, self.translations["objects.outer"].format(
@@ -386,8 +407,12 @@ class ObjectBrowserDialog(QDialog):
         if reselect is not None:
             self.tree.setCurrentItem(reselect)
         if self._pending is None:
-            self.status_label.setText(t["objects.status"].format(
-                classes=len(shown), objects=objects))
+            status = t["objects.status"].format(classes=len(shown), objects=objects)
+            if self._stats:
+                status += " " + t["objects.stopped"].format(ms=self._stats.get("stoppedMs", 0))
+            if self._truncated:
+                status += " " + t["objects.truncated"]
+            self.status_label.setText(status)
         self._update_buttons()
 
     def _expanded(self, item):

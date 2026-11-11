@@ -18,7 +18,8 @@ class MonoAdapter(base.EngineAdapter):
     id = "mono"
     display_name = "Mono"
     capabilities = frozenset({base.NAMING, base.CATALOG, base.TRACE, base.MONITOR,
-                              base.METHOD_HOOKS, base.CALL_GRAPH, base.CALL})
+                              base.METHOD_HOOKS, base.CALL_GRAPH, base.CALL,
+                              base.OBJECT_BROWSER})
     agent_source = MONO_AGENT_SOURCE
     # The native trace ended Shadowrun Returns within seconds (Linux). Likely cause:
     # Stalker recompiles the JIT code too (it lies in no module to exclude),

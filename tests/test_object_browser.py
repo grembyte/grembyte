@@ -38,6 +38,10 @@ def test_names_and_singletons():
     hero = _entry("BP_Hero_C", 3, "/Game/Blueprints")
     assert name_matches(hero, ["hero", "ubp"]) and not name_matches(hero, ["side"])
     assert object_text({"name": "BP_Hero_C_0", "address": "0x10"}) == '"BP_Hero_C_0"@0x10'
+    # Plain C# objects have no name; strings may have line breaks
+    assert object_text({"name": None, "address": "0x20"}, "Game.Inventory") == \
+        "Game.Inventory@0x20"
+    assert object_text({"name": "a\nb", "address": "0x30"}) == '"a b"@0x30'
     # An engine single-instance class, or a game class with one object
     assert is_singleton(_entry("PlayerController", 1, "/Script/Engine", "PlayerController"),
                         _is_framework)

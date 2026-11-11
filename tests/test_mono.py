@@ -11,6 +11,8 @@ signature, as if the game had been updated.
 """
 
 import os
+
+import pytest
 import subprocess
 import time
 
@@ -159,7 +161,7 @@ struct GameObject { Object header; void *cached_ptr; const char *name; Combat *c
 typedef struct { Object header; void *bounds; uintptr_t length; void *data[1]; } ComponentArray;
 typedef struct { Object header; void *message; } Exception;
 static int type_object_component, type_object_combat, type_object_game_object,
-    type_object_other;
+    type_object_unity, type_object_other;
 /* Every Combat and GameObject the game made, for FindObjectsOfType */
 static Combat *live_combats[64];
 static GameObject *live_game_objects[64];
@@ -211,6 +213,10 @@ static void *object_find_objects_of_type(void *self, void **params, void **excep
             array->data[array->length++] = live_combats[i];
         else if (params[0] == &type_object_game_object)
             array->data[array->length++] = live_game_objects[i];
+        else if (params[0] == &type_object_unity && array->length < 63) {
+            array->data[array->length++] = live_combats[i];
+            array->data[array->length++] = live_game_objects[i];
+        }
     }
     return array;
 }
@@ -425,6 +431,8 @@ void *mono_type_get_object(void *domain, Type *type) {
         return &type_object_combat;
     if (type == &classes[10].type)
         return &type_object_game_object;
+    if (type == &classes[8].type)
+        return &type_object_unity;
     return type == &classes[9].type ? (void *)&type_object_component : &type_object_other;
 }
 void *mono_class_from_name(Image *img, const char *ns, const char *name) {
@@ -636,6 +644,122 @@ void *fake_combat(const char *name) {
     *loop_statics = combat;
     return combat;
 }
+/* Unity's liveness calculation (see the Mono adapter's object browser):
+   from the statics Game.Loop.Current and a plain Game.Inventory, from a
+   root array its elements. While the world is stopped it marks the objects
+   in their vtable's lowest bit, as Unity's does; the browser must mask it.
+   Built with FAKE_LIVENESS_BLOCKS: Unity 2021's API (allocate_struct, its
+   blocks from a callback), else Unity 2017-2020's calculation_begin/end. */
+typedef void (*liveness_fn)(void **objects, int count, void *data);
+typedef void (*world_fn)(void);
+typedef void *(*block_fn)(void *block, int size, void *data);
+typedef struct {
+    void *filter; liveness_fn report; void *data; world_fn on_start, on_stop;
+    block_fn blocks; void *block; Object *seen[256]; int seen_count;
+} Liveness;
+static VTable vt_inventory = { &classes[0] };
+static Object inventory = { &vt_inventory, NULL };
+static int world_stopped, liveness_errors, liveness_runs, gchandles;
+static void liveness_report(Liveness *l, Object **objects, int count) {
+    void *batch[64];
+    int n = 0;
+    for (int i = 0; i < count; i++) {
+        Object *object = objects[i];
+        if (object == NULL || ((uintptr_t)object->vtable & 1) || l->seen_count >= 256)
+            continue;
+        if (!world_stopped)
+            liveness_errors++;
+        object->vtable = (VTable *)((uintptr_t)object->vtable | 1);
+        l->seen[l->seen_count++] = object;
+        batch[n++] = object;
+        if (n == 64) {
+            l->report(batch, n, l->data);
+            n = 0;
+        }
+    }
+    if (n > 0)
+        l->report(batch, n, l->data);
+}
+static Liveness *liveness_new(void *filter, liveness_fn report, void *data) {
+    Liveness *l = calloc(1, sizeof *l);
+    if (filter != &classes[2])
+        liveness_errors++;  /* System.Object: every object */
+    l->filter = filter;
+    l->report = report;
+    l->data = data;
+    liveness_runs++;
+    return l;
+}
+static void liveness_clear(Liveness *l) {
+    for (int i = 0; i < l->seen_count; i++)
+        l->seen[i]->vtable = (VTable *)((uintptr_t)l->seen[i]->vtable & ~(uintptr_t)1);
+}
+void *mono_get_object_class(void) { return &classes[2]; }
+uint32_t mono_gchandle_new(void *object, int pinned) {
+    (void)object; (void)pinned;
+    return (uint32_t)++gchandles;
+}
+void mono_gchandle_free(uint32_t handle) { (void)handle; gchandles--; }
+void mono_unity_liveness_calculation_from_statics(Liveness *l) {
+    make_statics();
+    Object *roots[] = { (Object *)*loop_statics, &inventory };
+    liveness_report(l, roots, 2);
+}
+void mono_unity_liveness_calculation_from_root(ObjectArray *root, Liveness *l) {
+    if (gchandles == 0)
+        liveness_errors++;  /* not held: a collection could free it */
+    liveness_report(l, (Object **)root->data, (int)root->length);
+}
+#ifdef FAKE_LIVENESS_BLOCKS
+Liveness *mono_unity_liveness_allocate_struct(void *filter, uint32_t max, liveness_fn report,
+                                              void *data, block_fn blocks) {
+    (void)max;
+    Liveness *l = liveness_new(filter, report, data);
+    l->blocks = blocks;
+    l->block = blocks(NULL, 8192, data);
+    if (l->block == NULL)
+        liveness_errors++;
+    else
+        memset(l->block, 0xab, 8192);
+    return l;
+}
+void mono_unity_liveness_stop_gc_world(void) { world_stopped = 1; }
+void mono_unity_liveness_finalize(Liveness *l) { liveness_clear(l); }
+void mono_unity_liveness_start_gc_world(void) { world_stopped = 0; }
+void mono_unity_liveness_free_struct(Liveness *l) {
+    l->blocks(l->block, 0, l->data);
+    free(l);
+}
+#else
+Liveness *mono_unity_liveness_calculation_begin(void *filter, uint32_t max, liveness_fn report,
+                                                void *data, world_fn on_start,
+                                                world_fn on_stop) {
+    (void)max;
+    Liveness *l = liveness_new(filter, report, data);
+    l->on_start = on_start;
+    l->on_stop = on_stop;
+    on_stop();
+    world_stopped = 1;
+    return l;
+}
+void mono_unity_liveness_calculation_end(Liveness *l) {
+    liveness_clear(l);
+    world_stopped = 0;
+    l->on_start();
+    free(l);
+}
+#endif
+/* What the liveness calculation got wrong, how often it ran, and whether an
+   object stayed marked */
+void fake_liveness(int *errors, int *runs, int *marked) {
+    *errors = liveness_errors;
+    *runs = liveness_runs;
+    *marked = ((uintptr_t)inventory.vtable & 1) != 0;
+    for (int i = 0; i < live_count; i++)
+        *marked |= (((uintptr_t)live_combats[i]->header.vtable
+                     | (uintptr_t)live_game_objects[i]->header.vtable) & 1) != 0;
+}
+
 void *fake_string(const char *ascii) {
     int32_t length = (int32_t)strlen(ascii);
     uint8_t *string = calloc(1, 0x14 + 2 * (size_t)length);
@@ -661,6 +785,7 @@ void *fake_combat(const char *name);
 void *fake_string(const char *ascii);
 void fake_tick(void);
 void fake_set_value(int32_t value);
+void fake_liveness(int *errors, int *runs, int *marked);
 typedef float (*roll_fn)(void *self, int32_t min, float scale, void *name, int32_t crit,
                          int32_t type, int32_t *roll);
 typedef void (*calc_fn)(void *self, void *other, void **info);
@@ -718,6 +843,17 @@ int main(void) {
             fflush(stdout);
             continue;
         }
+        else if (strcmp(cmd, "liveness") == 0) {
+            int errors, runs, marked;
+            fake_liveness(&errors, &runs, &marked);
+            printf("%d %d\n", errors * 1000 + marked, runs);
+            fflush(stdout);
+            continue;
+        }
+        else if (strcmp(cmd, "spawn") == 0) {
+            fake_combat("Miranda");
+            fake_combat("Young Wolf");
+        }
         else if (strcmp(cmd, "bgroll") == 0) {
             /* The same call on a thread other than Unity's main thread */
             pthread_t thread;
@@ -732,11 +868,12 @@ int main(void) {
 """
 
 
-def _build(tmp_path):
+def _build(tmp_path, defines=()):
     (tmp_path / "fake_mono.c").write_text(_FAKE_MONO_SOURCE)
     (tmp_path / "target.c").write_text(_TARGET_SOURCE)
     subprocess.run(
-        ["gcc", "-shared", "-fPIC", str(tmp_path / "fake_mono.c"),
+        ["gcc", "-shared", "-fPIC", *(f"-D{name}" for name in defines),
+         str(tmp_path / "fake_mono.c"),
          "-o", str(tmp_path / "libmonosgen-2.0.so")],
         check=True,
     )
@@ -2779,3 +2916,64 @@ def test_catalog_shows_nested_classes_as_csharp_writes_them(qt_app, translations
     assert matches(["type:strongholdadventure.type"], method)
     assert method.signature.endswith("(StrongholdAdventure/Type)")
     assert csharp_name("/Script/Engine.Actor", "unreal") == "/Script/Engine.Actor"
+
+
+@pytest.mark.parametrize("generation", ["begin", "blocks"])
+@requires_target
+def test_object_browser_reads_live_objects_with_the_world_stopped(tmp_path, qt_app, generation):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.scripts import ScriptWorker
+
+    defines = ("FAKE_LIVENESS_BLOCKS",) if generation == "blocks" else ()
+    target = _MonoTarget(_build(tmp_path, defines))
+    worker = ScriptWorker(target.pid)
+    answers, failed = [], []
+    worker.classes_browsed.connect(lambda _request, answer: answers.append(answer))
+    worker.browse_failed.connect(lambda _request, message: failed.append(message))
+    worker.instances_browsed.connect(lambda _request, answer: answers.append(answer))
+    worker.instances_failed.connect(lambda _request, message: failed.append(message))
+
+    def ask(request, *args):
+        answers.clear()
+        failed.clear()
+        getattr(worker, request)(*args)
+        # On Unity's main thread: when the game next runs a script method
+        _wait_for(qt_app, lambda: target.send("tick", 0) and (answers or failed))
+        assert not failed, failed
+        return answers[0]
+
+    try:
+        target.send("spawn", 0)
+        worker.start()
+        # From the statics (Game.Loop.Current, a plain Game.Inventory) and
+        # from the Unity objects; the marks in the vtables masked
+        listed = ask("browse_classes")
+        classes = {entry["name"]: entry for entry in listed["classes"]}
+        assert {name: (entry["count"], entry["package"], entry["role"])
+                for name, entry in classes.items()} == {
+            "Game.Combat": (2, "Assembly-CSharp", None),
+            "Game.Inventory": (1, "Assembly-CSharp", None),
+            "UnityEngine.GameObject": (2, "UnityEngine.CoreModule", None)}
+        assert listed["objects"] == 5 and not listed["truncated"]
+        assert listed["stats"]["stoppedMs"] >= 0
+        # Nothing done while the world ran, the root array held by a GC
+        # handle, every mark cleared
+        assert target.send("liveness", 0) == (0, 1)
+
+        # Unity objects by their names, plain objects by their class
+        instances = ask("browse_instances", classes["Game.Combat"]["klass"])
+        assert [entry["name"] for entry in instances["instances"]] == ["Miranda", "Young Wolf"]
+        instances = ask("browse_instances", classes["Game.Inventory"]["klass"])
+        assert [entry["name"] for entry in instances["instances"]] == [None]
+        assert target.send("liveness", 0) == (0, 1)  # from the objects read
+
+        listed = ask("browse_classes", "wolf")
+        assert {entry["name"]: entry["matched"] for entry in listed["classes"]
+                if entry["matched"]} == {"Game.Combat": 1, "UnityEngine.GameObject": 1}
+        instances = ask("browse_instances", classes["Game.Combat"]["klass"], "wolf")
+        assert [entry["name"] for entry in instances["instances"]] == ["Young Wolf"]
+        assert target.send("liveness", 0) == (0, 2)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()

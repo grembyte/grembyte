@@ -218,7 +218,14 @@ the class tree, the dropdown and the filter, and can become two views of one win
   objects of the engine's single-instance classes (`GameInstance`, subsystems, `GameModeBase`,
   `GameStateBase`, `WorldSettings`, `GameUserSettings`), and game classes with exactly one
   live instance.
-- **Mono/IL2CPP:** `FindObjectsOfType` only gives `UnityEngine.Object`s (GameObjects,
+- **Mono, prototype:** done against a stand-in runtime (see the
+  [Mono page](docs/engines/unity-mono.md#object-browser)), to try in Pillars of Eternity:
+  Unity's liveness calculation (`mono_unity_liveness_*`, both API generations) from the
+  statics and from all Unity objects, with the world stopped; its callbacks are a few
+  instructions of machine code, since no JavaScript may run then. Open: how long a large
+  heap stands still, objects only stacks hold, the statics holding an object as chain bases
+  for the pointer scan, IL2CPP (`il2cpp_unity_liveness_*`).
+- **Mono/IL2CPP, first thoughts:** `FindObjectsOfType` only gives `UnityEngine.Object`s (GameObjects,
   components, ScriptableObjects), of active GameObjects, on the main thread. One call for
   `UnityEngine.Object`, grouped by class, gives those; `Resources.FindObjectsOfTypeAll`
   would add inactive objects and assets (a checkbox). Plain C# objects, where much game state

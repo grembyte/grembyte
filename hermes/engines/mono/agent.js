@@ -1745,6 +1745,362 @@ gpointer run_batch (gpointer data) {
     return found;
   }
 
+  // --- Object browser: the live objects, through Unity's liveness calculation ---
+  // Unity's Mono (Boehm GC) has no heap walk: mono_gc_walk_heap is SGen's and
+  // does nothing there. Unity's own liveness calculation (Resources.
+  // UnloadUnusedAssets, the memory profiler) finds the objects reachable from
+  // the static fields, or from one root object, and hands them to a callback
+  // in batches of 64. It marks every object it visits in the lowest bit of
+  // its vtable pointer, so it runs with the world stopped, and the marks are
+  // cleared before the world starts again. Two passes: from the statics, and
+  // from an array of all Unity objects (FindObjectsOfType), which Unity's
+  // native side holds through GC handles, not statics.
+  //
+  // Two API generations: Unity 2017-2020 (also the old libmono) have
+  // calculation_begin/end, which stop and start the world themselves and call
+  // back when they do (to restart it while their arrays grow); Unity 2021 and
+  // later have allocate_struct, stop/start_gc_world, finalize and free_struct,
+  // and ask a callback for the 8 KiB blocks of their arrays. While the world
+  // is stopped no JavaScript may run (it could wait for a lock a stopped
+  // thread holds), so the callbacks are a few instructions of machine code:
+  // ``collect`` keeps (object, class) pairs in a buffer, ``allocate`` hands
+  // out blocks from a pool allocated beforehand, ``nothing`` is the world
+  // callback.
+
+  // Objects recorded per read; the rest are counted, not kept
+  const LIVENESS_CAPACITY = 2 * 1024 * 1024;
+  // The newer API's array blocks: enough for about 16 million objects
+  const LIVENESS_POOL = 128 * 1024 * 1024;
+  // The buffer's header: count, capacity, pool next, pool end; then the pairs
+  const LIVENESS_HEADER = 64;
+  // How long browseInstances answers from the objects browseClasses read
+  const BROWSE_AGE = 60000;
+  // Instances a class lists at most
+  const MAX_INSTANCES = 5000;
+  // Text of a string object shown as its name
+  const MAX_STRING_NAME = 80;
+  let liveness;  // undefined: not looked for yet; null: not available
+  let browsed = null;  // { read, byClass: Map(klass -> [addresses]) }
+
+  function livenessCode() {
+    // The three callbacks (see above), for the platform's calling convention.
+    const code = allocateCode(Process.pageSize);
+    let entries;
+    Memory.patchCode(code, Process.pageSize, memory => {
+      entries = writeLivenessCode(new X86Writer(memory, { pc: code }),
+                                  Process.platform === 'windows');
+    });
+    return entries;
+  }
+
+  function writeLivenessCode(w, windows) {
+    // { collect, allocate, nothing }: where each starts. Only rax, r10, r11
+    // and the arguments' registers are used: volatile in both conventions.
+    const [first, second, third] = windows ? ['rcx', 'rdx', 'r8'] : ['rdi', 'rsi', 'rdx'];
+    const second32 = windows ? 'edx' : 'esi';
+    const entries = {};
+    // void collect(MonoObject **objects, int count, Buffer *buffer)
+    entries.collect = w.pc;
+    w.putMovRegReg(second32, second32);  // zero-extend the count
+    w.putLabel('next');
+    w.putTestRegReg(second, second);
+    w.putJccShortLabel('je', 'done', 'no-hint');
+    w.putMovRegRegPtr('r10', first);  // the object
+    w.putMovRegRegPtr('r11', 'r10');  // its vtable, marked in bit 0
+    w.putAndRegU32('r11', 0xfffffffe);  // sign-extended: clears bit 0 only
+    w.putMovRegRegPtr('r11', 'r11');  // the vtable's class
+    w.putMovRegRegPtr('rax', third);  // count
+    w.putCmpRegOffsetPtrReg(third, 8, 'rax');  // capacity - count
+    w.putJccShortLabel('jbe', 'counted', 'no-hint');
+    w.putShlRegU8('rax', 4);
+    w.putAddRegReg('rax', third);
+    w.putMovRegOffsetPtrReg('rax', LIVENESS_HEADER, 'r10');
+    w.putMovRegOffsetPtrReg('rax', LIVENESS_HEADER + 8, 'r11');
+    w.putLabel('counted');
+    w.putIncRegPtr('qword', third);
+    w.putAddRegImm(first, 8);
+    w.putDecReg(second);
+    w.putJmpShortLabel('next');
+    w.putLabel('done');
+    w.putRet();
+    // void *allocate(void *block, int size, Buffer *buffer): a block of the
+    // pool, or NULL; freeing (size 0) does nothing
+    entries.allocate = w.pc;
+    w.putMovRegReg(second32, second32);
+    w.putTestRegReg(second, second);
+    w.putJccShortLabel('je', 'none', 'no-hint');
+    w.putMovRegRegOffsetPtr('rax', third, 16);  // pool next
+    w.putMovRegReg('r10', 'rax');
+    w.putAddRegReg('r10', second);
+    w.putCmpRegOffsetPtrReg(third, 24, 'r10');  // pool end - new next
+    w.putJccShortLabel('jb', 'none', 'no-hint');
+    w.putMovRegOffsetPtrReg(third, 16, 'r10');
+    w.putRet();
+    w.putLabel('none');
+    w.putXorRegReg('rax', 'rax');
+    w.putRet();
+    // void nothing(void)
+    entries.nothing = w.pc;
+    w.putRet();
+    w.flush();
+    return entries;
+  }
+
+  function livenessApi() {
+    if (liveness !== undefined)
+      return liveness;
+    liveness = null;
+    const m = api.module;
+    const has = name => m.findExportByName(name) !== null;
+    const fn = (name, ret, args) => new NativeFunction(m.findExportByName(name), ret, args);
+    if (!['mono_unity_liveness_calculation_from_statics', 'mono_get_object_class',
+      'mono_gchandle_new', 'mono_gchandle_free'].every(has))
+      return null;
+    const common = {
+      objectClass: fn('mono_get_object_class', 'pointer', []),
+      fromStatics: fn('mono_unity_liveness_calculation_from_statics', 'void', ['pointer']),
+      fromRoot: has('mono_unity_liveness_calculation_from_root')
+        ? fn('mono_unity_liveness_calculation_from_root', 'void', ['pointer', 'pointer']) : null,
+      handleNew: fn('mono_gchandle_new', 'uint32', ['pointer', 'int']),
+      handleFree: fn('mono_gchandle_free', 'void', ['uint32'])
+    };
+    if (has('mono_unity_liveness_calculation_begin')
+        && has('mono_unity_liveness_calculation_end')) {
+      liveness = { ...common, kind: 'begin',
+        begin: fn('mono_unity_liveness_calculation_begin', 'pointer',
+          ['pointer', 'uint32', 'pointer', 'pointer', 'pointer', 'pointer']),
+        end: fn('mono_unity_liveness_calculation_end', 'void', ['pointer']) };
+    } else if (['mono_unity_liveness_allocate_struct', 'mono_unity_liveness_stop_gc_world',
+      'mono_unity_liveness_finalize', 'mono_unity_liveness_start_gc_world',
+      'mono_unity_liveness_free_struct'].every(has)) {
+      liveness = { ...common, kind: 'blocks',
+        allocate: fn('mono_unity_liveness_allocate_struct', 'pointer',
+          ['pointer', 'uint32', 'pointer', 'pointer', 'pointer']),
+        stop: fn('mono_unity_liveness_stop_gc_world', 'void', []),
+        finalize: fn('mono_unity_liveness_finalize', 'void', ['pointer']),
+        start: fn('mono_unity_liveness_start_gc_world', 'void', []),
+        free: fn('mono_unity_liveness_free_struct', 'void', ['pointer']) };
+    } else {
+      return null;
+    }
+    liveness.code = livenessCode();
+    liveness.buffer = Memory.alloc(LIVENESS_HEADER + 16 * LIVENESS_CAPACITY);
+    liveness.pool = liveness.kind === 'blocks' ? Memory.alloc(LIVENESS_POOL) : null;
+    return liveness;
+  }
+
+  function unityObjectsArray() {
+    // A managed array of every UnityEngine.Object (FindObjectsOfType), or
+    // NULL in a game without them. On the main thread.
+    let unityObject;
+    try {
+      unityObject = findClass('UnityEngine.Object');
+    } catch (_error) {
+      return NULL;
+    }
+    const find = methodTakingType(unityObject, 'FindObjectsOfType');
+    if (find === null)
+      return NULL;
+    const params = Memory.alloc(Process.pointerSize);
+    params.writePointer(api.invoke.typeObject(api.currentDomain(),
+                                              api.types.classType(unityObject)));
+    const { result, exception } = invoke(find, NULL, params);
+    return exception.isNull() ? result : NULL;
+  }
+
+  function readLiveObjects() {
+    // { pairs: [[object, class], ...] as numbers, count, stoppedMs } of the
+    // objects reachable from the statics and the Unity objects. On Unity's
+    // main thread: the calculation needs a thread Mono knows, and
+    // FindObjectsOfType runs there.
+    const l = livenessApi();
+    if (l === null)
+      throw hermesError('error.mono.no_liveness');
+    const buffer = l.buffer;
+    buffer.writeU64(0);
+    buffer.add(8).writeU64(LIVENESS_CAPACITY);
+    if (l.pool !== null) {
+      buffer.add(16).writePointer(l.pool);
+      buffer.add(24).writePointer(l.pool.add(LIVENESS_POOL));
+    }
+    // Held by a GC handle: a collection must not free it before the world stops
+    const roots = l.fromRoot === null ? NULL : unityObjectsArray();
+    const handle = roots.isNull() ? 0 : l.handleNew(roots, 0);
+    const filter = l.objectClass();
+    let stoppedMs;
+    try {
+      const started = Date.now();
+      if (l.kind === 'begin') {
+        const state = l.begin(filter, 1000, l.code.collect, buffer, l.code.nothing,
+                              l.code.nothing);
+        l.fromStatics(state);
+        if (!roots.isNull())
+          l.fromRoot(roots, state);
+        l.end(state);
+      } else {
+        const state = l.allocate(filter, 1000, l.code.collect, buffer, l.code.allocate);
+        l.stop();
+        l.fromStatics(state);
+        if (!roots.isNull())
+          l.fromRoot(roots, state);
+        l.finalize(state);
+        l.start();
+        l.free(state);
+      }
+      stoppedMs = Date.now() - started;
+    } finally {
+      if (handle !== 0)
+        l.handleFree(handle);
+    }
+    const count = Number(buffer.readU64());
+    const kept = Math.min(count, LIVENESS_CAPACITY);
+    const view = new DataView(buffer.add(LIVENESS_HEADER).readByteArray(16 * kept));
+    const pairs = [];
+    for (let i = 0; i < kept; i++) {
+      pairs.push([view.getUint32(16 * i, true) + view.getUint32(16 * i + 4, true) * 0x100000000,
+                  view.getUint32(16 * i + 8, true)
+                    + view.getUint32(16 * i + 12, true) * 0x100000000]);
+    }
+    return { pairs, count, stoppedMs };
+  }
+
+  function objectName(object, klass) {
+    // A Unity object's name, a string's text, or null (on the main thread)
+    const name = layout(klass).name;
+    if (name === 'System.String') {
+      const length = object.add(2 * Process.pointerSize).readS32();
+      return object.add(2 * Process.pointerSize + 4).readUtf16String(
+        Math.min(length, MAX_STRING_NAME));
+    }
+    return nameMethod(klass) === null ? null : unityName(object);
+  }
+
+  function singletonField(klass, object) {
+    // "Class.Field" of a static field of ``klass`` or a base class (as
+    // Singleton<T> keeps it) holding ``object``, or null
+    const t = typesApi();
+    for (let current = klass; !current.isNull(); current = t.classParent(current)) {
+      const fields = ownStaticFields(t, current);
+      if (fields.length === 0)
+        continue;
+      const data = staticData(current);
+      if (data === null)
+        continue;
+      for (const [name, offset] of fields) {
+        try {
+          if (data.add(offset).readPointer().equals(object))
+            return `${layout(current).name.replace(/^.*\./, '')}.${name}`;
+        } catch (_error) {
+          // no pointer there
+        }
+      }
+    }
+    return null;
+  }
+
+  function filterWords(filter) {
+    return String(filter || '').toLowerCase().split(/\s+/).filter(word => word !== '');
+  }
+
+  function matchesWords(text, words) {
+    const lower = text.toLowerCase();
+    return words.every(word => lower.includes(word));
+  }
+
+  function browseClasses(options = {}) {
+    // As the Unreal adapter's: the classes with live objects, here read by
+    // the liveness calculation on Unity's main thread. ``package`` is the
+    // class's assembly, ``role`` the static field holding the one object of
+    // a class (a singleton's Instance). ``internal`` changes nothing.
+    typesApi();
+    const words = filterWords(options.filter);
+    return onMainThread(() => {
+      const started = Date.now();
+      const { pairs, count, stoppedMs } = readLiveObjects();
+      const byClass = new Map();
+      for (const [object, klass] of pairs) {
+        let list = byClass.get(klass);
+        if (list === undefined) {
+          list = [];
+          byClass.set(klass, list);
+        }
+        list.push(object);
+      }
+      browsed = { read: Date.now(), byClass };
+      const classes = [];
+      for (const [number, objects] of byClass) {
+        const klass = ptr(number);
+        let name, assembly;
+        try {
+          name = layout(klass).name;
+          assembly = api.imageName(api.classImage(klass)).readUtf8String();
+        } catch (_error) {
+          continue;
+        }
+        let role = null, matched = 0;
+        try {
+          if (objects.length === 1)
+            role = singletonField(klass, ptr(objects[0]));
+          if (words.length > 0 && (name === 'System.String' || nameMethod(klass) !== null)) {
+            for (const object of objects) {
+              const text = objectName(ptr(object), klass);
+              if (text !== null && matchesWords(text, words))
+                matched++;
+            }
+          }
+        } catch (_error) {
+          // a class whose statics or names cannot be read
+        }
+        classes.push({ klass: klass.toString(), name, cppName: name, package: assembly,
+                       count: objects.length, role, matched });
+      }
+      classes.sort((a, b) => a.name.localeCompare(b.name));
+      return { classes, objects: pairs.length, truncated: count > pairs.length,
+               stats: { stoppedMs, totalMs: Date.now() - started } };
+    });
+  }
+
+  function browseInstances(klass, options = {}) {
+    // As the Unreal adapter's, from the objects browseClasses read last (the
+    // liveness calculation stops the world): those still of their class.
+    typesApi();
+    const words = filterWords(options.filter);
+    const limit = options.limit > 0 ? options.limit : MAX_INSTANCES;
+    return onMainThread(() => {
+      if (browsed === null || Date.now() - browsed.read > BROWSE_AGE) {
+        const { pairs } = readLiveObjects();
+        const byClass = new Map();
+        for (const [object, owner] of pairs) {
+          if (!byClass.has(owner))
+            byClass.set(owner, []);
+          byClass.get(owner).push(object);
+        }
+        browsed = { read: Date.now(), byClass };
+      }
+      const wanted = ptr(klass);
+      const instances = [];
+      let count = 0;
+      for (const number of browsed.byClass.get(Number(wanted.toString())) || []) {
+        const object = ptr(number);
+        try {
+          if (!object.readPointer().readPointer().equals(wanted))
+            continue;  // freed, and its memory used anew
+        } catch (_error) {
+          continue;
+        }
+        const name = objectName(object, wanted);
+        if (words.length > 0 && (name === null || !matchesWords(name, words)))
+          continue;
+        count++;
+        if (instances.length < limit)
+          instances.push({ address: object.toString(), name, outer: null });
+      }
+      instances.sort((a, b) => (a.name || '').localeCompare(b.name || '')
+        || (ptr(a.address).compare(ptr(b.address))));
+      return { instances, count, truncated: count > instances.length };
+    });
+  }
+
   function writeReference(object, field, value) {
     // Store reference ``value`` in the field at ``field`` of ``object``.
     if (api.writeBarrier !== null && object !== null)
@@ -1996,7 +2352,7 @@ gpointer run_batch (gpointer data) {
     objectClassName, classOf, layout, staticData, staticAreas: classStaticAreas, staticBase,
     onRuntimeThread: onMonoThread, unityName,
     onMainThread, drainMain, properties, getProperty, methods, signatureOf, findClass,
-    findMethod, findObject, findObjects, newString, invoke, classChain, writeReference, resolve: resolveMethod,
+    findMethod, findObject, findObjects, browseClasses, browseInstances, newString, invoke, classChain, writeReference, resolve: resolveMethod,
     virtualMethod: (object, method) => api.invoke.virtualMethod(object, method)
   };
 })();

@@ -1980,6 +1980,7 @@ class MainWindow(QMainWindow):
                 self.translations, self.script_panel,
                 is_framework=lambda name: (self._engine is not None
                                            and self._engine.is_framework_assembly(name)),
+                engine=self._engine.id if self._engine is not None else "unreal",
                 parent=self)
             dialog.finished.connect(lambda _result: setattr(self, "_objects_dialog", None))
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)

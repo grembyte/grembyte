@@ -123,7 +123,7 @@ CALL_FOUND = "call_found"
 # The player's Gameplay Ability System attributes (see the Unreal adapter)
 GAS = "gas"
 # The object browser: every live object by its class (``browseClasses``,
-# ``browseInstances``); Mono only finds Unity objects, so far only Unreal
+# ``browseInstances``): Unreal's object table, Mono's liveness calculation
 OBJECT_BROWSER = "object_browser"
 
 

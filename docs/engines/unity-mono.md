@@ -10,10 +10,23 @@ Everything in the [engine overview](index.md) is available:
 - The **method monitor** logs calls with arguments and results; **method hooks** change arguments, fields or results with templates of their own.
 - The **call graph** shows which methods a method calls and which call it, from the IL code.
 - The **object inspector** shows the fields of C# objects, and **Call method** runs a static method on the game's main thread.
+- The **object browser** lists the live objects by class (see [below](#object-browser)).
   An enum argument is chosen from the enum's names, e.g. `StrongholdAdventure.Type`: `Minor (1)`, `Average (2)` …; a number can be typed in, too. Nested classes read as C# writes them (`StrongholdAdventure.Type`), not as Mono does (`StrongholdAdventure/Type`).
 
 !!! tip "Try it on HermesQuest"
     HermesQuest is a small Unity Mono role-playing game made for trying out Hermes – the running example of the [Examples](../examples/index.md) section. Download it for [Linux](https://github.com/winterhafen/hermes-hook/releases/download/v0.5.0-alpha/HermesQuest-RPG-Linux) or [Windows](https://github.com/winterhafen/hermes-hook/releases/download/v0.5.0-alpha/HermesQuest-RPG-Windows.zip) (also for Wine/Proton); both are zip archives. The examples walk through scans, pointer scans, value and method hooks and scripts on it.
+
+## Object browser
+
+**View → Object browser …** shows the game's live objects by class, as for [Unreal](unreal.md#object-browser): a package (here: assembly) to focus on, a filter on class and object names, and singletons only. Unity objects show with their name, strings with their text, other C# objects as `Class@address`; a double-click opens one in the [object inspector](index.md#object-inspector).
+
+Unity's Mono has no heap walk: `mono_gc_walk_heap` belongs to the SGen collector and does nothing in Unity's Boehm GC. Hermes uses Unity's own liveness calculation instead (`mono_unity_liveness_*`, which `Resources.UnloadUnusedAssets` uses). It finds the objects reachable from the static fields and from Unity's objects. Objects only a thread's stack holds are not among them.
+
+- The calculation marks the objects it visits, so the game stands still while it runs. The status line says for how long; **Refresh** reads again.
+- *Singleton* names the static field that holds a class's only object, also through a generic base such as `Singleton<T>`. Game classes with exactly one object count as singletons too.
+
+!!! note "Prototype"
+    So far tested against a stand-in runtime only, in both generations of the API (Unity 2017–2020 with `calculation_begin`/`end`, Unity 2021 and later with `allocate_struct`).
 
 ## Mono and value hooks
 
