@@ -72,7 +72,7 @@ A string is not always loaded by the code directly. Tables of names (commands, s
 | **Copy pattern** | Copies the shortest unique byte pattern starting at the selected instruction (or the function's start). Addresses, branch targets and RIP-relative displacements become `??`, so the pattern still matches after an update that moved the code around. The status line says whether it is unique. |
 | **Copy script** | Copies a [native script](scripts.md#scripts-in-native-games) that finds the selected instruction or function by that pattern. For a function it prepares a call with `ctx.native.fn`, with the arguments and return type guessed from the code; for an instruction loading an address it resolves that address (`ctx.native.rip`, or the absolute address in a 32-bit game). Paste it into a new script and adjust it. |
 | **Monitor** | Logs the calls of the function, or the runs of the selected instruction, in the [native function monitor](native-tools.md#native-function-monitor). Needs the game attached. |
-| **Memory** | Shows what the selected instruction refers to in the [memory viewer](tools.md). Needs the game attached. |
+| **Memory** | Shows what the selected instruction refers to in the [memory viewer](tools.md#memory-viewer). Needs the game attached. |
 
 ## Symbol names
 

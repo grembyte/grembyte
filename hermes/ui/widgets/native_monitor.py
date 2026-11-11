@@ -36,6 +36,7 @@ from hermes.features.native_monitor import (
     signed,
     vector_numbers,
 )
+from hermes.ui.widgets.docking import PinButton
 from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import DocsHint, SelectableText
 from hermes.ui.widgets.method_monitor import call_time
@@ -481,6 +482,8 @@ class NativeMonitorDialog(QDialog):
         self.memory_button.setEnabled(False)
         self.memory_button.clicked.connect(self._request_memory)
         actions.addWidget(self.memory_button)
+        self.pin_button = PinButton(t)
+        actions.addWidget(self.pin_button)
         layout.addLayout(actions)
 
         self.status_label = QLabel("")

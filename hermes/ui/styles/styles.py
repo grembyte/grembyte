@@ -397,6 +397,18 @@ STYLE = """
     QTabBar::tab:hover:!selected {
         color: #c9d1d9;
     }
+    QTabBar::close-button {
+        image: url(__TAB_CLOSE_IMAGE__);
+        subcontrol-position: right;
+        border-radius: 4px;
+        width: 14px;
+        height: 14px;
+        padding: 1px;
+    }
+    QTabBar::close-button:hover {
+        image: url(__TAB_CLOSE_HOVER_IMAGE__);
+        background-color: #21262d;
+    }
     QFrame#divider {
         background-color: #21262d;
         border: none;
@@ -518,6 +530,8 @@ _INDICATOR_IMAGES = {
     "__SPIN_DOWN_IMAGE__": ("expand_more", "muted"),
     "__SPIN_UP_DISABLED_IMAGE__": ("expand_less", "disabled_text"),
     "__SPIN_DOWN_DISABLED_IMAGE__": ("expand_more", "disabled_text"),
+    "__TAB_CLOSE_IMAGE__": ("close", "muted"),
+    "__TAB_CLOSE_HOVER_IMAGE__": ("close", "danger"),
 }
 _RGBA = re.compile(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)")
 

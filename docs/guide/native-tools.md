@@ -12,7 +12,7 @@ When a game offers no engine metadata – or the logic you look for is plain C++
 4. Record a **scenario** while doing the thing you are interested in, e.g. paying gold.
 5. The functions that are new in the scenario, or called more often there, are the candidates.
 
-The game runs noticeably slower while it is followed.
+The game runs noticeably slower while it is followed. The native trace can be [docked](tools.md#docking-windows) at the bottom of the main window.
 
 <figure markdown="span">
   ![Native trace](../assets/screenshots/native-trace-dark.webp#only-dark)
@@ -27,7 +27,7 @@ Candidates can be marked with ★ as [favorites](tools.md#favorites) or handed t
 
 ## Native function monitor
 
-**Monitor native function …** logs the calls of one function: its arguments, the result and the caller. For pointer arguments it compares the memory behind them before and after the call, so you see what the function changed.
+**Monitor native function …** logs the calls of one function: its arguments, the result and the caller. For pointer arguments it compares the memory behind them before and after the call, so you see what the function changed. The monitor can be [docked](tools.md#docking-windows) at the bottom of the main window.
 
 | | Arguments | Floating-point arguments | Result |
 | --- | --- | --- | --- |

@@ -5,8 +5,12 @@ import json
 import shiboken6  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtCore import QObject, QPoint, Signal  # pylint: disable=import-error,no-name-in-module
 
+from hermes.ui.widgets.docking import RIGHT, find_dock_manager
 from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
 from hermes.ui.widgets.text_viewer import TextViewerDialog
+
+# The kind of dialog docked (see DockManager)
+INSPECTOR = "inspector"
 
 
 class Inspections(QObject):
@@ -65,14 +69,24 @@ class Inspections(QObject):
             list_methods=self._request_methods, call_method=self.call_method))
 
     def show_inspector(self, inspector, origin=None):
+        """Show ``inspector``: docked in the main window as a tab if the last
+        one was or ``origin`` is (see hermes.ui.widgets.docking), else as a
+        window of its own."""
         self.inspectors.append(inspector)
         inspector.address_requested.connect(self.address_requested.emit)
         inspector.destroyed.connect(self._forget_inspectors)
-        if origin is not None:
-            # Opened from another dialog: a little offset, so both stay visible.
+        floating_origin = origin is not None and origin.isWindow()
+        if floating_origin:
+            # Opened from another window: a little offset, so both stay visible.
             inspector.move(origin.pos() + QPoint(32, 32))
-        inspector.show()
-        inspector.activateWindow()
+        manager = find_dock_manager(self._window)
+        if manager is None:
+            inspector.show()
+            inspector.activateWindow()
+            return
+        # One opened from a docked inspector goes next to it
+        docked_origin = origin is not None and not floating_origin
+        manager.add(inspector, INSPECTOR, RIGHT, dock=True if docked_origin else None)
 
     # Slots for ``destroyed`` are bound methods, not lambdas: PySide does not
     # call a bound method of a dialog the garbage collector is taking apart,

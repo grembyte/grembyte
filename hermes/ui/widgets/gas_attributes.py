@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 
 from hermes.features.scripts import ScriptSpec
+from hermes.ui.widgets.docking import PinButton
 from hermes.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from hermes.ui.widgets.labels import DocsHint
@@ -211,6 +212,8 @@ class GasAttributesDialog(QDialog):
         self.release_button.setToolTip(t["gas.release_tooltip"])
         self.release_button.clicked.connect(self._release_selected)
         actions.addWidget(self.release_button)
+        self.pin_button = PinButton(t)
+        actions.addWidget(self.pin_button)
         layout.addLayout(actions)
 
         self.status_label = QLabel("")

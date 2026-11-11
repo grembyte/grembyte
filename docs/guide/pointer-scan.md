@@ -17,7 +17,7 @@ reads as: take the pointer at offset `0x4040` of the module `dummy_game.exe`, ad
 ## Finding a chain
 
 1. Right-click the tracked address → **Find pointers …** → **New scan**. In the test game it finds `dummy_game.exe+0x… → 0x28 → 0x0` (`g_game` → player → gold), plus some chance hits.
-2. Make the value move: click **New game** (or restart the game) and find the value again in the scanner. The pointer dialog can stay open meanwhile; **Pin to main window** docks it next to the scanner (drag it to the other side if you like), and the next pointer scan opens there too until you click **Detach**.
+2. Make the value move: click **New game** (or restart the game) and find the value again in the scanner. The pointer dialog can stay open meanwhile; **Pin to main window** [docks](tools.md#docking-windows) it next to the scanner, as a tab beside other docked tools, and the next pointer scan opens there too until you click **Detach**. It stays open when the game ends.
 3. Select the new result in the scanner, then **Take from scan** and **Filter with this address** in the pointer dialog. Chains that only matched because of the layout in memory drop out. A plain restart is often not enough for that, since the layout at start tends to be the same; a new game or a new level changes more.
 4. Select the remaining chain → **Use pointer**.
 
