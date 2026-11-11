@@ -189,11 +189,48 @@ types the adapters know, searchable like the catalog:
   read them for **Call method** (Mono from the constants' metadata, Unreal from `UEnum`).
 - **Unreal:** `UClass`, `UScriptStruct` and `UEnum` from reflection, with property flags
   (`BlueprintReadWrite`, `Replicated`, ...) and the Blueprint classes of loaded packages.
-- **Links:** open a live object of the type in the object inspector (`findObjects`), copy a
+- **Links:** open a live object of the type in the object inspector (`findObjects`, or the
+  object browser below), copy a
   type as a C struct for the structure view (proposal 3), and give offsets to the pointer
   chain dialog, so `GameState.s_playerCharacter → m_Inventory → currencyTotalValue` can be
   entered by field names instead of hex offsets.
 - Type names as C# writes them (`StrongholdAdventure.Type`), as the catalog shows them.
+
+### Object browser (Unreal, then Mono/IL2CPP)
+
+Today a live object is reached through `ctx.find`/`ctx.forEach` or a link in the inspector,
+which needs its class name first. An object browser shows which objects exist: a tree with
+the classes on the first level (with their number of instances) and below them the instances
+as `"name"@address`, opened in the object inspector from there (double click or context
+menu, also "copy address"). Above the tree: a dropdown to focus on one assembly or package
+(also "game only", without the framework ones), a filter on class and instance names, and a
+checkbox for singletons only. It is the instance side of the type explorer above; both share
+the class tree, the dropdown and the filter, and can become two views of one window.
+
+- **Unreal (first):** `GUObjectArray` holds every UObject, so one pass over the object table
+  (as `findObjects` reads it) gives all of them, grouped by their exact class. The dropdown
+  lists the packages as the catalog groups them (`/Script/<Module>`, `/Game/<Folder>`). Class
+  default objects, archetypes and the reflection objects themselves (classes, functions,
+  packages) are left out unless asked for. Games keep hundreds of thousands of objects: the
+  classes come first with their counts, the instances of a class only when it is opened, and
+  the filter runs in the agent (a class matches by its name or by those of its instances).
+  `FName`s repeat, so the outer name (`ctx.outerName`) shows in the tooltip. Singletons:
+  objects of the engine's single-instance classes (`GameInstance`, subsystems, `GameModeBase`,
+  `GameStateBase`, `WorldSettings`, `GameUserSettings`), and game classes with exactly one
+  live instance.
+- **Mono/IL2CPP:** `FindObjectsOfType` only gives `UnityEngine.Object`s (GameObjects,
+  components, ScriptableObjects), of active GameObjects, on the main thread. One call for
+  `UnityEngine.Object`, grouped by class, gives those; `Resources.FindObjectsOfTypeAll`
+  would add inactive objects and assets (a checkbox). Plain C# objects, where much game state
+  lives (`GameState.s_playerCharacter → m_Inventory`), are not in it. A heap walk
+  (`mono_gc_walk_heap`, Boehm GC) would find them but stops the game and is risky in old
+  Monos (PoE2), so they are reached through static fields instead.
+- **Singletons (Mono/IL2CPP):** a static field whose type is its own class or a subclass and
+  which holds an object (`Instance`, `s_instance`, `<Instance>k__BackingField`), also through
+  generic bases such as `Singleton<T>`. This reaches plain C# objects too, and is what the
+  pointer scan wants as chain bases.
+- Objects die: the tree is a snapshot with a refresh button, and an instance is checked again
+  before the inspector opens it.
 
 ### More adapters
 
