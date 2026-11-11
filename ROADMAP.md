@@ -165,6 +165,27 @@ JavaScript:
 - On Linux, callers are checked in JavaScript (no `GetCurrentThreadStackLimits`).
 - A fixed-address hook that learns callers.
 
+### 9. Dockable dialogs in tabs
+
+Today only the pointer scan dialog can be docked, and the dock holds one dialog: pinning a
+second floats the first. Windows of their own cannot be kept next to the main window, since
+Wayland does not let programs place them, so docking is how tools stay in view.
+
+- **Dock host:** the main window gets two docking areas, **right** for narrow tools and
+  **bottom** for wide tables. Each holds its dialogs as tabs of a `QTabWidget` (closable
+  tabs, middle click closes, the tab follows the window title), rather than tabified
+  `QDockWidget`s, whose tabs have no close buttons and whose dynamic layout is hard to save.
+  Undocking stays the pin button in the dialog (no dragging out, which Wayland does not
+  support well). Whether a kind of dialog opens docked is remembered per kind, as the
+  pointer scan does today; `PointerScanDock` becomes the general host.
+- **Dockable (right):** pointer scan, object inspector (one opened from a docked inspector
+  opens as a tab next to it), object browser, write watch, memory viewer, GAS attributes.
+- **Dockable (bottom):** trace (engine and native), method monitor, native monitor, log.
+- **Not docked:** catalog and code explorer (large windows with their own navigation; maybe
+  later at the bottom), call graph, and the short or modal dialogs (settings, themes,
+  import/export, process selection, sessions, templates, script parameters, method call,
+  text viewer).
+
 ### Recommendation
 
 The **code explorer and pseudocode** list above comes next, starting with names without PDB.
