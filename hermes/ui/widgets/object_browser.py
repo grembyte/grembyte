@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 
 from hermes.ui.widgets.code_explorer import BoundedComboBox
+from hermes.ui.widgets.docking import PinButton
 from hermes.ui.widgets.icons import set_button_icon, theme_qcolor
 from hermes.ui.widgets.labels import DocsHint
 
@@ -165,6 +166,8 @@ class ObjectBrowserDialog(QDialog):
         self.refresh_button.setToolTip(t["objects.refresh_tooltip"])
         self.refresh_button.clicked.connect(self.refresh)
         options.addWidget(self.refresh_button)
+        self.pin_button = PinButton(t)
+        options.addWidget(self.pin_button)
         layout.addLayout(options)
 
         self.tree = QTreeWidget()

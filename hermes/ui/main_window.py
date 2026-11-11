@@ -106,7 +106,7 @@ from hermes.ui.widgets.settings_dialog import SettingsDialog
 from hermes.ui.widgets.theme_dialog import ThemeDialog
 from hermes.core import activity, logs, messages, sessions
 from hermes.core import settings as app_settings
-from hermes.ui import window_state, workers
+from hermes.ui import workers
 from hermes.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
 from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog
 from hermes.ui.widgets.method_call import MethodCallDialog
@@ -115,7 +115,8 @@ from hermes.ui.widgets.code_explorer import CodeExplorerDialog
 from hermes.ui.widgets.native_monitor import NativeMonitorDialog
 from hermes.ui.widgets.native_trace import NativeTraceDialog
 from hermes.ui.widgets.trace import TraceDialog
-from hermes.ui.widgets.pointer_scan import PointerScanDialog, PointerScanDock
+from hermes.ui.widgets.pointer_scan import PointerScanDialog
+from hermes.ui.widgets.docking import BOTTOM, RIGHT, DockManager, close_dialog
 from hermes.ui.widgets.templates import TemplateDialog
 from hermes.ui.widgets.write_watch import WriteWatchDialog
 
@@ -138,8 +139,6 @@ RESULT_DISPLAY_LIMIT = 1000
 # How often chain bases in a class's static data are looked for again while
 # they cannot be found (the class may not have run its static constructor).
 STATIC_BASES_RETRY_S = 30
-# Whether pointer scan dialogs open docked in the main window.
-_POINTER_PINNED_KEY = "pointer_scan/pinned"
 
 # The app icon (window and taskbar, see hermes.main; toolbar)
 ICON_PATH = Path(__file__).parent / "resources" / "favicon.svg"
@@ -505,8 +504,8 @@ class MainWindow(QMainWindow):
         self._address_keys = itertools.count(1)
         self._filling_addresses = False
         self._pointer_dialogs = {}
-        # Holds a pinned pointer scan dialog (PointerScanDock), once used.
-        self._pointer_dock = None
+        # The docking areas for dialogs pinned to the main window (as tabs)
+        self.dock_manager = DockManager(self)
         # Looks up managed chain bases (see _request_static_bases)
         self._static_bases_worker = None
         self._static_bases_next = 0.0
@@ -1624,12 +1623,7 @@ class MainWindow(QMainWindow):
         }
         dialog = self._pointer_dialogs.get(meta["id"])
         if dialog is not None:
-            if self._pointer_dock is not None and self._pointer_dock.dialog() is dialog:
-                self._pointer_dock.pin(dialog)
-                return
-            dialog.show()
-            dialog.raise_()
-            dialog.activateWindow()
+            self.dock_manager.show(dialog)
             return
         mono = self._engine is not None and self._engine.id == "mono"
         dialog = PointerScanDialog(
@@ -1645,27 +1639,8 @@ class MainWindow(QMainWindow):
             lambda chains: dialog.show_adopted(self._add_pointer_entries(entry_id, chains))
         )
         dialog.finished.connect(lambda _result: self._pointer_dialogs.pop(entry_id, None))
-        dialog.finished.connect(lambda _result: self._pointer_dock_for().release(dialog))
-        dialog.pin_toggled.connect(lambda pinned: self._pin_pointer_dialog(dialog, pinned))
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        if window_state.settings().value(_POINTER_PINNED_KEY, False, type=bool):
-            self._pointer_dock_for().pin(dialog)
-        else:
-            dialog.show()
-
-    def _pointer_dock_for(self):
-        """The dock for pointer scan dialogs, created on first use."""
-        if self._pointer_dock is None:
-            self._pointer_dock = PointerScanDock(self)
-        return self._pointer_dock
-
-    def _pin_pointer_dialog(self, dialog, pinned):
-        """Dock a pointer scan dialog at the side, or float it; remembered for the next."""
-        window_state.settings().setValue(_POINTER_PINNED_KEY, pinned)
-        if pinned:
-            self._pointer_dock_for().pin(dialog)
-        else:
-            self._pointer_dock_for().unpin(dialog)
+        self.dock_manager.add(dialog, "pointer_scan", RIGHT)
 
     def _selected_scan_address(self):
         """Return the address of the selected scan result, or None."""
@@ -1896,11 +1871,10 @@ class MainWindow(QMainWindow):
             dialog.finished.connect(lambda _result: setattr(self, "_log_dialog", None))
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._log_dialog = dialog
-        else:
-            dialog.refresh()
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
+            self.dock_manager.add(dialog, "log", BOTTOM)
+            return
+        dialog.refresh()
+        self.dock_manager.show(dialog)
 
     def _open_sessions(self):
         """Show the workers attached to processes, to end them if need be."""
@@ -1931,9 +1905,9 @@ class MainWindow(QMainWindow):
                 trace.hook_requested.connect(self.hook_panel.create_method_hook)
             trace.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._trace_dialog = trace
-        trace.show()
-        trace.raise_()
-        trace.activateWindow()
+            self.dock_manager.add(trace, "trace", BOTTOM)
+            return
+        self.dock_manager.show(trace)
 
     def _open_native_trace(self):
         """Show the trace of the native functions a scenario in the game runs."""
@@ -1950,9 +1924,9 @@ class MainWindow(QMainWindow):
             trace.monitor_requested.connect(self._monitor_native_function)
             trace.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._native_trace_dialog = trace
-        trace.show()
-        trace.raise_()
-        trace.activateWindow()
+            self.dock_manager.add(trace, "native_trace", BOTTOM)
+            return
+        self.dock_manager.show(trace)
 
     def _open_code_explorer(self):
         """Show the strings, references and functions of a module of the game.
@@ -1985,9 +1959,9 @@ class MainWindow(QMainWindow):
             dialog.finished.connect(lambda _result: setattr(self, "_objects_dialog", None))
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._objects_dialog = dialog
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
+            self.dock_manager.add(dialog, "object_browser", RIGHT)
+            return
+        self.dock_manager.show(dialog)
 
     def _open_gas_attributes(self):
         """Show the player's GAS attributes (Unreal games); one window at a time."""
@@ -1997,9 +1971,9 @@ class MainWindow(QMainWindow):
             dialog.finished.connect(lambda _result: setattr(self, "_gas_dialog", None))
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._gas_dialog = dialog
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
+            self.dock_manager.add(dialog, "gas", RIGHT)
+            return
+        self.dock_manager.show(dialog)
 
     def _open_favorites(self):
         """Show the favorite methods and functions of the program."""
@@ -2052,11 +2026,11 @@ class MainWindow(QMainWindow):
             monitor.finished.connect(lambda _result: setattr(self, "_native_monitor", None))
             monitor.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._native_monitor = monitor
-        monitor.show()
+            self.dock_manager.add(monitor, "native_monitor", BOTTOM)
+        else:
+            self.dock_manager.show(monitor)
         if function is not None:
             monitor.add_function(function)
-        monitor.raise_()
-        monitor.activateWindow()
         return monitor
 
     def _engine_can(self, method, capability, title):
@@ -2115,9 +2089,10 @@ class MainWindow(QMainWindow):
             monitor.finished.connect(lambda _result: setattr(self, "_method_monitor", None))
             monitor.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._method_monitor = monitor
-        monitor.show()
+            self.dock_manager.add(monitor, "method_monitor", BOTTOM)
+        else:
+            self.dock_manager.show(monitor)
         monitor.add_method(method)
-        monitor.activateWindow()
 
     def _call_method(self, method):
         """Call a method chosen in the catalog or the favorites: a static one, or
@@ -2163,13 +2138,19 @@ class MainWindow(QMainWindow):
                 self.translations["monitor.type_arguments_count"].format(
                     count=len(parameters), parameters=", ".join(parameters)))
 
-    def _close_catalog(self):
-        """Close the catalog, the traces and the method monitor (process gone or switched)."""
+    def _close_process_tools(self):
+        """Close the windows that only make sense with the game running (process
+        gone or switched), docked or not: catalog, traces, monitors, object
+        browser, GAS attributes, memory viewer ... The log stays, and pointer
+        scans stay for a restarted game (see _switch_pointer_dialogs); the
+        panels close the object inspectors with their workers.
+        """
         for name in ("_assemblies_dialog", "_catalog", "_trace_dialog", "_native_trace_dialog",
-                     "_method_monitor", "_native_monitor", "_method_call", "_code_explorer"):
+                     "_method_monitor", "_native_monitor", "_method_call", "_code_explorer",
+                     "_objects_dialog", "_gas_dialog", "_memory_viewer"):
             dialog = getattr(self, name)
             if dialog is not None:
-                dialog.close()
+                close_dialog(dialog)
                 setattr(self, name, None)
 
     def _open_memory_viewer(self, address=None):
@@ -2187,11 +2168,11 @@ class MainWindow(QMainWindow):
             viewer.finished.connect(lambda _result: setattr(self, "_memory_viewer", None))
             viewer.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._memory_viewer = viewer
+            self.dock_manager.add(viewer, "memory_viewer", RIGHT)
+        else:
+            self.dock_manager.show(viewer)
         if address is not None:
             viewer.go_to(address)
-        viewer.show()
-        viewer.raise_()
-        viewer.activateWindow()
 
     def _close_pointer_dialogs(self):
         """Close open pointer scans; they belong to another program."""
@@ -2440,7 +2421,7 @@ class MainWindow(QMainWindow):
         self._write_watch_dialog = dialog
         self._write_watch_stopping = False
         worker.start()
-        dialog.show()
+        self.dock_manager.add(dialog, "write_watch", RIGHT)
 
     def _create_hook(self, address_value, value_type, trap_pc, site, pointer=None):
         # pylint: disable=too-many-arguments
@@ -2540,7 +2521,7 @@ class MainWindow(QMainWindow):
                 worker.wait(timeout_ms)
         dialog = self._write_watch_dialog
         if dialog is not None:
-            dialog.close()
+            close_dialog(dialog)
             self._write_watch_dialog = None
 
     # ------------------------------------------------------------------
@@ -2593,11 +2574,9 @@ class MainWindow(QMainWindow):
                 self._stop_scan_and_refresh()
                 self._stop_write_monitor()
                 self._stop_freeze_worker()
-                self._close_catalog()
+                self._close_process_tools()
                 self._engine = None
                 self._switch_pointer_dialogs(dlg.selected_pid, process_id)
-                if self._memory_viewer is not None:
-                    self._memory_viewer.set_process(dlg.selected_pid)
                 # Wine/Proton cannot take Frida; native processes prefer it.
                 self._auto_select_backend(dlg.selected_pid)
             if self.hook_panel is not None:
@@ -2771,13 +2750,11 @@ class MainWindow(QMainWindow):
         self._stop_write_monitor()
         self._stop_freeze_worker()
         self._switch_pointer_dialogs(None, None)
-        if self._memory_viewer is not None:
-            self._memory_viewer.set_process(None)
         if self.hook_panel is not None:
             self.hook_panel.set_process(None)
         if self.script_panel is not None:
             self.script_panel.set_process(None)
-        self._close_catalog()
+        self._close_process_tools()
 
         self._current_pid = None
         self._debug_registers_used = None
@@ -3212,7 +3189,7 @@ class MainWindow(QMainWindow):
         # the target remove their hooks first; that waits for the target,
         # so the waits here are bounded and the rest happens in a dialog.
         self._sessions_timer.stop()
-        self._close_catalog()
+        self._close_process_tools()
         workers.stop_workers(CLOSING_WORKER_TIMEOUT_MS)
         self._stop_write_monitor()
         self._stop_freeze_worker()

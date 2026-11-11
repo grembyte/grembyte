@@ -18,7 +18,7 @@ Everything in the [engine overview](index.md) is available:
 
 ## Object browser
 
-**View → Object browser …** shows the game's live objects by class, as for [Unreal](unreal.md#object-browser): a package (here: assembly) to focus on, a filter on class and object names, and singletons only. Unity objects show with their name, strings with their text, other C# objects as `Class@address`; a double-click opens one in the [object inspector](index.md#object-inspector).
+**View → Object browser …** shows the game's live objects by class, as for [Unreal](unreal.md#object-browser): a package (here: assembly) to focus on, a filter on class and object names, and singletons only. Unity objects show with their name, strings with their text, other C# objects as `Class@address`; a double-click opens one in the [object inspector](index.md#object-inspector). The browser can be [docked](../guide/tools.md#docking-windows) beside the scanner.
 
 Unity's Mono has no heap walk: `mono_gc_walk_heap` belongs to the SGen collector and does nothing in Unity's Boehm GC. Hermes uses Unity's own liveness calculation instead (`mono_unity_liveness_*`, which `Resources.UnloadUnusedAssets` uses). It finds the objects reachable from the static fields and from Unity's objects. Objects only a thread's stack holds are not among them.
 

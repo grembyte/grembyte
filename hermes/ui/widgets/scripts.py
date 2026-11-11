@@ -36,6 +36,7 @@ from hermes.features.scripts import (
 from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.widgets.docking import close_dialog
 from hermes.ui.widgets.icons import material_icon, set_button_icon, theme_color
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.labels import DocsHint, WrappedLabel
@@ -414,12 +415,22 @@ class ScriptPanel(QGroupBox):
         self._restore_saved_scripts()
 
     def shutdown(self):
-        """Stop the worker; the game keeps nothing of the scripts."""
+        """Stop the worker; the game keeps nothing of the scripts. The object
+        inspectors opened from its results close: their objects are gone."""
         worker = self._worker
         self._worker = None
+        self._close_inspections()
         if worker is not None:
             worker.requestInterruption()
             worker.wait(3000)
+
+    def _close_inspections(self):
+        inspections = self.inspections
+        self.inspections = None
+        if inspections is not None:
+            for inspector in list(inspections.inspectors):
+                close_dialog(inspector)
+            inspections.deleteLater()
 
     def _store(self, action, *args, **kwargs):
         """Run a repository call; report failures instead of raising."""

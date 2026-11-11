@@ -1,5 +1,7 @@
 """The main window: scan results, value search and the tracked addresses."""
 
+from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+
 from hermes.core.pointer import PointerChain
 from studio import DEMO_NAME, scene, settle
 
@@ -73,3 +75,22 @@ def pointer_chain_dialog(studio):
     dialog.show()
     settle()
     return dialog
+
+
+@scene("main-window-docked", size=(1600, 800),
+       description="Main window with the memory viewer and an object inspector docked as tabs")
+def main_window_docked(studio):
+    """The main window with tools docked as tabs (hermes.ui.widgets.docking)."""
+    # pylint: disable=import-outside-toplevel
+    from studio import SCENES
+
+    from hermes.ui.widgets.docking import RIGHT
+
+    window = studio.show_attached()
+    _fill(window)
+    host = window.dock_manager.host(RIGHT)
+    for name in ("memory-viewer", "object-inspector"):
+        host.pin(SCENES[name].build(studio))
+    window.resizeDocks([host], [760], Qt.Orientation.Horizontal)
+    settle()
+    return window

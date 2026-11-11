@@ -46,7 +46,7 @@ A catalog read once is cached; **View → Catalog (offline) …** opens it witho
 
 ## Trace
 
-**View → Trace …** finds the methods that a scenario in the game calls – *which method runs when I buy something?* It hooks the methods of the chosen assemblies and works like the [native trace](../guide/native-tools.md): a **baseline** while the game idles, then the **scenario**; the methods that are new or called more often in the scenario are the candidates. Preselection filters keep large games manageable.
+**View → Trace …** finds the methods that a scenario in the game calls – *which method runs when I buy something?* It hooks the methods of the chosen assemblies and works like the [native trace](../guide/native-tools.md): a **baseline** while the game idles, then the **scenario**; the methods that are new or called more often in the scenario are the candidates. Preselection filters keep large games manageable. The trace can be [docked](../guide/tools.md#docking-windows) at the bottom of the main window.
 
 What the trace cannot see:
 
@@ -60,7 +60,7 @@ What the trace cannot see:
 
 ## Method monitor
 
-The method monitor logs the calls of chosen methods with their arguments, the result and the object they run on.
+The method monitor logs the calls of chosen methods with their arguments, the result and the object they run on. It can be [docked](../guide/tools.md#docking-windows) at the bottom of the main window.
 
 It shares the limits of the trace: calls Mono has inlined are missing. In Unreal games, when a Blueprint calls a native function, the arguments come from the Blueprint's bytecode: variables and constants are shown, other arguments as `?`.
 
@@ -72,6 +72,8 @@ It shares the limits of the trace: calls Mono has inlined are missing. In Unreal
 ## Object inspector
 
 The object inspector shows the fields of an object – for Unity also static fields and properties, for Unreal the UProperties of objects and structs – evaluated on the game's main thread. Open it from an object in the monitor or a script result; fields that hold a value can be handed to the tracked addresses. The filter above the fields keeps those whose name or type contains every word typed, e.g. `health` among the hundreds of fields of an Unreal player character.
+
+Inspectors can be [docked](../guide/tools.md#docking-windows) beside the scanner; an object opened from a docked inspector opens as a tab beside it.
 
 <figure markdown="span">
   ![Object inspector](../assets/screenshots/object-inspector-dark.webp#only-dark)

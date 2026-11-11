@@ -813,7 +813,7 @@
   "inspector.static_const": "(static, constant)",
   "inspector.static_thread": "(static, per thread)",
   "inspector.static_offset": "Offset in the class's static data; the value is at {address}",
-  "inspector.hint": "Shows the current values; “open” shows an object in a window of its own. The game may have freed short-lived objects by now.",
+  "inspector.hint": "Shows the current values; “open” shows an object in an inspector of its own. The game may have freed short-lived objects by now.",
   "inspector.failed": "Could not be read: {message}",
   "inspector.fields": "Fields – read directly from memory",
   "inspector.fields_tooltip": "The data stored in the object itself, with its offset. Hermes reads it from memory without running game code. Static fields belong to the class, not to the object.",
@@ -850,7 +850,7 @@
   "inspector.copy_address": "Copy address",
   "inspector.address_added": "{label} ({address}, {type}) is now on the address list.",
   "inspector.captured": "at the call at {time}",
-  "inspector.hint_captured": "Shows the fields at the time of the call; “open” shows an object with its current values in a window of its own.",
+  "inspector.hint_captured": "Shows the fields at the time of the call; “open” shows an object with its current values in an inspector of its own.",
   "monitor.status_tooltip": "Code at {address}\nParameters: {params}\nReturns: {returns}\nArguments after a struct are not read: where Mono passes them depends on its fields.",
   "monitor.failed": "{method}: {message}",
   "monitor.worker_failed": "The method monitor failed: {message}",
@@ -1029,8 +1029,6 @@
   "pointer.adopted": "{count} candidates added to the address list (chains already in it were skipped).",
   "pointer.adopt_selected": "Add selected to address list",
   "pointer.adopt_selected_tooltip": "Add the selected candidates to the address list, each as an entry of its own.",
-  "pointer.pin": "Pin to main window",
-  "pointer.unpin": "Detach",
   "pointer.pin_tooltip": "Dock this dialog at the side of the main window, next to the scanner, to search the value again after a restart. Kept for the next pointer scan.",
   "pointer.clear_scan": "Remove saved candidates",
   "pointer.clear_scan_tooltip": "Remove the candidates saved for this entry, e.g. once a stable chain is in use. The entry and its pointer stay.",
@@ -1708,5 +1706,8 @@
   "menu.documentation": "Documentation",
   "menu.documentation_tooltip": "Open the online documentation in the browser.",
   "menu.report_bug": "Report a bug …",
-  "menu.report_bug_tooltip": "Open the bug report form on GitHub. Attach the ZIP from Log → Export bug report …."
+  "menu.report_bug_tooltip": "Open the bug report form on GitHub. Attach the ZIP from Log → Export bug report ….",
+  "dock.pin": "Pin to main window",
+  "dock.unpin": "Detach",
+  "dock.pin_tooltip": "Dock this window in the main window, as a tab next to the others docked there. The next window of this kind opens docked as well."
 }

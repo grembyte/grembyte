@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QHeaderView,
 )
 
+from hermes.ui.widgets.docking import PinButton
 from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 
@@ -115,6 +116,8 @@ class WriteWatchDialog(QDialog):
         self.monitor_button.clicked.connect(self._request_monitor)
         buttons.addWidget(self.monitor_button)
         buttons.addStretch()
+        self.pin_button = PinButton(self.translations)
+        buttons.addWidget(self.pin_button)
         self.stop_button = QPushButton(self.translations["watch.stop"])
         set_button_icon(self.stop_button, "stop")
         self.stop_button.clicked.connect(self._request_stop)

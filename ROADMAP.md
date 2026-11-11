@@ -165,6 +165,14 @@ JavaScript:
 - On Linux, callers are checked in JavaScript (no `GetCurrentThreadStackLimits`).
 - A fixed-address hook that learns callers.
 
+### 9. Dockable dialogs in tabs
+
+Done (see [docking windows](docs/guide/tools.md#docking-windows)): two docking areas in the
+main window, right and bottom, with the dialogs as tabs; pointer scan, object inspector,
+object browser, write watch, memory viewer, GAS attributes, the traces, the monitors and the
+log can be docked. Open: the catalog and the code explorer (large windows with their own
+navigation; maybe at the bottom), several memory viewers side by side.
+
 ### Recommendation
 
 The **code explorer and pseudocode** list above comes next, starting with names without PDB.

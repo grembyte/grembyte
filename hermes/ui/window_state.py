@@ -46,9 +46,19 @@ def _path(widget, top):
     return "/".join(reversed(parts))
 
 
+def _owner(widget):
+    """The dialog ``widget`` lies in, docked in the main window or not; else its window."""
+    node = widget.parentWidget()
+    while node is not None:
+        if isinstance(node, QDialog):
+            return node
+        node = node.parentWidget()
+    return widget.window()
+
+
 def view_key(view):
-    """The key a table's column widths are kept under."""
-    window = view.window()
+    """The key a table's column widths are kept under (the same docked or not)."""
+    window = _owner(view)
     return f"{type(window).__name__}/{_path(view, window)}"
 
 

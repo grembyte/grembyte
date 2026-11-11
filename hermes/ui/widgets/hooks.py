@@ -41,6 +41,7 @@ from hermes.hooks.transforms import (
 from hermes.hooks.syntax import BODY
 from hermes.ui.widgets.code_editor import CodeEditor
 from hermes.ui.widgets.dialog_buttons import dialog_button_row
+from hermes.ui.widgets.docking import close_dialog
 from hermes.ui.widgets.hook_debug import HookDebugWindow
 from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.inspection import Inspections
@@ -1611,7 +1612,7 @@ class HookPanel(QGroupBox):
         self._log_targets.clear()
         if inspections is not None:
             for inspector in list(inspections.inspectors):
-                inspector.close()
+                close_dialog(inspector)
             inspections.deleteLater()
 
     # ------------------------------------------------------------------

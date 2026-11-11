@@ -1,8 +1,25 @@
-# Memory, sessions and logs
+# Docking, memory, sessions and logs
+
+## Docking windows
+
+Windows of their own cannot be kept beside the main window on every desktop (Wayland does not let programs place their windows). The tools you keep using while the game runs can therefore be docked in the main window instead: **Pin to main window** in the tool's window docks it as a tab, **Detach** gives it a window of its own again.
+
+<figure markdown="span">
+  ![Docked tools](../assets/screenshots/main-window-docked-dark.webp#only-dark)
+  ![Docked tools](../assets/screenshots/main-window-docked-light.webp#only-light)
+  <figcaption>The memory viewer and an object inspector docked beside the scanner.</figcaption>
+</figure>
+
+- **At the side:** pointer scan, object inspector, object browser, write watch, memory viewer, GAS attributes.
+- **At the bottom**, where wide tables have room: trace, native trace, method monitor, native function monitor, log.
+- Each side holds its windows as tabs. The ✕ on a tab, or a middle click, closes the window. A docked object inspector shows the object's name in its tab (else its class); the full title is in the tooltip.
+- Hermes remembers per kind of window whether the last one was docked: the next opens the same way. An object opened from a docked inspector opens as a tab beside it.
+- When the game ends or another program is chosen, the tools close, docked or not. The log stays, and so does the [pointer scan](pointer-scan.md#finding-a-chain): it is meant to find the value again after a restart.
+
 
 ## Memory viewer
 
-**Memory** in the toolbar, or **Show in memory viewer** in the context menu of an address, shows the memory around an address as bytes and as text.
+**Memory** in the toolbar, or **Show in memory viewer** in the context menu of an address, shows the memory around an address as bytes and as text. It can be [docked](#docking-windows) beside the scanner.
 
 <figure markdown="span">
   ![Memory viewer](../assets/screenshots/memory-viewer-dark.webp#only-dark)
@@ -33,7 +50,7 @@ Methods and functions found in the catalog, a trace or the native trace can be m
 
 ## Log and activity
 
-**Log** in the status bar opens the log window. It turns red when errors were logged.
+**Log** in the status bar opens the log window. It turns red when errors were logged. The log can be [docked](#docking-windows) at the bottom of the main window.
 
 The **Activity** tab shows the activity log: the course of every run, written to `activity.jsonl` in the log folder. It records
 

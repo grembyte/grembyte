@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QCheckBox,
     QComboBox,
     QDialog,
-    QDockWidget,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
@@ -20,7 +19,6 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
-    QWidget,
 )
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -44,6 +42,7 @@ from hermes.platform import (
 from hermes.db.repository.addresses import SavedPointerScan
 from hermes.features import managed_statics
 from hermes.ui import window_state
+from hermes.ui.widgets.docking import PinButton
 from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.labels import DocsHint, WrappedLabel
 from hermes.ui.widgets.spin_boxes import SpinBox
@@ -203,9 +202,6 @@ class PointerScanDialog(QDialog):
     chain_chosen = Signal(object)
     # Candidates (list of PointerChain) to add to the address list as entries.
     chains_adopted = Signal(object)
-    # The pin button: True to dock the dialog in the main window, False to
-    # float it again (see PointerScanDock).
-    pin_toggled = Signal(bool)
 
     def __init__(self, translations, repository, pid, entry, parent=None,
                  address_source=None, assemblies=None):
@@ -386,12 +382,9 @@ class PointerScanDialog(QDialog):
         self.btn_clear.clicked.connect(self.clear_scan)
         bottom.addWidget(self.btn_clear)
         bottom.addStretch()
-        self.btn_pin = QPushButton(self.translations["pointer.pin"])
-        set_button_icon(self.btn_pin, "push_pin")
-        self.btn_pin.setCheckable(True)
-        self.btn_pin.setToolTip(self.translations["pointer.pin_tooltip"])
-        self.btn_pin.toggled.connect(self._on_pin_toggled)
-        bottom.addWidget(self.btn_pin)
+        # Docks the dialog in the main window (see hermes.ui.widgets.docking)
+        self.pin_button = PinButton(self.translations, "pointer.pin_tooltip")
+        bottom.addWidget(self.pin_button)
         close = QPushButton(self.translations["templates.close"])
         set_button_icon(close, "close")
         close.clicked.connect(self.reject)
@@ -814,17 +807,6 @@ class PointerScanDialog(QDialog):
             return
         self.chains_adopted.emit(chains[:ADOPT_LIMIT])
 
-    def set_pinned(self, pinned):
-        """Show whether the dialog is docked, without asking to change it."""
-        self.btn_pin.blockSignals(True)
-        self.btn_pin.setChecked(pinned)
-        self.btn_pin.blockSignals(False)
-        self.btn_pin.setText(self.translations["pointer.unpin" if pinned else "pointer.pin"])
-
-    def _on_pin_toggled(self, pinned):
-        self.btn_pin.setText(self.translations["pointer.unpin" if pinned else "pointer.pin"])
-        self.pin_toggled.emit(pinned)
-
     def clear_scan(self):
         """Remove the saved candidates of this entry; its pointer stays."""
         if self._scan is None or self._worker is not None:
@@ -861,69 +843,3 @@ class PointerScanDialog(QDialog):
             self._worker.requestInterruption()
             self._worker.wait(STOP_TIMEOUT_MS)
         super().done(result)
-
-
-class PointerScanDock(QDockWidget):
-    """A side of the main window holding one pointer scan dialog.
-
-    Docked, the dialog stays next to the scanner while the value is searched
-    again after a restart; a window of its own could not be kept there, since
-    Wayland does not let programs place their windows. The dock holds one
-    dialog: pinning another floats the one before. Closing the dock closes
-    its dialog, and a dialog that finishes leaves the dock.
-    """
-
-    def __init__(self, window):
-        super().__init__(window)
-        self.setObjectName("pointer_scan_dock")
-        self.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea
-                             | Qt.DockWidgetArea.RightDockWidgetArea)
-        self.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable
-                         | QDockWidget.DockWidgetFeature.DockWidgetMovable)
-        self._window = window
-        window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self)
-        self.hide()
-
-    def dialog(self):
-        """The docked PointerScanDialog, or None."""
-        widget = self.widget()
-        return widget if isinstance(widget, PointerScanDialog) else None
-
-    def pin(self, dialog):
-        """Dock ``dialog`` (floating the one docked before)."""
-        current = self.dialog()
-        if current is dialog:
-            self.show()
-            return
-        if current is not None:
-            self.unpin(current)
-        dialog.setParent(self, Qt.WindowType.Widget)
-        self.setWidget(dialog)
-        self.setWindowTitle(dialog.windowTitle())
-        dialog.set_pinned(True)
-        dialog.show()
-        self.show()
-        self.raise_()
-
-    def unpin(self, dialog):
-        """Give ``dialog`` a window of its own again."""
-        if self.dialog() is not dialog:
-            return
-        self.setWidget(QWidget())
-        dialog.setParent(self._window, Qt.WindowType.Dialog)
-        dialog.set_pinned(False)
-        dialog.show()
-        self.hide()
-
-    def release(self, dialog):
-        """``dialog`` finished: empty the dock if it held it."""
-        if self.dialog() is dialog:
-            self.setWidget(QWidget())
-            self.hide()
-
-    def closeEvent(self, event):  # pylint: disable=invalid-name
-        """The dock's close button closes its dialog."""
-        dialog = self.dialog()
-        if dialog is not None:
-            dialog.reject()
-        super().closeEvent(event)

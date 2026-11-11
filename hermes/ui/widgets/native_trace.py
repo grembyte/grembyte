@@ -20,6 +20,7 @@ from hermes.platform import is_wine_process
 from hermes.features.favorites import NATIVE_TRACE
 from hermes.features.native_trace import NativeTraceWorker, apply_names
 from hermes.features.trace import analyze, recording_calls
+from hermes.ui.widgets.docking import PinButton
 from hermes.ui.widgets.favorites import FAVORITE_COLUMN
 from hermes.ui.widgets.icons import set_button_icon
 from hermes.ui.widgets.labels import DocsHint, SelectableText
@@ -236,6 +237,8 @@ class NativeTraceDialog(QDialog):
         set_button_icon(self.copy_button, "content_copy")
         self.copy_button.clicked.connect(self._copy_address)
         actions.addWidget(self.copy_button)
+        self.pin_button = PinButton(t)
+        actions.addWidget(self.pin_button)
         layout.addLayout(actions)
 
         self.status_label = QLabel("")

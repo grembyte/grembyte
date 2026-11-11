@@ -98,7 +98,7 @@ nav:
       - Scripts: guide/scripts.md
       - Native trace and monitor: guide/native-tools.md
       - Code explorer: guide/code-explorer.md
-      - Memory, sessions and logs: guide/tools.md
+      - Docking, memory, sessions and logs: guide/tools.md
       - Settings and themes: guide/settings.md
       - Saving, export and import: guide/data.md
   - Engines:

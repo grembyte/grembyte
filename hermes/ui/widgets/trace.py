@@ -32,6 +32,7 @@ from hermes.features.trace import (
 )
 from hermes.features.catalog import short_name
 from hermes.features.favorites import TRACE
+from hermes.ui.widgets.docking import PinButton
 from hermes.ui.widgets.favorites import (
     FAVORITE_COLUMN,
     FAVORITE_COLUMN_KEY,
@@ -467,6 +468,8 @@ class TraceDialog(QDialog):
                                    (self.hook_button, engine_base.METHOD_HOOKS)):
             if not self.engine.supports(capability):
                 button.setToolTip(unsupported)
+        self.pin_button = PinButton(self.translations)
+        actions.addWidget(self.pin_button)
         layout.addLayout(actions)
 
         self.status_label = QLabel("")

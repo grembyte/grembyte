@@ -31,7 +31,7 @@ Many shipping builds keep their cheat manager: in Avowed `BP_CheatManager_C` (an
 
 ## Object browser
 
-**View → Object browser …** shows every live object of the game by its class, read from `GUObjectArray`. Each class shows with how many objects of exactly that class live. Opening a class lists its objects as `"name"@address`; the tooltip names the object's outer. A double-click, or **Open in inspector**, opens an object in the [object inspector](index.md#object-inspector).
+**View → Object browser …** shows every live object of the game by its class, read from `GUObjectArray`. Each class shows with how many objects of exactly that class live. Opening a class lists its objects as `"name"@address`; the tooltip names the object's outer. A double-click, or **Open in inspector**, opens an object in the [object inspector](index.md#object-inspector). The browser can be [docked](../guide/tools.md#docking-windows) beside the scanner.
 
 - **Packages:** all of them, **Game only** (without the engine's and its plugins'), or one package as the catalog groups them (`/Script/<Module>`, `/Game/<Folder>`).
 - **Filter:** a class whose name contains all the words shows with all its objects. A class with objects named so shows with only those, e.g. `sidekick` finds `BP_Hero_C` with its `Sidekick` object.
@@ -42,7 +42,7 @@ The tree is a snapshot: **Refresh** reads the object table again. A class lists 
 
 ## GAS attributes
 
-Games built on Unreal's Gameplay Ability System keep values such as health, strength or damage multipliers as *attributes*. **View → GAS attributes …** shows the player's attribute sets with base and current value, live.
+Games built on Unreal's Gameplay Ability System keep values such as health, strength or damage multipliers as *attributes*. **View → GAS attributes …** shows the player's attribute sets with base and current value, live. The window can be [docked](../guide/tools.md#docking-windows) beside the scanner.
 
 !!! note "Games without GAS"
     Not every Unreal game keeps its values with GAS, even when the plugin is loaded: Queen's Domain, for one, keeps health, level and potions in plain fields of the player character. The table then stays empty and the window says:

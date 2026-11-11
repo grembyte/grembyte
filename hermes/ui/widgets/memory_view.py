@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 from hermes.core.memory import describe_address, parse_address, read_memory
 from hermes.platform import read_mappings
 from hermes.core.value_types import VALUE_TYPES
+from hermes.ui.widgets.docking import PinButton
 from hermes.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 
 BYTES_PER_ROW = 16
@@ -219,6 +220,8 @@ class MemoryViewerDialog(QDialog):
         self.live.setChecked(True)
         self.live.toggled.connect(self._toggle_live)
         bar.addWidget(self.live)
+        self.pin_button = PinButton(self.translations)
+        bar.addWidget(self.pin_button)
         layout.addLayout(bar)
         QShortcut(QKeySequence("Ctrl+G"), self, self.address_input.setFocus)
 

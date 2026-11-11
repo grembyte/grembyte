@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 
 from hermes.core import messages
 from hermes.ui import window_state
+from hermes.ui.widgets.docking import TAB_TITLE, PinButton
 from hermes.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 from hermes.ui.widgets.labels import SelectableText
 from hermes.ui.widgets.table import add_copy_actions, copy_menu, resizable_columns, set_row_height
@@ -135,6 +136,16 @@ class InspectorSection(QWidget):
         self.toggled.emit(is_open)
 
 
+def short_type_name(name):
+    """A type's name without namespace or outer classes, its type arguments kept:
+    ``Game.Combat+Health`` → ``Health``, ``System.Collections.Generic.List<Game.Item>``
+    → ``List<Game.Item>``."""
+    head, bracket, rest = name.partition("<")
+    for separator in (".", "+", "/", "::"):
+        head = head.rsplit(separator, 1)[-1]
+    return head + bracket + rest
+
+
 class ObjectInspectorDialog(QDialog):
     """Show the fields of an object, array or struct.
 
@@ -196,6 +207,7 @@ class ObjectInspectorDialog(QDialog):
         # the property whose setter was called last, to show its new value
         self._setting = None
         self._type_name = "?"
+        self._shown_name = None
         self._set_window_title("?")
         self.resize(860, 760)
         self._build_ui(live=contents is None)
@@ -232,6 +244,8 @@ class ObjectInspectorDialog(QDialog):
         else:
             self.live_check.hide()
             self.refresh_button.hide()
+        self.pin_button = PinButton(self.translations)
+        bar.addWidget(self.pin_button)
         layout.addLayout(bar)
 
         self.fields_section = InspectorSection(
@@ -405,6 +419,15 @@ class ObjectInspectorDialog(QDialog):
         # e.g. "Objekt-Inspektor - attacker (UnityEngine.GameObject) (1)"
         self.setWindowTitle(self.translations["inspector.window_title"].format(
             name=self.name or "?", type=type_name, depth=self.depth))
+        # Docked, the tab shows a short title (see DockHost): the object's own
+        # name, else its class without namespace (``Health``)
+        if self._shown_name:
+            short = self._shown_name
+        elif type_name != "?":
+            short = short_type_name(type_name)
+        else:
+            short = self.name or "?"
+        self.setProperty(TAB_TITLE, short)
 
     def _toggle_live(self, live):
         if live:
@@ -485,6 +508,8 @@ class ObjectInspectorDialog(QDialog):
         class_name = contents.get("name", "?")
         address = contents.get("address", "")
         instance_name = contents.get("instanceName") or self.instance_name
+        # The object's own name, from the agent or the caller
+        self._shown_name = instance_name
         title = (f"{class_name} {json.dumps(instance_name, ensure_ascii=False)}@{address}"
                  if instance_name is not None else f"{class_name} @ {address}")
         if "length" in contents:

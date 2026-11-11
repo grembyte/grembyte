@@ -26,6 +26,7 @@ from hermes.engines import base as engine_base
 from hermes.engines.registry import engine_by_id
 from hermes.features.catalog import short_name
 from hermes.features.monitor import MethodMonitorWorker
+from hermes.ui.widgets.docking import PinButton
 from hermes.ui.widgets.icons import set_button_icon, theme_color
 from hermes.ui.widgets.inspection import Inspections
 from hermes.ui.widgets.object_inspector import link_label, link_width
@@ -258,6 +259,8 @@ class MethodMonitorDialog(QDialog):
         self.hook_button.clicked.connect(self._request_hook)
         buttons.addWidget(self.hook_button)
         buttons.addStretch()
+        self.pin_button = PinButton(self.translations)
+        buttons.addWidget(self.pin_button)
         top_layout.addLayout(buttons)
         splitter.addWidget(top)
 

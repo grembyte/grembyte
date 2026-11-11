@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 
 from hermes.core import activity, logs
+from hermes.ui.widgets.docking import PinButton
 from hermes.ui.widgets.icons import set_button_icon, theme_color
 
 
@@ -115,6 +116,8 @@ class LogDialog(QDialog):
         export.setToolTip(translations["log.export_tooltip"])
         export.clicked.connect(self._export)
         buttons.addWidget(export)
+        self.pin_button = PinButton(translations)
+        buttons.addWidget(self.pin_button)
         layout.addLayout(buttons)
         self.refresh()
 
