@@ -221,6 +221,10 @@ class _FakeScriptWorker:
             gas_set_failed = Signal(int, str)
             options_listed = Signal(int, object)
             options_failed = Signal(int, str)
+            classes_browsed = Signal(int, object)
+            browse_failed = Signal(int, str)
+            instances_browsed = Signal(int, object)
+            instances_failed = Signal(int, str)
             finished = Signal()
 
         self.signals = Signals()
@@ -244,6 +248,10 @@ class _FakeScriptWorker:
         self.gas_set_failed = self.signals.gas_set_failed
         self.options_listed = self.signals.options_listed
         self.options_failed = self.signals.options_failed
+        self.classes_browsed = self.signals.classes_browsed
+        self.browse_failed = self.signals.browse_failed
+        self.instances_browsed = self.signals.instances_browsed
+        self.instances_failed = self.signals.instances_failed
         self.finished = self.signals.finished
         self.requests = []
 
@@ -292,6 +300,14 @@ class _FakeScriptWorker:
 
     def gas_set_base(self, name, value):
         self.requests.append(("gas_set_base", name, value))
+        return len(self.requests)
+
+    def browse_classes(self, filter_text="", internal=False):
+        self.requests.append(("browse_classes", filter_text, internal))
+        return len(self.requests)
+
+    def browse_instances(self, klass, filter_text="", internal=False):
+        self.requests.append(("browse_instances", klass, filter_text, internal))
         return len(self.requests)
 
 

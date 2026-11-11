@@ -29,6 +29,17 @@ Not possible as arguments: `TArray`, `TMap`, `TSet`, `FText` and delegates.
 
 Many shipping builds keep their cheat manager: in Avowed `BP_CheatManager_C` (an `AlabamaCheatManager`) has 147 functions with code, such as `GiveHealth`, `AddCurrency` and `ToggleUnlimitedStamina`.
 
+## Object browser
+
+**View → Object browser …** shows every live object of the game by its class, read from `GUObjectArray`. Each class shows with how many objects of exactly that class live. Opening a class lists its objects as `"name"@address`; the tooltip names the object's outer. A double-click, or **Open in inspector**, opens an object in the [object inspector](index.md#object-inspector).
+
+- **Packages:** all of them, **Game only** (without the engine's and its plugins'), or one package as the catalog groups them (`/Script/<Module>`, `/Game/<Folder>`).
+- **Filter:** a class whose name contains all the words shows with all its objects. A class with objects named so shows with only those, e.g. `sidekick` finds `BP_Hero_C` with its `Sidekick` object.
+- **Singletons only:** classes with exactly one object. These are either the engine's single-instance classes (game instance, subsystems, game mode, game state, player controller, …) and their subclasses, or game classes. The *Singleton* column names the engine class.
+- **Templates and reflection:** class default objects (`Default__…`), archetypes and the reflection objects themselves (packages, classes, functions, structs, enums) are left out unless this is checked.
+
+The tree is a snapshot: **Refresh** reads the object table again. A class lists at most 5,000 objects; the filter narrows them.
+
 ## GAS attributes
 
 Games built on Unreal's Gameplay Ability System keep values such as health, strength or damage multipliers as *attributes*. **View → GAS attributes …** shows the player's attribute sets with base and current value, live.

@@ -273,6 +273,12 @@ class ScriptWorker(QThread):
     # request id, {base, current} after setting a base value
     gas_set = Signal(int, object)
     gas_set_failed = Signal(int, str)
+    # request id, the classes with live objects (see browse_classes)
+    classes_browsed = Signal(int, object)
+    browse_failed = Signal(int, str)
+    # request id, the objects of one class (see browse_instances)
+    instances_browsed = Signal(int, object)
+    instances_failed = Signal(int, str)
     # request id, a choice parameter's options [{label, value}] (see script_options)
     options_listed = Signal(int, object)
     options_failed = Signal(int, str)
@@ -361,6 +367,33 @@ class ScriptWorker(QThread):
         self._commands.put(("gas_set_base", request_id, (name, float(value))))
         return request_id
 
+    def browse_classes(self, filter_text="", internal=False):
+        """List the classes with live objects (object browser); expect
+        classes_browsed or browse_failed.
+
+        The answer is ``{objects, classes: [{klass, name, cppName, package,
+        count, role, matched}]}``: ``count`` objects of exactly that class,
+        ``matched`` of them named with all words of ``filter_text``; ``role``
+        the engine class that makes it a singleton, or None. ``internal`` also
+        counts class default objects, templates and reflection objects.
+        """
+        request_id = next(self._requests)
+        self._commands.put(("browse_classes", request_id,
+                            {"filter": filter_text, "internal": bool(internal)}))
+        return request_id
+
+    def browse_instances(self, klass, filter_text="", internal=False):
+        """List the live objects of class ``klass`` (an address as browse_classes
+        gives it); expect instances_browsed or instances_failed.
+
+        The answer is ``{instances: [{address, name, outer}], count,
+        truncated}``, with ``filter_text`` only the objects named so.
+        """
+        request_id = next(self._requests)
+        self._commands.put(("browse_instances", request_id,
+                            (klass, {"filter": filter_text, "internal": bool(internal)})))
+        return request_id
+
     def full_text(self, text_id):
         """Fetch the whole text of a long string value (its ``fullText``)."""
         request_id = next(self._requests)
@@ -442,6 +475,8 @@ class ScriptWorker(QThread):
         "gas_attributes": ("gas_attributes", "gas_listed", "gas_failed"),
         "gas_set_base": ("gas_set_base", "gas_set", "gas_set_failed"),
         "options": ("script_options", "options_listed", "options_failed"),
+        "browse_classes": ("browse_classes", "classes_browsed", "browse_failed"),
+        "browse_instances": ("browse_instances", "instances_browsed", "instances_failed"),
     }
 
     def _answer(self, api, action, request_id, argument):

@@ -167,8 +167,8 @@ const unreal = (() => {
     const size = ue.objects.itemSize;
     const chunks = table.readPointer();
     const count = table.add(0x14).readS32();
-    const s = { address: [], klass: [], name: [], number: [], outer: [], index: new Map(),
-                read: Date.now() };
+    const s = { address: [], klass: [], name: [], number: [], outer: [], flags: [],
+                index: new Map(), read: Date.now() };
     for (let chunk = 0; chunk * CHUNK < count; chunk++) {
       const inChunk = Math.min(CHUNK, count - chunk * CHUNK);
       const items = chunks.add(8 * chunk).readPointer();
@@ -191,6 +191,7 @@ const unreal = (() => {
         s.name.push(object.getUint32(OBJECT_NAME, true));
         s.number.push(object.getUint32(OBJECT_NAME + 4, true));
         s.outer.push(u64(object, OBJECT_OUTER));
+        s.flags.push(object.getUint32(OBJECT_FLAGS, true));
       }
     }
     return s;
@@ -2155,8 +2156,7 @@ const unreal = (() => {
     // an archetype, or a part of one or of a class (a widget in a Widget
     // Blueprint's tree, the template of the widgets shown).
     for (let k = i; k !== undefined; k = s.index.get(s.outer[k])) {
-      if (objectName(s, k).startsWith('Default__')
-          || (ptr(s.address[k]).add(OBJECT_FLAGS).readU32() & RF_TEMPLATE) !== 0
+      if (objectName(s, k).startsWith('Default__') || (s.flags[k] & RF_TEMPLATE) !== 0
           || (k !== i && isClass(s, s.klass[k], classKinds)))
         return true;
     }
@@ -2238,6 +2238,191 @@ const unreal = (() => {
     snapshot = null;
     // (Frida's JavaScript on Windows has no Infinity: it is NaN there.)
     return searchObjects(klass, named, Number.MAX_SAFE_INTEGER);
+  }
+
+  // --- Object browser: every live object, by its class ---------------------------
+  // One pass over the object table groups the objects by their exact class.
+  // Class default objects, archetypes and their parts (see isTemplate), and
+  // the reflection objects (packages, classes, functions, structs, enums)
+  // are left out unless ``internal`` asks for them. Memory reads only: on
+  // the agent's thread, also while the game is paused.
+
+  // Engine classes a game has one object of (or of a subclass of them); the
+  // first of a class's chain names its role
+  const SINGLETON_BASES = new Set(['GameEngine', 'Engine', 'GameInstance', 'Subsystem',
+    'GameModeBase', 'GameStateBase', 'WorldSettings', 'GameUserSettings', 'AssetManager',
+    'GameViewportClient', 'LocalPlayer', 'PlayerController', 'CheatManager']);
+  // Instances a class lists at most (the filter narrows them)
+  const MAX_INSTANCES = 5000;
+
+  function filterWords(filter) {
+    // The words all of which a name must contain (case does not matter)
+    return String(filter || '').toLowerCase().split(/\s+/).filter(word => word !== '');
+  }
+
+  function matchesWords(text, words) {
+    const lower = text.toLowerCase();
+    return words.every(word => lower.includes(word));
+  }
+
+  function browseState(internal) {
+    // What the browser asks of every object, cached by class: whether it is
+    // shown (reflection objects only with ``internal``) and whether index i
+    // is a template.
+    const L = ue.layout;
+    const s = objects();
+    const reflectionKinds = new Set([L.structClass, L.enumClass, L.packageClass]);
+    const classKinds = new Map();
+    const shownClasses = new Map();
+    const shown = klass => {
+      let result = shownClasses.get(klass);
+      if (result === undefined) {
+        result = klass !== 0;
+        for (let current = klass; result && current !== 0 && !internal;
+          current = superOf(current)) {
+          if (reflectionKinds.has(current))
+            result = false;
+        }
+        shownClasses.set(klass, result);
+      }
+      return result;
+    };
+    // isTemplate for every object, each outer's answer kept: games keep
+    // hundreds of thousands of objects, mostly in a few outers. 0: not known
+    // yet, 1: no template, 2: one (or a part of one or of a class).
+    const insideTemplate = new Uint8Array(s.address.length);
+    const ownTemplate = i => objectName(s, i).startsWith('Default__')
+      || (s.flags[i] & RF_TEMPLATE) !== 0;
+    const inside = i => {
+      // Whether an object in outer ``i`` is part of a template or a class
+      const path = [];
+      let k = i, result = false;
+      for (; k !== undefined; k = s.index.get(s.outer[k])) {
+        if (insideTemplate[k] !== 0) {
+          result = insideTemplate[k] === 2;
+          break;
+        }
+        path.push(k);
+        if (ownTemplate(k) || isClass(s, s.klass[k], classKinds)) {
+          result = true;
+          break;
+        }
+      }
+      for (const known of path)
+        insideTemplate[known] = result ? 2 : 1;
+      return result;
+    };
+    const isTemplateObject = i => {
+      if (ownTemplate(i))
+        return true;
+      const outer = s.index.get(s.outer[i]);
+      return outer !== undefined && inside(outer);
+    };
+    const isShown = i => {
+      try {
+        return shown(s.klass[i]) && (internal || !isTemplateObject(i));
+      } catch (_error) {
+        return false;  // freed meanwhile
+      }
+    };
+    return { s, isShown };
+  }
+
+  function classPackage(s, klass) {
+    // The catalog's group of the package a class is in (/Script/Engine,
+    // /Game/Blueprints), or '' if it is in none
+    let i = s.index.get(klass);
+    while (i !== undefined && s.outer[i] !== 0)
+      i = s.index.get(s.outer[i]);
+    return i === undefined ? '' : packageGroup(objectName(s, i));
+  }
+
+  function singletonRole(klass) {
+    // The engine class (SINGLETON_BASES) ``klass`` is or derives from, or null
+    for (let current = klass; current !== 0; current = superOf(current)) {
+      const name = nameOfAddress(current);
+      if (SINGLETON_BASES.has(name))
+        return name;
+    }
+    return null;
+  }
+
+  function browseClasses(options = {}) {
+    // The classes with live objects: [{klass, name, cppName, package, count,
+    // role, matched}], read from the object table anew. ``filter`` (words):
+    // ``matched`` is how many of a class's objects are named so; ``internal``
+    // also counts templates and reflection objects.
+    reflection();
+    snapshot = null;
+    const { s, isShown } = browseState(Boolean(options.internal));
+    const words = filterWords(options.filter);
+    const byClass = new Map();
+    let total = 0;
+    for (let i = 0; i < s.address.length; i++) {
+      if (!isShown(i))
+        continue;
+      const klass = s.klass[i];
+      let entry = byClass.get(klass);
+      if (entry === undefined) {
+        entry = { count: 0, matched: 0 };
+        byClass.set(klass, entry);
+      }
+      entry.count++;
+      total++;
+      if (words.length > 0 && matchesWords(objectName(s, i), words))
+        entry.matched++;
+    }
+    const classes = [];
+    for (const [klass, entry] of byClass) {
+      let name;
+      try {
+        name = nameOfAddress(klass);
+      } catch (_error) {
+        continue;
+      }
+      if (name === null)
+        continue;  // a class that is no object of the table (any more)
+      let role = null, cpp = name;
+      try {
+        role = singletonRole(klass);
+        cpp = cppName(klass);
+      } catch (_error) {
+        // a class whose chain cannot be read: no role
+      }
+      classes.push({ klass: ptr(klass).toString(), name, cppName: cpp,
+                     package: classPackage(s, klass), count: entry.count, role,
+                     matched: entry.matched });
+    }
+    classes.sort((a, b) => a.name.localeCompare(b.name));
+    return { classes, objects: total };
+  }
+
+  function browseInstances(klass, options = {}) {
+    // The live objects of exactly class ``klass`` (as browseClasses lists
+    // it): {instances: [{address, name, outer}], count, truncated}, with
+    // ``filter`` those named so, at most ``limit``.
+    reflection();
+    const wanted = Number(ptr(klass).toString());
+    const { s, isShown } = browseState(Boolean(options.internal));
+    const words = filterWords(options.filter);
+    const limit = options.limit > 0 ? options.limit : MAX_INSTANCES;
+    const instances = [];
+    let count = 0;
+    for (let i = 0; i < s.address.length; i++) {
+      if (s.klass[i] !== wanted || !isShown(i))
+        continue;
+      const name = objectName(s, i);
+      if (words.length > 0 && !matchesWords(name, words))
+        continue;
+      count++;
+      if (instances.length >= limit)
+        continue;
+      const outer = s.index.get(s.outer[i]);
+      instances.push({ address: ptr(s.address[i]).toString(), name,
+                       outer: outer === undefined ? null : objectName(s, outer) });
+    }
+    instances.sort((a, b) => a.name.localeCompare(b.name));
+    return { instances, count, truncated: count > instances.length };
   }
 
   // --- Gameplay Ability System: the player's attributes -----------------------------
@@ -2574,6 +2759,8 @@ const unreal = (() => {
     findObject,
     findObjects,
     outerName,
+    browseClasses,
+    browseInstances,
     gasAttributes,
     gasSetBase,
     classChain,

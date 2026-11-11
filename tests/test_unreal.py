@@ -1463,3 +1463,73 @@ def test_gas_base_values_are_set_through_angelscript_attribute_sets(tmp_path, qt
         worker.requestInterruption()
         worker.wait(5000)
         target.close()
+
+
+@requires_target
+def test_object_browser_lists_live_objects_by_class(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from hermes.features.scripts import ScriptWorker
+
+    target = _Target(_build(tmp_path))
+    worker = ScriptWorker(target.pid)
+    answers, failed = [], []
+    worker.classes_browsed.connect(lambda _request, answer: answers.append(answer))
+    worker.browse_failed.connect(lambda _request, message: failed.append(message))
+    worker.instances_browsed.connect(lambda _request, answer: answers.append(answer))
+    worker.instances_failed.connect(lambda _request, message: failed.append(message))
+
+    def ask(request, *args):
+        answers.clear()
+        failed.clear()
+        getattr(worker, request)(*args)
+        _wait_for(qt_app, lambda: answers or failed)
+        assert not failed, failed
+        return answers[0]
+
+    try:
+        worker.start()
+        # By exact class, with the catalog's package groups; no class default
+        # objects, templates (the rival's in its Blueprint class) or
+        # reflection objects (packages, classes, functions, structs)
+        listed = ask("browse_classes")
+        classes = {entry["name"]: entry for entry in listed["classes"]}
+        assert {name: (entry["count"], entry["package"], entry["role"])
+                for name, entry in classes.items()} == {
+            "AbilitySystemComponent": (1, "/Script/GameplayAbilities", None),
+            "BP_Hero_C": (3, "/Game/Blueprints", None),
+            "HeroAttributeSet": (2, "/Script/FakeGame", None),
+            "Object": (5000, "/Script/CoreUObject", None),
+            "PlayerController": (1, "/Script/Engine", "PlayerController"),
+            "WidgetTree": (1, "/Script/Engine", None)}
+        assert listed["objects"] == 5008
+        assert classes["BP_Hero_C"]["cppName"] == "ABP_Hero_C"
+        hero = classes["BP_Hero_C"]["klass"]
+
+        # A class's objects, named in their outer
+        instances = ask("browse_instances", hero)
+        assert [(entry["name"], entry["outer"]) for entry in instances["instances"]] == [
+            ("BP_Hero_C_0", "/Game/Maps/Start"), ("BP_Hero_C_1", "/Game/Maps/Start"),
+            ("Sidekick", "WidgetTree_7")]
+        assert all(int(entry["address"], 16) for entry in instances["instances"])
+        assert (instances["count"], instances["truncated"]) == (3, False)
+
+        # The filter: how many objects of each class are named so, and those
+        listed = ask("browse_classes", "SIDE kick")
+        assert {entry["name"]: entry["matched"] for entry in listed["classes"]
+                if entry["matched"]} == {"BP_Hero_C": 1}
+        instances = ask("browse_instances", hero, "side")
+        assert [entry["name"] for entry in instances["instances"]] == ["Sidekick"]
+
+        # Templates and reflection on request
+        listed = ask("browse_classes", "default", True)
+        matched = {entry["name"]: entry["matched"] for entry in listed["classes"]
+                   if entry["matched"]}
+        assert matched["Object"] == 1 and matched["Hero"] == 1
+        assert {"Class", "Package", "Function", "ScriptStruct"} <= {
+            entry["name"] for entry in listed["classes"]}
+        instances = ask("browse_instances", hero, "", True)
+        assert instances["count"] == 4  # with the rival's template
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()

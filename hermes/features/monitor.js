@@ -2532,6 +2532,17 @@ function gasFindSet(pattern) {
   return set === undefined ? null : set.name;
 }
 
+// --- Object browser: the live objects by class (see the adapters' browseClasses) --------
+// Memory reads only: on the agent's thread, also while the game is paused.
+
+function browseClasses(options) {
+  return engine.browseClasses(options || {});
+}
+
+function browseInstances(klass, options) {
+  return engine.browseInstances(ptr(klass), options || {});
+}
+
 // ctx.gas in scripts (they run on the game thread)
 const scriptGas = {
   attributes: gasAttributes,
@@ -2612,6 +2623,8 @@ rpc.exports = {
   },
   gasAttributes,
   gasSetBase,
+  browseClasses,
+  browseInstances,
   addScript,
   updateScript,
   removeScript,

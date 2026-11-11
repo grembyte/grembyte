@@ -97,6 +97,7 @@ from hermes.ui.widgets.known_games import KnownGamesDialog
 from hermes.ui.widgets.database_entries import DeleteEntriesDialog
 from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 from hermes.ui.widgets.gas_attributes import GasAttributesDialog
+from hermes.ui.widgets.object_browser import ObjectBrowserDialog
 from hermes.ui.widgets.game_export import GameExportDialog, GameImportDialog
 from hermes.ui.widgets.hooks import HookDialog, HookPanel
 from hermes.ui.widgets.scripts import ScriptPanel
@@ -493,6 +494,7 @@ class MainWindow(QMainWindow):
             self.translations["hooks.db_failed"].format(message=message)))
         self._favorites_dialog = None
         self._gas_dialog = None
+        self._objects_dialog = None
         # Assemblies the catalog and the trace of the program are limited to.
         self._assembly_selection = AssemblySelectionStore(AssemblySelectionRepository(), self)
         self._assembly_selection.failed.connect(lambda message: self.lbl_status.setText(
@@ -676,6 +678,10 @@ class MainWindow(QMainWindow):
         self.act_trace = view_menu.addAction(
             material_icon("track_changes"), self.translations["menu.trace"])
         self.act_trace.triggered.connect(self._open_trace)
+
+        self.act_objects = view_menu.addAction(
+            material_icon("account_tree"), self.translations["menu.objects"])
+        self.act_objects.triggered.connect(self._open_object_browser)
 
         self.act_gas = view_menu.addAction(
             material_icon("tune"), self.translations["menu.gas"])
@@ -1751,6 +1757,11 @@ class MainWindow(QMainWindow):
             action.setToolTip(text)
         gas = (self._current_pid is not None and self._engine is not None
                and self._engine.supports(engine_base.GAS))
+        objects = (self._current_pid is not None and self._engine is not None
+                   and self._engine.supports(engine_base.OBJECT_BROWSER))
+        self.act_objects.setEnabled(objects)
+        self.act_objects.setToolTip(self.translations["objects.button_tooltip"] if objects
+                                    else unsupported)
         self.act_gas.setEnabled(gas)
         self.act_gas.setToolTip(self.translations["gas.button_tooltip"] if gas else unsupported)
         self.act_favorites.setEnabled(self._favorite_store.process_id is not None)
@@ -1960,6 +1971,22 @@ class MainWindow(QMainWindow):
         explorer.show()
         explorer.raise_()
         explorer.activateWindow()
+
+    def _open_object_browser(self):
+        """Show the game's live objects by class (Unreal games); one window at a time."""
+        dialog = self._objects_dialog
+        if dialog is None:
+            dialog = ObjectBrowserDialog(
+                self.translations, self.script_panel,
+                is_framework=lambda name: (self._engine is not None
+                                           and self._engine.is_framework_assembly(name)),
+                parent=self)
+            dialog.finished.connect(lambda _result: setattr(self, "_objects_dialog", None))
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._objects_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _open_gas_attributes(self):
         """Show the player's GAS attributes (Unreal games); one window at a time."""

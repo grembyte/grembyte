@@ -80,6 +80,9 @@ with ``engine`` set. ``findObject(className, name)`` gives scripts a live
 object of a class, with ``name`` (or null) the one of that name (``ctx.find``),
 ``findObjects(className, name)`` all of them (``ctx.forEach``); Unreal's
 ``outerName(object)`` names an object in its outer, a name it also finds.
+The object browser (``OBJECT_BROWSER``) lists the classes with live objects,
+``browseClasses({filter, internal})``, and the objects of one class,
+``browseInstances(klass, {filter, internal, limit})`` (see the Unreal adapter).
 The object inspector lists what it can call with ``methods(klass)``: ``[{name,
 method, static, owner}]``, the class's own methods first; a ``properties``
 entry's ``setter`` (Mono) is the property's set_ method or null.
@@ -119,6 +122,9 @@ CALL = "call"
 CALL_FOUND = "call_found"
 # The player's Gameplay Ability System attributes (see the Unreal adapter)
 GAS = "gas"
+# The object browser: every live object by its class (``browseClasses``,
+# ``browseInstances``); Mono only finds Unity objects, so far only Unreal
+OBJECT_BROWSER = "object_browser"
 
 
 class EngineAdapter:

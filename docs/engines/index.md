@@ -19,6 +19,7 @@ Which of Hermes Hook's engine tools are available for games built on each engine
 | [Call method](#call-method) | :material-check: | – | :material-check: |
 | [Call graph](#call-graph) | :material-check: | – | – |
 | [Scripts](../guide/scripts.md) | :material-check: | :material-check: | :material-check: |
+| [Object browser](unreal.md#object-browser) | – | – | :material-check: |
 | [GAS attributes](unreal.md#gas-attributes) | – | – | :material-check: |
 
 The engine pages describe the details: [Unity (Mono)](unity-mono.md), [Unity (IL2CPP)](unity-il2cpp.md), [Unreal Engine](unreal.md).
