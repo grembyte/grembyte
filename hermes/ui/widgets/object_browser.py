@@ -22,7 +22,6 @@ from PySide6.QtGui import QGuiApplication  # pylint: disable=import-error,no-nam
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
-    QComboBox,
     QDialog,
     QHBoxLayout,
     QHeaderView,
@@ -35,6 +34,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QVBoxLayout,
 )
 
+from hermes.ui.widgets.code_explorer import BoundedComboBox
 from hermes.ui.widgets.icons import set_button_icon, theme_qcolor
 from hermes.ui.widgets.labels import DocsHint
 
@@ -134,7 +134,8 @@ class ObjectBrowserDialog(QDialog):
             "engines/unity-mono/#object-browser" if mono else "engines/unreal/#object-browser"))
 
         top = QHBoxLayout()
-        self.package_combo = QComboBox()
+        # Hundreds of packages: the list stays in the window, with a scroll bar
+        self.package_combo = BoundedComboBox()
         self.package_combo.setToolTip(t["objects.package_tooltip"])
         self.package_combo.setMinimumWidth(220)
         self.package_combo.currentIndexChanged.connect(lambda _index: self._fill())
@@ -450,7 +451,8 @@ class ObjectBrowserDialog(QDialog):
         inspections = self.panel.inspections
         if entry is None or inspections is None or self.panel.worker() is not self._worker:
             return
-        inspections.inspect({"address": entry["address"]}, name=entry["name"])
+        inspections.inspect({"address": entry["address"]}, name=entry["name"],
+                            instance_name=entry["name"] or None)
 
     def _tree_menu(self, position):
         item = self.tree.itemAt(position)

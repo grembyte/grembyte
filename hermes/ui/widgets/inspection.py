@@ -43,17 +43,18 @@ class Inspections(QObject):
         worker.text_failed.connect(self._on_text_failed)
 
     # --- Object inspector ------------------------------------------------------
-    def inspect(self, target, origin=None, name=""):
+    def inspect(self, target, origin=None, name="", instance_name=None):
         """Show the current fields of ``target`` in a dialog of its own.
 
-        ``origin`` is the dialog it was opened from (one level less deep).
+        ``origin`` is the dialog it was opened from (one level less deep);
+        ``instance_name`` the object's name if known (see ObjectInspectorDialog).
         """
         self.show_inspector(ObjectInspectorDialog(
             self.translations, self.inspect, target=target, request=self._request_inspection,
             evaluate=self._request_evaluation, name=name,
             depth=1 if origin is None else origin.depth + 1, parent=self._window,
             show_text=self.show_text, list_methods=self._request_methods,
-            call_method=self.call_method), origin)
+            call_method=self.call_method, instance_name=instance_name), origin)
 
     def inspect_snapshot(self, target, snapshot, captured, name=""):
         """Show the fields of ``target`` as recorded at a call (``snapshot``)."""

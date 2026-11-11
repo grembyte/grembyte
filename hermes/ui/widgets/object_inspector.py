@@ -145,6 +145,8 @@ class ObjectInspectorDialog(QDialog):
     shows that object in a dialog of its own. ``name`` (the variable, field or
     property the object came from) and ``depth`` (1 for an object of a call,
     one more for each object opened from it) go into the window title.
+    ``instance_name`` is the object's own name where the caller knows it
+    (the object browser), for when the agent gives none.
 
     Below the fields, the object's properties (getters) can be evaluated on
     the game's main thread through ``evaluate(target, names, dialog)``; the
@@ -168,7 +170,7 @@ class ObjectInspectorDialog(QDialog):
 
     def __init__(self, translations, open_object, target=None, request=None,
                  contents=None, captured=None, evaluate=None, name="", depth=1, parent=None,
-                 show_text=None, list_methods=None, call_method=None):
+                 show_text=None, list_methods=None, call_method=None, instance_name=None):
         # pylint: disable=too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
@@ -183,6 +185,7 @@ class ObjectInspectorDialog(QDialog):
         self._call_method = call_method
         self._captured = captured
         self.name = name
+        self.instance_name = instance_name
         self.depth = depth
         self._pending = False
         # property name -> value, once evaluated
@@ -481,7 +484,7 @@ class ObjectInspectorDialog(QDialog):
         fields = contents.get("fields", [])
         class_name = contents.get("name", "?")
         address = contents.get("address", "")
-        instance_name = contents.get("instanceName")
+        instance_name = contents.get("instanceName") or self.instance_name
         title = (f"{class_name} {json.dumps(instance_name, ensure_ascii=False)}@{address}"
                  if instance_name is not None else f"{class_name} @ {address}")
         if "length" in contents:

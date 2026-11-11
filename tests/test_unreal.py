@@ -1174,6 +1174,7 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         assert run["result"].startswith('ABP_Hero_C "BP_Hero_C_0"@0x')
         worker.inspect(run["target"])
         _wait_for(qt_app, lambda: inspected)
+        assert inspected[0]["instanceName"] == "BP_Hero_C_0"
         assert [(field["name"], field["value"]["text"]) for field in inspected[0]["fields"]
                 if field["name"] == "Health"] == [("Health", "75")]
 

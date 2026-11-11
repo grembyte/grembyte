@@ -498,6 +498,14 @@ function unityNameOf(pointer, ask) {
   return unityNames.get(key) || null;
 }
 
+function instanceNameOf(pointer) {
+  // The name of an object for the inspector: Unreal's FName (read from
+  // memory on any thread), a Unity object's name as seen in calls.
+  if (engine.id === 'unreal')
+    return engine.instanceName(pointer);
+  return unityNameOf(pointer, false);
+}
+
 function objectValue(pointer, ask = false) {
   // ``ask``: on the game thread of a call, Unity may be asked for names.
   if (pointer.isNull())
@@ -619,7 +627,7 @@ function contents(target) {
   const base = target.klass ? address.sub(header) : address;
   const result = {
     name: layout.name,
-    instanceName: target.klass ? null : unityNameOf(address, false),
+    instanceName: target.klass ? null : instanceNameOf(address),
     address: address.toString(), fields: []
   };
   if (layout.rank > 0) {

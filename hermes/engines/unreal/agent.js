@@ -2759,6 +2759,8 @@ const unreal = (() => {
     findObject,
     findObjects,
     outerName,
+    // The inspector's title: an object by its FName
+    instanceName: uobjectName,
     browseClasses,
     browseInstances,
     gasAttributes,

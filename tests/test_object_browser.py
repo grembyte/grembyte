@@ -106,9 +106,10 @@ def test_window_lists_classes_and_opens_their_objects(qt_app, monkeypatch):
         assert dialog.inspect_button.isEnabled()
         opened = []
         monkeypatch.setattr(panel.inspections, "inspect",
-                            lambda target, name="": opened.append((target, name)))
+                            lambda target, name="", instance_name=None: opened.append(
+                                (target, name, instance_name)))
         dialog.inspect_button.click()
-        assert opened == [({"address": "0x7f00"}, "BP_Hero_C_0")]
+        assert opened == [({"address": "0x7f00"}, "BP_Hero_C_0", "BP_Hero_C_0")]
 
         # The filter: class names at once, objects' names once the agent counted
         dialog.filter_input.setText("side")
