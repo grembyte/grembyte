@@ -6,12 +6,12 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-from hermes.db.base import Base
-from hermes.db.repository.hooks import HookRepository
-from hermes.hooks.transforms import TransformParameter, example_templates
-from hermes.ui.localization import load_translations
-from hermes.ui.widgets.templates import format_choices, parse_choices
+from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+from grembyte.db.base import Base
+from grembyte.db.repository.hooks import HookRepository
+from grembyte.hooks.transforms import TransformParameter, example_templates
+from grembyte.ui.localization import load_translations
+from grembyte.ui.widgets.templates import format_choices, parse_choices
 
 
 @pytest.fixture(name="qt_app", scope="module")
@@ -29,7 +29,7 @@ def fixture_translations():
 
 @pytest.fixture(name="repository")
 def fixture_repository(tmp_path, translations):
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     repository = HookRepository(sessionmaker(bind=engine))
     repository.ensure_templates(example_templates())
@@ -39,7 +39,7 @@ def fixture_repository(tmp_path, translations):
 
 @pytest.fixture(name="dialog")
 def fixture_dialog(qt_app, translations, repository):  # pylint: disable=unused-argument
-    from hermes.ui.widgets.templates import TemplateDialog  # pylint: disable=import-outside-toplevel
+    from grembyte.ui.widgets.templates import TemplateDialog  # pylint: disable=import-outside-toplevel
 
     return TemplateDialog(translations, repository)
 
@@ -138,7 +138,7 @@ def test_delete_template(dialog, repository, monkeypatch):
 
 
 def test_wrapped_label_reserves_height_for_its_width(qt_app):  # pylint: disable=unused-argument
-    from hermes.ui.widgets.labels import WrappedLabel  # pylint: disable=import-outside-toplevel
+    from grembyte.ui.widgets.labels import WrappedLabel  # pylint: disable=import-outside-toplevel
 
     label = WrappedLabel("word " * 60)
     label.show()  # hidden widgets get no resize events
@@ -154,7 +154,7 @@ def test_wrapped_label_reserves_height_for_its_width(qt_app):  # pylint: disable
 
 def test_template_test_dialog_runs_definition(dialog, translations):
     # pylint: disable=import-outside-toplevel
-    from hermes.ui.widgets.templates import TemplateTestDialog
+    from grembyte.ui.widgets.templates import TemplateTestDialog
 
     row = next(
         i for i in range(dialog.template_list.count())
@@ -180,8 +180,8 @@ def test_template_test_dialog_runs_definition(dialog, translations):
 
 def test_debug_window_lists_filters_and_pauses(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets import hook_debug
-    from hermes.ui.widgets.hook_debug import HookDebugWindow
+    from grembyte.ui.widgets import hook_debug
+    from grembyte.ui.widgets.hook_debug import HookDebugWindow
 
     window = HookDebugWindow(translations)
     window.set_hooks({1: "#1 Gold", 2: "#2 Mana"})
@@ -243,7 +243,7 @@ def test_method_templates_keep_their_kind_and_code(dialog, repository):
 
 def test_method_template_test_run(qt_app, translations):  # pylint: disable=unused-argument
     # pylint: disable=import-outside-toplevel
-    from hermes.ui.widgets.templates import TemplateTestDialog
+    from grembyte.ui.widgets.templates import TemplateTestDialog
 
     multiply = example_templates()["method_multiply"]
     dialog = TemplateTestDialog(translations, multiply)

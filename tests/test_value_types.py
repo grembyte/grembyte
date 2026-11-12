@@ -7,9 +7,9 @@ import time
 
 import pytest
 
-from hermes.core.value_types import AUTO_VALUE_TYPES, VALUE_TYPES, value_type
-from hermes.hooks.engine import HookSpec, build_agent_source
-from hermes.hooks.transforms import MultiplyTransform
+from grembyte.core.value_types import AUTO_VALUE_TYPES, VALUE_TYPES, value_type
+from grembyte.hooks.engine import HookSpec, build_agent_source
+from grembyte.hooks.transforms import MultiplyTransform
 from tests.test_hooks import _wait_for, requires_target
 
 
@@ -118,7 +118,7 @@ class _SmallTarget:
 def _trap_pc(target, command, size):
     """Watch the command's variable with the real write-watch agent."""
     import frida  # pylint: disable=import-outside-toplevel
-    from hermes.features.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
+    from grembyte.features.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
 
     hits = []
     session = frida.attach(target.pid)
@@ -151,7 +151,7 @@ def fixture_qt_app():
 
 @requires_target
 def test_hooks_rewrite_small_values(tmp_path, qt_app):
-    from hermes.hooks.engine import HookWorker  # pylint: disable=import-outside-toplevel
+    from grembyte.hooks.engine import HookWorker  # pylint: disable=import-outside-toplevel
 
     source = tmp_path / "small.c"
     source.write_text(_SMALL_TARGET_SOURCE)

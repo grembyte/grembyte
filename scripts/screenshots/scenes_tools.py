@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
 
-from hermes import __version__
+from grembyte import __version__
 
 from studio import DEMO_NAME, DEMO_PID, scene, settle
 
@@ -140,7 +140,7 @@ _ITEM_OPTIONS = [
 
 def _item_spec():
     # pylint: disable=import-outside-toplevel
-    from hermes.features.scripts import ScriptParam, ScriptSpec
+    from grembyte.features.scripts import ScriptParam, ScriptSpec
 
     return ScriptSpec(_ITEM_SOURCE, "manual", 0.0, True, "Give item", (
         ScriptParam("item", "Item", "choice", "BP_Consumable_HealthPotion_T1_C",
@@ -156,7 +156,7 @@ def _item_spec():
 def scripts_tab(studio):
     """Three Avowed scripts, some runs in the log, the manual heal selected."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.features.scripts import ScriptSpec
+    from grembyte.features.scripts import ScriptSpec
 
     window = studio.show_attached(_AVOWED, pid=_AVOWED_PID, details="64-bit, Unreal Engine")
     panel = window.script_panel
@@ -197,7 +197,7 @@ def scripts_tab(studio):
 def script_params(studio):
     """The run dialog of "Give item": a choice from the game, a number, a yes/no."""
     # pylint: disable=import-outside-toplevel
-    from hermes.ui.widgets.script_params import ScriptRunDialog
+    from grembyte.ui.widgets.script_params import ScriptRunDialog
 
     worker = studio.keep(_ScriptWorkerStub())
     # The options came from the game when the dialog was opened before.
@@ -299,8 +299,8 @@ def _trace_results():
 def native_trace(studio):
     """Baseline while idle, scenario while buying three times; buy_item selected."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.features.native_trace import TraceModule, TraceThread
-    from hermes.ui.widgets import native_trace as module
+    from grembyte.features.native_trace import TraceModule, TraceThread
+    from grembyte.ui.widgets import native_trace as module
 
     with _Patched(module, NativeTraceWorker=_AgentWorkerStub,
                   is_wine_process=lambda _pid: False):
@@ -390,10 +390,10 @@ class _SignatureWorkerStub(QObject):
 def native_monitor(studio):
     """spend_gold and buy_item monitored while buying three times; the last call selected."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.features.native_trace import NativeFunction
-    from hermes.ui.widgets import native_monitor as module
+    from grembyte.features.native_trace import NativeFunction
+    from grembyte.ui.widgets import native_monitor as module
 
-    from hermes.features.code_explorer import Parameter, Signature
+    from grembyte.features.code_explorer import Parameter, Signature
 
     with _Patched(module, NativeMonitorWorker=_AgentWorkerStub,
                   is_wine_process=lambda _pid: False):
@@ -441,7 +441,7 @@ def _dummy_game_binary():
     global _DUMMY_BINARY  # pylint: disable=global-statement
     if _DUMMY_BINARY is None:
         root = Path(__file__).resolve().parents[2]
-        folder = Path(tempfile.mkdtemp(prefix="hermes-dummy-game-"))
+        folder = Path(tempfile.mkdtemp(prefix="grembyte-dummy-game-"))
         binary = folder / DEMO_NAME
         flags = subprocess.run(["pkg-config", "--cflags", "--libs", "gtk+-3.0"], check=True,
                                capture_output=True, text=True).stdout.split()
@@ -458,8 +458,8 @@ def code_explorer(studio):
     """The test game: "treasure" among the strings, on_treasure open with its
     call of add_gold selected, and the instruction that hands on_treasure to GTK."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.features.code_explorer import CodeIndex, load_image
-    from hermes.ui.widgets import code_explorer as module
+    from grembyte.features.code_explorer import CodeIndex, load_image
+    from grembyte.ui.widgets import code_explorer as module
 
     path = _dummy_game_binary()
     dialog = module.CodeExplorerDialog(studio.translations)
@@ -491,8 +491,8 @@ def code_explorer_pseudocode(studio):
     """refresh_ui of the test game in the pseudocode tab, at the line that
     reads the gold through g_game → 0x28 → 0x0."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.features.code_explorer import CodeIndex, load_image
-    from hermes.ui.widgets import code_explorer as module
+    from grembyte.features.code_explorer import CodeIndex, load_image
+    from grembyte.ui.widgets import code_explorer as module
 
     path = _dummy_game_binary()
     dialog = module.CodeExplorerDialog(studio.translations)
@@ -584,8 +584,8 @@ def _fake_read_memory(_pid, address, size):
 def memory_viewer(studio):
     """The heap around the gold (1350 as int32), the gold's first byte selected."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.platform.linux import parse_maps
-    from hermes.ui.widgets import memory_view as module
+    from grembyte.platform.linux import parse_maps
+    from grembyte.ui.widgets import memory_view as module
 
     patch = _Patched(module, read_memory=_fake_read_memory,
                      read_mappings=lambda _pid: parse_maps(_MAPS))
@@ -641,7 +641,7 @@ class _Registry:
 def sessions(studio):
     """Hooks and a native monitor over Frida, a write watch over ptrace."""
     # pylint: disable=import-outside-toplevel
-    from hermes.ui.widgets import sessions as module
+    from grembyte.ui.widgets import sessions as module
 
     now = time.monotonic()
     registry = _Registry([
@@ -672,7 +672,7 @@ def _activity_entries():
     day = datetime.now().strftime("%Y-%m-%d")
     entries = [
         ("21:02:41.118", "app_started", {
-            "pid": 30412, "hermes": __version__, "python": "3.13.7", "frida": "17.24.3",
+            "pid": 30412, "grembyte": __version__, "python": "3.13.7", "frida": "17.24.3",
             "qt": "6.9.2", "pyside": "6.9.2", "system": "Fedora Linux 44",
             "kernel": "6.17.4-300.fc44.x86_64", "machine": "x86_64", "session": "wayland",
             "desktop": "KDE", "argv": []}),
@@ -689,9 +689,9 @@ def _activity_entries():
             "agent": "hooks#1", "pid": DEMO_PID, "session": 1, "size": 48211,
             "seconds": 0.131}),
         ("21:03:05.640", "click", {
-            "window": "Hermes Hook", "widget": "QPushButton", "text": "First scan"}),
+            "window": "Grembyte", "widget": "QPushButton", "text": "First scan"}),
         ("21:03:19.207", "click", {
-            "window": "Hermes Hook", "widget": "QPushButton", "text": "Next scan"}),
+            "window": "Grembyte", "widget": "QPushButton", "text": "Next scan"}),
         ("21:03:31.774", "rpc", {
             "agent": "hooks#1", "method": "readValues", "repeated": 24, "ms": 41.9,
             "max_ms": 3.2, "within_s": 12.0}),
@@ -748,12 +748,12 @@ def _activity_entries():
 
 
 @scene("log-activity", size=(1000, 600),
-       description="Log window on the activity log: what Hermes did, in order")
+       description="Log window on the activity log: what Grembyte did, in order")
 def log_activity(studio):
     """The activity of a short run on the test game."""
     # pylint: disable=import-outside-toplevel
-    from hermes.core import activity
-    from hermes.ui.widgets.log_view import LogDialog
+    from grembyte.core import activity
+    from grembyte.ui.widgets.log_view import LogDialog
 
     path = activity.activity_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -764,7 +764,7 @@ def log_activity(studio):
         dialog.source_combo.setCurrentIndex(1)
     # Where it is on a real system, not in the studio's temporary folder
     dialog.path_label.setText(studio.translations["log.path"].format(
-        path="~/.local/state/hermes-hook/activity.jsonl"))
+        path="~/.local/state/grembyte/activity.jsonl"))
     dialog.text.moveCursor(dialog.text.textCursor().MoveOperation.Start)
     return studio.keep(dialog)
 
@@ -776,8 +776,8 @@ def log_activity(studio):
 def settings_window(studio):
     """The general settings with their defaults."""
     # pylint: disable=import-outside-toplevel
-    from hermes.db.repository.settings import SettingsRepository
-    from hermes.ui.widgets.settings_dialog import SettingsDialog
+    from grembyte.db.repository.settings import SettingsRepository
+    from grembyte.ui.widgets.settings_dialog import SettingsDialog
 
     dialog = SettingsDialog(studio.translations, SettingsRepository())
     dialog.adjustSize()
@@ -788,7 +788,7 @@ def settings_window(studio):
 def theme_editor(studio):
     """The current theme's colors, each a button that opens a color picker."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.ui.widgets.theme_dialog import ThemeDialog
+    from grembyte.ui.widgets.theme_dialog import ThemeDialog
 
     dialog = ThemeDialog(studio.translations, studio.window._theme_manager)
     return studio.keep(dialog)
@@ -808,8 +808,8 @@ class _ExportRepository:  # pylint: disable=too-few-public-methods
 def game_export(studio):
     """Three games with saved entries; the test game selected."""
     # pylint: disable=import-outside-toplevel
-    from hermes.db.repository.game_export import ExportableGame
-    from hermes.ui.widgets.game_export import GameExportDialog
+    from grembyte.db.repository.game_export import ExportableGame
+    from grembyte.ui.widgets.game_export import GameExportDialog
 
     proton = ("/home/user/.steam/steam/steamapps/common/Proton - Experimental/files/lib/"
               "wine/x86_64-unix/wine64-preloader")
@@ -826,6 +826,6 @@ def game_export(studio):
             "pointer_scans": 0}),
     ]
     dialog = GameExportDialog(studio.translations, _ExportRepository(games), current=DEMO_NAME)
-    dialog.folder.setText("/home/user/Documents/hermes-hook")
+    dialog.folder.setText("/home/user/Documents/grembyte")
     dialog.pointer_scans.setChecked(True)
     return studio.keep(dialog)

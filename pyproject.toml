@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hermes-hook"
+name = "grembyte"
 dynamic = ["version"]
 description = "Memory scanner, hook engine and reverse engineering tool for games on Linux (also under Wine/Proton) and Windows"
 requires-python = ">=3.11"
@@ -23,24 +23,24 @@ test = ["pytest"]
 docs = ["mkdocs-material", "mkdocs-glightbox"]
 
 [project.scripts]
-hermes = "hermes.main:main"
+grembyte = "grembyte.main:main"
 
 [tool.setuptools.dynamic]
-version = {attr = "hermes.__version__"}
+version = {attr = "grembyte.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["hermes*"]
+include = ["grembyte*"]
 
 [tool.setuptools.package-data]
-"hermes.ui" = ["localization/*.json", "resources/*.svg", "resources/icons/*", "themes/*.json"]
-"hermes.attach" = ["inject/inject.c", "inject/build.sh"]
-"hermes.agent" = ["*.js"]
-"hermes.engines" = ["*.js"]
-"hermes.engines.il2cpp" = ["*.js"]
-"hermes.engines.mono" = ["*.js"]
-"hermes.engines.unreal" = ["*.js"]
-"hermes.features" = ["*.js"]
-"hermes.hooks" = ["*.js"]
+"grembyte.ui" = ["localization/*.json", "resources/*.svg", "resources/icons/*", "themes/*.json"]
+"grembyte.attach" = ["inject/inject.c", "inject/build.sh"]
+"grembyte.agent" = ["*.js"]
+"grembyte.engines" = ["*.js"]
+"grembyte.engines.il2cpp" = ["*.js"]
+"grembyte.engines.mono" = ["*.js"]
+"grembyte.engines.unreal" = ["*.js"]
+"grembyte.features" = ["*.js"]
+"grembyte.hooks" = ["*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

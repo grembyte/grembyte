@@ -8,8 +8,8 @@ import subprocess
 
 import pytest
 
-from hermes.core import pointer as pointer_module
-from hermes.core.pointer import (
+from grembyte.core import pointer as pointer_module
+from grembyte.core.pointer import (
     PointerChain,
     PointerMap,
     chain_for_static_address,
@@ -18,9 +18,9 @@ from hermes.core.pointer import (
     resolve_chain,
     static_regions,
 )
-from hermes.platform import Mapping, ProcessMemory, main_module, read_mappings
-from hermes.platform import linux
-from hermes.platform.linux import parse_maps
+from grembyte.platform import Mapping, ProcessMemory, main_module, read_mappings
+from grembyte.platform import linux
+from grembyte.platform.linux import parse_maps
 from tests.test_hooks import requires_target
 
 
@@ -385,8 +385,8 @@ def test_chains_can_be_limited_to_the_main_module(binary):
 @requires_target
 def test_a_scan_by_memory_category_skips_system_modules_and_stacks(binary):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.core import memory_regions
-    from hermes.ui.widgets.pointer_scan import PointerScanWorker
+    from grembyte.core import memory_regions
+    from grembyte.ui.widgets.pointer_scan import PointerScanWorker
 
     target = _Target(binary)
     try:
@@ -549,10 +549,10 @@ def fixture_sessions(tmp_path):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-    from hermes.db.base import Base
+    from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+    from grembyte.db.base import Base
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     yield sessionmaker(bind=engine)
     engine.dispose()
@@ -572,10 +572,10 @@ def _wait(app, predicate, timeout=10):
 @requires_target
 def test_pointer_scan_dialog_scans_filters_and_picks(binary, qt_app, sessions):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.db.repository.addresses import AddressRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+    from grembyte.db.repository.addresses import AddressRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.pointer_scan import PointerScanDialog
 
     translations = load_translations("de")
     repository = AddressRepository(sessions)
@@ -638,9 +638,9 @@ def _delete_window(window):
 
 def test_main_window_table_headers_are_centered(qt_app, sessions, monkeypatch):
     # pylint: disable=import-outside-toplevel
-    from hermes.db.repository.addresses import AddressRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui import main_window
+    from grembyte.db.repository.addresses import AddressRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui import main_window
 
     monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
     monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
@@ -658,9 +658,9 @@ def test_main_window_table_headers_are_centered(qt_app, sessions, monkeypatch):
 @requires_target
 def test_address_list_survives_restart(binary, qt_app, sessions, monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.db.repository.addresses import AddressRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui import main_window
+    from grembyte.db.repository.addresses import AddressRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui import main_window
 
     monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
     monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
@@ -736,9 +736,9 @@ def test_a_pointer_chain_entered_by_hand_follows_the_value(binary, qt_app, sessi
     # pylint: disable=import-outside-toplevel,protected-access
     from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.db.repository.addresses import AddressRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui import main_window
+    from grembyte.db.repository.addresses import AddressRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui import main_window
 
     expected = _gold_chain(binary)
     # Typed as "module+0x… -> 0x… : 0x…", in place of the user
@@ -788,8 +788,8 @@ def _add_gold_write_offset(binary):
 
 def test_hook_dialog_with_pointer_target(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.hooks import HookDialog
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.hooks import HookDialog
 
     chain = PointerChain("game", 0x3070, (0x18, 0x40, 0x4))
     dialog = HookDialog(load_translations("de"), "0x1000", "int32", "game+0x10", pointer=chain)
@@ -802,11 +802,11 @@ def test_hook_dialog_with_pointer_target(qt_app):
 @requires_target
 def test_pointer_hook_survives_restart_and_ignores_enemy(binary, qt_app, sessions):
     # pylint: disable=import-outside-toplevel,protected-access,too-many-locals
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.hooks.engine import HookSpec
-    from hermes.hooks.transforms import MultiplyTransform
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.hooks.engine import HookSpec
+    from grembyte.hooks.transforms import MultiplyTransform
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.hooks import HookPanel
 
     translations = load_translations("de")
     repository = HookRepository(sessions)
@@ -855,10 +855,10 @@ def test_pointer_hook_survives_restart_and_ignores_enemy(binary, qt_app, session
 @requires_target
 def test_pointer_dialog_recognizes_static_address(binary, qt_app, sessions):
     # pylint: disable=import-outside-toplevel,protected-access,unused-argument
-    from hermes.db.repository.addresses import AddressRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+    from grembyte.db.repository.addresses import AddressRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.pointer_scan import PointerScanDialog
 
     translations = load_translations("de")
     repository = AddressRepository(sessions)
@@ -888,9 +888,9 @@ def test_pointer_dialog_recognizes_static_address(binary, qt_app, sessions):
 @requires_target
 def test_pointer_dialog_stays_open_while_scanning(binary, qt_app, sessions, monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.db.repository.addresses import AddressRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui import main_window
+    from grembyte.db.repository.addresses import AddressRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui import main_window
 
     monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
     monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
@@ -935,9 +935,9 @@ def test_pointer_dialog_survives_a_restart_of_the_program(binary, qt_app, sessio
     # pylint: disable=import-outside-toplevel,protected-access,too-many-locals
     from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.db.repository.addresses import AddressRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui import main_window
+    from grembyte.db.repository.addresses import AddressRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui import main_window
 
     monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
     monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
@@ -976,7 +976,7 @@ def test_pointer_dialog_survives_a_restart_of_the_program(binary, qt_app, sessio
         assert _gold_chain(binary) in dialog.candidates()
 
         # The game is closed while a scan is running: the dialog stays open.
-        from hermes.ui.widgets import pointer_scan
+        from grembyte.ui.widgets import pointer_scan
         monkeypatch.setattr(pointer_scan.QMessageBox, "question",
                             lambda *_args: pointer_scan.QMessageBox.StandardButton.Yes)
         monkeypatch.setattr(main_window.QMessageBox, "question",
@@ -1063,9 +1063,9 @@ def test_scan_of_the_previous_program_is_cleared_on_a_switch(binary, qt_app, ses
     from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
     from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.db.repository.addresses import AddressRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui import main_window
+    from grembyte.db.repository.addresses import AddressRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui import main_window
 
     monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
     monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
@@ -1125,8 +1125,8 @@ def test_worker_finishing_after_its_dialog_was_deleted_is_harmless(qt_app, monke
     # pylint: disable=import-outside-toplevel,protected-access
     import threading
 
-    from hermes.ui import workers
-    from hermes.ui.widgets import pointer_scan
+    from grembyte.ui import workers
+    from grembyte.ui.widgets import pointer_scan
 
     release = threading.Event()
 
@@ -1145,7 +1145,7 @@ def test_worker_finishing_after_its_dialog_was_deleted_is_harmless(qt_app, monke
 
     monkeypatch.setattr(pointer_scan, "PointerScanWorker", SlowWorker)
     monkeypatch.setattr(pointer_scan, "STOP_TIMEOUT_MS", 0)
-    translations = __import__("hermes.ui.localization", fromlist=["x"]).load_translations("de")
+    translations = __import__("grembyte.ui.localization", fromlist=["x"]).load_translations("de")
     dialog = pointer_scan.PointerScanDialog(
         translations, Repository(), 1, {"id": 1, "label": "Gold", "address": 0x1000}
     )
@@ -1188,11 +1188,11 @@ def test_pointer_dialog_adopts_the_selected_candidates_and_removes_the_scan(
 
     from PySide6.QtCore import QItemSelectionModel  # pylint: disable=no-name-in-module
 
-    from hermes.db.repository.addresses import AddressRepository, SavedPointerScan
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets import pointer_scan
-    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+    from grembyte.db.repository.addresses import AddressRepository, SavedPointerScan
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets import pointer_scan
+    from grembyte.ui.widgets.pointer_scan import PointerScanDialog
 
     monkeypatch.setattr(pointer_scan.QMessageBox, "question",
                         lambda *_args: pointer_scan.QMessageBox.StandardButton.Yes)
@@ -1236,11 +1236,11 @@ def test_pointer_dialog_offers_memory_categories_and_remembers_them(qt_app, sess
     # pylint: disable=import-outside-toplevel,protected-access
     import os
 
-    from hermes.core import memory_regions
-    from hermes.db.repository.addresses import AddressRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+    from grembyte.core import memory_regions
+    from grembyte.db.repository.addresses import AddressRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.pointer_scan import PointerScanDialog
 
     translations = load_translations("en")
     repository = AddressRepository(sessions)
@@ -1268,10 +1268,10 @@ def test_pointer_dialog_shows_the_most_promising_chains_first(qt_app, sessions):
     # pylint: disable=import-outside-toplevel,protected-access
     import os
 
-    from hermes.db.repository.addresses import AddressRepository, SavedPointerScan
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+    from grembyte.db.repository.addresses import AddressRepository, SavedPointerScan
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.pointer_scan import PointerScanDialog
 
     translations = load_translations("en")
     repository = AddressRepository(sessions)
@@ -1304,10 +1304,10 @@ def test_the_main_window_remembers_pinned_pointer_dialogs(binary, qt_app, sessio
     # pylint: disable=import-outside-toplevel,protected-access
     from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.db.repository.addresses import AddressRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui import main_window
-    from hermes.ui.widgets.docking import RIGHT
+    from grembyte.db.repository.addresses import AddressRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui import main_window
+    from grembyte.ui.widgets.docking import RIGHT
 
     monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
     monkeypatch.setattr(main_window, "AddressRepository", lambda: AddressRepository(sessions))
@@ -1359,12 +1359,12 @@ def test_pointer_dialog_offers_marked_assemblies_in_mono_games(qt_app, sessions)
     # pylint: disable=import-outside-toplevel,protected-access
     import os
 
-    from hermes.core import memory_regions
-    from hermes.db.repository.addresses import AddressRepository, SavedPointerScan
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.features.managed_statics import StaticArea
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.pointer_scan import PointerScanDialog
+    from grembyte.core import memory_regions
+    from grembyte.db.repository.addresses import AddressRepository, SavedPointerScan
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.features.managed_statics import StaticArea
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.pointer_scan import PointerScanDialog
 
     translations = load_translations("en")
     repository = AddressRepository(sessions)
@@ -1412,8 +1412,8 @@ def test_the_main_window_looks_up_static_fields_saved_chains_need(qt_app, monkey
     # pylint: disable=import-outside-toplevel,protected-access
     import os
 
-    from hermes.core import pointer
-    from hermes.ui import main_window
+    from grembyte.core import pointer
+    from grembyte.ui import main_window
 
     started = []
 

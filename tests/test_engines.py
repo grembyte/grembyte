@@ -2,11 +2,11 @@
 
 import pytest
 
-from hermes.engines import base
-from hermes.engines.il2cpp.adapter import Il2CppAdapter
-from hermes.engines.mono.adapter import MonoAdapter
-from hermes.engines.unreal.adapter import UnrealAdapter, bootstrapped_game
-from hermes.engines.registry import (
+from grembyte.engines import base
+from grembyte.engines.il2cpp.adapter import Il2CppAdapter
+from grembyte.engines.mono.adapter import MonoAdapter
+from grembyte.engines.unreal.adapter import UnrealAdapter, bootstrapped_game
+from grembyte.engines.registry import (
     ENGINE_AGENT_SOURCE, ENGINES, detect_engine, engine_by_id, resolve_engine,
 )
 from tests.test_hooks import linux_only
@@ -143,7 +143,7 @@ def test_mono_adapter_capabilities_and_framework_filter():
     assert mono.is_framework_assembly("UnityEngine.CoreModule")
     assert mono.is_framework_assembly("Rewired_Core") and mono.is_framework_assembly("Steamworks")
     assert not mono.is_framework_assembly("Assembly-CSharp")
-    # The native trace crashed a Mono game: hermes keeps both native tools away.
+    # The native trace crashed a Mono game: grembyte keeps both native tools away.
     assert not mono.native_tools and base.EngineAdapter.native_tools  # Mono: they ask first
 
 

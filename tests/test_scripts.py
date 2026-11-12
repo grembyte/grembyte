@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from hermes.features.scripts import ScriptSpec
-from hermes.ui.localization import language_code, load_translations
+from grembyte.features.scripts import ScriptSpec
+from grembyte.ui.localization import language_code, load_translations
 
 
 @pytest.fixture(name="qt_app", scope="module")
@@ -20,7 +20,7 @@ def fixture_qt_app():
 
 
 def test_both_languages_name_the_same_script_texts():
-    folder = Path(__file__).parent.parent / "hermes" / "ui" / "localization"
+    folder = Path(__file__).parent.parent / "grembyte" / "ui" / "localization"
     keys = {language: {key for key in json.loads((folder / f"{language}.json").read_text("utf-8"))
                        if key.startswith("scripts.")}
             for language in ("en", "de")}
@@ -36,7 +36,7 @@ def test_language_code_resolves_supported_script_languages(language, expected):
 @pytest.mark.parametrize("language", ["en", "de"])
 def test_the_dialog_builds_a_script_and_rejects_busy_loops(qt_app, language):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.scripts import ScriptDialog, timing_text
+    from grembyte.ui.widgets.scripts import ScriptDialog, timing_text
 
     translations = load_translations(language)
     dialog = ScriptDialog(translations)
@@ -69,14 +69,14 @@ def test_the_address_search_folds_away_and_stays_so(qt_app, tmp_path, monkeypatc
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-    from hermes.db.base import Base
-    from hermes.db.repository.addresses import AddressRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.db.repository.scripts import ScriptRepository
-    from hermes.ui import main_window
+    from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+    from grembyte.db.base import Base
+    from grembyte.db.repository.addresses import AddressRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.db.repository.scripts import ScriptRepository
+    from grembyte.ui import main_window
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine)
     monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
@@ -148,15 +148,15 @@ def test_native_tools_ask_first_in_mono_games(qt_app, tmp_path, monkeypatch):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-    from hermes.db.base import Base
-    from hermes.db.repository.addresses import AddressRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.db.repository.scripts import ScriptRepository
-    from hermes.engines.registry import engine_by_id
-    from hermes.ui import main_window
+    from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+    from grembyte.db.base import Base
+    from grembyte.db.repository.addresses import AddressRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.db.repository.scripts import ScriptRepository
+    from grembyte.engines.registry import engine_by_id
+    from grembyte.ui import main_window
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine)
     monkeypatch.setattr(main_window, "HookRepository", lambda: HookRepository(sessions))
@@ -315,7 +315,7 @@ def test_objects_scripts_return_open_in_the_inspector_from_the_log(qt_app, monke
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from PySide6.QtCore import QUrl  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.widgets import scripts
+    from grembyte.ui.widgets import scripts
 
     monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
     panel = scripts.ScriptPanel(load_translations("de"))
@@ -358,8 +358,8 @@ def test_context_menu_creates_a_localized_script_copy(qt_app, monkeypatch, langu
     # pylint: disable=import-outside-toplevel,protected-access,unused-argument
     from PySide6.QtCore import QPoint  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.features.scripts import ScriptParam
-    from hermes.ui.widgets import scripts
+    from grembyte.features.scripts import ScriptParam
+    from grembyte.ui.widgets import scripts
 
     class FakeAction:
         def __init__(self, label, callback):
@@ -422,7 +422,7 @@ def test_context_menu_creates_a_localized_script_copy(qt_app, monkeypatch, langu
 
 def test_scripts_show_disconnected_when_their_session_ends(qt_app, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.widgets import scripts
+    from grembyte.ui.widgets import scripts
 
     monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
     panel = scripts.ScriptPanel(load_translations("de"))
@@ -456,8 +456,8 @@ def test_scripts_show_disconnected_when_their_session_ends(qt_app, monkeypatch):
 
 def test_the_dialog_defines_parameters_and_their_options(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.features.scripts import ScriptParam
-    from hermes.ui.widgets.scripts import ScriptDialog
+    from grembyte.features.scripts import ScriptParam
+    from grembyte.ui.widgets.scripts import ScriptDialog
 
     dialog = ScriptDialog(load_translations("de"))
     dialog.code_edit.setPlainText("return ctx.args.count;")
@@ -500,9 +500,9 @@ def test_running_by_hand_asks_for_the_parameters(qt_app, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.features.scripts import ScriptParam
-    from hermes.ui.widgets import scripts
-    from hermes.ui.widgets.script_params import ScriptRunDialog
+    from grembyte.features.scripts import ScriptParam
+    from grembyte.ui.widgets import scripts
+    from grembyte.ui.widgets.script_params import ScriptRunDialog
 
     translations = load_translations("de")
     spec = ScriptSpec("return 1;", label="Items", params=(

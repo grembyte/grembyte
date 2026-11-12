@@ -52,7 +52,7 @@ Scripts are different from [hook templates](templates.md): a template changes on
 
 ## Scripts in native games
 
-Without an engine adapter Hermes looks for a function the game calls every frame on its main thread and runs scripts each time it returns. It hooks the ones the game exports, in this order: `SDL_PollEvent`, `SDL_PumpEvents`, `SDL_GL_SwapWindow`, `glfwPollEvents`, `glfwSwapBuffers`, `PeekMessageW`, `PeekMessageA`, `SwapBuffers`, `wglSwapBuffers`, `glXSwapBuffers`, `eglSwapBuffers`, `vkQueuePresentKHR`, and for GTK and other GLib programs `g_main_context_iteration`. The first of them that runs on the main thread within half a second is kept (if none does, the first that runs on another thread). The first run logs which one it is. A game that exports none of them, for example one with SDL linked in statically, gets an error instead.
+Without an engine adapter Grembyte looks for a function the game calls every frame on its main thread and runs scripts each time it returns. It hooks the ones the game exports, in this order: `SDL_PollEvent`, `SDL_PumpEvents`, `SDL_GL_SwapWindow`, `glfwPollEvents`, `glfwSwapBuffers`, `PeekMessageW`, `PeekMessageA`, `SwapBuffers`, `wglSwapBuffers`, `glXSwapBuffers`, `eglSwapBuffers`, `vkQueuePresentKHR`, and for GTK and other GLib programs `g_main_context_iteration`. The first of them that runs on the main thread within half a second is kept (if none does, the first that runs on another thread). The first run logs which one it is. A game that exports none of them, for example one with SDL linked in statically, gets an error instead.
 
 There are no class or method names to go by, so `ctx.native` finds code by its bytes: a pattern of the function's first instructions, with `??` for the bytes that change between builds (addresses, offsets). A pattern survives game updates that leave the function alone, unlike a fixed address. The [code explorer](code-explorer.md) finds the code and copies its pattern, or a whole script skeleton. The [script context reference](../reference/script-context.md#native-code-ctxnative) lists the functions.
 
@@ -98,7 +98,7 @@ return allow ? "Debug commands enabled" : "Debug commands disabled again";
 
 To use the debug menu:
 
-1. Attach Hermes to the game and add both scripts in the **Scripts** tab, each set to *Only when run by hand*.
+1. Attach Grembyte to the game and add both scripts in the **Scripts** tab, each set to *Only when run by hand*.
 2. Run **Switch the debug commands on or off** once. The result says *Debug commands enabled*.
 3. In the game, open the in-game menu with ++esc++, then run **Open the hidden debug menu**. Page 11 of the menu appears: kill nearby or all enemies, level up the party, unlock skills, 100 skill points, heal the party, reveal the map, unlock all recipes and fast travel, weather, and more.
 4. The buttons now work. To switch the commands off again, run the second script once more.
@@ -108,4 +108,4 @@ The patch lives only in the game's memory: restarting the game undoes it, and th
 !!! warning "Achievements and statistics"
     The debug commands include `reset_steam_stats_and_achievements`, which resets your Steam statistics and achievements. Achievements may also still unlock while the commands are enabled.
 
-<small>Underkeep and Gothic 1 Remake are named on this page only to illustrate how Hermes Hook works. All game names, trademarks and game content belong to their respective owners. Hermes Hook is not affiliated with, endorsed or sponsored by them.</small>
+<small>Underkeep and Gothic 1 Remake are named on this page only to illustrate how Grembyte works. All game names, trademarks and game content belong to their respective owners. Grembyte is not affiliated with, endorsed or sponsored by them.</small>

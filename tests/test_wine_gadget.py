@@ -8,9 +8,9 @@ import struct
 
 import pytest
 
-from hermes.attach import wine_gadget
-from hermes.attach.wine_gadget import GadgetError, ensure_gadget
-from hermes.platform.wine import RawMemory
+from grembyte.attach import wine_gadget
+from grembyte.attach.wine_gadget import GadgetError, ensure_gadget
+from grembyte.platform.wine import RawMemory
 
 
 def _pe(machine):
@@ -46,7 +46,7 @@ def test_a_checked_gadget_is_written_whole(monkeypatch, tmp_path):
     _serve(monkeypatch, dll)
     path = ensure_gadget(64, version="1.2.3")
     assert path.read_bytes() == dll
-    assert not list((tmp_path / "hermes-hook" / "gadget").glob("*.part"))
+    assert not list((tmp_path / "grembyte" / "gadget").glob("*.part"))
 
 
 def test_download_reports_progress(monkeypatch):
@@ -61,7 +61,7 @@ def test_download_reports_progress(monkeypatch):
 
 @pytest.mark.parametrize("allowed", [False, True])
 def test_connect_uses_the_download_setting(monkeypatch, allowed):
-    from hermes.core import settings
+    from grembyte.core import settings
 
     calls = []
     monkeypatch.setattr(settings, "get", lambda _key: allowed)
@@ -87,7 +87,7 @@ def test_connect_uses_the_download_setting(monkeypatch, allowed):
 )
 def test_preparing_a_missing_gadget_respects_consent(
         monkeypatch, tmp_path, allowed, answer, expected):
-    from hermes.ui import main_window
+    from grembyte.ui import main_window
 
     QMessageBox = main_window.QMessageBox
 
@@ -138,7 +138,7 @@ def test_preparing_a_missing_gadget_respects_consent(
 @pytest.mark.parametrize("current_bits, expected", [(64, [64]), (None, [32, 64])])
 def test_gadget_check_offers_missing_compatible_architectures(
         monkeypatch, tmp_path, current_bits, expected):
-    from hermes.ui import main_window
+    from grembyte.ui import main_window
 
     class FakeMessageBox:
         StandardButton = main_window.QMessageBox.StandardButton
@@ -190,7 +190,7 @@ def test_gadget_check_offers_missing_compatible_architectures(
 
 def test_gadget_check_is_inert_on_windows(monkeypatch):
     from types import SimpleNamespace
-    from hermes.ui import main_window
+    from grembyte.ui import main_window
 
     class Harness:
         _current_pid = None
@@ -203,7 +203,7 @@ def test_gadget_check_is_inert_on_windows(monkeypatch):
 @pytest.mark.parametrize("present, expected", [(False, " (Update available)"), (True, "")])
 def test_gadget_status_marks_a_missing_current_version(
         monkeypatch, tmp_path, present, expected):
-    from hermes.ui import main_window
+    from grembyte.ui import main_window
 
     path = tmp_path / "frida-gadget-current-64.dll"
     if present:

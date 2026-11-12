@@ -25,8 +25,8 @@ def _explorer(studio, size=(1280, 820)):
     """The code explorer on the test game, indexed and shown at its final
     size (so a selected line can be scrolled to the middle); and its index."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.features.code_explorer import CodeIndex, load_image
-    from hermes.ui.widgets import code_explorer as module
+    from grembyte.features.code_explorer import CodeIndex, load_image
+    from grembyte.ui.widgets import code_explorer as module
 
     path = _dummy_game_binary()
     dialog = module.CodeExplorerDialog(studio.translations)
@@ -115,11 +115,11 @@ def example_chain_add_gold(studio):
 def example_chain_dialog(studio):
     """Pointer chain … with dummy_game.exe+<g_game> -> 0x28 -> 0x0, as read from add_gold."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.core.memory import parse_chain
-    from hermes.core.pointer import PointerChain
-    from hermes.features.code_explorer import load_image, parse_location
-    from hermes.platform.linux import parse_maps
-    from hermes.ui.main_window import PointerChainDialog
+    from grembyte.core.memory import parse_chain
+    from grembyte.core.pointer import PointerChain
+    from grembyte.features.code_explorer import load_image, parse_location
+    from grembyte.platform.linux import parse_maps
+    from grembyte.ui.main_window import PointerChainDialog
 
     image = load_image(str(_dummy_game_binary()))
     g_game = parse_location("g_game", image) - image.base
@@ -200,9 +200,9 @@ def _example_calls():
 def example_monitor(studio):
     """The calls of Find treasure, Gold +100, Cast spell and the mana regenerating."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.features.code_explorer import Parameter, Signature
-    from hermes.features.native_trace import NativeFunction
-    from hermes.ui.widgets import native_monitor as module
+    from grembyte.features.code_explorer import Parameter, Signature
+    from grembyte.features.native_trace import NativeFunction
+    from grembyte.ui.widgets import native_monitor as module
 
     with _Patched(module, NativeMonitorWorker=_AgentWorkerStub,
                   is_wine_process=lambda _pid: False):
@@ -249,7 +249,7 @@ return `Gold: ${gGame.readPointer().add(0x28).readPointer().readS32()}`;
 def example_script(studio):
     """The gold script in the Scripts tab, run twice."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.features.scripts import ScriptSpec
+    from grembyte.features.scripts import ScriptSpec
 
     window = studio.show_attached()
     panel = window.script_panel

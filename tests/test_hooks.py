@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from hermes.core.pointer import PointerChain
+from grembyte.core.pointer import PointerChain
 
-from hermes.hooks.engine import HookSpec, build_agent_source
-from hermes.hooks.transforms import (
+from grembyte.hooks.engine import HookSpec, build_agent_source
+from grembyte.hooks.transforms import (
     ClampTransform,
     FreezeTransform,
     MultiplyTransform,
@@ -69,7 +69,7 @@ def test_custom_transforms_can_be_registered():
         with pytest.raises(ValueError, match="already registered"):
             register_transform(_Double)
     finally:
-        from hermes.hooks import transforms  # pylint: disable=import-outside-toplevel
+        from grembyte.hooks import transforms  # pylint: disable=import-outside-toplevel
         del transforms._TRANSFORMS["test-double"]  # pylint: disable=protected-access
 
 
@@ -238,7 +238,7 @@ class _Target:
 def _trap_pcs(target):
     """Run the real write-watch agent and return the trap PC per command."""
     import frida  # pylint: disable=import-outside-toplevel
-    from hermes.features.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
+    from grembyte.features.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
 
     hits = []
     session = frida.attach(target.pid)
@@ -286,7 +286,7 @@ def fixture_qt_app():
 
 @pytest.fixture(name="translations")
 def fixture_translations():
-    from hermes.ui.localization import load_translations  # pylint: disable=import-outside-toplevel
+    from grembyte.ui.localization import load_translations  # pylint: disable=import-outside-toplevel
 
     return load_translations("de")
 
@@ -315,7 +315,7 @@ _BUSY_TARGET_SOURCE = _TARGET_SOURCE.replace(
 
 @requires_target
 def test_stopping_hooks_while_a_thread_writes_through_them(tmp_path, qt_app):
-    from hermes.hooks.engine import HookWorker  # pylint: disable=import-outside-toplevel
+    from grembyte.hooks.engine import HookWorker  # pylint: disable=import-outside-toplevel
 
     source = tmp_path / "busy.c"
     source.write_text(_BUSY_TARGET_SOURCE)
@@ -358,7 +358,7 @@ def _build_target(tmp_path, optimization="-O2", *flags):
 @requires_target
 @pytest.mark.parametrize("optimization", ["-O0", "-O2"])
 def test_hook_worker_rewrites_values(tmp_path, qt_app, optimization):
-    from hermes.hooks.engine import HookWorker  # pylint: disable=import-outside-toplevel
+    from grembyte.hooks.engine import HookWorker  # pylint: disable=import-outside-toplevel
 
     target = _Target(_build_target(tmp_path, optimization))
     worker = HookWorker(target.pid)
@@ -414,8 +414,8 @@ def test_hook_works_while_its_target_is_write_watched(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
     import frida
 
-    from hermes.features.write_watch import _build_agent_source
-    from hermes.hooks.engine import HookWorker
+    from grembyte.features.write_watch import _build_agent_source
+    from grembyte.hooks.engine import HookWorker
 
     target = _Target(_build_target(tmp_path))
     worker = HookWorker(target.pid)
@@ -499,8 +499,8 @@ int main(void) {
 @pytest.mark.parametrize("short_jump", [False, True])
 def test_short_jump_hooks_a_write_without_room_for_the_jmp(tmp_path, qt_app, short_jump):
     # pylint: disable=import-outside-toplevel
-    from hermes.core import settings
-    from hermes.hooks.engine import HookWorker
+    from grembyte.core import settings
+    from grembyte.hooks.engine import HookWorker
 
     (tmp_path / "target.c").write_text(_CRAMPED_SOURCE)
     (tmp_path / "cramped.S").write_text(_CRAMPED_ASM)
@@ -572,8 +572,8 @@ def test_repatch_into_a_new_cave_is_restored_on_removal(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel,too-many-locals
     import frida
 
-    from hermes.core import settings
-    from hermes.hooks.engine import HookWorker
+    from grembyte.core import settings
+    from grembyte.hooks.engine import HookWorker
 
     (tmp_path / "target.c").write_text(_CRAMPED_SOURCE)
     (tmp_path / "caves.S").write_text(_TWO_CAVES_ASM)
@@ -666,8 +666,8 @@ def test_hook_reverted_by_the_game_is_reported_and_patched_again(tmp_path, qt_ap
     # pylint: disable=import-outside-toplevel,protected-access
     import frida
 
-    from hermes.core import settings
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.core import settings
+    from grembyte.ui.widgets.hooks import HookPanel
 
     target, function = _start_ctypes_target(tmp_path)
     original = _CTYPES_WRITE + [0x90] * 3
@@ -720,7 +720,7 @@ def test_hook_edited_while_the_game_exits_is_only_saved(tmp_path, qt_app, transl
 
     from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.widgets import hooks
+    from grembyte.ui.widgets import hooks
 
     target, function = _start_ctypes_target(tmp_path)
     panel = hooks.HookPanel(translations)
@@ -787,8 +787,8 @@ def _read_code(pid, address, size):
 @requires_x64_attach
 def test_hooked_writes_stay_out_of_javascript(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.core import settings
-    from hermes.hooks.engine import HookWorker
+    from grembyte.core import settings
+    from grembyte.hooks.engine import HookWorker
 
     target, function = _start_ctypes_target(tmp_path)
     settings.apply({"hook_profiling": True})
@@ -822,7 +822,7 @@ def test_breakpoint_hook_leaves_the_code_untouched(tmp_path, qt_app, translation
     # pylint: disable=import-outside-toplevel,protected-access
     import dataclasses
 
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.ui.widgets.hooks import HookPanel
 
     target, function = _start_ctypes_target(tmp_path)
     code = _read_code(target.pid, function, 7)
@@ -855,7 +855,7 @@ def test_breakpoint_hook_leaves_the_code_untouched(tmp_path, qt_app, translation
 def _watch_hits(target, command, reads):
     """Run the watch agent around one command and return its hits."""
     import frida  # pylint: disable=import-outside-toplevel
-    from hermes.features.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
+    from grembyte.features.write_watch import _build_agent_source  # pylint: disable=import-outside-toplevel
 
     hits = []
     session = frida.attach(target.pid)
@@ -892,7 +892,7 @@ def test_access_watch_tells_reads_from_writes(tmp_path):
 @requires_target
 def test_hook_works_while_its_target_is_access_watched(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.ui.widgets.hooks import HookPanel
 
     target = _Target(_build_target(tmp_path))
     panel = HookPanel(translations)
@@ -935,7 +935,7 @@ def _template(template_id=1, source="ctx => ctx.new * ctx.params.factor", defaul
 
 def test_hook_dialog_lists_example_templates(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.hooks import HookDialog
+    from grembyte.ui.widgets.hooks import HookDialog
 
     dialog = HookDialog(translations, "0x1000", "int32", "game+0x10")
 
@@ -946,7 +946,7 @@ def test_hook_dialog_lists_example_templates(qt_app, translations):
 
 def test_hook_dialog_builds_transform_from_form(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.hooks import HookDialog
+    from grembyte.ui.widgets.hooks import HookDialog
 
     dialog = HookDialog(translations, "0x1000", "int32", "game+0x10")
     form = dialog.forms.currentWidget()
@@ -965,7 +965,7 @@ def test_hook_dialog_builds_transform_from_form(qt_app, translations):
 
 def test_hook_dialog_sets_caller_depth_only_when_creating(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.widgets.hooks import HookDialog
+    from grembyte.ui.widgets.hooks import HookDialog
 
     dialog = HookDialog(translations, "0x1000", "int32", "game+0x10")
     dialog.caller_depth_input.setValue(3)
@@ -980,7 +980,7 @@ def test_hook_dialog_sets_caller_depth_only_when_creating(qt_app, translations):
 
 def test_hook_dialog_reports_invalid_input(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.widgets.hooks import HookDialog
+    from grembyte.ui.widgets.hooks import HookDialog
 
     dialog = HookDialog(translations, "0x1000", "int32", "game+0x10")
     dialog.forms.currentWidget()._editors["factor"][1].setText("viel")
@@ -993,7 +993,7 @@ def test_hook_dialog_reports_invalid_input(qt_app, translations):
 
 def test_hook_dialog_prefills_transform_without_template(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.hooks import HookDialog
+    from grembyte.ui.widgets.hooks import HookDialog
 
     dialog = HookDialog(
         translations, "0x1000", "int32", "game+0x10",
@@ -1009,7 +1009,7 @@ def test_hook_dialog_prefills_transform_without_template(qt_app, translations):
 
 def test_hook_dialog_uses_hook_copy_of_unchanged_template(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.hooks import HookDialog
+    from grembyte.ui.widgets.hooks import HookDialog
 
     dialog = HookDialog(
         translations, "0x1000", "int32", "game+0x10",
@@ -1024,7 +1024,7 @@ def test_hook_dialog_uses_hook_copy_of_unchanged_template(qt_app, translations):
 
 def test_hook_dialog_offers_changed_template(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.widgets.hooks import HookDialog
+    from grembyte.ui.widgets.hooks import HookDialog
 
     changed = TransformDefinition(
         "Faktor neu", "ctx => ctx.old + ctx.delta * ctx.params.factor",
@@ -1057,7 +1057,7 @@ def test_hook_dialog_offers_changed_template(qt_app, translations):
 
 def test_hook_dialog_reports_deleted_template(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.hooks import HookDialog
+    from grembyte.ui.widgets.hooks import HookDialog
 
     dialog = HookDialog(
         translations, "0x1000", "int32", "game+0x10",
@@ -1077,7 +1077,7 @@ def test_hook_dialog_reports_deleted_template(qt_app, translations):
 @requires_target
 def test_hook_panel_installs_and_removes_hooks(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.ui.widgets.hooks import HookPanel
 
     target = _Target(_build_target(tmp_path))
     panel = HookPanel(translations)
@@ -1119,8 +1119,8 @@ def test_hooks_of_an_ended_session_can_be_resumed_in_a_new_one(tmp_path, qt_app,
     # pylint: disable=import-outside-toplevel,protected-access
     from typing import cast
 
-    from hermes.ui.widgets.hooks import HookPanel
-    from hermes.hooks.engine import HookWorker
+    from grembyte.ui.widgets.hooks import HookPanel
+    from grembyte.hooks.engine import HookWorker
 
     target = _Target(_build_target(tmp_path))
     panel = HookPanel(translations)
@@ -1161,7 +1161,7 @@ def test_hooks_of_an_ended_session_can_be_resumed_in_a_new_one(tmp_path, qt_app,
 def test_write_watch_hits_in_trampolines_count_for_the_hooked_write(
         tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.ui.widgets.hooks import HookPanel
 
     target = _Target(_build_target(tmp_path))
     panel = HookPanel(translations)
@@ -1196,12 +1196,12 @@ def test_saved_hooks_survive_a_restart(tmp_path, qt_app, translations):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-    from hermes.db.base import Base
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+    from grembyte.db.base import Base
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui.widgets.hooks import HookPanel
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     repository = HookRepository(sessionmaker(bind=engine))
     binary = _build_target(tmp_path, "-O2", "-fPIE", "-pie")
@@ -1266,7 +1266,7 @@ def test_saved_hooks_survive_a_restart(tmp_path, qt_app, translations):
 
 @requires_target
 def test_changed_code_is_not_patched(tmp_path, qt_app):
-    from hermes.hooks.engine import HookWorker  # pylint: disable=import-outside-toplevel
+    from grembyte.hooks.engine import HookWorker  # pylint: disable=import-outside-toplevel
 
     target = _Target(_build_target(tmp_path))
     worker = HookWorker(target.pid)
@@ -1290,7 +1290,7 @@ def test_changed_code_is_not_patched(tmp_path, qt_app):
 @requires_target
 def test_shared_callers_are_reported_as_ambiguous(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.ui.widgets.hooks import HookPanel
 
     target = _Target(_build_target(tmp_path))
     panel = HookPanel(translations)
@@ -1317,7 +1317,7 @@ def test_shared_callers_are_reported_as_ambiguous(tmp_path, qt_app, translations
 @requires_target
 def test_debug_mode_reports_calls_and_skipped_writes(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.ui.widgets.hooks import HookPanel
 
     target = _Target(_build_target(tmp_path))
     panel = HookPanel(translations)
@@ -1471,12 +1471,12 @@ def test_hook_on_jit_code_is_trained_again_after_a_restart(tmp_path, qt_app, tra
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-    from hermes.db.base import Base
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+    from grembyte.db.base import Base
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui.widgets.hooks import HookPanel
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     repository = HookRepository(sessionmaker(bind=engine))
     source = tmp_path / "target.c"

@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-from hermes.hooks.sandbox import normalize_value
-from hermes.hooks.transforms import ClampTransform, MultiplyTransform
+from grembyte.hooks.sandbox import normalize_value
+from grembyte.hooks.transforms import ClampTransform, MultiplyTransform
 
 
 @pytest.fixture(name="sandbox", scope="module")
@@ -13,7 +13,7 @@ def fixture_sandbox():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     # pylint: disable=import-error,no-name-in-module,import-outside-toplevel
     from PySide6.QtWidgets import QApplication
-    from hermes.hooks.sandbox import TransformSandbox
+    from grembyte.hooks.sandbox import TransformSandbox
 
     app = QApplication.instance() or QApplication([])
     yield TransformSandbox()

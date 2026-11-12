@@ -3,7 +3,7 @@
 Extensions that would help find addresses and hook entry points, and open points from the
 work so far. As of November 2026.
 
-What Hermes can do today is described in the [documentation](docs/index.md); what was learned
+What Grembyte can do today is described in the [documentation](docs/index.md); what was learned
 while building it is in the [implementation notes](docs/development/implementation-notes.md).
 
 ## Proposals, independent of any engine
@@ -305,7 +305,7 @@ the class tree, the dropdown and the filter, and can become two views of one win
 
 ## Binary distribution (PyInstaller) and licenses
 
-Open, nothing is built yet. Hermes Hook is MIT-licensed; a frozen bundle contains
+Open, nothing is built yet. Grembyte is MIT-licensed; a frozen bundle contains
 third-party code whose licenses add duties that a source release through pip does not have:
 
 - **Qt (LGPL-3.0):** users must be able to replace the bundled Qt libraries with their own
@@ -320,7 +320,7 @@ third-party code whose licenses add duties that a source release through pip doe
 - **Inventory the bundle:** PyInstaller pulls in more than `requirements.txt` lists — the Python
   runtime (PSF-2.0), OpenSSL (Apache-2.0), libffi, zlib, Qt plugins, ICU and others. List
   what the finished bundle contains and extend `THIRD_PARTY_NOTICES` and `LICENSES/`.
-- **Smaller inventory:** exclude Qt modules and plugins Hermes does not use (e.g. QtWebEngine,
+- **Smaller inventory:** exclude Qt modules and plugins Grembyte does not use (e.g. QtWebEngine,
   QtMultimedia, QML). That is not required by the licenses, but each excluded module is one
   license fewer to check and makes the bundle smaller.
 - **Frida gadgets:** they are downloaded at runtime and not part of the bundle. If a bundle

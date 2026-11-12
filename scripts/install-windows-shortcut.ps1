@@ -1,4 +1,4 @@
-# Install a Start menu shortcut for the current user that starts Hermes Hook
+# Install a Start menu shortcut for the current user that starts Grembyte
 # from the project's virtual environment. Pin it to the taskbar from the Start
 # menu (right click, "Pin to taskbar"); Windows does not allow scripts to pin.
 # Remove it again with: install-windows-shortcut.ps1 -Uninstall
@@ -8,12 +8,12 @@ param([switch]$Uninstall)
 $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $PSScriptRoot
-$VenvDir = if ($env:HERMES_VENV) { $env:HERMES_VENV } else { Join-Path $ProjectDir ".venv" }
-$ShortcutFile = Join-Path ([Environment]::GetFolderPath("Programs")) "Hermes Hook.lnk"
-$IconFile = Join-Path $env:LOCALAPPDATA "hermes-hook\hermes-hook.ico"
-# Has to match WINDOWS_APP_ID in hermes/main.py, so that the pinned shortcut
+$VenvDir = if ($env:GREMBYTE_VENV) { $env:GREMBYTE_VENV } else { Join-Path $ProjectDir ".venv" }
+$ShortcutFile = Join-Path ([Environment]::GetFolderPath("Programs")) "Grembyte.lnk"
+$IconFile = Join-Path $env:LOCALAPPDATA "grembyte\grembyte.ico"
+# Has to match WINDOWS_APP_ID in grembyte/main.py, so that the pinned shortcut
 # and the running window share one taskbar button.
-$AppId = "hermes-hook.win"
+$AppId = "grembyte.win"
 
 if ($Uninstall) {
     Remove-Item -Force -ErrorAction SilentlyContinue $ShortcutFile, $IconFile
@@ -35,18 +35,18 @@ from PySide6.QtGui import QGuiApplication, QIcon
 app = QGuiApplication(sys.argv)
 image = QIcon(sys.argv[1]).pixmap(256, 256).toImage()
 sys.exit(0 if image.save(sys.argv[2], 'ICO') else 1)
-"@ (Join-Path $ProjectDir "hermes\ui\resources\favicon.svg") $IconFile
+"@ (Join-Path $ProjectDir "grembyte\ui\resources\favicon.svg") $IconFile
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "Cannot create $IconFile, the shortcut uses the Python icon."
     $IconFile = $Pythonw
 }
 
-# The shortcut starts pythonw.exe directly instead of hermes-hook.cmd, so no
+# The shortcut starts pythonw.exe directly instead of grembyte.cmd, so no
 # console window flashes up.
 $Shell = New-Object -ComObject WScript.Shell
 $Shortcut = $Shell.CreateShortcut($ShortcutFile)
 $Shortcut.TargetPath = $Pythonw
-$Shortcut.Arguments = "-m hermes"
+$Shortcut.Arguments = "-m grembyte"
 $Shortcut.WorkingDirectory = $ProjectDir
 $Shortcut.IconLocation = "$IconFile,0"
 $Shortcut.Description = "Memory scanner, hook engine and reverse engineering tool"
@@ -139,4 +139,4 @@ public static class ShortcutAppId
 [ShortcutAppId]::Set($ShortcutFile, $AppId)
 
 Write-Output "Installed $ShortcutFile"
-Write-Output "Pin it from the Start menu: right click 'Hermes Hook', 'Pin to taskbar'."
+Write-Output "Pin it from the Start menu: right click 'Grembyte', 'Pin to taskbar'."

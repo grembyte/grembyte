@@ -1,8 +1,8 @@
 # Regular expressions
 
-A regular expression is a pattern for text: "starts with `BP_`", "ends in a number", "contains *potion*, in any case". In Hermes they are useful in the JavaScript of [scripts](../guide/scripts.md), [hook templates](../guide/templates.md), method hooks and the options of choice parameters, wherever names or texts of the game are picked, cleaned up or taken apart. They are JavaScript's regular expressions; this page covers the part needed for that. If JavaScript itself is new to you, start with [JavaScript in Hermes](../examples/javascript.md).
+A regular expression is a pattern for text: "starts with `BP_`", "ends in a number", "contains *potion*, in any case". In Grembyte they are useful in the JavaScript of [scripts](../guide/scripts.md), [hook templates](../guide/templates.md), method hooks and the options of choice parameters, wherever names or texts of the game are picked, cleaned up or taken apart. They are JavaScript's regular expressions; this page covers the part needed for that. If JavaScript itself is new to you, start with [JavaScript in Grembyte](../examples/javascript.md).
 
-The filters in Hermes' own windows (catalog, code explorer, trace, monitor) are no regular expressions: they keep the rows containing every word typed.
+The filters in Grembyte's own windows (catalog, code explorer, trace, monitor) are no regular expressions: they keep the rows containing every word typed.
 
 ## Writing one
 
@@ -64,7 +64,7 @@ const set = new RegExp("^" + name);    // built from text at run time
 
 `. * + ? ^ $ ( ) [ ] { } | \ /` mean something in a pattern. To match one of them literally, put a backslash before it: `AttributeSetCore\.Might`, `\(Clone\)`, `\$`. When a pattern is built from text with `new RegExp`, the backslash itself is written twice in the string: `new RegExp("\\d+")`.
 
-## In Hermes
+## In Grembyte
 
 **Unreal names with a running number.** Unreal often numbers objects anew on every load: `AttributeSet_Health_2147445233`, `BP_Hero_C_1`. Cut the number off, or look for the start:
 
@@ -116,4 +116,4 @@ if (!/^\w{1,32}$/.test(ctx.args.name)) return "Only letters, digits and _ (at mo
 
 ## Trying patterns
 
-[regex101](https://regex101.com/) explains a pattern piece by piece and shows what it matches; choose the flavor *ECMAScript (JavaScript)*. In Hermes, a script with `ctx.log(text.match(/…/))` shows the match on real game text.
+[regex101](https://regex101.com/) explains a pattern piece by piece and shows what it matches; choose the flavor *ECMAScript (JavaScript)*. In Grembyte, a script with `ctx.log(text.match(/…/))` shows the match on real game text.

@@ -1,10 +1,10 @@
-"""Window sizes, splitters and column widths kept between runs (hermes.ui.window_state)."""
+"""Window sizes, splitters and column widths kept between runs (grembyte.ui.window_state)."""
 
 import os
 
 import pytest
 
-from hermes.ui.localization import load_translations
+from grembyte.ui.localization import load_translations
 
 
 @pytest.fixture(name="qt_app", scope="module")
@@ -17,7 +17,7 @@ def fixture_qt_app():
 
 @pytest.fixture(name="keeper")
 def fixture_keeper(qt_app):
-    from hermes.ui.window_state import keep_window_state  # pylint: disable=import-outside-toplevel
+    from grembyte.ui.window_state import keep_window_state  # pylint: disable=import-outside-toplevel
 
     keeper = keep_window_state(qt_app)
     yield keeper
@@ -29,7 +29,7 @@ def _settle(qt_app):
     # pylint: disable=import-outside-toplevel
     import time
 
-    from hermes.ui.widgets.table import SAVE_DELAY_MS
+    from grembyte.ui.widgets.table import SAVE_DELAY_MS
     deadline = time.monotonic() + (SAVE_DELAY_MS + 200) / 1000
     while time.monotonic() < deadline:
         qt_app.processEvents()
@@ -37,16 +37,16 @@ def _settle(qt_app):
 
 def test_windows_get_their_size_splitters_and_column_widths_back(qt_app, keeper):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.widgets.scripts import ScriptPanel
+    from grembyte.ui.widgets.scripts import ScriptPanel
     from PySide6.QtWidgets import QDialog, QVBoxLayout  # pylint: disable=import-error,no-name-in-module
 
     translations = load_translations("en")
 
     def open_window():
-        # A window of Hermes' own (the filter keeps only those) with the
+        # A window of Grembyte's own (the filter keeps only those) with the
         # scripts panel: a table and a splitter.
         window = QDialog()
-        window.__class__ = type("ScriptsWindow", (QDialog,), {"__module__": "hermes.test"})
+        window.__class__ = type("ScriptsWindow", (QDialog,), {"__module__": "grembyte.test"})
         layout = QVBoxLayout(window)
         panel = ScriptPanel(translations)
         layout.addWidget(panel)
@@ -77,8 +77,8 @@ def test_modal_dialogs_get_only_their_size_back(qt_app, keeper):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtCore import QSize  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui import window_state
-    from hermes.ui.widgets.scripts import ScriptDialog
+    from grembyte.ui import window_state
+    from grembyte.ui.widgets.scripts import ScriptDialog
 
     store = window_state.settings()
     store.setValue("windows/ScriptDialog/size", QSize(812, 633))
@@ -95,7 +95,7 @@ def test_modal_dialogs_get_only_their_size_back(qt_app, keeper):
 
 def test_column_widths_of_another_layout_are_ignored(qt_app):
     # pylint: disable=unused-argument,import-outside-toplevel
-    from hermes.ui import window_state
+    from grembyte.ui import window_state
 
     window_state.save_columns("W/T0", 3, {1: 150})
     assert window_state.load_columns("W/T0", 3) == {1: 150}

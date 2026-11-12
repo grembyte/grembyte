@@ -5,8 +5,8 @@ import struct
 
 import pytest
 
-from hermes.features.catalog import CatalogMethod
-from hermes.features.method_call import (
+from grembyte.features.catalog import CatalogMethod
+from grembyte.features.method_call import (
     BOOLEAN,
     CHAR,
     I4,
@@ -21,7 +21,7 @@ from hermes.features.method_call import (
     parse_argument,
     supported,
 )
-from hermes.ui.localization import load_translations
+from grembyte.ui.localization import load_translations
 
 
 GIVE_ITEM = CatalogMethod("Assembly-CSharp", "Scripts", "GiveItem", "(string,int)", "void",
@@ -72,8 +72,8 @@ def test_arguments_are_read_by_their_type():
 
 def test_enums_with_known_names_are_chosen_from_a_list(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.widgets import method_call
-    from hermes.ui.widgets.method_call import MethodCallDialog
+    from grembyte.ui.widgets import method_call
+    from grembyte.ui.widgets.method_call import MethodCallDialog
 
     dialog = MethodCallDialog.__new__(MethodCallDialog)  # pylint: disable=no-value-for-parameter
     dialog.translations, dialog._editors = translations, []
@@ -262,7 +262,7 @@ class _FakeWorker:
 
 def test_call_dialog_reads_arguments_and_logs_results(qt_app, translations, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.widgets import method_call
+    from grembyte.ui.widgets import method_call
 
     monkeypatch.setattr(method_call, "MethodMonitorWorker", _FakeWorker)
     monkeypatch.setattr(method_call, "_last_arguments", {})
@@ -316,7 +316,7 @@ def test_unreal_instance_functions_run_on_a_found_object(qt_app, translations, m
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from PySide6.QtWidgets import QCheckBox  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.widgets import method_call
+    from grembyte.ui.widgets import method_call
 
     monkeypatch.setattr(method_call, "MethodMonitorWorker", _FakeWorker)
     monkeypatch.setattr(method_call, "_last_arguments", {})
@@ -381,13 +381,13 @@ def test_only_static_methods_can_be_called(qt_app, translations, tmp_path):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-    from hermes.db.base import Base
-    from hermes.db.repository.favorites import FavoriteRepository
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
+    from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+    from grembyte.db.base import Base
+    from grembyte.db.repository.favorites import FavoriteRepository
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine)
     store = FavoriteStore(FavoriteRepository(sessions))
@@ -416,7 +416,7 @@ def test_an_object_a_call_returns_opens_in_the_inspector(qt_app, translations, m
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from PySide6.QtCore import QUrl  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.widgets import method_call
+    from grembyte.ui.widgets import method_call
 
     monkeypatch.setattr(method_call, "MethodMonitorWorker", _FakeWorker)
     monkeypatch.setattr(method_call, "_last_arguments", {})
@@ -461,9 +461,9 @@ def test_the_inspector_sets_properties_and_calls_methods(qt_app, translations, m
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from PySide6.QtWidgets import QWidget  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui import window_state
-    from hermes.ui.widgets import method_call
-    from hermes.ui.widgets.inspection import Inspections
+    from grembyte.ui import window_state
+    from grembyte.ui.widgets import method_call
+    from grembyte.ui.widgets.inspection import Inspections
 
     monkeypatch.setattr(method_call, "_last_arguments", {})
     window = QWidget()

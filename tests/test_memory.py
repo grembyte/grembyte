@@ -5,9 +5,9 @@ import struct
 
 import pytest
 
-from hermes.core import memory as memory_module
-from hermes.core.memory import write_process_value
-from hermes.platform import linux
+from grembyte.core import memory as memory_module
+from grembyte.core.memory import write_process_value
+from grembyte.platform import linux
 
 
 class FakeMemory:

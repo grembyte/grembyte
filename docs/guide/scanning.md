@@ -62,4 +62,4 @@ The test game has examples of both:
 
 Results show the address, type and live value. Select one or several and click **Track** (or double-click) to move them to the [tracked addresses](addresses.md). A right-click offers the memory viewer and the [write and read watch](write-watch.md) for a result directly.
 
-The scan area folds away with **Hide address search** next to the tabs, **View → Address search** or ++ctrl+shift+f++; Hermes remembers the choice.
+The scan area folds away with **Hide address search** next to the tabs, **View → Address search** or ++ctrl+shift+f++; Grembyte remembers the choice.

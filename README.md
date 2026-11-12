@@ -1,8 +1,8 @@
-# Hermes Hook
+# Grembyte
 
-Hermes Hook is a desktop application for inspecting and manipulating the memory of running games. It runs on Linux, including Windows games under Wine/Proton, and on Windows. The project is under development.
+Grembyte is a desktop application for inspecting and manipulating the memory of running games. It runs on Linux, including Windows games under Wine/Proton, and on Windows. The project is under development.
 
-**Documentation: <https://winterhafen.github.io/hermes-hook/>** – installation, tutorials, the user guide and examples with screenshots. Its sources are in [`docs/`](docs/index.md); `mkdocs serve` shows them locally (see [Development](docs/development/index.md#documentation)).
+**Documentation: <https://grembyte.github.io/grembyte/>** – installation, tutorials, the user guide and examples with screenshots. Its sources are in [`docs/`](docs/index.md); `mkdocs serve` shows them locally (see [Development](docs/development/index.md#documentation)).
 
 ## Disclaimer
 
@@ -31,15 +31,15 @@ Python 3.11 or newer is needed. In the project directory:
 ```bash
 python3 -m venv .venv
 ./.venv/bin/python -m pip install -e .
-./.venv/bin/hermes
+./.venv/bin/grembyte
 ```
 
-On Linux, Hermes needs `kernel.yama.ptrace_scope=0` to access a game started separately. The [installation guide](https://winterhafen.github.io/hermes-hook/getting-started/installation/), the [permissions](https://winterhafen.github.io/hermes-hook/getting-started/permissions/) and a [tutorial](https://winterhafen.github.io/hermes-hook/getting-started/first-hook/) with the test game in `test_app/` have the details.
+On Linux, Grembyte needs `kernel.yama.ptrace_scope=0` to access a game started separately. The [installation guide](https://grembyte.github.io/grembyte/getting-started/installation/), the [permissions](https://grembyte.github.io/grembyte/getting-started/permissions/) and a [tutorial](https://grembyte.github.io/grembyte/getting-started/first-hook/) with the test game in `test_app/` have the details.
 
 ## License
 
 Copyright (C) 2026 Frank Hoogen
 
-Hermes Hook is distributed under the MIT License. It is provided without any warranty; see [LICENSE](LICENSE).
+Grembyte is distributed under the MIT License. It is provided without any warranty; see [LICENSE](LICENSE).
 
 The third-party components and their licenses are listed in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES); the full license texts are in [LICENSES](LICENSES/).

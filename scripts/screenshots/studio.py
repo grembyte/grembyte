@@ -1,9 +1,9 @@
-"""The stage the screenshot scenes play on: an isolated hermes without a game.
+"""The stage the screenshot scenes play on: an isolated grembyte without a game.
 
-``run.py`` points every directory hermes writes to (QSettings, database,
-logs, caches) into a temporary folder before hermes is imported, so the
+``run.py`` points every directory grembyte writes to (QSettings, database,
+logs, caches) into a temporary folder before grembyte is imported, so the
 scenes never touch the user's data. No scene attaches to a process: they
-fill hermes' widgets with demo data the way its workers would.
+fill grembyte's widgets with demo data the way its workers would.
 """
 
 from dataclasses import dataclass
@@ -59,14 +59,14 @@ class Studio:
         self.language = language
         self._window = None
         self._extra = []
-        QSettings("hermes-hook", "hermes-hook").setValue("ui_theme", theme)
+        QSettings("grembyte", "grembyte").setValue("ui_theme", theme)
 
     @property
     def window(self):
         """The main window, built on first use and shown with no process attached."""
         if self._window is None:
             # pylint: disable=import-outside-toplevel
-            from hermes.ui.main_window import MainWindow
+            from grembyte.ui.main_window import MainWindow
 
             self._window = MainWindow(self.language)
             self._window.show()

@@ -1,4 +1,4 @@
-"""Pseudocode of the code explorer (see hermes/features/pseudocode.py).
+"""Pseudocode of the code explorer (see grembyte/features/pseudocode.py).
 
 Functions written in assembly (naked, Intel syntax) give exact instructions
 whatever the compiler version; the C functions show how compiled code reads.
@@ -10,8 +10,8 @@ import subprocess
 
 import pytest
 
-from hermes.features.code_explorer import CodeIndex, load_image, parse_location
-from hermes.features.pseudocode import render
+from grembyte.features.code_explorer import CodeIndex, load_image, parse_location
+from grembyte.features.pseudocode import render
 
 _SOURCE = r"""
 #include <stdio.h>

@@ -6,12 +6,12 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from hermes.db.base import Base
-from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-from hermes.db.repository.favorites import FavoriteRepository
-from hermes.db.repository.hooks import HookRepository
-from hermes.features.catalog import CatalogMethod
-from hermes.features.favorites import (
+from grembyte.db.base import Base
+from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+from grembyte.db.repository.favorites import FavoriteRepository
+from grembyte.db.repository.hooks import HookRepository
+from grembyte.features.catalog import CatalogMethod
+from grembyte.features.favorites import (
     CATALOG,
     METHOD,
     NATIVE,
@@ -20,8 +20,8 @@ from hermes.features.favorites import (
     favorite_from_method,
     favorite_key,
 )
-from hermes.features.native_trace import NativeFunction
-from hermes.ui.localization import load_translations
+from grembyte.features.native_trace import NativeFunction
+from grembyte.ui.localization import load_translations
 
 
 GOLD = CatalogMethod("Assembly-CSharp", "Game.PlayerInventory", "AddCurrency", "(int)", "void",
@@ -32,7 +32,7 @@ JIT = NativeFunction(0x7f0000, "", None)
 
 @pytest.fixture(name="sessions")
 def fixture_sessions(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     yield sessionmaker(bind=engine)
     engine.dispose()
@@ -102,7 +102,7 @@ def test_repository_keeps_favorites_and_their_notes(repository, process_id, sess
 
 
 def test_favorite_store_backfills_argument_names(repository, process_id):
-    from hermes.ui.widgets.favorites import FavoriteStore
+    from grembyte.ui.widgets.favorites import FavoriteStore
 
     legacy = favorite_from_method(GOLD)
     legacy.data.pop("argument_names")
@@ -125,10 +125,10 @@ def test_star_column_marks_and_unmarks(qt_app, repository, process_id, translati
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.features.trace import NEW, TraceRow
-    from hermes.ui.widgets.favorites import NO_STAR, STAR, FavoriteStore
-    from hermes.ui.widgets.native_trace import NativeRowModel
-    from hermes.ui.widgets.trace import trace_table
+    from grembyte.features.trace import NEW, TraceRow
+    from grembyte.ui.widgets.favorites import NO_STAR, STAR, FavoriteStore
+    from grembyte.ui.widgets.native_trace import NativeRowModel
+    from grembyte.ui.widgets.trace import trace_table
 
     store = FavoriteStore(repository)
     store.set_process(process_id)
@@ -159,10 +159,10 @@ def test_space_marks_the_selected_row(qt_app, repository, process_id, translatio
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
     from PySide6.QtGui import QShortcut  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.features.trace import NEW, TraceRow
-    from hermes.ui.widgets.favorites import FavoriteStore
-    from hermes.ui.widgets.native_trace import NativeRowModel
-    from hermes.ui.widgets.trace import trace_table
+    from grembyte.features.trace import NEW, TraceRow
+    from grembyte.ui.widgets.favorites import FavoriteStore
+    from grembyte.ui.widgets.native_trace import NativeRowModel
+    from grembyte.ui.widgets.trace import trace_table
 
     store = FavoriteStore(repository)
     store.set_process(process_id)
@@ -186,7 +186,7 @@ def test_space_marks_the_selected_row(qt_app, repository, process_id, translatio
 
 def test_favorites_window_annotates_and_monitors(qt_app, repository, process_id, translations):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
+    from grembyte.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 
     store = FavoriteStore(repository)
     store.set_process(process_id)
@@ -239,7 +239,7 @@ def test_favorites_window_handles_several_at_once(qt_app, repository, process_id
     from PySide6.QtCore import QItemSelectionModel  # pylint: disable=import-error,no-name-in-module
     from PySide6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
     from PySide6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
-    from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
+    from grembyte.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 
     store = FavoriteStore(repository)
     store.set_process(process_id)
@@ -285,7 +285,7 @@ def test_favorites_window_handles_several_at_once(qt_app, repository, process_id
 def test_favorites_window_sorts_by_column(qt_app, repository, process_id, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-    from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
+    from grembyte.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 
     store = FavoriteStore(repository)
     store.set_process(process_id)
@@ -310,7 +310,7 @@ def test_favorites_window_sorts_by_column(qt_app, repository, process_id, transl
 
 def test_favorites_show_static_methods(qt_app, repository, process_id, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.favorites import FavoritesDialog, FavoriteStore
+    from grembyte.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 
     store = FavoriteStore(repository)
     store.set_process(process_id)
@@ -328,7 +328,7 @@ def test_catalog_sorts_by_column_and_keeps_the_selection(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtCore import QItemSelectionModel, Qt  # pylint: disable=import-error,no-name-in-module
     from PySide6.QtWidgets import QTableView  # pylint: disable=import-error,no-name-in-module
-    from hermes.ui.widgets.catalog import CatalogModel
+    from grembyte.ui.widgets.catalog import CatalogModel
 
     class Engine:  # pylint: disable=too-few-public-methods
         @staticmethod

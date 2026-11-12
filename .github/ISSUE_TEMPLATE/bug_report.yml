@@ -1,11 +1,11 @@
 name: Bug report
-description: Something in Hermes Hook does not work as expected.
+description: Something in Grembyte does not work as expected.
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report a bug. Security problems go through a [private report](https://github.com/winterhafen/hermes-hook/security/advisories/new) instead.
+        Thanks for taking the time to report a bug. Security problems go through a [private report](https://github.com/grembyte/grembyte/security/advisories/new) instead.
   - type: textarea
     id: what-happened
     attributes:
@@ -21,7 +21,7 @@ body:
     id: area
     attributes:
       label: Area
-      description: Which part of Hermes is affected?
+      description: Which part of Grembyte is affected?
       options:
         - Memory scan / tracked addresses
         - Pointer scan
@@ -66,8 +66,8 @@ body:
   - type: input
     id: environment
     attributes:
-      label: Hermes version and system
-      description: Hermes version or commit, distribution, and the Proton or Wine version if used.
+      label: Grembyte version and system
+      description: Grembyte version or commit, distribution, and the Proton or Wine version if used.
       placeholder: 0.5.0 (commit abc1234), Fedora 44, Proton 10.0
     validations:
       required: true

@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-from hermes.attach import wine_helper
-from hermes.attach.wine_helper import (
+from grembyte.attach import wine_helper
+from grembyte.attach.wine_helper import (
     HelperError,
     WineProcess,
     helper_environment,
@@ -36,18 +36,18 @@ def _fake_process(root, pid, exe, environ=b""):
 
 
 def test_helpers_are_found_in_the_build_directory(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMES_INJECT_DIR", str(tmp_path))
-    _executable(tmp_path / "hermes-inject-x86_64.exe")
-    _executable(tmp_path / "hermes-inject-x86.exe")
-    assert wine_helper.helper_path(64) == tmp_path / "hermes-inject-x86_64.exe"
-    assert wine_helper.helper_path(32) == tmp_path / "hermes-inject-x86.exe"
-    monkeypatch.delenv("HERMES_INJECT_DIR")
+    monkeypatch.setenv("GREMBYTE_INJECT_DIR", str(tmp_path))
+    _executable(tmp_path / "grembyte-inject-x86_64.exe")
+    _executable(tmp_path / "grembyte-inject-x86.exe")
+    assert wine_helper.helper_path(64) == tmp_path / "grembyte-inject-x86_64.exe"
+    assert wine_helper.helper_path(32) == tmp_path / "grembyte-inject-x86.exe"
+    monkeypatch.delenv("GREMBYTE_INJECT_DIR")
     assert wine_helper.helper_dir() == wine_helper.BUILD_DIR
     assert wine_helper.BUILD_DIR.parts[-2:] == ("build", "inject")
 
 
 def test_a_missing_helper_is_reported_with_how_to_build_it(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMES_INJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("GREMBYTE_INJECT_DIR", str(tmp_path))
     with pytest.raises(HelperError, match="build.sh"):
         wine_helper.helper_path(64, build=False)
 
@@ -62,8 +62,8 @@ def test_build_sh_builds_both_helpers(tmp_path):
     subprocess.run(["sh", str(wine_helper.HELPER_DIR / "build.sh")], check=True,
                    env={**os.environ, "OUT_DIR": str(tmp_path)}, capture_output=True)
     assert sorted(path.name for path in tmp_path.iterdir()) == [
-        "hermes-inject-x86.exe", "hermes-inject-x86_64.exe"]
-    assert (tmp_path / "hermes-inject-x86_64.exe").read_bytes()[:2] == b"MZ"
+        "grembyte-inject-x86.exe", "grembyte-inject-x86_64.exe"]
+    assert (tmp_path / "grembyte-inject-x86_64.exe").read_bytes()[:2] == b"MZ"
 
 
 def test_parses_list_output_with_crlf_and_skips_noise():

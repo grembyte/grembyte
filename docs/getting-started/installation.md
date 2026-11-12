@@ -2,32 +2,32 @@
 
 ## Get the source code
 
-Hermes Hook is not offered as a ready-made installer. You download its source code from GitHub and install it with Python, as described further down. GitHub is a website where software projects keep their files; you need no account to download them.
+Grembyte is not offered as a ready-made installer. You download its source code from GitHub and install it with Python, as described further down. GitHub is a website where software projects keep their files; you need no account to download them.
 
-The project page is **<https://github.com/winterhafen/hermes-hook>**. There are two ways to get the files from it:
+The project page is **<https://github.com/grembyte/grembyte>**. There are two ways to get the files from it:
 
-- **Download a ZIP file**: no extra programs, a few clicks in the browser. Good for trying Hermes out. For a newer version you download the ZIP again.
+- **Download a ZIP file**: no extra programs, a few clicks in the browser. Good for trying Grembyte out. For a newer version you download the ZIP again.
 - **Clone with Git**: needs the program Git once, then a single command brings your copy up to date. Recommended if you want to follow the development.
 
 Either way you end up with a folder with the project's files, the **project directory**. All later commands on this page run in it.
 
 !!! tip "Pick a simple place"
-    Put the project directory somewhere you will find it again and whose path has no spaces or special characters, for example `~/Programs/hermes-hook` on Linux or `C:\Programs\hermes-hook` on Windows. The menu entry and shortcut installed below point to this folder, so it should stay there.
+    Put the project directory somewhere you will find it again and whose path has no spaces or special characters, for example `~/Programs/grembyte` on Linux or `C:\Programs\grembyte` on Windows. The menu entry and shortcut installed below point to this folder, so it should stay there.
 
 ### Option 1: Download as a ZIP file
 
-1. Open <https://github.com/winterhafen/hermes-hook> in your browser.
+1. Open <https://github.com/grembyte/grembyte> in your browser.
 2. Above the list of files, click the green **Code** button.
-3. In the menu that opens, click **Download ZIP** at the bottom. The browser saves a file named `hermes-hook-main.zip`, usually in your *Downloads* folder.
+3. In the menu that opens, click **Download ZIP** at the bottom. The browser saves a file named `grembyte-main.zip`, usually in your *Downloads* folder.
 4. Extract the ZIP file:
-    - **Linux**: right-click the file in your file manager and choose *Extract here* (the wording depends on the desktop), or in a terminal: `unzip hermes-hook-main.zip`
+    - **Linux**: right-click the file in your file manager and choose *Extract here* (the wording depends on the desktop), or in a terminal: `unzip grembyte-main.zip`
     - **Windows**: right-click the file in Explorer, choose **Extract All…**, and confirm.
-5. This creates a folder `hermes-hook-main`. Move it to the place you picked and rename it to `hermes-hook` if you like. This folder is your project directory.
+5. This creates a folder `grembyte-main`. Move it to the place you picked and rename it to `grembyte` if you like. This folder is your project directory.
 
 !!! note "Do not start from inside the ZIP"
     Windows lets you open a ZIP file like a folder. Always extract it first; programs cannot run properly from inside the ZIP.
 
-**Updating:** download the ZIP again, extract it and replace the old project directory with the new one. Then repeat the [install](#install) step, because the virtual environment `.venv` lives in the project directory. Your addresses, hooks, scripts and settings are not affected: Hermes keeps them outside the project directory (see [Files and environment](../reference/files.md)).
+**Updating:** download the ZIP again, extract it and replace the old project directory with the new one. Then repeat the [install](#install) step, because the virtual environment `.venv` lives in the project directory. Your addresses, hooks, scripts and settings are not affected: Grembyte keeps them outside the project directory (see [Files and environment](../reference/files.md)).
 
 ### Option 2: Clone with Git
 
@@ -72,8 +72,8 @@ Open a terminal (Linux: e.g. *Konsole* or *Terminal*; Windows: *PowerShell* or *
     ```bash
     mkdir -p ~/Programs
     cd ~/Programs
-    git clone https://github.com/winterhafen/hermes-hook.git
-    cd hermes-hook
+    git clone https://github.com/grembyte/grembyte.git
+    cd grembyte
     ```
 
 === "Windows"
@@ -81,11 +81,11 @@ Open a terminal (Linux: e.g. *Konsole* or *Terminal*; Windows: *PowerShell* or *
     ```powershell
     mkdir C:\Programs -Force
     cd C:\Programs
-    git clone https://github.com/winterhafen/hermes-hook.git
-    cd hermes-hook
+    git clone https://github.com/grembyte/grembyte.git
+    cd grembyte
     ```
 
-`git clone` creates the folder `hermes-hook` with all files; that is your project directory. The last command already takes you into it, so you can continue straight with the [install](#install).
+`git clone` creates the folder `grembyte` with all files; that is your project directory. The last command already takes you into it, so you can continue straight with the [install](#install).
 
 **Updating:** in the project directory run
 
@@ -96,7 +96,7 @@ git pull
 This fetches the latest changes. If they changed the dependencies, running `python -m pip install -e .` again with the virtual environment activated brings them up to date; it does no harm if nothing changed.
 
 !!! note "Changed files"
-    `git pull` refuses to overwrite files in the project directory you edited yourself. If you did not mean to change them, `git status` lists them and `git restore <file>` puts a file back. Your Hermes data is not in the project directory and is never touched by Git.
+    `git pull` refuses to overwrite files in the project directory you edited yourself. If you did not mean to change them, `git status` lists them and `git restore <file>` puts a file back. Your Grembyte data is not in the project directory and is never touched by Git.
 
 ## Requirements
 
@@ -145,13 +145,13 @@ The Python dependencies, PySide6 (Qt) among them, are installed with `pip` from 
 
     On Leap the default `python3` can be older than 3.11; install a newer one, e.g. `python311`, and create the virtual environment with `python3.11 -m venv .venv`.
 
-On a Wayland session Qt uses its `wayland` plugin, whose libraries every Wayland desktop already has. The XCB packages are still worth installing: Qt falls back to `xcb` (through XWayland) when the Wayland plugin cannot start. If Hermes still does not start, see [Troubleshooting](#troubleshooting).
+On a Wayland session Qt uses its `wayland` plugin, whose libraries every Wayland desktop already has. The XCB packages are still worth installing: Qt falls back to `xcb` (through XWayland) when the Wayland plugin cannot start. If Grembyte still does not start, see [Troubleshooting](#troubleshooting).
 
 On Windows nothing besides Python is needed: install it from <https://www.python.org/downloads/windows/> (tick *Add python.exe to PATH*) or with `winget install --id Python.Python.3.13 -e`.
 
 ### Supported platforms
 
-**Tested**: Hermes Hook is developed on these systems, and every release is tried on them:
+**Tested**: Grembyte is developed on these systems, and every release is tried on them:
 
 | System | Version | Notes |
 | --- | --- | --- |
@@ -169,9 +169,9 @@ On Windows nothing besides Python is needed: install it from <https://www.python
 | Other Linux distributions | | with Python 3.11+ and the libraries above |
 | Windows | 10 22H2 | |
 
-**Not supported**: macOS, 32-bit systems and ARM computers (Hermes reads x86 and x86-64 code).
+**Not supported**: macOS, 32-bit systems and ARM computers (Grembyte reads x86 and x86-64 code).
 
-If Hermes runs on a system that is not tested, or does not, a [bug report](https://github.com/winterhafen/hermes-hook/issues) or a short note helps.
+If Grembyte runs on a system that is not tested, or does not, a [bug report](https://github.com/grembyte/grembyte/issues) or a short note helps.
 
 ## Install
 
@@ -195,27 +195,27 @@ In the project directory:
     python -m pip install -e .
     ```
 
-The editable install also sets up the console command `hermes`.
+The editable install also sets up the console command `grembyte`.
 
 ## Start
 
 With the virtual environment activated:
 
 ```bash
-hermes
+grembyte
 ```
 
 Or straight from the project directory, without activating anything:
 
 ```bash
-./.venv/bin/python -m hermes
+./.venv/bin/python -m grembyte
 ```
 
 ### Menu entry and shortcut
 
 === "Linux"
 
-    `scripts/hermes-hook.sh` activates the virtual environment (`.venv` in the project, or `$HERMES_VENV`) and starts Hermes from any working directory. A menu entry for the current user (KDE, GNOME, …) appears under Development and Games:
+    `scripts/grembyte.sh` activates the virtual environment (`.venv` in the project, or `$GREMBYTE_VENV`) and starts Grembyte from any working directory. A menu entry for the current user (KDE, GNOME, …) appears under Development and Games:
 
     ```bash
     ./scripts/install-desktop-entry.sh              # install or update the entry
@@ -226,7 +226,7 @@ Or straight from the project directory, without activating anything:
 
 === "Windows"
 
-    `scripts\hermes-hook.cmd` starts Hermes the same way. For the Start menu and the taskbar, install a shortcut for the current user, then right-click "Hermes Hook" in the Start menu and choose "Pin to taskbar":
+    `scripts\grembyte.cmd` starts Grembyte the same way. For the Start menu and the taskbar, install a shortcut for the current user, then right-click "Grembyte" in the Start menu and choose "Pin to taskbar":
 
     ```powershell
     powershell -ExecutionPolicy Bypass -File scripts\install-windows-shortcut.ps1             # install or update
@@ -238,15 +238,15 @@ Or straight from the project directory, without activating anything:
 The interface is German or English, depending on the system locale (English for any other locale). Choose it under **Settings → General …**, or for one start with an environment variable, which applies while the setting is "as the system":
 
 ```bash
-HERMES_LANGUAGE=en hermes
-HERMES_LANGUAGE=de hermes
+GREMBYTE_LANGUAGE=en grembyte
+GREMBYTE_LANGUAGE=de grembyte
 ```
 
 ## First start
 
-At the first start Hermes creates its SQLite database, where it keeps addresses, hooks, templates, scripts and settings per game. [Files and environment](../reference/files.md) lists where it lives and how to move it.
+At the first start Grembyte creates its SQLite database, where it keeps addresses, hooks, templates, scripts and settings per game. [Files and environment](../reference/files.md) lists where it lives and how to move it.
 
-On Linux, continue with the [permissions](permissions.md) Hermes needs to read another process's memory.
+On Linux, continue with the [permissions](permissions.md) Grembyte needs to read another process's memory.
 
 ## Troubleshooting
 
@@ -256,7 +256,7 @@ On Linux, continue with the [permissions](permissions.md) Hermes needs to read a
 ModuleNotFoundError: No module named 'PySide6'
 ```
 
-(or `frida`, `capstone`, `sqlalchemy`, `hermes`, …) almost always means that Python runs outside the virtual environment, or that the install step did not finish.
+(or `frida`, `capstone`, `sqlalchemy`, `grembyte`, …) almost always means that Python runs outside the virtual environment, or that the install step did not finish.
 
 1. Check which Python runs. With the environment activated, the path must end in the project's `.venv`:
 
@@ -264,7 +264,7 @@ ModuleNotFoundError: No module named 'PySide6'
     python -c "import sys; print(sys.prefix)"
     ```
 
-    If it does not, activate it (`source .venv/bin/activate`, on Windows `.venv\Scripts\activate`) or start Hermes with `./.venv/bin/python -m hermes`. The menu entry and the shortcut use `.venv` by themselves.
+    If it does not, activate it (`source .venv/bin/activate`, on Windows `.venv\Scripts\activate`) or start Grembyte with `./.venv/bin/python -m grembyte`. The menu entry and the shortcut use `.venv` by themselves.
 
 2. Install again and read the end of the output; an error there names the package that failed:
 
@@ -294,7 +294,7 @@ The plugin is there, but a system library it needs is missing. Install the [syst
 1. Let Qt report what fails:
 
     ```bash
-    QT_DEBUG_PLUGINS=1 hermes
+    QT_DEBUG_PLUGINS=1 grembyte
     ```
 
     The output names the plugin and the library that could not be loaded (`Cannot load library …: libxcb-cursor.so.0: cannot open shared object file`).
@@ -310,12 +310,12 @@ The plugin is there, but a system library it needs is missing. Install the [syst
 3. Try the other platform plugin. On Wayland, `wayland` and `xcb` are both possible:
 
     ```bash
-    QT_QPA_PLATFORM=wayland hermes
-    QT_QPA_PLATFORM=xcb hermes
+    QT_QPA_PLATFORM=wayland grembyte
+    QT_QPA_PLATFORM=xcb grembyte
     ```
 
     Remove a `QT_QPA_PLATFORM` set in your shell profile or environment that names a plugin your session does not have.
 
 A message `Could not find the Qt platform plugin "…" in ""` (*find*, not *load*) means that PySide6 itself is incomplete: install it again with `python -m pip install --force-reinstall PySide6-Essentials`.
 
-If neither helps, open a [bug report](https://github.com/winterhafen/hermes-hook/issues) with the output of `QT_DEBUG_PLUGINS=1 hermes`, your distribution and its version.
+If neither helps, open a [bug report](https://github.com/grembyte/grembyte/issues) with the output of `QT_DEBUG_PLUGINS=1 grembyte`, your distribution and its version.

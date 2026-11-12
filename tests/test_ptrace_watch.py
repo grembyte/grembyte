@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes.features.ptrace_watch import build_dr7, decode_access
+from grembyte.features.ptrace_watch import build_dr7, decode_access
 
 
 @pytest.mark.parametrize(
@@ -111,7 +111,7 @@ def test_ptrace_watch_sees_writes_and_leaves_target_running(tmp_path):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication  # pylint: disable=no-name-in-module
 
-    from hermes.features.ptrace_watch import PtraceWriteWatchWorker
+    from grembyte.features.ptrace_watch import PtraceWriteWatchWorker
 
     source = tmp_path / "wtarget.c"
     source.write_text(_TARGET_SOURCE)
@@ -211,7 +211,7 @@ def test_ptrace_watch_keeps_signals_and_new_threads_of_the_target(tmp_path):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication  # pylint: disable=no-name-in-module
 
-    from hermes.features.ptrace_watch import PtraceWriteWatchWorker
+    from grembyte.features.ptrace_watch import PtraceWriteWatchWorker
 
     source = tmp_path / "busy.c"
     source.write_text(_BUSY_SOURCE)

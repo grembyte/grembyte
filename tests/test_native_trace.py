@@ -2,7 +2,7 @@
 
 import subprocess
 
-from hermes.features.native_trace import (
+from grembyte.features.native_trace import (
     NativeFunction,
     TraceModule,
     apply_names,
@@ -10,7 +10,7 @@ from hermes.features.native_trace import (
     thread_activity,
 )
 
-from hermes.platform.linux import parse_maps
+from grembyte.platform.linux import parse_maps
 from tests.test_hooks import (  # pylint: disable=unused-import
     _Target,
     _wait_for,
@@ -160,8 +160,8 @@ class _Recorder:
 @requires_target
 def test_native_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.native_trace import NativeTraceWorker
-    from hermes.features.trace import NEW, SAME, analyze, recording_calls
+    from grembyte.features.native_trace import NativeTraceWorker
+    from grembyte.features.trace import NEW, SAME, analyze, recording_calls
 
     target = _Target(_build(tmp_path))
     worker = NativeTraceWorker(target.pid)
@@ -238,7 +238,7 @@ def test_native_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
 @requires_target
 def test_native_trace_survives_a_crowded_address_space(tmp_path, qt_app, monkeypatch):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.native_trace import NativeTraceWorker
+    from grembyte.features.native_trace import NativeTraceWorker
 
     # Stalker found no room for its code near its thread contexts and wrote
     # to NULL (EVERSPACE crashed 0.4 s after the start).
@@ -272,7 +272,7 @@ def test_native_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, tr
     # pylint: disable=import-outside-toplevel,protected-access
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.widgets.native_trace import NativeTraceDialog
+    from grembyte.ui.widgets.native_trace import NativeTraceDialog
 
     target = _Target(_build(tmp_path))
     dialog = NativeTraceDialog(translations, target.pid)
@@ -383,7 +383,7 @@ def test_calls_filter_reads_counts_ranges_bounds_and_multiples():
     # pylint: disable=import-outside-toplevel
     import pytest
 
-    from hermes.features.trace import calls_filter
+    from grembyte.features.trace import calls_filter
 
     assert calls_filter("") is None
     assert calls_filter(" , ") is None
@@ -399,9 +399,9 @@ def test_rows_sort_by_column_and_filter_by_name_and_calls(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.features.trace import NEW, SAME, TraceRow
-    from hermes.ui.widgets.native_trace import NativeRowModel
-    from hermes.ui.widgets.trace import RowFilterBar
+    from grembyte.features.trace import NEW, SAME, TraceRow
+    from grembyte.ui.widgets.native_trace import NativeRowModel
+    from grembyte.ui.widgets.trace import RowFilterBar
 
     functions = [NativeFunction(0x401000, "game", 0x1000, "roll_dice"),
                  NativeFunction(0x402000, "game", 0x2000, "draw_ui"),
@@ -442,7 +442,7 @@ def test_rows_sort_by_column_and_filter_by_name_and_calls(qt_app, translations):
 
 def test_under_wine_the_agent_measures_the_threads(qt_app, monkeypatch):
     # pylint: disable=unused-argument,protected-access,import-outside-toplevel
-    from hermes.features import native_trace
+    from grembyte.features import native_trace
 
     monkeypatch.setattr(native_trace, "is_wine_process", lambda _pid: True)
     worker = native_trace.NativeTraceWorker(123)

@@ -5,7 +5,7 @@ This example uses the [code explorer](../guide/code-explorer.md) on the small te
 !!! tip "Reading assembly"
     The [assembly quick reference](../reference/assembly.md) explains registers, operands and the instructions this page shows, and how to read a function line by line – `add_gold` and `on_treasure` included.
 
-The test game is a native C program without an engine, like a game with an engine of its own. Hermes has no catalog of classes for it: the way in is its machine code.
+The test game is a native C program without an engine, like a game with an engine of its own. Grembyte has no catalog of classes for it: the way in is its machine code.
 
 ## Build and start the game
 
@@ -17,7 +17,7 @@ gcc -O2 test_app/dummy_game.c -o build/dummy_game.exe $(pkg-config --cflags --li
 ./build/dummy_game.exe
 ```
 
-Attach Hermes to `dummy_game.exe` and open **View → Code explorer …**. The module `dummy_game.exe` is chosen already; after a moment the status line reads something like *dummy_game.exe: ELF, 64-bit, image base 0x400000; 45 functions, 65 strings, 262 references.*
+Attach Grembyte to `dummy_game.exe` and open **View → Code explorer …**. The module `dummy_game.exe` is chosen already; after a moment the status line reads something like *dummy_game.exe: ELF, 64-bit, image base 0x400000; 45 functions, 65 strings, 262 references.*
 
 !!! note "Your addresses differ"
     The addresses and byte patterns on this page come from GCC on Fedora, which builds this command without position-independent code (image base `0x400000`). Another compiler version, other flags or a distribution that builds position-independent executables by default (Debian, Ubuntu: image base `0`) give other addresses and patterns; the steps are the same. Copy patterns from your own code explorer, not from this page.
@@ -147,7 +147,7 @@ jmp  refresh_ui
 
 So `add_gold` is `void add_gold(int amount)`, in a script `n.fn(at, "void", ["int"])`.
 
-### Hermes guesses it too
+### Grembyte guesses it too
 
 The code explorer does this reading for every function it opens: the line above the disassembly says *Guessed from the code: void add_gold(int rdi)*. The [native function monitor](../guide/native-tools.md#native-function-monitor) uses the same guess: its column **Signature (guessed)** reads `void (int rdi)`, the log shows `int rdi=23` instead of four registers, and the result `—` instead of whatever `rax` happens to hold. For `change_mana` (**Cast spell**, and every second while the mana regenerates) it reads `void (float xmm0)`, and the log shows the amount: `float xmm0=-7.5`, or `0.13`. **Copy script** writes the guess into the `n.fn` line (step 5).
 
@@ -189,7 +189,7 @@ const fn = n.fn(at, "void", ["int"]);
 return String(at);
 ```
 
-The pattern is the function's first bytes; the address of `g_game` inside the first instruction became `?? ?? ?? ??`, because a new build of the game moves it. The `n.fn` line carries the signature Hermes guessed: one `int` in `edi`, nothing returned, as step 4 found by hand. Do the same for `refresh_ui` (open it from `on_treasure`, **Copy pattern**), so the window shows the new gold at once.
+The pattern is the function's first bytes; the address of `g_game` inside the first instruction became `?? ?? ?? ??`, because a new build of the game moves it. The `n.fn` line carries the signature Grembyte guessed: one `int` in `edi`, nothing returned, as step 4 found by hand. Do the same for `refresh_ui` (open it from `on_treasure`, **Copy pattern**), so the window shows the new gold at once.
 
 In the **Scripts** tab create a script, **When:** *Only when run by hand*, with this code (use your own patterns):
 
@@ -221,7 +221,7 @@ No engine adapter: scripts run natively each time g_main_context_iteration retur
   <figcaption>The script in the <strong>Scripts</strong> tab, run twice: each run gives 500 gold through <code>add_gold</code>. The first run says where native scripts run in this game.</figcaption>
 </figure>
 
-The game has no engine adapter, so Hermes runs the script on the game's main thread when GTK's main loop returns from an event (see [scripts in native games](../guide/scripts.md#scripts-in-native-games)). `n.rip(addGoldAt, 3, 7)` reads the RIP-relative address in `mov rax, [rip + …]`: the displacement starts at byte 3 of the 7-byte instruction. For an instruction like that, **Copy script** writes this line itself.
+The game has no engine adapter, so Grembyte runs the script on the game's main thread when GTK's main loop returns from an event (see [scripts in native games](../guide/scripts.md#scripts-in-native-games)). `n.rip(addGoldAt, 3, 7)` reads the RIP-relative address in `mov rax, [rip + …]`: the displacement starts at byte 3 of the 7-byte instruction. For an instruction like that, **Copy script** writes this line itself.
 
 The script keeps working after **New game**: it calls the game's code instead of writing to an address, and the game's code always finds the current player.
 

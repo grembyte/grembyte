@@ -1,8 +1,8 @@
-"""The call graph from IL code (see hermes.features.call_graph), without a game."""
+"""The call graph from IL code (see grembyte.features.call_graph), without a game."""
 
 import struct
 
-from hermes.features.call_graph import (
+from grembyte.features.call_graph import (
     Call,
     async_owner,
     build_call_index,
@@ -12,7 +12,7 @@ from hermes.features.call_graph import (
     split_bodies,
     state_machines,
 )
-from hermes.features.catalog import CatalogMethod, catalog_methods
+from grembyte.features.catalog import CatalogMethod, catalog_methods
 
 
 def _token(value):
@@ -123,10 +123,10 @@ def test_dialog_navigates_and_searches_callers(monkeypatch):
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
-    from hermes.engines.registry import engine_by_id
-    from hermes.features.call_graph import CallGraphWorker
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.call_graph import CallGraphDialog
+    from grembyte.engines.registry import engine_by_id
+    from grembyte.features.call_graph import CallGraphWorker
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.call_graph import CallGraphDialog
 
     _app = QApplication.instance() or QApplication([])
     asked = []
@@ -175,7 +175,7 @@ def test_dialog_navigates_and_searches_callers(monkeypatch):
 
 def test_an_index_made_with_other_builds_is_made_anew():
     # pylint: disable=import-outside-toplevel
-    from hermes.features.call_graph import read_call_index
+    from grembyte.features.call_graph import read_call_index
 
     made = []
 

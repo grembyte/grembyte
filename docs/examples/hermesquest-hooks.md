@@ -1,6 +1,6 @@
 # HermesQuest: hooks
 
-Hermes has two kinds of hooks, and HermesQuest is built to show both:
+Grembyte has two kinds of hooks, and HermesQuest is built to show both:
 
 | | Value hook | Method hook |
 | --- | --- | --- |
@@ -16,7 +16,7 @@ The examples assume you have tracked Gold, Mana and Health as in [Scans and poin
 ### Ten times the gold
 
 1. Right-click "Gold" → **Address watch (writes)**.
-2. Kill an enemy in the game. The watch lists one row: the instruction that added the gold. In a Mono game the code was compiled at run time and lies in no module, so Hermes names it by its C# method: `AddGold` of the class `Character`, plus an offset into it.
+2. Kill an enemy in the game. The watch lists one row: the instruction that added the gold. In a Mono game the code was compiled at run time and lies in no module, so Grembyte names it by its C# method: `AddGold` of the class `Character`, plus an offset into it.
 3. Select the row → **Create hook**, template **Multiplier**, factor `10`, **Increases only**.
 
 From now on every kill brings ten times the gold. The column **Last** in the Hooks tab shows each write as *old → written by the game ⇒ stored*, e.g. `12 → 17 ⇒ 62`.
@@ -24,7 +24,7 @@ From now on every kill brings ten times the gold. The column **Last** in the Hoo
 What happens: the game executes `Stats.Gold += amount`. The hook sits on exactly that instruction and replaces the result with `old + (new − old) × 10`. The game's own code and the log don't know about it – the log still says "5 gold", the character sheet shows the multiplied amount.
 
 !!! tip "After a restart"
-    Code compiled by Mono moves with every start. A value hook in such code remembers its C# method: when HermesQuest starts again, Hermes has Mono compile `AddGold` and installs the hook in it right away. This needs the tracked address to have a pointer chain; see [Hooks after a restart](../guide/hooks.md#after-a-restart).
+    Code compiled by Mono moves with every start. A value hook in such code remembers its C# method: when HermesQuest starts again, Grembyte has Mono compile `AddGold` and installs the hook in it right away. This needs the tracked address to have a pointer chain; see [Hooks after a restart](../guide/hooks.md#after-a-restart).
 
 ### Protecting the player, not the enemies
 

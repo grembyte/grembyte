@@ -1,17 +1,17 @@
 Third-Party Notices
 ===================
 
-Hermes Hook
+Grembyte
 Copyright (C) 2026 Frank Hoogen
 
-Hermes Hook is distributed under the MIT License. See LICENSE for the full
-text. Hermes Hook is distributed WITHOUT ANY WARRANTY.
+Grembyte is distributed under the MIT License. See LICENSE for the full
+text. Grembyte is distributed WITHOUT ANY WARRANTY.
 
-Hermes Hook uses the third-party components listed below. Each keeps its own
+Grembyte uses the third-party components listed below. Each keeps its own
 license; the full license texts are in the LICENSES directory. Versions are
 those pinned in requirements.txt and may differ in other installations.
 
-Hermes Hook does not ship these packages in its source tree: pip installs
+Grembyte does not ship these packages in its source tree: pip installs
 them. Installing a package with pip does not by itself satisfy license
 obligations for a distributor. Whoever builds and distributes a binary bundle
 (installer, frozen executable) must inventory that exact bundle, include the
@@ -50,7 +50,7 @@ NumPy 2.5.4
 
 PySide6_Essentials 6.12.0, shiboken6 6.12.0 (Qt for Python)
   License: LGPL-3.0-only (also offered under GPL-2.0-only, GPL-3.0-only or
-  commercial terms; Hermes Hook uses the LGPL v3 option)
+  commercial terms; Grembyte uses the LGPL v3 option)
   Copyright (C) The Qt Company Ltd. and other contributors
   Project: https://doc.qt.io/qtforpython/
   License texts: LICENSES/LGPL-3.0.txt and LICENSES/GPL-3.0.txt
@@ -90,11 +90,11 @@ Material Icons, style Outlined, by Google
   Copyright Google LLC
   Source: https://fonts.google.com/icons
   License text: LICENSES/Apache-2.0.txt
-  The SVG files in hermes/ui/resources/icons are unmodified; see
-  hermes/ui/resources/icons/README.md.
+  The SVG files in grembyte/ui/resources/icons are unmodified; see
+  grembyte/ui/resources/icons/README.md.
 
 Not listed
 ----------
 
 Packages used only for tests or development (pytest, iniconfig, packaging,
-pluggy, Pygments) are not distributed with Hermes Hook and are not listed.
+pluggy, Pygments) are not distributed with Grembyte and are not listed.

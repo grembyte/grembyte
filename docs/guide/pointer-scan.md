@@ -54,7 +54,7 @@ With the game's assemblies marked under **Assemblies**, **Marked assemblies** ma
 [Assembly-CSharp] GameState.s_Instance → 0x5d0 → 0x1f0
 ```
 
-Hermes looks the blocks up through the Mono runtime at the start of the scan, and again after each restart of the game for the classes the saved chains need. Until it has, such an entry on the address list shows as not resolved. A class whose static constructor has not run yet has no block; it is looked for again every 30 seconds.
+Grembyte looks the blocks up through the Mono runtime at the start of the scan, and again after each restart of the game for the classes the saved chains need. Until it has, such an entry on the address list shows as not resolved. A class whose static constructor has not run yet has no block; it is looked for again every 30 seconds.
 
 ## Alignment
 

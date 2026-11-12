@@ -4,7 +4,7 @@
     python scripts/screenshots/run.py main-window     # only scenes whose name starts so
     python scripts/screenshots/run.py --theme dark --list
 
-Each theme renders in a process of its own, offscreen, against a hermes whose
+Each theme renders in a process of its own, offscreen, against a grembyte whose
 settings, database, logs and caches live in a temporary folder. The images
 are named ``<scene>-<dark|light>.webp`` (lossless); the pages show the one matching the
 reader's color scheme. The scenes are in the scenes_*.py modules beside
@@ -28,16 +28,16 @@ SCALE = "2"
 
 
 def _isolate(home):
-    """Point every directory hermes writes to into ``home``; before importing hermes."""
+    """Point every directory grembyte writes to into ``home``; before importing grembyte."""
     for variable, folder in (("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"),
                              ("XDG_STATE_HOME", "state"), ("XDG_CACHE_HOME", "cache")):
         path = Path(home) / folder
         path.mkdir(parents=True, exist_ok=True)
         os.environ[variable] = str(path)
-    os.environ["HERMES_DB"] = str(Path(home) / "hermes.db")
-    os.environ["HERMES_CACHE_DIR"] = str(Path(home) / "catalog-cache")
-    os.environ["HERMES_LOG_DIR"] = str(Path(home) / "logs")
-    os.environ["HERMES_LANGUAGE"] = "en"
+    os.environ["GREMBYTE_DB"] = str(Path(home) / "grembyte.db")
+    os.environ["GREMBYTE_CACHE_DIR"] = str(Path(home) / "catalog-cache")
+    os.environ["GREMBYTE_LOG_DIR"] = str(Path(home) / "logs")
+    os.environ["GREMBYTE_LANGUAGE"] = "en"
     # Numbers as English readers write them (1,000 rather than 1.000)
     os.environ["LANG"] = os.environ["LC_ALL"] = "en_US.UTF-8"
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -53,7 +53,7 @@ def _load_scenes():
 
 def _render(theme, prefixes, list_only):
     """Render the scenes in this process, with ``theme`` (dark or light)."""
-    with tempfile.TemporaryDirectory(prefix="hermes-screenshots-") as home:
+    with tempfile.TemporaryDirectory(prefix="grembyte-screenshots-") as home:
         _isolate(home)
         _load_scenes()
         # pylint: disable=import-outside-toplevel
@@ -68,10 +68,10 @@ def _render(theme, prefixes, list_only):
             for scene in chosen:
                 print(f"{scene.name:32} {scene.description}")
             return 0
-        from hermes.core import settings
-        from hermes.db.engine import init_db
-        from hermes.db.repository.settings import SettingsRepository
-        from hermes.ui.window_buttons import add_window_buttons
+        from grembyte.core import settings
+        from grembyte.db.engine import init_db
+        from grembyte.db.repository.settings import SettingsRepository
+        from grembyte.ui.window_buttons import add_window_buttons
 
         init_db()
         settings.load(SettingsRepository().load())

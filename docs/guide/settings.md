@@ -2,7 +2,7 @@
 
 ## Settings
 
-**Settings → General …** holds the settings, stored in Hermes' database.
+**Settings → General …** holds the settings, stored in Grembyte's database.
 
 <figure markdown="span">
   ![Settings](../assets/screenshots/settings-dark.webp#only-dark){ width="640" }
@@ -19,8 +19,8 @@
 | Trace: entries in the sequence | How many calls the trace and the native trace keep in order during the scenario; raise it when the window reports dropped ones. |
 | Automatically download the Wine/Proton Frida gadget | Off by default; see [Wine and Proton](../wine-proton.md). |
 | Hooks: short jump in tight spots (experimental) | See the [hook limitations](hooks.md#limitations). |
-| Hooks: patch hooks the game removed again | For games that check and restore their code, e.g. Dark Souls III. Hermes checks every second and patches again. Can be detected by anti-tamper systems. |
-| Hooks: measure their cost | Measures every write at a hooked site: calls per second, skipped writes, waiting time and run time. Shown in the tooltip of the "Applied" column and in `hermes.log`. |
+| Hooks: patch hooks the game removed again | For games that check and restore their code, e.g. Dark Souls III. Grembyte checks every second and patches again. Can be detected by anti-tamper systems. |
+| Hooks: measure their cost | Measures every write at a hooked site: calls per second, skipped writes, waiting time and run time. Shown in the tooltip of the "Applied" column and in `grembyte.log`. |
 
 **Defaults** fills in the default values; **Save** stores them.
 
@@ -35,7 +35,7 @@
   ![Theme editor](../assets/screenshots/theme-editor-light.webp#only-light)
 </figure>
 
-The bundled themes are **Github-Dark** (the default), **Github-Light**, **Solarized-Dark** and **Solarized-Light**. Themes of your own are saved as `hermes_themes_<name>.json`; [Files and environment](../reference/files.md) says where.
+The bundled themes are **Github-Dark** (the default), **Github-Light**, **Solarized-Dark** and **Solarized-Light**. Themes of your own are saved as `grembyte_themes_<name>.json`; [Files and environment](../reference/files.md) says where.
 
 ## Window layout
 

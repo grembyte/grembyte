@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability
-    url: https://github.com/winterhafen/hermes-hook/security/advisories/new
+    url: https://github.com/grembyte/grembyte/security/advisories/new
     about: Please report security problems privately, not as a public issue.
   - name: Documentation
-    url: https://winterhafen.github.io/hermes-hook/
+    url: https://grembyte.github.io/grembyte/
     about: Installation, permissions, tutorials and the user guide.

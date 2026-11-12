@@ -4,7 +4,7 @@ import gzip
 import os
 import time
 
-from hermes.features import catalog_cache
+from grembyte.features import catalog_cache
 
 _CLASSES = [["Game.Loot", [["Take", "(int&,int)", "System.Void", True, 0x06000002,
                             "Game.Loot:Take (int&,int)"]]]]
@@ -76,8 +76,8 @@ def test_damaged_or_foreign_files_are_ignored(tmp_path):
     assert catalog_cache.load("mono", "Assembly-CSharp", _MVID, tmp_path) is None
 
 
-def test_the_cache_lies_in_hermes_cache_dir(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMES_CACHE_DIR", str(tmp_path))
+def test_the_cache_lies_in_grembyte_cache_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("GREMBYTE_CACHE_DIR", str(tmp_path))
     catalog_cache.store("mono", "Assembly-CSharp", _MVID, _CLASSES)
 
     assert catalog_cache.cache_dir() == tmp_path

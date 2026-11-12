@@ -1,6 +1,6 @@
 # Unreal Engine
 
-Hermes supports Unreal Engine 4.23 and later, 64-bit, natively and under Proton. It finds the engine's reflection data – `FNamePool` and `GUObjectArray` – in memory by its shape, without signatures, SDK dumps or a mod loader, and measures the layout of objects, properties and functions on the game itself.
+Grembyte supports Unreal Engine 4.23 and later, 64-bit, natively and under Proton. It finds the engine's reflection data – `FNamePool` and `GUObjectArray` – in memory by its shape, without signatures, SDK dumps or a mod loader, and measures the layout of objects, properties and functions on the game itself.
 
 - The **catalog** lists the classes and UFunctions with C++ parameter types, grouped by package: `/Script/<Module>` for C++ classes, the first folder for Blueprints (`/Game/Blueprints`).
 - **Assemblies …** (here: packages) and the **trace** work as for Mono. The trace hooks the exec thunks of native UFunctions and gives every Blueprint function a hookable stub of its own. It sees calls from Blueprints and through `ProcessEvent` (events, delegates), not C++ calling C++ directly – the [native trace](../guide/native-tools.md) sees those.
@@ -102,4 +102,4 @@ In Gothic 1 Remake, a manual [script](../guide/scripts.md) adds any item to the 
 
 Avowed (UE5, Proton), Gothic 1 Remake (UE5, Proton; its GAS setter follows AngelscriptGAS).
 
-<small>The screenshots of Avowed and Gothic 1 Remake on this page only illustrate how Hermes Hook works. All game names, trademarks and game content belong to their respective owners. Hermes Hook is not affiliated with, endorsed or sponsored by them.</small>
+<small>The screenshots of Avowed and Gothic 1 Remake on this page only illustrate how Grembyte works. All game names, trademarks and game content belong to their respective owners. Grembyte is not affiliated with, endorsed or sponsored by them.</small>

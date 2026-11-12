@@ -27,7 +27,7 @@ dist/
 *.o
 *.obj
 *.exe
-!hermes/attach/inject/*.exe
+!grembyte/attach/inject/*.exe
 *.out
 *.so
 *.a

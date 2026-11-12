@@ -4,7 +4,7 @@ import json
 
 from PySide6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
 
-from hermes.ui.widgets.text_viewer import TextViewerDialog, parse_json, summary
+from grembyte.ui.widgets.text_viewer import TextViewerDialog, parse_json, summary
 
 from tests.test_hooks import fixture_qt_app, fixture_translations  # pylint: disable=unused-import
 
@@ -65,8 +65,8 @@ def test_plain_text_and_a_cut_text(qt_app, translations):
 
 def test_monitor_details_link_every_string(qt_app, translations, monkeypatch):
     # pylint: disable=unused-argument,import-outside-toplevel,protected-access
-    from hermes.features.monitor import MethodMonitorWorker
-    from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+    from grembyte.features.monitor import MethodMonitorWorker
+    from grembyte.ui.widgets.method_monitor import MethodMonitorDialog
 
     # No game: the worker is not started, the call below is made up.
     monkeypatch.setattr(MethodMonitorWorker, "start", lambda self: None)

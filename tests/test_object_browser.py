@@ -1,7 +1,7 @@
-"""The object browser window (see hermes.ui.widgets.object_browser)."""
+"""The object browser window (see grembyte.ui.widgets.object_browser)."""
 
-from hermes.ui.localization import load_translations
-from hermes.ui.widgets.object_browser import (
+from grembyte.ui.localization import load_translations
+from grembyte.ui.widgets.object_browser import (
     GAME_PACKAGES,
     filter_words,
     is_singleton,
@@ -57,8 +57,8 @@ def _names(dialog):
 
 def test_window_lists_classes_and_opens_their_objects(qt_app, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.widgets import scripts
-    from hermes.ui.widgets.object_browser import ObjectBrowserDialog
+    from grembyte.ui.widgets import scripts
+    from grembyte.ui.widgets.object_browser import ObjectBrowserDialog
 
     monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
     translations = load_translations("de")

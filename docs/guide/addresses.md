@@ -27,13 +27,13 @@ The **Tracked addresses** tab keeps the addresses you work with, with a descript
 !!! example "Step by step with the test game"
     The [pointer chain example](../examples/dummy-game-pointer-chain.md) reads the chain of the gold from the game's code, enters it with **Pointer chain …**, and explains with a simple picture how to tell a step of a chain from an offset.
 
-Double-click the description to rename an entry. If an address lies in the program's static memory (a global variable), Hermes stores it as module + offset right away; it stays valid after a restart without a pointer scan.
+Double-click the description to rename an entry. If an address lies in the program's static memory (a global variable), Grembyte stores it as module + offset right away; it stays valid after a restart without a pointer scan.
 
 ## Writing and freezing
 
 **Write value** writes a new value into the game once.
 
-**Freeze** holds the current value: Hermes writes it back every 100 ms. Clicking again releases it; **Write value** changes the frozen value. For entries with a pointer chain or a static address the frozen state is stored and still applies after the game restarts. Entries without a chain are released when they are loaded again, because their address need no longer be right then.
+**Freeze** holds the current value: Grembyte writes it back every 100 ms. Clicking again releases it; **Write value** changes the frozen value. For entries with a pointer chain or a static address the frozen state is stored and still applies after the game restarts. Entries without a chain are released when they are loaded again, because their address need no longer be right then.
 
 !!! question "Freeze or hook?"
     Freezing needs no write watch and works on any value, but may flicker briefly, since the game can change the value between two passes. A [hook](hooks.md) with the template *Fixed value* acts directly at the write instruction, so the game never sees another value.
@@ -51,4 +51,4 @@ Scan results offer the memory viewer and the two watches as well.
 
 ## After a restart
 
-Without a pointer chain the stored address is usually wrong after the game restarts, and the entry shows a stale value. With a chain Hermes resolves it again; while it cannot (e.g. in the main menu, before a save is loaded) the address column shows `?`, and the entry resolves once the chain leads somewhere again.
+Without a pointer chain the stored address is usually wrong after the game restarts, and the entry shows a stale value. With a chain Grembyte resolves it again; while it cannot (e.g. in the main menu, before a save is loaded) the address column shows `?`, and the entry resolves once the chain leads somewhere again.

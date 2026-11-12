@@ -1,6 +1,6 @@
 # HermesQuest: scripts
 
-[Scripts](../guide/scripts.md) are JavaScript that Hermes runs on the game's main thread, by hand or on a timer. They read and change the game's objects through their fields and call its methods – no addresses, no pointer chains. This page builds up from reading one value to scripts with parameters. If JavaScript is new to you, keep [JavaScript in Hermes](javascript.md) open beside it.
+[Scripts](../guide/scripts.md) are JavaScript that Grembyte runs on the game's main thread, by hand or on a timer. They read and change the game's objects through their fields and call its methods – no addresses, no pointer chains. This page builds up from reading one value to scripts with parameters. If JavaScript is new to you, keep [JavaScript in Grembyte](javascript.md) open beside it.
 
 To create a script: attach to HermesQuest, open the **Scripts** tab, click **New …**, give it a name, choose **When** it runs, and type the code. **Run now** runs the selected script at once; what it logs and returns appears in the log below the scripts.
 
@@ -120,7 +120,7 @@ player.AddGold(amount);
 return `${amount} gold added, now ${player.Stats.Gold}`;
 ```
 
-`AddGold` takes an `int`; `Math.trunc` cuts off decimals someone may have typed. Run it with **Run now**: Hermes asks for the amount first.
+`AddGold` takes an `int`; `Math.trunc` cuts off decimals someone may have typed. Run it with **Run now**: Grembyte asks for the amount first.
 
 <figure markdown="span">
   ![Script parameters](../assets/screenshots/script-params-dark.webp#only-dark){ width="560" }
@@ -189,7 +189,7 @@ if (ctx.state.lastGold !== undefined && gold > ctx.state.lastGold)
 ctx.state.lastGold = gold;
 ```
 
-Variables declared with `const` exist for one run only. `ctx.state` is an object that the script keeps while Hermes stays attached, also when you edit the code: whatever the script stores in it is there again on the next run. On the first run `ctx.state.lastGold` does not exist yet – it is `undefined` – which the `if` checks before comparing.
+Variables declared with `const` exist for one run only. `ctx.state` is an object that the script keeps while Grembyte stays attached, also when you edit the code: whatever the script stores in it is there again on the next run. On the first run `ctx.state.lastGold` does not exist yet – it is `undefined` – which the `if` checks before comparing.
 
 ## When something goes wrong
 

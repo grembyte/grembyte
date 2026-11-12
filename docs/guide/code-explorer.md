@@ -17,7 +17,7 @@ It is the static counterpart of the [native trace and monitor](native-tools.md):
 
 Most ways into unknown code start with a text: a menu entry, a message, a log line, a console command. New to assembly? The [assembly quick reference](../reference/assembly.md) explains what the disassembly shows.
 
-1. Choose the **module**. The game's executable comes first, then the modules in its folder. Indexing a large executable takes a few seconds; the window keeps the result while Hermes runs.
+1. Choose the **module**. The game's executable comes first, then the modules in its folder. Indexing a large executable takes a few seconds; the window keeps the result while Grembyte runs.
 2. Type words of the text into the filter of the **Strings** tab and select the string. The references list shows every instruction that loads its address, with the function it is in.
 3. Double-click a reference to open its **function**. Above the disassembly, the explorer shows the function's **signature guessed from its code** (x86-64): `void add_gold(int rdi)`, from the argument registers the function reads before writing them and from what its callers do with the result – see [how it is guessed](../examples/dummy-game-code-explorer.md#4-what-add_gold-takes). The disassembly names what instructions refer to: strings, functions, imported functions of other modules (`SDL_PollEvent`, `kernel32.dll!CreateFileW`), and pointers to strings or functions.
 4. **Callers** lists who calls the function. Double-click one to go there; **Back** returns.

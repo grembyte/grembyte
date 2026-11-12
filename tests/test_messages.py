@@ -7,17 +7,17 @@ from pathlib import Path
 
 import pytest
 
-from hermes.agent.source import MESSAGES_SOURCE
-from hermes.core import messages
-from hermes.attach.wine_gadget import GadgetError
-from hermes.attach.wine_helper import HelperError
-from hermes.ui.localization import load_translations
+from grembyte.agent.source import MESSAGES_SOURCE
+from grembyte.core import messages
+from grembyte.attach.wine_gadget import GadgetError
+from grembyte.attach.wine_helper import HelperError
+from grembyte.ui.localization import load_translations
 
-_HERMES = Path(messages.__file__).resolve().parents[1]
+_GREMBYTE = Path(messages.__file__).resolve().parents[1]
 
 
 def _catalog(language):
-    return json.loads((_HERMES / "ui" / "localization" / f"{language}.json")
+    return json.loads((_GREMBYTE / "ui" / "localization" / f"{language}.json")
                       .read_text(encoding="utf-8"))
 
 
@@ -43,11 +43,11 @@ def test_error_keys_exist_in_both_catalogs_with_the_same_fields():
     assert keys == {key for key in german if key.startswith("error.")}
     for key in keys:
         assert _fields(english[key]) == _fields(german[key]), key
-    used = {key for path in _HERMES.rglob("*.py")
+    used = {key for path in _GREMBYTE.rglob("*.py")
             for key in re.findall(r"""Error\(\s*"(error\.[\w.]+)\"""", path.read_text())}
-    # The agents' hermesError(...) and hermesMessage(...)
-    used |= {key for path in _HERMES.rglob("*.js")
-             for key in re.findall(r"""hermes(?:Error|Message)\(\s*['"`](error\.[\w.]+)""",
+    # The agents' grembyteError(...) and grembyteMessage(...)
+    used |= {key for path in _GREMBYTE.rglob("*.js")
+             for key in re.findall(r"""grembyte(?:Error|Message)\(\s*['"`](error\.[\w.]+)""",
                                    path.read_text())}
     assert used and used <= keys, used - keys
 
@@ -60,7 +60,7 @@ def test_agent_errors_are_rendered_in_the_users_language():
     # pylint: disable=import-outside-toplevel
     import frida
 
-    from hermes.hooks.syntax import checker
+    from grembyte.hooks.syntax import checker
 
     if not checker().available:
         pytest.skip("needs Frida's system session")
@@ -69,9 +69,9 @@ def test_agent_errors_are_rendered_in_the_users_language():
         script = session.create_script(MESSAGES_SOURCE + """
             rpc.exports.fail = () => {
               try {
-                throw hermesError('error.gadget.not_present', {path: ptr(0x1234)});
+                throw grembyteError('error.gadget.not_present', {path: ptr(0x1234)});
               } catch (e) {
-                throw hermesError('error.gadget.load', {error: e.message});
+                throw grembyteError('error.gadget.load', {error: e.message});
               }
             };
             rpc.exports.plain = () => { throw new Error('plain ⟧ text'); };
@@ -98,9 +98,9 @@ def test_agent_errors_are_rendered_in_the_users_language():
 
 def test_every_trace_agent_has_its_messages():
     # pylint: disable=import-outside-toplevel
-    from hermes.features.native_monitor import NativeMonitorWorker
-    from hermes.features.native_trace import NativeTraceWorker
-    from hermes.features.trace import AgentWorker, TraceWorker
+    from grembyte.features.native_monitor import NativeMonitorWorker
+    from grembyte.features.native_trace import NativeTraceWorker
+    from grembyte.features.trace import AgentWorker, TraceWorker
 
     english = _catalog("en")
     for worker in (AgentWorker, TraceWorker, NativeTraceWorker, NativeMonitorWorker):

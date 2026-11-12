@@ -3,7 +3,7 @@
 import os
 import subprocess
 
-from hermes.platform.linux import (
+from grembyte.platform.linux import (
     is_wine_process,
     main_module,
     process_start_time,
@@ -72,13 +72,13 @@ def test_detects_wine_and_proton_loaders(tmp_path):
 @linux_only
 def test_the_main_module_of_a_wine_program_is_its_exe(tmp_path, monkeypatch):
     # /proc/<pid>/exe is Wine's loader; the game is the .exe it maps
-    import hermes.platform.wine  # pylint: disable=import-outside-toplevel
+    import grembyte.platform.wine  # pylint: disable=import-outside-toplevel
 
     _link_exe(tmp_path, 1, "/steam/Proton/files/lib/wine/x86_64-unix/wine64-preloader")
     _link_exe(tmp_path, 2, "/games/PillarsOfEternity")
     _link_exe(tmp_path, 3, "/usr/bin/wine64")
     programs = {1: ("/games/BG/Baldur.exe", 64), 3: (None, None)}
-    monkeypatch.setattr(hermes.platform.wine, "wine_program", programs.get)
+    monkeypatch.setattr(grembyte.platform.wine, "wine_program", programs.get)
 
     assert main_module(1, tmp_path) == "Baldur.exe"
     assert main_module(2, tmp_path) == "PillarsOfEternity"
@@ -100,7 +100,7 @@ def test_reads_the_bitness_of_the_program(tmp_path):
 
 def test_process_list_names_wine_processes_by_their_windows_program():
     # pylint: disable=import-outside-toplevel
-    from hermes.ui.widgets.process_list import _resolve_display
+    from grembyte.ui.widgets.process_list import _resolve_display
 
     preloader = "/steam/Proton - Experimental/files/lib/wine/i386-unix/wine64-preloader"
     # Unreal renames the main thread, whose name the kernel reports.

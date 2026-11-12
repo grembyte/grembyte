@@ -1,12 +1,12 @@
 # Unity (Mono)
 
-Unity games built with Mono ship their code as .NET assemblies (`Assembly-CSharp.dll` and others) and compile it at run time. Hermes talks to the Mono runtime in the game – `libmono`/`mono-2.0-bdwgc.dll` – through its exported API, natively on Linux and under Wine/Proton on Windows games.
+Unity games built with Mono ship their code as .NET assemblies (`Assembly-CSharp.dll` and others) and compile it at run time. Grembyte talks to the Mono runtime in the game – `libmono`/`mono-2.0-bdwgc.dll` – through its exported API, natively on Linux and under Wine/Proton on Windows games.
 
 Everything in the [engine overview](index.md) is available:
 
 - The **catalog** lists the classes and methods of the game's assemblies, also offline for games read before.
 - **Assemblies …** limits the catalog and the trace to chosen assemblies.
-- The **trace** finds the methods a scenario calls, with preselection filters. Mono compiles every traced method first, which takes a moment for large selections; from a configurable number of methods Hermes asks before it starts.
+- The **trace** finds the methods a scenario calls, with preselection filters. Mono compiles every traced method first, which takes a moment for large selections; from a configurable number of methods Grembyte asks before it starts.
 - The **method monitor** logs calls with arguments and results; **method hooks** change arguments, fields or results with templates of their own.
 - The **call graph** shows which methods a method calls and which call it, from the IL code.
 - The **object inspector** shows the fields of C# objects, and **Call method** runs a static method on the game's main thread.
@@ -14,11 +14,11 @@ Everything in the [engine overview](index.md) is available:
   An enum argument is chosen from the enum's names, e.g. `StrongholdAdventure.Type`: `Minor (1)`, `Average (2)` …; a number can be typed in, too. Nested classes read as C# writes them (`StrongholdAdventure.Type`), not as Mono does (`StrongholdAdventure/Type`).
 
 !!! tip "Try it on HermesQuest"
-    HermesQuest is a small Unity Mono role-playing game made for trying out Hermes – the running example of the [Examples](../examples/index.md) section. Download it for [Linux](https://github.com/winterhafen/hermes-hook/releases/download/v0.5.0-alpha/HermesQuest-RPG-Linux) or [Windows](https://github.com/winterhafen/hermes-hook/releases/download/v0.5.0-alpha/HermesQuest-RPG-Windows.zip) (also for Wine/Proton); both are zip archives. The examples walk through scans, pointer scans, value and method hooks and scripts on it.
+    HermesQuest is a small Unity Mono role-playing game made for trying out Grembyte – the running example of the [Examples](../examples/index.md) section. Download it for [Linux](https://github.com/grembyte/grembyte/releases/download/v0.5.0-alpha/HermesQuest-RPG-Linux) or [Windows](https://github.com/grembyte/grembyte/releases/download/v0.5.0-alpha/HermesQuest-RPG-Windows.zip) (also for Wine/Proton); both are zip archives. The examples walk through scans, pointer scans, value and method hooks and scripts on it.
 
 ## Object browser
 
-**View → Object browser …** lists the game's live objects by class and opens them in the object inspector. Unity's Mono has no heap walk, so Hermes uses Unity's own liveness calculation: it finds the objects reachable from static fields and from Unity's objects, and the game stands still for a moment while it runs. The [object browser guide](../guide/object-browser.md#unity-mono) explains it.
+**View → Object browser …** lists the game's live objects by class and opens them in the object inspector. Unity's Mono has no heap walk, so Grembyte uses Unity's own liveness calculation: it finds the objects reachable from static fields and from Unity's objects, and the game stands still for a moment while it runs. The [object browser guide](../guide/object-browser.md#unity-mono) explains it.
 
 ## 32-bit games
 
@@ -26,13 +26,13 @@ Everything in the [engine overview](index.md) is available:
 
 ## Games that sleep out of focus
 
-Some Unity games stop running frames when their window loses focus (Unity's *Run In Background* switched off), e.g. Might & Magic X – Legacy in window mode. Getters, **Call method**, Unity object names and the object browser run on the game's main thread, which then waits for the next window message instead of running game code. Hermes wakes it with an empty window message and does its work there, so these tools also work while you are in Hermes; the game itself stays paused.
+Some Unity games stop running frames when their window loses focus (Unity's *Run In Background* switched off), e.g. Might & Magic X – Legacy in window mode. Getters, **Call method**, Unity object names and the object browser run on the game's main thread, which then waits for the next window message instead of running game code. Grembyte wakes it with an empty window message and does its work there, so these tools also work while you are in Grembyte; the game itself stays paused.
 
 ## Mono and value hooks
 
 The [pointer scan](../guide/pointer-scan.md#mono-games-static-fields-as-chain-bases) can start chains in the static fields of the classes in the marked assemblies, which Mono keeps on the heap.
 
-Code compiled by Mono lies in no module and moves with every start. Hermes therefore names a hit of the [write watch](../guide/write-watch.md) in JIT code by its C# method, and a [hook](../guide/hooks.md) with a pointer chain remembers that method: after a restart Mono compiles it and the hook is installed in it right away.
+Code compiled by Mono lies in no module and moves with every start. Grembyte therefore names a hit of the [write watch](../guide/write-watch.md) in JIT code by its C# method, and a [hook](../guide/hooks.md) with a pointer chain remembers that method: after a restart Mono compiles it and the hook is installed in it right away.
 
 ## Example: Pillars of Eternity
 
@@ -115,4 +115,4 @@ The [HermesQuest examples](../examples/hermesquest-hooks.md#method-hooks) explai
 
 Pillars of Eternity, Pillars of Eternity II, Kathy Rain 2 (Proton), Shadowrun Returns (32-bit, Proton) and Might & Magic X – Legacy (Unity 4.2, 32-bit, Proton).
 
-<small>The screenshots of Pillars of Eternity on this page only illustrate how Hermes Hook works. All game names, trademarks and game content belong to their respective owners. Hermes Hook is not affiliated with, endorsed or sponsored by them.</small>
+<small>The screenshots of Pillars of Eternity on this page only illustrate how Grembyte works. All game names, trademarks and game content belong to their respective owners. Grembyte is not affiliated with, endorsed or sponsored by them.</small>

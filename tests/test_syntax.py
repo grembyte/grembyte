@@ -1,8 +1,8 @@
-"""Syntax check of hook scripts in Frida's engine (see hermes.hooks.syntax)."""
+"""Syntax check of hook scripts in Frida's engine (see grembyte.hooks.syntax)."""
 
 import pytest
 
-from hermes.hooks.syntax import (
+from grembyte.hooks.syntax import (
     BODY,
     FUNCTION,
     SyntaxChecker,
@@ -43,7 +43,7 @@ def test_a_checker_without_frida_checks_nothing(monkeypatch):
     def refuse(_pid):
         raise OSError("no frida")
 
-    monkeypatch.setattr("hermes.hooks.syntax.frida.attach", refuse)
+    monkeypatch.setattr("grembyte.hooks.syntax.frida.attach", refuse)
     without = SyntaxChecker()
 
     assert without.check(BODY, "if (") is None

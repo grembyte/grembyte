@@ -1,10 +1,10 @@
 """Scripts in a native game: the game thread without an engine, and ctx.native
-(see hermes/features/script_native.js)."""
+(see grembyte/features/script_native.js)."""
 
 import json
 import subprocess
 
-from hermes.features.scripts import ScriptSpec
+from grembyte.features.scripts import ScriptSpec
 
 from tests.test_hooks import (  # pylint: disable=unused-import
     _Target,
@@ -101,7 +101,7 @@ return JSON.stringify({
 @requires_target
 def test_native_script_runs_on_the_main_thread_and_finds_code_by_bytes(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.scripts import ScriptWorker
+    from grembyte.features.scripts import ScriptWorker
 
     target = _Target(_build(tmp_path))
     worker = ScriptWorker(target.pid)
@@ -147,8 +147,8 @@ def test_native_script_runs_on_the_main_thread_and_finds_code_by_bytes(tmp_path,
 @requires_target
 def test_a_native_game_without_frame_functions_says_so(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.core import messages
-    from hermes.features.scripts import ScriptWorker
+    from grembyte.core import messages
+    from grembyte.features.scripts import ScriptWorker
 
     source = tmp_path / "plain.c"
     source.write_text(r"""
@@ -195,8 +195,8 @@ def test_a_script_calls_game_code_that_a_write_watch_traps(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
     import frida
 
-    from hermes.features.scripts import ScriptWorker
-    from hermes.features.write_watch import _build_agent_source
+    from grembyte.features.scripts import ScriptWorker
+    from grembyte.features.write_watch import _build_agent_source
 
     binary = _build(tmp_path)
     target = _Target(binary)
@@ -243,8 +243,8 @@ def test_a_script_reads_and_writes_what_an_access_watch_traps(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
     import frida
 
-    from hermes.features.scripts import ScriptWorker
-    from hermes.features.write_watch import _build_agent_source
+    from grembyte.features.scripts import ScriptWorker
+    from grembyte.features.write_watch import _build_agent_source
 
     binary = _build(tmp_path)
     target = _Target(binary)

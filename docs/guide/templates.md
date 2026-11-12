@@ -17,7 +17,7 @@ The fields of `ctx` are listed in the [hook context reference](../reference/hook
 
 ## Managing templates
 
-Manipulations are stored in the database as **hook templates** and managed under **View → Hook templates …**. At first start Hermes creates the examples **Multiplier**, **Fixed value** and **Clamp**; they can be changed or deleted like templates of your own. Their texts are English whatever the language of the interface, since templates are data that exports share.
+Manipulations are stored in the database as **hook templates** and managed under **View → Hook templates …**. At first start Grembyte creates the examples **Multiplier**, **Fixed value** and **Clamp**; they can be changed or deleted like templates of your own. Their texts are English whatever the language of the interface, since templates are data that exports share.
 
 <figure markdown="span">
   ![Hook templates](../assets/screenshots/hook-templates-dark.webp#only-dark)
@@ -47,7 +47,7 @@ ctx => ctx.delta >= ctx.params.threshold ? ctx.new : ctx.old
 
 ## Templates and existing hooks
 
-A hook stores a **copy** of the template it was created from, so later changes to the template do not affect existing hooks. In the hook's **Edit** dialog Hermes points out a changed template and offers **Use changed template**. If the template is deleted, the hook keeps working with its copy.
+A hook stores a **copy** of the template it was created from, so later changes to the template do not affect existing hooks. In the hook's **Edit** dialog Grembyte points out a changed template and offers **Use changed template**. If the template is deleted, the hook keeps working with its copy.
 
 ## Examples
 

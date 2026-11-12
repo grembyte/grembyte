@@ -7,10 +7,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-CATALOG_DIR = ROOT / "hermes" / "ui" / "localization"
+CATALOG_DIR = ROOT / "grembyte" / "ui" / "localization"
 LANGUAGES = ("en", "de")
-# hermesError('error.…', …) in the agents; also the keys of a ``cond ? 'a' : 'b'``
-_AGENT_KEY = re.compile(r"hermesError\(\s*(?:[^'()]*\?\s*)?'([\w.]+)'(?:\s*:\s*'([\w.]+)')?")
+# grembyteError('error.…', …) in the agents; also the keys of a ``cond ? 'a' : 'b'``
+_AGENT_KEY = re.compile(r"grembyteError\(\s*(?:[^'()]*\?\s*)?'([\w.]+)'(?:\s*:\s*'([\w.]+)')?")
 _PLACEHOLDER = re.compile(r"\{(\w*)\}")
 
 
@@ -45,7 +45,7 @@ def test_translations_keep_their_placeholders(catalogs):
 
 def test_agent_messages_are_translated(catalogs):
     used = {}
-    for script in (ROOT / "hermes").rglob("*.js"):
+    for script in (ROOT / "grembyte").rglob("*.js"):
         for match in _AGENT_KEY.finditer(script.read_text(encoding="utf-8")):
             for key in filter(None, match.groups()):
                 used.setdefault(key, script.relative_to(ROOT).as_posix())

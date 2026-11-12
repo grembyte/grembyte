@@ -61,7 +61,7 @@ A chain has to start somewhere that does not move: a global variable inside the 
 References to 0x403108 (g_game, dummy_game.exe+0x3108): 12.
 ```
 
-`dummy_game.exe+0x3108` is the start of the chain: `0x3108` bytes into the module `dummy_game.exe`. Hermes writes chains with the module, not with `0x403108`, because a program built position-independent (most Linux distributions, all Windows games with ASLR) is loaded at a different address with every start – the offset inside the module stays.
+`dummy_game.exe+0x3108` is the start of the chain: `0x3108` bytes into the module `dummy_game.exe`. Grembyte writes chains with the module, not with `0x403108`, because a program built position-independent (most Linux distributions, all Windows games with ASLR) is loaded at a different address with every start – the offset inside the module stays.
 
 So the chain of the gold is:
 

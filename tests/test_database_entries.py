@@ -2,7 +2,7 @@
 
 from sqlalchemy import select
 
-from hermes.db.models import Address, AssemblySelectionRecord, Hook, PointerScan, Process
+from grembyte.db.models import Address, AssemblySelectionRecord, Hook, PointerScan, Process
 
 from tests.test_game_export import (  # pylint: disable=unused-import
     PROTON_EXP,
@@ -51,7 +51,7 @@ def test_dialog_ticks_rows_and_deletes(qt_app, translations, sessions, repositor
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
     from PySide6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
-    from hermes.ui.widgets.database_entries import (
+    from grembyte.ui.widgets.database_entries import (
         KIND_COLUMNS,
         PROCESS_COLUMN,
         ROW_COLUMN,
@@ -92,7 +92,7 @@ def test_space_steps_the_selected_rows(qt_app, translations, sessions, repositor
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
     from PySide6.QtGui import QShortcut  # pylint: disable=import-error,no-name-in-module
-    from hermes.ui.widgets.database_entries import (
+    from grembyte.ui.widgets.database_entries import (
         KIND_COLUMNS,
         PROCESS_COLUMN,
         ROW_COLUMN,

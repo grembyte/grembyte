@@ -1,9 +1,9 @@
-"""The GAS attributes window (see hermes.ui.widgets.gas_attributes)."""
+"""The GAS attributes window (see grembyte.ui.widgets.gas_attributes)."""
 
 import pytest
 
-from hermes.ui.localization import load_translations
-from hermes.ui.widgets.gas_attributes import (
+from grembyte.ui.localization import load_translations
+from grembyte.ui.widgets.gas_attributes import (
     format_value,
     held_value,
     hold_label,
@@ -52,8 +52,8 @@ def test_scripts_name_sets_without_their_object_number():
 
 def test_window_lists_sets_and_holds_values_by_scripts(qt_app, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.widgets import scripts
-    from hermes.ui.widgets.gas_attributes import GasAttributesDialog
+    from grembyte.ui.widgets import scripts
+    from grembyte.ui.widgets.gas_attributes import GasAttributesDialog
 
     monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
     translations = load_translations("de")

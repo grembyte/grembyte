@@ -5,7 +5,7 @@ import time
 import shiboken6  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtCore import QThread  # pylint: disable=import-error,no-name-in-module
 
-from hermes.ui import workers
+from grembyte.ui import workers
 
 from tests.test_hooks import _wait_for, fixture_qt_app  # pylint: disable=unused-import
 

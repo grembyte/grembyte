@@ -4,7 +4,7 @@ This tutorial uses the small test game in the repository to go through the whole
 
 ## The test game
 
-`test_app/dummy_game.c` is a minimal GTK game with buttons for **Gold +100**, **Gold −100** and **New game**, plus mana, experience and a treasure hunt for trying [fuzzy scans](../guide/scanning.md#fuzzy-scans). As in real games, the player lives on the heap behind pointers (`g_game → player → gold`), so the address of the gold changes with every start and every **New game**. The game prints its PID, the pointer chain and the current address of the gold to the terminal, so you can check what Hermes finds. Several instances may run at once.
+`test_app/dummy_game.c` is a minimal GTK game with buttons for **Gold +100**, **Gold −100** and **New game**, plus mana, experience and a treasure hunt for trying [fuzzy scans](../guide/scanning.md#fuzzy-scans). As in real games, the player lives on the heap behind pointers (`g_game → player → gold`), so the address of the gold changes with every start and every **New game**. The game prints its PID, the pointer chain and the current address of the gold to the terminal, so you can check what Grembyte finds. Several instances may run at once.
 
 Build and start it (needs `gcc` and the GTK 3 development packages: `gtk3-devel` on Fedora, `libgtk-3-dev` on Debian/Ubuntu):
 
@@ -15,14 +15,14 @@ gcc -O2 test_app/dummy_game.c -o build/dummy_game.exe $(pkg-config --cflags --li
 ```
 
 <figure markdown="span">
-  ![Hermes Hook next to the test game](../assets/photos/dummy-game-dark.webp#only-dark)
-  ![Hermes Hook next to the test game](../assets/photos/dummy-game-light.webp#only-light)
-  <figcaption>Where this tutorial leads: the test game on the right, Hermes on the left with its gold found and tracked through a pointer chain.</figcaption>
+  ![Grembyte next to the test game](../assets/photos/dummy-game-dark.webp#only-dark)
+  ![Grembyte next to the test game](../assets/photos/dummy-game-light.webp#only-light)
+  <figcaption>Where this tutorial leads: the test game on the right, Grembyte on the left with its gold found and tracked through a pointer chain.</figcaption>
 </figure>
 
 ## 1. Attach to the game
 
-Click **Select process** in Hermes and choose `dummy_game.exe`. The toolbar and the status bar now show the program, its PID and whether it is 32 or 64 bit.
+Click **Select process** in Grembyte and choose `dummy_game.exe`. The toolbar and the status bar now show the program, its PID and whether it is 32 or 64 bit.
 
 <figure markdown="span">
   ![Process selection](../assets/screenshots/process-list-dark.webp#only-dark){ width="640" }
@@ -70,11 +70,11 @@ The hook appears in the **Hooks** tab. Every click on **Gold +100** now brings 1
   <figcaption>Active hooks with their template, target and last call.</figcaption>
 </figure>
 
-In the **Hooks** tab hooks can be edited, paused, debugged and removed. When a hook is removed, when you select another process and when Hermes exits, the original bytes of the game are restored.
+In the **Hooks** tab hooks can be edited, paused, debugged and removed. When a hook is removed, when you select another process and when Grembyte exits, the original bytes of the game are restored.
 
 ## 5. Make it last
 
-Restart the game, or click **New game**: the gold now lives at another address. For the tracked address and the hook to find it again, give "Gold" a pointer chain with the [pointer scan](../guide/pointer-scan.md). From then on both follow the gold after every restart, and Hermes installs the hook again by itself whenever you attach to the game.
+Restart the game, or click **New game**: the gold now lives at another address. For the tracked address and the hook to find it again, give "Gold" a pointer chain with the [pointer scan](../guide/pointer-scan.md). From then on both follow the gold after every restart, and Grembyte installs the hook again by itself whenever you attach to the game.
 
 ## Where next
 

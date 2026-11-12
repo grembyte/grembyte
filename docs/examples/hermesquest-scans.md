@@ -9,7 +9,7 @@ The [scanning guide](../guide/scanning.md) explains the scan types; here they ar
 Gold starts at 0, and searching for 0 finds millions of addresses. So earn some first:
 
 1. Press **2** to spawn a goblin and walk into it until it dies. The log says how much gold it dropped, e.g. "You gain 10.25 experience and 5 gold."
-2. In Hermes choose the data type `int32`, scan type **Exact value**, enter the gold (`5`) and click **First scan**.
+2. In Grembyte choose the data type `int32`, scan type **Exact value**, enter the gold (`5`) and click **First scan**.
 3. Kill another enemy, enter the new amount and click **Next scan**. After two or three rounds one address is left.
 4. **Track** it and call it "Gold".
 
@@ -57,7 +57,7 @@ From now on "Mana" resolves after every new game and every restart of HermesQues
 !!! note "No chain found?"
     Raise **Max. depth** by one or two. Managed games often need deeper chains than native ones, because the way to a static field leads through the runtime's own tables.
 
-With the chain in place you can give **Gold** and **Experience** chains too: they differ from Mana's only in the last offset, because all three are fields of the same `CharacterStats` object. Hermes does not derive them for you: scan for each, then filter its pointer scan as above.
+With the chain in place you can give **Gold** and **Experience** chains too: they differ from Mana's only in the last offset, because all three are fields of the same `CharacterStats` object. Grembyte does not derive them for you: scan for each, then filter its pointer scan as above.
 
 ## A shortcut for Mono games
 

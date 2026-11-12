@@ -8,16 +8,16 @@ import struct
 
 import pytest
 
-from hermes.core.memory import (
+from grembyte.core.memory import (
     UnknownModuleError,
     describe_address,
     parse_address,
     parse_chain,
     read_memory,
 )
-from hermes.core.pointer import PointerChain
-from hermes.platform import read_mappings
-from hermes.platform.linux import parse_maps
+from grembyte.core.pointer import PointerChain
+from grembyte.platform import read_mappings
+from grembyte.platform.linux import parse_maps
 
 
 @pytest.fixture(name="qt_app", scope="module")
@@ -40,11 +40,11 @@ def _unmapped_gap():
 
 
 def test_read_memory_reads_own_process():
-    buffer = ctypes.create_string_buffer(b"hermes-hook!", 16)
+    buffer = ctypes.create_string_buffer(b"grembyte-ok!", 16)
 
     data, readable = read_memory(os.getpid(), ctypes.addressof(buffer), 12)
 
-    assert data == b"hermes-hook!"
+    assert data == b"grembyte-ok!"
     assert all(readable)
 
 
@@ -102,8 +102,8 @@ def test_viewer_shows_bytes_values_and_changes(qt_app):
     # pylint: disable=import-outside-toplevel
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.memory_view import BYTES_PER_ROW, MemoryViewerDialog
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.memory_view import BYTES_PER_ROW, MemoryViewerDialog
 
     buffer = (ctypes.c_ubyte * 64)()
     address = ctypes.addressof(buffer)
@@ -148,8 +148,8 @@ def test_viewer_shows_bytes_values_and_changes(qt_app):
 
 def test_viewer_shows_unreadable_memory(qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.memory_view import BYTES_PER_ROW, MemoryViewerDialog
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.memory_view import BYTES_PER_ROW, MemoryViewerDialog
 
     end = _unmapped_gap()
     dialog = MemoryViewerDialog(load_translations("de"), os.getpid(), end - BYTES_PER_ROW)
@@ -171,8 +171,8 @@ def test_viewer_shows_unreadable_memory(qt_app):
 
 def test_address_dialog_parses_hex_and_module_addresses(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.localization import load_translations
-    from hermes.ui.main_window import AddressInputDialog
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.main_window import AddressInputDialog
 
     translations = load_translations("de")
     mappings = parse_maps(["40000-41000 r-xp 00000000 08:01 1 /opt/game/game"])
@@ -203,7 +203,7 @@ _GAME_MAPS = ["40000-41000 r-xp 00000000 08:01 1 /opt/game/game",
     ("game+0x1f0 -> 0x28 -> 0x0", PointerChain("game", 0x1F0, (0x28, 0))),
     ("game+0x1f0=>28=>0", PointerChain("game", 0x1F0, (0x28, 0))),
     ("game+0x1f0 : 0x28 : -8", PointerChain("game", 0x1F0, (0x28, -8))),
-    ("game+0x1f0 → 0x28 → 0x0", PointerChain("game", 0x1F0, (0x28, 0))),  # as Hermes shows it
+    ("game+0x1f0 → 0x28 → 0x0", PointerChain("game", 0x1F0, (0x28, 0))),  # as Grembyte shows it
     ("game+0x100+0xf0 -> +0x28", PointerChain("game", 0x1F0, (0x28,))),
     ("0x411f0 -> 0x28", PointerChain("game", 0x11F0, (0x28,))),  # an address in the module
     ("game+0x1f0", PointerChain("game", 0x1F0, ())),
@@ -227,8 +227,8 @@ def test_parse_chain_names_the_unknown_module():
 
 def test_pointer_chain_dialog_shows_where_the_chain_leads(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.localization import load_translations
-    from hermes.ui.main_window import PointerChainDialog
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.main_window import PointerChainDialog
 
     translations = load_translations("en")
     mappings = parse_maps(_GAME_MAPS)

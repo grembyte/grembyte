@@ -1,9 +1,9 @@
-site_name: Hermes Hook
+site_name: Grembyte
 site_description: Memory scanner, hook engine and reverse engineering tool for games on Linux (also under Wine/Proton) and Windows
 site_author: Frank Hoogen
-site_url: https://winterhafen.github.io/hermes-hook/
-repo_url: https://github.com/winterhafen/hermes-hook
-repo_name: winterhafen/hermes-hook
+site_url: https://grembyte.github.io/grembyte/
+repo_url: https://github.com/grembyte/grembyte
+repo_name: grembyte/grembyte
 edit_uri: edit/main/docs/
 copyright: Copyright &copy; 2026 Frank Hoogen – MIT License
 
@@ -114,7 +114,7 @@ nav:
       - Scripts: examples/hermesquest-scripts.md
       - Code explorer: examples/dummy-game-code-explorer.md
       - Pointer chain from the code: examples/dummy-game-pointer-chain.md
-      - JavaScript in Hermes: examples/javascript.md
+      - JavaScript in Grembyte: examples/javascript.md
   - Wine and Proton: wine-proton.md
   - Reference:
       - Files and environment: reference/files.md

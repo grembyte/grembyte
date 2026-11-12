@@ -1,6 +1,6 @@
 # Implementation notes
 
-What was learned while building the features: how they work inside, what broke in which game, and why the code does what it does. Open work is in the [roadmap](https://github.com/winterhafen/hermes-hook/blob/main/ROADMAP.md).
+What was learned while building the features: how they work inside, what broke in which game, and why the code does what it does. Open work is in the [roadmap](https://github.com/grembyte/grembyte/blob/main/ROADMAP.md).
 
 ## Native call diff trace
 
@@ -12,9 +12,9 @@ functions called newly or more often when, for example, paying or taking damage.
 - Verified with the test game under Proton and Baldur's Gate under Proton; see the findings below.
 
 **Implementation (2026-10-19 onward):** View → "Native trace…", independent of any engine.
-`hermes/features/native_trace.py` (`NativeTraceWorker`) and `native_trace.js` (agent),
-`hermes/ui/widgets/native_trace.py` (window). Session logic shared with the Mono trace in
-`AgentWorker` (`hermes/features/trace.py`); `analyze` and the verdicts are the same.
+`grembyte/features/native_trace.py` (`NativeTraceWorker`) and `native_trace.js` (agent),
+`grembyte/ui/widgets/native_trace.py` (window). Session logic shared with the Mono trace in
+`AgentWorker` (`grembyte/features/trace.py`); `analyze` and the verdicts are the same.
 
 - Stalker follows the chosen threads with a CModule `transform` (since 2026-10-22, before
   that `events: {call: true}` and `onCallSummary`): before every `call` of the followed code
@@ -65,7 +65,7 @@ functions called newly or more often when, for example, paying or taking damage.
   overwrites a few bytes after a `call` instruction; if code jumps into the middle of them,
   the game crashes.
 - Reproducing without a game: a small Windows test game built with `x86_64-w64-mingw32-gcc`,
-  run with Proton's `files/bin/wine` in a `WINEPREFIX` of its own; Hermes connects through
+  run with Proton's `files/bin/wine` in a `WINEPREFIX` of its own; Grembyte connects through
   the gadget as with a real game. Stacks in the frozen state: `wine winedbg --command
   "bt all" <Windows PID>` (gdb only sees Wine's Unix side).
 - Learned: a followed thread that hangs in a blocking call holds on to Stalker's code;
@@ -93,14 +93,14 @@ functions called newly or more often when, for example, paying or taking damage.
   32-bit games (Mono trace in Shadowrun Returns).
 
 - **(2026-10-19):** results sortable and filterable (name, call count, `%3`). Native
-  function monitor (`hermes/features/native_monitor.py`): an Interceptor on a function from
+  function monitor (`grembyte/features/native_monitor.py`): an Interceptor on a function from
   the trace or by address/module+offset/symbol; logs arguments, result and caller, and
   compares the memory behind pointer arguments before and after the call (for C++ methods:
   which fields of `this` are set). Not yet tried in Baldur's Gate (native, Linux).
 
 ## IL2CPP adapter
 
-**IL2CPP adapter (2026-11-03):** `hermes/engines/il2cpp/` (`Il2CppAdapter`, agent in
+**IL2CPP adapter (2026-11-03):** `grembyte/engines/il2cpp/` (`Il2CppAdapter`, agent in
 `agent.js`), tried on V Rising (Unity 2022.3, metadata v31, Proton). Recognised by
 `GameAssembly.dll`/`.so`; the runtime counts as started once `il2cpp_get_corlib` answers.
 - Catalog: images without `.dll` as assembly names, signatures as Mono writes them, the
@@ -135,7 +135,7 @@ functions called newly or more often when, for example, paying or taking damage.
 
 ## Unreal adapter
 
-**Unreal adapter (2026-10-30):** `hermes/engines/unreal/` (`UnrealAdapter`, agent in
+**Unreal adapter (2026-10-30):** `grembyte/engines/unreal/` (`UnrealAdapter`, agent in
 `agent.js`). Recognised by the executable's name (`<Project>-Win64-Shipping.exe`, also Linux
 and modular builds). The agent finds `FNamePool` and `GUObjectArray` in the module's
 writable data by their shape (pool: `CurrentBlock`, `Blocks[]`, first entries `None` and
@@ -192,7 +192,7 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   on the class default object. Avowed: `BP_CheatManager_C` (an `AlabamaCheatManager`) is
   the player controller's `CheatManager` (+0x400); 147 of its 152 functions have code in
   the shipping build (`GiveHealth`, `AddCurrency`, `ToggleUnlimitedStamina` checked live).
-  Scripts (hermes/features/scripts.py) run such calls by time. Hooks on functions a call
+  Scripts (grembyte/features/scripts.py) run such calls by time. Hooks on functions a call
   reaches do not fire for it (Frida's interceptor ignores the thread inside a callback).
   Learned (2026-11-08, Queen's Domain, UE4): the search read 0x800 bytes from each slot and
   found `call [reg + 0xd8]` in the functions *after* slots 16 and 65 ("2 candidates"), while
@@ -243,7 +243,7 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   32-bit, Proton) stops running frames when its window loses focus. Its main thread then
   sits in a single `GetMessageA` call and calls nothing else, not even `mono_runtime_invoke`
   (about 40,000 calls a second while it runs), so every main-thread request timed out after
-  3 s. `wakeMainThread` (`hermes/agent/platform.js`) hooks `GetMessageA`/`GetMessageW` while a
+  3 s. `wakeMainThread` (`grembyte/agent/platform.js`) hooks `GetMessageA`/`GetMessageW` while a
   request waits and posts the main thread a `WM_NULL` (`PostThreadMessageW`); the work runs in
   the next `GetMessage` call, between two passes of the message loop. Mono and IL2CPP use it
   beside their `runtime_invoke` hook. Learned: Frida waits for every thread to leave a hooked
@@ -272,7 +272,7 @@ Found with Dark Souls III (Arxan/GuardIT):
   (`0x7ff7ab63b120`) as in the two crashes before (a breakpoint hook and a write watch). So
   hook installation as hardware breakpoint (`HookSpec.breakpoint`, leaves the code untouched)
   is no option there, and write watches must stay short. When a game ends within 30 s after
-  Hermes used debug registers in it, the main window says so.
+  Grembyte used debug registers in it, the main window says so.
 - **Performance:** a hooked write cost ~18 µs in a test process, mostly JavaScript work: all
   16 registers read into an object (~7 µs) and the address computed with BigInt (~3.5 µs).
   Now registers are read on demand, the address with NativePointer arithmetic from a plan made
@@ -286,7 +286,7 @@ Found with Dark Souls III (Arxan/GuardIT):
   scheduler slice), once up to 400 ms: a game thread descheduled while it held the agent's
   JavaScript lock stalls every other hooked thread.
 - **C fast path (2026-10-27):** the trampoline calls a CModule (`FAST_SOURCE` in
-  `hermes/hooks/engine.js`). It checks address, switch and learned callers and runs multiply, freeze and
+  `grembyte/hooks/engine.js`). It checks address, switch and learned callers and runs multiply, freeze and
   clamp itself (`native_spec` in `transforms.py` recognises them by their code, also copies
   such as "Clamp (Import)"). Writes pending between before and after are kept per thread in a
   table per site. A hooked write now costs ~0.1 µs instead of ~8–18 µs in the test process; a
@@ -310,8 +310,8 @@ Found with Dark Souls III (Arxan/GuardIT):
 
 ## Activity log
 
-`hermes/core/activity.py`, `hermes/ui/activity_recorder.py`: `activity.jsonl` beside
-`hermes.log`, one JSON line per event with a run id. Agents, RPCs, script errors and the end
+`grembyte/core/activity.py`, `grembyte/ui/activity_recorder.py`: `activity.jsonl` beside
+`grembyte.log`, one JSON line per event with a run id. Agents, RPCs, script errors and the end
 of a session are recorded by proxies around Frida's session and script in `attach_session`
 (all Frida workers go through it); sessions by `sessions.tracked`, the gadget by
 `wine_gadget.connect`, process/engine/backend by the main window, clicks by a timer that
@@ -327,8 +327,8 @@ switched off in the settings.
 
 ## Settings
 
-`hermes/core/settings.py` (definitions, values in this process), table `settings` in
-`hermes.db` (`hermes/db/repository/settings.py`), window `hermes/ui/widgets/settings_dialog.py`
+`grembyte/core/settings.py` (definitions, values in this process), table `settings` in
+`grembyte.db` (`grembyte/db/repository/settings.py`), window `grembyte/ui/widgets/settings_dialog.py`
 under Settings → General …: activity log, the trace's method limit under Wine/Proton
 (`wine_trace_limit`, formerly the constant `WINE_TRACE_LIMIT`), from how many methods the trace
 asks first (`large_trace`), entries in the traces' call sequence (`trace_sequence`), the refresh
@@ -339,7 +339,7 @@ chosen automatically on attach.
 
 ## Wine and Proton
 
-- **Method monitor and method hooks under Wine:** `hermes/features/monitor.py` now assigns
+- **Method monitor and method hooks under Wine:** `grembyte/features/monitor.py` now assigns
   arguments by the platform's convention: System V (Linux x86-64), Win64 (rcx, rdx, r8, r9 or
   xmm0–3 by position, 32 bytes of shadow space) and x86 (everything on the stack). Under
   32 bit, float results are in st0 and 64-bit results in edx:eax; they are read or reported
@@ -350,20 +350,20 @@ chosen automatically on attach.
   `CONTEXT` in `pauseThreads`. That is fixed and checked in a 32-bit process. The hook
   engine only handles x64 code (`installSite`), so the watch and hooks take ptrace for 32-bit
   games; Mono features always go through the gadget.
-- **Gadget through the Windows helper:** `hermes/attach/inject/inject.c`, built
-  with `build.sh` (MinGW or zig) as `hermes-inject-x86_64.exe` or `-x86.exe` into
+- **Gadget through the Windows helper:** `grembyte/attach/inject/inject.c`, built
+  with `build.sh` (MinGW or zig) as `grembyte-inject-x86_64.exe` or `-x86.exe` into
   `build/inject/` (not in git; `helper_path` runs `build.sh` once if they are missing), loads the gadget
   with `VirtualAllocEx`/`WriteProcessMemory`/`CreateRemoteThread` + `LoadLibraryW`.
-  `hermes/attach/wine_helper.py` starts it with the game's `wine` (beside or above its
+  `grembyte/attach/wine_helper.py` starts it with the game's `wine` (beside or above its
   preloader) and its `WINEPREFIX` and sync variables. It finds the Windows PID by exe name and
   creation time. Beforehand it checks that the prefix's wineserver socket exists in `/tmp`, so
   that no second server starts. `load_gadget` tries the helper first and falls back to the
   ptrace loader for 64 bit.
-  - The gadget drops messages from Hermes larger than 128 KiB; larger agents are sent in
+  - The gadget drops messages from Grembyte larger than 128 KiB; larger agents are sent in
     parts and put together in the game (`frida_attach.py`, 2026-10-27).
   - Checked in a prefix of its own with Proton's Wine (64- and 32-bit `ping.exe`, several
     processes of the same name).
 - **Test-suite core dumps (2026-10-29):** a window released a worker in its
   `finished` signal, which Qt emits before the thread has ended; destroying a running QThread
   aborted the process. Workers are now kept until their thread has ended
-  (`hermes/ui/workers.py`).
+  (`grembyte/ui/workers.py`).

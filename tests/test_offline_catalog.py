@@ -2,10 +2,10 @@
 
 import time
 
-from hermes.engines.registry import engine_by_id
-from hermes.features import catalog_cache, games
-from hermes.features.call_graph import CallGraphWorker, _OfflineApi
-from hermes.features.catalog import CachedCatalogWorker, catalog_methods
+from grembyte.engines.registry import engine_by_id
+from grembyte.features import catalog_cache, games
+from grembyte.features.call_graph import CallGraphWorker, _OfflineApi
+from grembyte.features.catalog import CachedCatalogWorker, catalog_methods
 
 from tests.test_hooks import _wait_for, fixture_qt_app, fixture_translations  # pylint: disable=unused-import
 
@@ -60,7 +60,7 @@ def test_cached_worker_reads_the_catalog_without_a_process(monkeypatch):
 
 def test_offline_catalog_dialog(monkeypatch, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access,unused-argument
-    from hermes.ui.widgets.catalog import CatalogDialog
+    from grembyte.ui.widgets.catalog import CatalogDialog
 
     _remember(monkeypatch)
     catalog_cache.store("mono", "Assembly-CSharp", "game-mvid", _CLASSES)
@@ -120,7 +120,7 @@ def test_offline_call_graph_answers_from_the_cache(monkeypatch, qt_app):
 
 def test_known_games_dialog(monkeypatch, qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.known_games import KnownGamesDialog
+    from grembyte.ui.widgets.known_games import KnownGamesDialog
 
     empty = KnownGamesDialog(translations)
     assert empty.table.rowCount() == 0
@@ -139,7 +139,7 @@ def test_known_games_dialog(monkeypatch, qt_app, translations):
 
 
 def test_catalog_search_accepts_wildcards():
-    from hermes.ui.widgets.catalog import matches  # pylint: disable=import-outside-toplevel
+    from grembyte.ui.widgets.catalog import matches  # pylint: disable=import-outside-toplevel
 
     method = catalog_methods("Assembly-CSharp", [["Game.PlayerCombat", [
         ["ApplyDamage", "(int)", "System.Void", False, 0x06000004,
@@ -152,7 +152,7 @@ def test_catalog_search_accepts_wildcards():
 
 
 def test_catalog_search_finds_parameter_and_return_types():
-    from hermes.ui.widgets.catalog import matches  # pylint: disable=import-outside-toplevel
+    from grembyte.ui.widgets.catalog import matches  # pylint: disable=import-outside-toplevel
 
     purchase, preset = catalog_methods("/Script/Alabama", [["AlabamaCheatManager", [
         ["PurchaseAttribute", "(EPrimaryAttribute,int32)", "void", False, 1,

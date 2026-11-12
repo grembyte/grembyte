@@ -4,10 +4,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from hermes.core import settings
-from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-from hermes.db.base import Base
-from hermes.db.repository.settings import SettingsRepository
+from grembyte.core import settings
+from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+from grembyte.db.base import Base
+from grembyte.db.repository.settings import SettingsRepository
 
 from tests.test_hooks import fixture_qt_app, fixture_translations  # pylint: disable=unused-import
 
@@ -21,7 +21,7 @@ def fixture_defaults():
 
 @pytest.fixture(name="repository")
 def fixture_repository(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     yield SettingsRepository(sessionmaker(bind=engine))
     engine.dispose()
@@ -67,7 +67,7 @@ def test_settings_are_stored_and_read_back(repository):
 
 def test_the_window_saves_applies_and_resets(repository, qt_app, translations):
     # pylint: disable=unused-argument
-    from hermes.ui.widgets.settings_dialog import (  # pylint: disable=import-outside-toplevel
+    from grembyte.ui.widgets.settings_dialog import (  # pylint: disable=import-outside-toplevel
         SettingsDialog,
         _SETTING_CATEGORIES,
     )
@@ -96,7 +96,7 @@ def test_the_window_saves_applies_and_resets(repository, qt_app, translations):
 
 def test_trace_agents_get_the_sequence_capacity():
     # pylint: disable=import-outside-toplevel
-    from hermes.features import native_trace, trace
+    from grembyte.features import native_trace, trace
 
     assert "const EVENT_CAPACITY = 250000;" in trace.build_agent_source(250_000)
     native = native_trace.build_agent_source(500_000)
@@ -111,10 +111,10 @@ def test_trace_agents_get_the_sequence_capacity():
 
 def test_the_activity_log_follows_its_setting(tmp_path, monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes import main
-    from hermes.core import activity
+    from grembyte import main
+    from grembyte.core import activity
 
-    monkeypatch.setenv("HERMES_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("GREMBYTE_LOG_DIR", str(tmp_path))
     settings.subscribe(main._follow_activity_setting)
     try:
         settings.apply({"activity_log": True})

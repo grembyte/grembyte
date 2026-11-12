@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes.attach.ptrace_engine import WATCHPOINT_SLOTS, build_dr7, combined_dr7
+from grembyte.attach.ptrace_engine import WATCHPOINT_SLOTS, build_dr7, combined_dr7
 
 
 def test_combined_dr7_matches_single_slot_for_slot_zero():
@@ -34,7 +34,7 @@ def fixture_qt_app():
 
 def test_claim_address_uses_four_slots_then_refuses(qt_app):
     # pylint: disable=unused-argument,protected-access
-    from hermes.hooks.ptrace_hook import PtraceHookWorker  # pylint: disable=import-outside-toplevel
+    from grembyte.hooks.ptrace_hook import PtraceHookWorker  # pylint: disable=import-outside-toplevel
 
     worker = PtraceHookWorker(os.getpid())
     worker._read_value = lambda *args: 0  # avoid touching real memory
@@ -49,8 +49,8 @@ def test_claim_address_uses_four_slots_then_refuses(qt_app):
 
 def test_unaligned_addresses_take_no_watchpoint(qt_app):
     # pylint: disable=unused-argument,protected-access,import-outside-toplevel
-    from hermes.attach.ptrace_engine import watch_alignment_error
-    from hermes.hooks.ptrace_hook import PtraceHookWorker
+    from grembyte.attach.ptrace_engine import watch_alignment_error
+    from grembyte.hooks.ptrace_hook import PtraceHookWorker
 
     # The kernel refuses them; a thread whose registers failed stayed stopped.
     assert watch_alignment_error(0x1002, 4) and watch_alignment_error(0x1004, 8)
@@ -102,9 +102,9 @@ requires_ptrace_target = pytest.mark.skipif(
 @requires_ptrace_target
 def test_ptrace_hook_freezes_multiplies_and_removes(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.hooks.engine import HookSpec
-    from hermes.hooks.ptrace_hook import PtraceHookWorker
-    from hermes.hooks.transforms import FreezeTransform, MultiplyTransform
+    from grembyte.hooks.engine import HookSpec
+    from grembyte.hooks.ptrace_hook import PtraceHookWorker
+    from grembyte.hooks.transforms import FreezeTransform, MultiplyTransform
 
     source = tmp_path / "htarget.c"
     source.write_text(_TARGET_SOURCE)
@@ -175,9 +175,9 @@ def test_ptrace_hooks_changing_keep_signals_and_new_threads(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
     import signal
 
-    from hermes.hooks.engine import HookSpec
-    from hermes.hooks.ptrace_hook import PtraceHookWorker
-    from hermes.hooks.transforms import MultiplyTransform
+    from grembyte.hooks.engine import HookSpec
+    from grembyte.hooks.ptrace_hook import PtraceHookWorker
+    from grembyte.hooks.transforms import MultiplyTransform
     from tests.test_ptrace_watch import _BUSY_SOURCE, _state
 
     source = tmp_path / "busy.c"

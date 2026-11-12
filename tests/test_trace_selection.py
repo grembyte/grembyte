@@ -1,7 +1,7 @@
 """Which catalog methods a Mono trace hooks (see select_methods)."""
 
-from hermes.features.catalog import CatalogMethod
-from hermes.features.trace import (
+from grembyte.features.catalog import CatalogMethod
+from grembyte.features.trace import (
     IMPL_INTERNAL_CALL,
     METHOD_ABSTRACT,
     METHOD_PINVOKE,

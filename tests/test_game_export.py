@@ -7,9 +7,9 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-from hermes.db.base import Base
-from hermes.db.models import (
+from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+from grembyte.db.base import Base
+from grembyte.db.models import (
     Address,
     FavoriteRecord,
     GameScript,
@@ -19,7 +19,7 @@ from hermes.db.models import (
     PointerScan,
     Process,
 )
-from hermes.db.repository.game_export import (
+from grembyte.db.repository.game_export import (
     EXPORT_FORMAT,
     GameExportRepository,
     ImportFormatError,
@@ -37,7 +37,7 @@ TODAY = date(2026, 10, 26)
 
 @pytest.fixture(name="sessions")
 def fixture_sessions(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     yield sessionmaker(bind=engine)
     engine.dispose()
@@ -91,8 +91,8 @@ def test_platform_comes_from_the_path_not_the_name():
 
 def test_file_name_is_platform_process_name_and_date():
     assert export_file_name("Windows", "DarkSoulsIII.ex", TODAY) \
-        == "hermes-hook_Windows_DarkSoulsIII.ex_2026-10-26.json"
-    assert export_file_name("Linux", 'a/b:c*', TODAY) == "hermes-hook_Linux_a_b_c__2026-10-26.json"
+        == "grembyte_Windows_DarkSoulsIII.ex_2026-10-26.json"
+    assert export_file_name("Linux", 'a/b:c*', TODAY) == "grembyte_Linux_a_b_c__2026-10-26.json"
 
 
 def test_games_are_grouped_by_name_and_empty_ones_left_out(repository):
@@ -129,17 +129,17 @@ def test_pointer_scans_only_when_asked_for(repository):
 def test_dialog_suggests_the_name_and_keeps_a_changed_one(qt_app, translations, repository,
                                                           tmp_path):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.game_export import GameExportDialog
+    from grembyte.ui.widgets.game_export import GameExportDialog
 
     dialog = GameExportDialog(translations, repository, current="PillarsOfEternity",
                               today=TODAY)
     assert dialog.selected_game.name == "PillarsOfEternity"
-    assert dialog.file_name.text() == "hermes-hook_Linux_PillarsOfEternity_2026-10-26.json"
+    assert dialog.file_name.text() == "grembyte_Linux_PillarsOfEternity_2026-10-26.json"
     # No pointer scans saved: nothing to tick.
     assert not dialog.pointer_scans.isChecked() and not dialog.pointer_scans.isEnabled()
 
     dialog.table.selectRow(0)
-    assert dialog.file_name.text() == "hermes-hook_Windows_DarkSoulsIII.ex_2026-10-26.json"
+    assert dialog.file_name.text() == "grembyte_Windows_DarkSoulsIII.ex_2026-10-26.json"
     assert dialog.pointer_scans.isEnabled() and not dialog.pointer_scans.isChecked()
 
     dialog.file_name.setText("souls-backup")
@@ -234,7 +234,7 @@ def test_a_changed_template_is_added_under_a_new_name(sessions, repository):
         assert session.get(HookTemplate, hook.template_id).name == "Begrenzen (Import)"
 
 
-def test_only_exports_of_hermes_hook_are_read(tmp_path, repository):
+def test_only_exports_of_grembyte_are_read(tmp_path, repository):
     path = tmp_path / "export.json"
     repository.write_export("DarkSoulsIII.ex", path)
     assert read_export(path)["game"] == "DarkSoulsIII.ex"
@@ -249,7 +249,7 @@ def test_import_dialog_selects_the_target_and_imports(qt_app, translations, sess
                                                       repository, tmp_path, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
-    from hermes.ui.widgets.game_export import GameImportDialog
+    from grembyte.ui.widgets.game_export import GameImportDialog
 
     path = tmp_path / "export.json"
     repository.write_export("PillarsOfEternity", path)

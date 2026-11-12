@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core.pointer import PointerChain
+from grembyte.core.pointer import PointerChain
 from studio import DEMO_NAME, scene, settle
 
 # A second scan in the test game: three addresses still hold the gold.
@@ -54,9 +54,9 @@ def main_window(studio):
 def pointer_chain_dialog(studio):
     """The dialog of Pointer chain … with the tutorial's gold chain entered."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.core.memory import parse_chain
-    from hermes.platform.linux import parse_maps
-    from hermes.ui.main_window import PointerChainDialog
+    from grembyte.core.memory import parse_chain
+    from grembyte.platform.linux import parse_maps
+    from grembyte.ui.main_window import PointerChainDialog
     from scenes_tools import _GAME_BASE, _GOLD
 
     # The test game as mapped in the demo: dummy_game.exe at its demo base
@@ -80,11 +80,11 @@ def pointer_chain_dialog(studio):
 @scene("main-window-docked", size=(1600, 800),
        description="Main window with the memory viewer and an object inspector docked as tabs")
 def main_window_docked(studio):
-    """The main window with tools docked as tabs (hermes.ui.widgets.docking)."""
+    """The main window with tools docked as tabs (grembyte.ui.widgets.docking)."""
     # pylint: disable=import-outside-toplevel
     from studio import SCENES
 
-    from hermes.ui.widgets.docking import RIGHT
+    from grembyte.ui.widgets.docking import RIGHT
 
     window = studio.show_attached()
     _fill(window)

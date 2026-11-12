@@ -16,9 +16,9 @@ import pytest
 import subprocess
 import time
 
-from hermes.core.pointer import PointerChain
-from hermes.hooks.transforms import MultiplyTransform
-from hermes.hooks.engine import HookSpec
+from grembyte.core.pointer import PointerChain
+from grembyte.hooks.transforms import MultiplyTransform
+from grembyte.hooks.engine import HookSpec
 
 from tests.test_hooks import (  # pylint: disable=unused-import
     _Target,
@@ -930,7 +930,7 @@ def test_write_watch_names_the_csharp_method(tmp_path):
 @requires_target
 def test_hook_names_its_site_and_callers(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.ui.widgets.hooks import HookPanel
 
     target = _MonoTarget(_build(tmp_path))
     panel = HookPanel(translations)
@@ -970,12 +970,12 @@ def test_hook_is_found_by_its_method_after_a_restart(tmp_path, qt_app, translati
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-    from hermes.db.base import Base
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+    from grembyte.db.base import Base
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.ui.widgets.hooks import HookPanel
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     repository = HookRepository(sessionmaker(bind=engine))
     binary = _build(tmp_path)
@@ -1044,8 +1044,8 @@ def test_hook_is_found_by_its_method_after_a_restart(tmp_path, qt_app, translati
 @requires_target
 def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument,too-many-locals
-    from hermes.engines.registry import detect_engine
-    from hermes.features.catalog import CatalogMethod, CatalogWorker
+    from grembyte.engines.registry import detect_engine
+    from grembyte.features.catalog import CatalogMethod, CatalogWorker
 
     target = _MonoTarget(_build(tmp_path))
     try:
@@ -1119,8 +1119,8 @@ def test_catalog_lists_game_methods_and_framework_on_request(tmp_path, qt_app):
 @requires_target
 def test_call_graph_reads_calls_from_il_code(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.call_graph import CallGraphWorker
-    from hermes.features.catalog import CatalogMethod
+    from grembyte.features.call_graph import CallGraphWorker
+    from grembyte.features.catalog import CatalogMethod
 
     target = _MonoTarget(_build(tmp_path))
     worker = CallGraphWorker(target.pid)
@@ -1154,7 +1154,7 @@ def test_call_graph_reads_calls_from_il_code(tmp_path, qt_app):
 @requires_target
 def test_catalog_dialog_searches_methods(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.ui.widgets.catalog import CatalogDialog
+    from grembyte.ui.widgets.catalog import CatalogDialog
 
     target = _MonoTarget(_build(tmp_path))
     dialog = CatalogDialog(translations, target.pid)
@@ -1205,7 +1205,7 @@ def test_catalog_dialog_searches_methods(tmp_path, qt_app, translations):
 @requires_target
 def test_method_monitor_logs_arguments_caller_and_result(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.monitor import MethodMonitorWorker
+    from grembyte.features.monitor import MethodMonitorWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodMonitorWorker(target.pid)
@@ -1262,7 +1262,7 @@ _SET_VALUE = {"image": "Assembly-CSharp", "file": None, "token": 0x0600000e,
 
 def test_methods_of_generic_classes_need_type_arguments():
     # pylint: disable=import-outside-toplevel
-    from hermes.features.catalog import (
+    from grembyte.features.catalog import (
         catalog_method_from_identity,
         generic_parameters,
         split_type_arguments,
@@ -1286,8 +1286,8 @@ def test_methods_of_generic_classes_need_type_arguments():
 @requires_target
 def test_method_monitor_binds_generic_classes_to_type_arguments(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.catalog import catalog_method_from_identity, with_type_arguments
-    from hermes.features.monitor import MethodMonitorWorker
+    from grembyte.features.catalog import catalog_method_from_identity, with_type_arguments
+    from grembyte.features.monitor import MethodMonitorWorker
 
     definition = catalog_method_from_identity(_SET_VALUE)
     target = _MonoTarget(_build(tmp_path))
@@ -1331,7 +1331,7 @@ def test_method_monitor_binds_generic_classes_to_type_arguments(tmp_path, qt_app
 @requires_target
 def test_method_monitor_lets_the_game_free_its_code_and_exit(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.monitor import MethodMonitorWorker
+    from grembyte.features.monitor import MethodMonitorWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodMonitorWorker(target.pid)
@@ -1365,7 +1365,7 @@ _CALC_DAMAGE = {"image": "Assembly-CSharp", "file": None, "token": 0x06000005,
 @requires_target
 def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel,too-many-locals
-    from hermes.features.monitor import MethodMonitorWorker
+    from grembyte.features.monitor import MethodMonitorWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodMonitorWorker(target.pid)
@@ -1451,8 +1451,8 @@ def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
 @requires_target
 def test_monitor_window_opens_objects_in_the_inspector(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.features.catalog import CatalogMethod
-    from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+    from grembyte.features.catalog import CatalogMethod
+    from grembyte.ui.widgets.method_monitor import MethodMonitorDialog
 
     target = _MonoTarget(_build(tmp_path))
     dialog = MethodMonitorDialog(translations, target.pid)
@@ -1513,7 +1513,7 @@ def test_monitor_window_opens_objects_in_the_inspector(tmp_path, qt_app, transla
 @requires_target
 def test_method_monitor_asks_unity_for_names_only_on_its_main_thread(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.monitor import MethodMonitorWorker
+    from grembyte.features.monitor import MethodMonitorWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodMonitorWorker(target.pid)
@@ -1542,7 +1542,7 @@ def test_method_monitor_asks_unity_for_names_only_on_its_main_thread(tmp_path, q
 
 def test_inspector_puts_number_fields_on_the_address_list(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
+    from grembyte.ui.widgets.object_inspector import ObjectInspectorDialog
 
     contents = {"name": "Game.CharacterStats", "address": "0x7f55e9339000", "fields": [
         {"name": "BaseMight", "type": "System.Int32", "offset": 0x244, "static": False,
@@ -1583,7 +1583,7 @@ def test_inspector_puts_number_fields_on_the_address_list(qt_app, translations):
 def test_inspector_filters_fields_by_name_and_type(qt_app, translations):
     # Queen's Domain's player has hundreds of fields: the filter finds Health
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
+    from grembyte.ui.widgets.object_inspector import ObjectInspectorDialog
 
     def field(name, kind, offset, text):
         return {"name": name, "type": kind, "offset": offset, "static": False,
@@ -1618,7 +1618,7 @@ def test_inspector_action_columns_can_be_resized(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtWidgets import QHeaderView  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
+    from grembyte.ui.widgets.object_inspector import ObjectInspectorDialog
 
     dialog = ObjectInspectorDialog(
         translations, lambda *_: None,
@@ -1642,7 +1642,7 @@ def test_inspector_action_columns_can_be_resized(qt_app, translations):
 
 def test_inspector_links_string_fields_to_the_text_viewer(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
+    from grembyte.ui.widgets.object_inspector import ObjectInspectorDialog
 
     shown = []
     contents = {"name": "Kingmaker.SaveInfo", "address": "0x1000", "fields": [
@@ -1685,7 +1685,7 @@ def test_inspector_links_string_fields_to_the_text_viewer(qt_app, translations):
 
 def test_inspector_shows_recorded_fields_without_reading_again(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
+    from grembyte.ui.widgets.object_inspector import ObjectInspectorDialog
 
     opened = []
     contents = {"name": "Game.DamageInfo", "instanceName": "Player_New_Game(Clone)_1",
@@ -1719,7 +1719,7 @@ def test_inspector_shows_recorded_fields_without_reading_again(qt_app, translati
 @requires_target
 def test_properties_are_evaluated_on_the_main_thread(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel,too-many-locals
-    from hermes.features.monitor import MethodMonitorWorker
+    from grembyte.features.monitor import MethodMonitorWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodMonitorWorker(target.pid)
@@ -1783,7 +1783,7 @@ def test_properties_are_evaluated_on_the_main_thread(tmp_path, qt_app):
 @requires_target
 def test_static_methods_are_called_on_the_main_thread(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.monitor import MethodMonitorWorker
+    from grembyte.features.monitor import MethodMonitorWorker
 
     count = {"image": "Assembly-CSharp", "file": None, "token": 0x06000009,
              "method": "Game.Combat:get_Count ()"}
@@ -1822,7 +1822,7 @@ def test_static_methods_are_called_on_the_main_thread(tmp_path, qt_app):
 @requires_target
 def test_instance_methods_are_listed_and_called_on_an_object(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.monitor import MethodMonitorWorker
+    from grembyte.features.monitor import MethodMonitorWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodMonitorWorker(target.pid)
@@ -1881,8 +1881,8 @@ def test_instance_methods_are_listed_and_called_on_an_object(tmp_path, qt_app):
 @requires_target
 def test_inspector_evaluates_properties(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.features.catalog import CatalogMethod
-    from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+    from grembyte.features.catalog import CatalogMethod
+    from grembyte.ui.widgets.method_monitor import MethodMonitorDialog
 
     target = _MonoTarget(_build(tmp_path))
     dialog = MethodMonitorDialog(translations, target.pid)
@@ -1925,8 +1925,8 @@ def test_inspector_evaluates_properties(tmp_path, qt_app, translations):
 @requires_target
 def test_monitor_options_default_to_what_the_method_has(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.features.catalog import CatalogMethod
-    from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+    from grembyte.features.catalog import CatalogMethod
+    from grembyte.ui.widgets.method_monitor import MethodMonitorDialog
 
     target = _MonoTarget(_build(tmp_path))
     dialog = MethodMonitorDialog(translations, target.pid)
@@ -1974,7 +1974,7 @@ _ROLL_DAMAGE = {"engine": "mono", "image": "Assembly-CSharp", "file": None, "tok
 
 def _method_transform(source, **params):
     # pylint: disable=import-outside-toplevel
-    from hermes.hooks.transforms import TemplateTransform, TransformDefinition, TransformParameter
+    from grembyte.hooks.transforms import TemplateTransform, TransformDefinition, TransformParameter
 
     definition = TransformDefinition(
         "test", source, tuple(TransformParameter(name, default=value)
@@ -1985,7 +1985,7 @@ def _method_transform(source, **params):
 @requires_target
 def test_method_hook_replaces_the_result(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.method_hooks import MethodHookSpec, MethodHookWorker
+    from grembyte.features.method_hooks import MethodHookSpec, MethodHookWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodHookWorker(target.pid)
@@ -2089,7 +2089,7 @@ def test_method_hook_replaces_the_result(tmp_path, qt_app):
 
 def test_hook_dialog_offers_method_templates_for_methods(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.hooks import HookDialog
+    from grembyte.ui.widgets.hooks import HookDialog
 
     dialog = HookDialog(translations, "", "", "", method="Health:DoDamage (single)")
     names = [dialog.template_combo.itemText(i) for i in range(dialog.template_combo.count())]
@@ -2101,7 +2101,7 @@ def test_hook_dialog_offers_method_templates_for_methods(qt_app, translations):
 
 
 def test_method_hook_signature_shows_argument_names():
-    from hermes.features.catalog import catalog_methods
+    from grembyte.features.catalog import catalog_methods
 
     signature = "Health:DoDamage (DamageInfo,UnityEngine.GameObject)"
     classes = [["Health", [[
@@ -2119,8 +2119,8 @@ def test_method_hook_signature_shows_argument_names():
 def test_method_script_with_a_syntax_error_is_refused(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from PySide6.QtWidgets import QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
-    from hermes.hooks.syntax import checker
-    from hermes.ui.widgets.hooks import HookDialog
+    from grembyte.hooks.syntax import checker
+    from grembyte.ui.widgets.hooks import HookDialog
 
     if not checker().available:
         return  # needs Frida's system session
@@ -2143,13 +2143,13 @@ def test_method_hooks_in_the_panel_are_saved_and_restored(tmp_path, qt_app, tran
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-    from hermes.db.base import Base
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.features.method_hooks import MethodHookSpec
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+    from grembyte.db.base import Base
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.features.method_hooks import MethodHookSpec
+    from grembyte.ui.widgets.hooks import HookPanel
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     repository = HookRepository(sessionmaker(bind=engine))
     binary = _build(tmp_path)
@@ -2204,8 +2204,8 @@ def test_method_hooks_in_the_panel_are_saved_and_restored(tmp_path, qt_app, tran
 @requires_target
 def test_monitor_offers_to_hook_a_method(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.catalog import CatalogMethod
-    from hermes.ui.widgets.method_monitor import MethodMonitorDialog
+    from grembyte.features.catalog import CatalogMethod
+    from grembyte.ui.widgets.method_monitor import MethodMonitorDialog
 
     target = _MonoTarget(_build(tmp_path))
     dialog = MethodMonitorDialog(translations, target.pid)
@@ -2229,7 +2229,7 @@ def test_monitor_offers_to_hook_a_method(tmp_path, qt_app, translations):
 @requires_target
 def test_method_hook_before_the_call_changes_arguments_and_fields(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.method_hooks import MethodHookSpec, MethodHookWorker
+    from grembyte.features.method_hooks import MethodHookSpec, MethodHookWorker
 
     target = _MonoTarget(_build(tmp_path))
     worker = MethodHookWorker(target.pid)
@@ -2295,7 +2295,7 @@ def test_method_hook_before_the_call_changes_arguments_and_fields(tmp_path, qt_a
 
 def test_hook_dialog_chooses_the_phase_of_method_hooks(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.widgets.hooks import HookDialog
+    from grembyte.ui.widgets.hooks import HookDialog
 
     dialog = HookDialog(translations, "", "", "", method="Health:DoDamage (single)")
     assert dialog.phase_combo.currentData() == "after"
@@ -2318,13 +2318,13 @@ def test_panel_saves_the_phase_of_method_hooks(tmp_path, qt_app, translations):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-    from hermes.db.base import Base
-    from hermes.db.repository.hooks import HookRepository
-    from hermes.features.method_hooks import MethodHookSpec
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+    from grembyte.db.base import Base
+    from grembyte.db.repository.hooks import HookRepository
+    from grembyte.features.method_hooks import MethodHookSpec
+    from grembyte.ui.widgets.hooks import HookPanel
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     repository = HookRepository(sessionmaker(bind=engine))
     binary = _build(tmp_path)
@@ -2353,10 +2353,10 @@ def test_panel_saves_the_phase_of_method_hooks(tmp_path, qt_app, translations):
 
 def test_hook_context_menu_offers_what_fits_the_hook(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.core.pointer import PointerChain
-    from hermes.hooks.engine import HookSpec
-    from hermes.features.method_hooks import MethodHookSpec
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.core.pointer import PointerChain
+    from grembyte.hooks.engine import HookSpec
+    from grembyte.features.method_hooks import MethodHookSpec
+    from grembyte.ui.widgets.hooks import HookPanel
 
     panel = HookPanel(translations)
     panel._pid = 1234  # a process, but no worker is needed for the menu
@@ -2407,7 +2407,7 @@ def test_hook_context_menu_offers_what_fits_the_hook(qt_app, translations):
 
 def test_catalog_method_from_a_hook_identity():
     # pylint: disable=import-outside-toplevel
-    from hermes.features.catalog import catalog_method_from_identity
+    from grembyte.features.catalog import catalog_method_from_identity
 
     method = catalog_method_from_identity(_ROLL_DAMAGE)
     assert (method.assembly, method.class_name, method.name, method.parameters) == (
@@ -2419,8 +2419,8 @@ def test_catalog_method_from_a_hook_identity():
 @requires_target
 def test_mono_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.catalog import CatalogMethod
-    from hermes.features.trace import NEW, SAME, TraceWorker, analyze, recording_calls
+    from grembyte.features.catalog import CatalogMethod
+    from grembyte.features.trace import NEW, SAME, TraceWorker, analyze, recording_calls
 
     target = _MonoTarget(_build(tmp_path))
     worker = TraceWorker(target.pid)
@@ -2503,7 +2503,7 @@ def test_mono_trace_finds_what_a_scenario_calls(tmp_path, qt_app):
 
 def test_trace_analysis_compares_rates_with_the_baseline():
     # pylint: disable=import-outside-toplevel
-    from hermes.features.trace import MORE, NEW, SAME, analyze
+    from grembyte.features.trace import MORE, NEW, SAME, analyze
 
     baseline = {"phase": "baseline", "duration": 2000, "counts": {"0": 20, "1": 20, "2": 1}}
     # one second: method 0 as usual, 1 five times as often, 2 only two more calls
@@ -2519,7 +2519,7 @@ def test_trace_analysis_compares_rates_with_the_baseline():
 @requires_target
 def test_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.ui.widgets.trace import TraceDialog
+    from grembyte.ui.widgets.trace import TraceDialog
 
     target = _MonoTarget(_build(tmp_path))
     dialog = TraceDialog(translations, target.pid)
@@ -2578,7 +2578,7 @@ def test_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, translati
 def test_trace_dialog_traces_a_preselection(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-    from hermes.ui.widgets.trace import TraceDialog
+    from grembyte.ui.widgets.trace import TraceDialog
 
     target = _MonoTarget(_build(tmp_path))
     dialog = TraceDialog(translations, target.pid)
@@ -2615,7 +2615,7 @@ def test_trace_dialog_traces_a_preselection(tmp_path, qt_app, translations):
 @requires_target
 def test_mono_trace_preparation_can_be_cancelled(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.trace import TraceWorker
+    from grembyte.features.trace import TraceWorker
 
     # Compiling takes 0.3 s per method here: 2.4 s for all eight.
     target = _MonoTarget(_build(tmp_path), slow_ms=300)
@@ -2649,8 +2649,8 @@ def test_mono_trace_preparation_can_be_cancelled(tmp_path, qt_app):
 @requires_target
 def test_sessions_list_workers_and_cut_one_that_hangs(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.trace import TraceWorker
-    from hermes.core.sessions import SESSIONS, TRACE
+    from grembyte.features.trace import TraceWorker
+    from grembyte.core.sessions import SESSIONS, TRACE
 
     target = _MonoTarget(_build(tmp_path), slow_ms=300)
     worker = TraceWorker(target.pid)
@@ -2689,8 +2689,8 @@ def test_sessions_list_workers_and_cut_one_that_hangs(tmp_path, qt_app):
 @requires_target
 def test_agent_answers_while_mono_works_on_a_thread_of_its_own(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.monitor import MethodMonitorWorker
-    from hermes.features.trace import TraceWorker
+    from grembyte.features.monitor import MethodMonitorWorker
+    from grembyte.features.trace import TraceWorker
 
     # Compiling a method takes 2 s; all sessions share the agent's thread.
     target = _MonoTarget(_build(tmp_path), slow_ms=2000)
@@ -2722,8 +2722,8 @@ def test_agent_answers_while_mono_works_on_a_thread_of_its_own(tmp_path, qt_app)
 def test_hook_panel_logs_scripts_and_acts_on_several_hooks(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
     from PySide6.QtCore import QUrl  # pylint: disable=import-error,no-name-in-module
-    from hermes.features.method_hooks import MethodHookSpec
-    from hermes.ui.widgets.hooks import HookPanel
+    from grembyte.features.method_hooks import MethodHookSpec
+    from grembyte.ui.widgets.hooks import HookPanel
 
     target, panel = _MonoTarget(_build(tmp_path)), HookPanel(translations)
     status = lambda row: panel.table.item(row, 4).text()  # pylint: disable=unnecessary-lambda-assignment
@@ -2793,8 +2793,8 @@ def test_monitor_marks_static_methods(qt_app, translations):  # pylint: disable=
     import dataclasses
 
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-    from hermes.features.catalog import CatalogMethod
-    from hermes.ui.widgets.method_monitor import CallLogModel, signature_text
+    from grembyte.features.catalog import CatalogMethod
+    from grembyte.ui.widgets.method_monitor import CallLogModel, signature_text
 
     count = CatalogMethod("Assembly-CSharp", "Game.Combat", "get_Count", "()", "System.Int32",
                           True, 0x06000009, "Game.Combat:get_Count ()")
@@ -2814,8 +2814,8 @@ def test_monitor_marks_static_methods(qt_app, translations):  # pylint: disable=
 def _hero_health(pid):
     """Where Game.Loop.Current (the last Game.Combat made) keeps its Health."""
     # pylint: disable=import-outside-toplevel
-    from hermes.features.managed_statics import read_static_areas
-    from hermes.platform import ProcessMemory
+    from grembyte.features.managed_statics import read_static_areas
+    from grembyte.platform import ProcessMemory
 
     areas = read_static_areas(pid, {"Assembly-CSharp": ["Game.Loop"]})
     with ProcessMemory(pid) as memory:
@@ -2825,9 +2825,9 @@ def _hero_health(pid):
 @requires_target
 def test_static_areas_of_marked_assemblies(tmp_path):
     # pylint: disable=import-outside-toplevel
-    from hermes.core.pointer import chain_bases, managed_bases
-    from hermes.features.managed_statics import StaticArea, read_static_areas
-    from hermes.platform import ProcessMemory, read_mappings
+    from grembyte.core.pointer import chain_bases, managed_bases
+    from grembyte.features.managed_statics import StaticArea, read_static_areas
+    from grembyte.platform import ProcessMemory, read_mappings
 
     target = _MonoTarget(_build(tmp_path))
     try:
@@ -2856,9 +2856,9 @@ def test_static_areas_of_marked_assemblies(tmp_path):
 @requires_target
 def test_pointer_scan_starts_in_static_fields_and_filters_after_a_restart(tmp_path):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.core import memory_regions, pointer
-    from hermes.platform import main_module
-    from hermes.ui.widgets.pointer_scan import PointerScanWorker
+    from grembyte.core import memory_regions, pointer
+    from grembyte.platform import main_module
+    from grembyte.ui.widgets.pointer_scan import PointerScanWorker
 
     binary = _build(tmp_path)
     expected = PointerChain("mono:Assembly-CSharp:Game.Loop", 0, (0x20,))
@@ -2900,9 +2900,9 @@ def test_catalog_shows_nested_classes_as_csharp_writes_them(qt_app, translations
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtCore import Qt  # pylint: disable=no-name-in-module
 
-    from hermes.engines.registry import engine_by_id
-    from hermes.features.catalog import CatalogMethod, csharp_name
-    from hermes.ui.widgets.catalog import CatalogModel, matches
+    from grembyte.engines.registry import engine_by_id
+    from grembyte.features.catalog import CatalogMethod, csharp_name
+    from grembyte.ui.widgets.catalog import CatalogModel, matches
 
     method = CatalogMethod("Assembly-CSharp", "CommandLine", "StrongholdForceAdventure",
                            "(StrongholdAdventure/Type)", "System.Void", True, 0x06001234,
@@ -2922,7 +2922,7 @@ def test_catalog_shows_nested_classes_as_csharp_writes_them(qt_app, translations
 @requires_target
 def test_object_browser_reads_live_objects_with_the_world_stopped(tmp_path, qt_app, generation):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.scripts import ScriptWorker
+    from grembyte.features.scripts import ScriptWorker
 
     defines = ("FAKE_LIVENESS_BLOCKS",) if generation == "blocks" else ()
     target = _MonoTarget(_build(tmp_path, defines))

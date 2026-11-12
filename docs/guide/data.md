@@ -1,8 +1,8 @@
 # Saving, export and import
 
-## What Hermes keeps per game
+## What Grembyte keeps per game
 
-Hermes identifies a game by its program and keeps for it:
+Grembyte identifies a game by its program and keeps for it:
 
 - tracked addresses with their pointer chains and frozen values,
 - hooks and method hooks,
@@ -12,7 +12,7 @@ Hermes identifies a game by its program and keeps for it:
 
 Hook templates and settings are shared by all games. Everything lives in one SQLite database; [Files and environment](../reference/files.md) says where.
 
-When the attached game exits, Hermes resets the window within a second: scans, watches, freezing and hooks stop; stored addresses and hooks are kept and loaded again the next time you attach.
+When the attached game exits, Grembyte resets the window within a second: scans, watches, freezing and hooks stop; stored addresses and hooks are kept and loaded again the next time you attach.
 
 ## Export and import
 

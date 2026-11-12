@@ -1,10 +1,10 @@
-"""Garbage is collected in the GUI thread only (see hermes.ui.garbage)."""
+"""Garbage is collected in the GUI thread only (see grembyte.ui.garbage)."""
 
 import gc
 import threading
 import weakref
 
-from hermes.ui.garbage import GarbageCollector
+from grembyte.ui.garbage import GarbageCollector
 from tests.test_hooks import fixture_qt_app  # pylint: disable=unused-import
 
 

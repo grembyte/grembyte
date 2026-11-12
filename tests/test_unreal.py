@@ -14,7 +14,7 @@ Hero:Tick and ``rename N`` Hero:Rename (FString, bool) like ProcessEvent does
 way, whose script calls Hero:AddGold with its local Amount (the caller's
 frame, Code at an EX_LocalVariable). Each answers with the gold and whether
 Loot's Func is the interpreter again. Hero:MoveBy (FVector, out int32) is
-only called by hermes; ``moved 0`` answers with the sum of its last offset
+only called by grembyte; ``moved 0`` answers with the sum of its last offset
 and how often it ran.
 """
 
@@ -838,8 +838,8 @@ def _run(qt_app, worker, signal):
 @requires_target
 def test_catalog_lists_packages_classes_and_ufunctions(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.engines.registry import detect_engine
-    from hermes.features.catalog import CatalogWorker
+    from grembyte.engines.registry import detect_engine
+    from grembyte.features.catalog import CatalogWorker
 
     target = _Target(_build(tmp_path))
     try:
@@ -879,7 +879,7 @@ def test_catalog_lists_packages_classes_and_ufunctions(tmp_path, qt_app):
 @requires_target
 def test_trace_hooks_native_and_blueprint_functions(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.trace import NEW, SAME, TraceWorker, analyze, recording_calls
+    from grembyte.features.trace import NEW, SAME, TraceWorker, analyze, recording_calls
 
     target = _Target(_build(tmp_path))
     worker = TraceWorker(target.pid)
@@ -947,7 +947,7 @@ def test_trace_hooks_native_and_blueprint_functions(tmp_path, qt_app):
 def _catalog(qt_app, pid):
     """{signature: CatalogMethod} of the game's packages."""
     # pylint: disable=import-outside-toplevel
-    from hermes.features.catalog import CatalogWorker
+    from grembyte.features.catalog import CatalogWorker
 
     worker = CatalogWorker(pid)
     loaded = {}
@@ -959,7 +959,7 @@ def _catalog(qt_app, pid):
 @requires_target
 def test_method_monitor_reads_arguments_from_the_call_frame(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.monitor import MethodMonitorWorker
+    from grembyte.features.monitor import MethodMonitorWorker
 
     target = _Target(_build(tmp_path))
     methods = _catalog(qt_app, target.pid)
@@ -1043,8 +1043,8 @@ def test_method_monitor_reads_arguments_from_the_call_frame(tmp_path, qt_app):
 @requires_target
 def test_the_call_dialog_calls_ufunctions_static_and_on_found_objects(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.method_call import parse_argument
-    from hermes.features.monitor import MethodMonitorWorker
+    from grembyte.features.method_call import parse_argument
+    from grembyte.features.monitor import MethodMonitorWorker
 
     target = _Target(_build(tmp_path))
     methods = _catalog(qt_app, target.pid)
@@ -1115,8 +1115,8 @@ def test_the_call_dialog_calls_ufunctions_static_and_on_found_objects(tmp_path, 
 @requires_target
 def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.core import messages
-    from hermes.features.scripts import ScriptParam, ScriptSpec, ScriptWorker
+    from grembyte.core import messages
+    from grembyte.features.scripts import ScriptParam, ScriptSpec, ScriptWorker
 
     target = _Target(_build(tmp_path))
     worker = ScriptWorker(target.pid, language="de")
@@ -1317,7 +1317,7 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
 @requires_target
 def test_process_event_is_found_when_it_calls_an_out_of_line_invoke(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.scripts import ScriptSpec, ScriptWorker
+    from grembyte.features.scripts import ScriptSpec, ScriptWorker
 
     # As in Gothic 1 Remake: ProcessEvent calls UFunction::Invoke, which
     # makes the call [reg + Func].
@@ -1345,8 +1345,8 @@ def test_process_event_is_found_when_it_calls_an_out_of_line_invoke(tmp_path, qt
 @requires_target
 def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.scripts import ScriptSpec, ScriptWorker
-    from hermes.ui.widgets.gas_attributes import hold_spec
+    from grembyte.features.scripts import ScriptSpec, ScriptWorker
+    from grembyte.ui.widgets.gas_attributes import hold_spec
 
     target = _Target(_build(tmp_path))
     worker = ScriptWorker(target.pid)
@@ -1429,7 +1429,7 @@ def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app):
 @requires_target
 def test_gas_base_values_are_set_through_angelscript_attribute_sets(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.scripts import ScriptWorker
+    from grembyte.features.scripts import ScriptWorker
 
     # As in Gothic 1 Remake: no library setter; the set's own
     # TrySetAttributeBaseValue(FName, float) sets it.
@@ -1469,7 +1469,7 @@ def test_gas_base_values_are_set_through_angelscript_attribute_sets(tmp_path, qt
 @requires_target
 def test_object_browser_lists_live_objects_by_class(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.scripts import ScriptWorker
+    from grembyte.features.scripts import ScriptWorker
 
     target = _Target(_build(tmp_path))
     worker = ScriptWorker(target.pid)

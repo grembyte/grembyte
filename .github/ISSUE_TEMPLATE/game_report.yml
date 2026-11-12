@@ -1,12 +1,12 @@
 name: Game compatibility report
-description: Tell us about a game Hermes works with, or one where it fails.
+description: Tell us about a game Grembyte works with, or one where it fails.
 labels: ["game report"]
 body:
   - type: markdown
     attributes:
       value: |
         Reports on working games are welcome too: they end up in the "Tested games" lists of the documentation.
-        If Hermes crashes or a feature fails, a [bug report](https://github.com/winterhafen/hermes-hook/issues/new?template=bug_report.yml) with the log is more helpful.
+        If Grembyte crashes or a feature fails, a [bug report](https://github.com/grembyte/grembyte/issues/new?template=bug_report.yml) with the log is more helpful.
   - type: input
     id: game
     attributes:
@@ -56,5 +56,5 @@ body:
   - type: input
     id: environment
     attributes:
-      label: Hermes version and system
+      label: Grembyte version and system
       placeholder: 0.5.0, Fedora 44, Proton 10.0

@@ -379,8 +379,8 @@ def _run(qt_app, worker, signal):
 @requires_target
 def test_catalog_lists_images_classes_and_methods(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.engines.registry import detect_engine
-    from hermes.features.catalog import CatalogWorker
+    from grembyte.engines.registry import detect_engine
+    from grembyte.features.catalog import CatalogWorker
 
     target = _Target(_build(tmp_path))
     try:
@@ -417,7 +417,7 @@ def test_catalog_lists_images_classes_and_methods(tmp_path, qt_app):
 @requires_target
 def test_trace_counts_methods_and_names_their_callers(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.trace import NEW, SAME, TraceWorker, analyze, recording_calls
+    from grembyte.features.trace import NEW, SAME, TraceWorker, analyze, recording_calls
 
     target = _Target(_build(tmp_path))
     worker = TraceWorker(target.pid)
@@ -509,7 +509,7 @@ def test_code_addresses_are_named_and_found_again(tmp_path):
     # pylint: disable=import-outside-toplevel
     import frida
 
-    from hermes.engines.registry import ENGINE_AGENT_SOURCE
+    from grembyte.engines.registry import ENGINE_AGENT_SOURCE
 
     target = _Target(_build(tmp_path))
     session = frida.attach(target.pid)
@@ -556,7 +556,7 @@ _PLACE = {"engine": "il2cpp", "image": "Assembly-CSharp", "file": None, "token":
 @requires_target
 def test_method_monitor_logs_arguments_and_inspects_objects(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.monitor import MethodMonitorWorker
+    from grembyte.features.monitor import MethodMonitorWorker
 
     target = _Target(_build(tmp_path))
     worker = MethodMonitorWorker(target.pid)
@@ -620,7 +620,7 @@ _LENGTH = {"engine": "il2cpp", "image": "Assembly-CSharp", "file": None, "token"
 
 def _method_transform(source, **params):
     # pylint: disable=import-outside-toplevel
-    from hermes.hooks.transforms import TemplateTransform, TransformDefinition, TransformParameter
+    from grembyte.hooks.transforms import TemplateTransform, TransformDefinition, TransformParameter
 
     definition = TransformDefinition(
         "test", source, tuple(TransformParameter(name, default=value)
@@ -631,7 +631,7 @@ def _method_transform(source, **params):
 @requires_target
 def test_method_hooks_change_arguments_fields_and_results(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.method_hooks import MethodHookSpec, MethodHookWorker
+    from grembyte.features.method_hooks import MethodHookSpec, MethodHookWorker
 
     target = _Target(_build(tmp_path))
     worker = MethodHookWorker(target.pid)

@@ -1,4 +1,4 @@
-"""Dialogs docked in the main window as tabs (hermes.ui.widgets.docking)."""
+"""Dialogs docked in the main window as tabs (grembyte.ui.widgets.docking)."""
 
 # pylint: disable=import-outside-toplevel,import-error,no-name-in-module
 
@@ -11,7 +11,7 @@ from tests.test_scripts import fixture_qt_app  # pylint: disable=unused-import
 def _window(qt_app):
     from PySide6.QtWidgets import QMainWindow
 
-    from hermes.ui.widgets.docking import DockManager
+    from grembyte.ui.widgets.docking import DockManager
 
     window = QMainWindow()
     window.dock_manager = DockManager(window)
@@ -24,7 +24,7 @@ def _window(qt_app):
 def _dialog(translations, title, parent):
     from PySide6.QtWidgets import QDialog, QVBoxLayout
 
-    from hermes.ui.widgets.docking import PinButton
+    from grembyte.ui.widgets.docking import PinButton
 
     dialog = QDialog(parent)
     dialog.setWindowTitle(title)
@@ -35,13 +35,13 @@ def _dialog(translations, title, parent):
 
 @pytest.fixture(name="translations")
 def _translations():
-    from hermes.ui.localization import load_translations
+    from grembyte.ui.localization import load_translations
 
     return load_translations("en")
 
 
 def test_dialogs_dock_as_tabs_and_float_again(window, translations, qt_app):
-    from hermes.ui.widgets.docking import RIGHT
+    from grembyte.ui.widgets.docking import RIGHT
 
     manager = window.dock_manager
     gold = _dialog(translations, "Gold", window)
@@ -75,7 +75,7 @@ def test_dialogs_dock_as_tabs_and_float_again(window, translations, qt_app):
 
 
 def test_tab_and_dock_close_buttons_close_the_dialogs(window, translations):
-    from hermes.ui.widgets.docking import BOTTOM
+    from grembyte.ui.widgets.docking import BOTTOM
 
     manager = window.dock_manager
     dialogs = [_dialog(translations, name, window) for name in ("Trace", "Log", "Monitor")]
@@ -99,7 +99,7 @@ def test_tab_and_dock_close_buttons_close_the_dialogs(window, translations):
 def test_a_docked_dialog_goes_with_the_window_it_came_from(window, translations, qt_app):
     from PySide6.QtWidgets import QDialog
 
-    from hermes.ui.widgets.docking import RIGHT, find_dock_manager
+    from grembyte.ui.widgets.docking import RIGHT, find_dock_manager
 
     monitor = QDialog(window)
     inspector = _dialog(translations, "Inspector", monitor)
@@ -116,8 +116,8 @@ def test_a_docked_dialog_goes_with_the_window_it_came_from(window, translations,
 
 
 def test_inspectors_open_next_to_a_docked_one(window, translations, qt_app):
-    from hermes.ui.widgets.docking import RIGHT
-    from hermes.ui.widgets.inspection import Inspections
+    from grembyte.ui.widgets.docking import RIGHT
+    from grembyte.ui.widgets.inspection import Inspections
     from tests.test_scripts import _FakeScriptWorker
 
     inspections = Inspections(translations, _FakeScriptWorker(1), window)
@@ -146,7 +146,7 @@ def test_inspectors_open_next_to_a_docked_one(window, translations, qt_app):
 def test_the_tools_that_stay_in_use_can_be_docked():
     import inspect
 
-    from hermes.ui.widgets import (gas_attributes, log_view, memory_view, method_monitor,
+    from grembyte.ui.widgets import (gas_attributes, log_view, memory_view, method_monitor,
                                    native_monitor, native_trace, object_browser,
                                    object_inspector, pointer_scan, trace, write_watch)
 
@@ -162,9 +162,9 @@ def test_the_tools_that_stay_in_use_can_be_docked():
 
 
 def test_docked_inspectors_show_short_tab_titles(window, translations):
-    from hermes.ui.widgets.docking import RIGHT
-    from hermes.ui.widgets.inspection import Inspections
-    from hermes.ui.widgets.object_inspector import short_type_name
+    from grembyte.ui.widgets.docking import RIGHT
+    from grembyte.ui.widgets.inspection import Inspections
+    from grembyte.ui.widgets.object_inspector import short_type_name
     from tests.test_scripts import _FakeScriptWorker
 
     assert short_type_name("Game.Combat+Health") == "Health"
@@ -189,8 +189,8 @@ def test_docked_inspectors_show_short_tab_titles(window, translations):
 
 def test_tools_close_with_the_game_but_log_and_pointer_scans_stay(qt_app, translations):
     # pylint: disable=protected-access
-    from hermes.ui import main_window
-    from hermes.ui.widgets.docking import BOTTOM, RIGHT
+    from grembyte.ui import main_window
+    from grembyte.ui.widgets.docking import BOTTOM, RIGHT
 
     window = main_window.MainWindow("en")
     try:

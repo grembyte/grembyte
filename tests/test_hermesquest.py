@@ -1,4 +1,4 @@
-"""Hermes against a build of HermesQuest (test_app/unity), the real Unity Mono runtime.
+"""Grembyte against a build of HermesQuest (test_app/unity), the real Unity Mono runtime.
 
 The build is not in the repository (see test_app/unity/README.md); without
 it, or with one older than what a test needs, the tests are skipped. The
@@ -108,7 +108,7 @@ def test_monitor_leaves_exceptions_thrown_through_the_method_to_the_game(tmp_pat
     # Frida's onEnter and onLeave do) hid Tick from Mono's unwinder: the
     # exception went unhandled and Unity ended the game.
     # pylint: disable=import-outside-toplevel
-    from hermes.features.monitor import MethodMonitorWorker
+    from grembyte.features.monitor import MethodMonitorWorker
 
     game = _Game(tmp_path / "Player.log")
     worker = MethodMonitorWorker(game.pid)

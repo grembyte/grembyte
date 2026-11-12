@@ -10,15 +10,15 @@ from datetime import datetime
 
 from PySide6.QtWidgets import QHeaderView  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core.pointer import PointerChain
-from hermes.db.repository.addresses import SavedPointerScan
-from hermes.hooks.engine import HookSpec
-from hermes.hooks.transforms import TemplateTransform, TransformDefinition
-from hermes.platform import Mapping
-from hermes.ui.widgets import pointer_scan
-from hermes.ui.widgets.hooks import HookDialog
-from hermes.ui.widgets.templates import TemplateDialog
-from hermes.ui.widgets.write_watch import WriteWatchDialog
+from grembyte.core.pointer import PointerChain
+from grembyte.db.repository.addresses import SavedPointerScan
+from grembyte.hooks.engine import HookSpec
+from grembyte.hooks.transforms import TemplateTransform, TransformDefinition
+from grembyte.platform import Mapping
+from grembyte.ui.widgets import pointer_scan
+from grembyte.ui.widgets.hooks import HookDialog
+from grembyte.ui.widgets.templates import TemplateDialog
+from grembyte.ui.widgets.write_watch import WriteWatchDialog
 from studio import DEMO_NAME, DEMO_PID, scene, settle
 
 # pylint: disable=protected-access
@@ -59,7 +59,7 @@ def _own_window(studio):
     as it is for the scenes of the other modules.
     """
     # pylint: disable=import-outside-toplevel
-    from hermes.ui.main_window import MainWindow
+    from grembyte.ui.main_window import MainWindow
 
     window = studio.keep(MainWindow(studio.language))
     window.show()

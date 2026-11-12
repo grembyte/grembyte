@@ -13,7 +13,7 @@ Windows of their own cannot be kept beside the main window on every desktop (Way
 - **At the side:** pointer scan, object inspector, object browser, write watch, memory viewer, GAS attributes.
 - **At the bottom**, where wide tables have room: trace, native trace, method monitor, native function monitor, log.
 - Each side holds its windows as tabs. The ✕ on a tab, or a middle click, closes the window. A docked object inspector shows the object's name in its tab (else its class); the full title is in the tooltip.
-- Hermes remembers per kind of window whether the last one was docked: the next opens the same way. An object opened from a docked inspector opens as a tab beside it.
+- Grembyte remembers per kind of window whether the last one was docked: the next opens the same way. An object opened from a docked inspector opens as a tab beside it.
 - When the game ends or another program is chosen, the tools close, docked or not. The log stays, and so does the [pointer scan](pointer-scan.md#finding-a-chain): it is meant to find the value again after a restart.
 
 
@@ -29,10 +29,10 @@ Windows of their own cannot be kept beside the main window on every desktop (Way
 
 ## Sessions
 
-**Sessions** in the toolbar lists Hermes' connections to processes – Frida sessions and ptrace attachments – with what uses them. A session that no longer responds can be cut there:
+**Sessions** in the toolbar lists Grembyte's connections to processes – Frida sessions and ptrace attachments – with what uses them. A session that no longer responds can be cut there:
 
 - **Stop** lets the session remove its hooks and detach cleanly.
-- **Disconnect** cuts the Frida session if it does not react to Stop. The part of Hermes it belongs to (e.g. the hooks) then has to be started again.
+- **Disconnect** cuts the Frida session if it does not react to Stop. The part of Grembyte it belongs to (e.g. the hooks) then has to be started again.
 
 <figure markdown="span">
   ![Sessions](../assets/screenshots/sessions-dark.webp#only-dark){ width="720" }
@@ -57,7 +57,7 @@ The **Activity** tab shows the activity log: the course of every run, written to
 - the attached process with its details: 32 or 64 bit, native or Wine/Proton with the Proton version, engine, how the gadget was loaded;
 - sessions and agents in the order they started and ended;
 - every call into the game with its duration and outcome (frequent ones summed up);
-- clicks in Hermes, and why a Frida session ended, with Frida's crash report.
+- clicks in Grembyte, and why a Frida session ended, with Frida's crash report.
 
 Values from the game's memory are not in it. The activity log can be switched off in the [settings](settings.md).
 

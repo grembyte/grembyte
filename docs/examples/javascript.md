@@ -1,6 +1,6 @@
-# JavaScript in Hermes
+# JavaScript in Grembyte
 
-Hermes uses JavaScript wherever you tell it *what* to do with a value or with the game: hook templates, method hooks and scripts. You need little of the language for that. This page explains that part, along the [HermesQuest](index.md) examples – no previous knowledge of JavaScript assumed.
+Grembyte uses JavaScript wherever you tell it *what* to do with a value or with the game: hook templates, method hooks and scripts. You need little of the language for that. This page explains that part, along the [HermesQuest](index.md) examples – no previous knowledge of JavaScript assumed.
 
 ## Where JavaScript is used
 
@@ -13,7 +13,7 @@ Hermes uses JavaScript wherever you tell it *what* to do with a value or with th
 
 All of them get one object, `ctx` (for *context*), through which they reach everything else. The [hook context](../reference/hook-context.md) and [script context](../reference/script-context.md) references list its fields.
 
-A **function** is code with a name for its input; a **body** is just the code inside. A template is a function because Hermes stores and tests it on its own; a script is a body because Hermes wraps it into a function for you:
+A **function** is code with a name for its input; a **body** is just the code inside. A template is a function because Grembyte stores and tests it on its own; a script is a body because Grembyte wraps it into a function for you:
 
 ```js
 // A function (hook template): input ctx, result after =>
@@ -46,11 +46,11 @@ healed = player.Heal(5);
 
 ### Numbers
 
-JavaScript has one number type: a 64-bit floating-point number (C#'s `double`). Hermes converts the game's types for you:
+JavaScript has one number type: a 64-bit floating-point number (C#'s `double`). Grembyte converts the game's types for you:
 
 | Game type | In JavaScript | Watch out |
 | --- | --- | --- |
-| `int`, `short`, `byte` … | number | When writing one back, cut decimals off with `Math.trunc` or `Math.round`. In value hooks Hermes truncates integer results itself. |
+| `int`, `short`, `byte` … | number | When writing one back, cut decimals off with `Math.trunc` or `Math.round`. In value hooks Grembyte truncates integer results itself. |
 | `long` (`int64`) | number | Exact only up to 2^53 (about 9 × 10^15). |
 | `float` | number | The game keeps only about 7 significant digits. |
 | `double` | number | Same precision as JavaScript. |
@@ -187,7 +187,7 @@ ctx.state.calls = (ctx.state.calls || 0) + 1;
 
 What `ctx.static`, `ctx.find`, `ctx.args`, `ctx.this` or a method give you for an object of the game is a **wrapper**: a JavaScript object that reads from and writes to the game's memory each time you use it.
 
-| You write | Hermes does |
+| You write | Grembyte does |
 | --- | --- |
 | `player.Stats` | reads the field `Stats` – an object again |
 | `stats.Health` | reads the field `Health` from the game's memory, now |

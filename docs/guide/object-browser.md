@@ -2,7 +2,7 @@
 
 The [object inspector](../engines/index.md#object-inspector) shows one object, but you first need that object: from a monitored call, a script result or a field of another object. The object browser starts from the other end. It lists the objects that live in the game right now, grouped by class, so you can open the player, the game state or a party member's inventory without knowing where they are kept.
 
-It is available for [Unreal Engine](#unreal-engine) and [Unity Mono](#unity-mono) games. Open it with **View → Object browser …** while Hermes is attached to the game.
+It is available for [Unreal Engine](#unreal-engine) and [Unity Mono](#unity-mono) games. Open it with **View → Object browser …** while Grembyte is attached to the game.
 
 <figure markdown="span">
   ![Object browser](../assets/screenshots/object-browser-dark.webp#only-dark)
@@ -34,7 +34,7 @@ Like the other tools that stay in use while you play, the object browser can be 
 
 ## Unreal Engine
 
-Hermes reads every object from the engine's object table (`GUObjectArray`), the same table [scripts](scripts.md) search with `ctx.find`. Reading it does not stop the game.
+Grembyte reads every object from the engine's object table (`GUObjectArray`), the same table [scripts](scripts.md) search with `ctx.find`. Reading it does not stop the game.
 
 - The objects' names are `FName`s, which repeat: `PointsAvailableTracker` may exist once per widget. The tooltip of an object names its outer, the object it belongs to (`Sidekick in WidgetTree_7`).
 - *Singletons* are objects of the engine's single-instance classes and their subclasses: game instance, subsystems, game mode, game state, player controller, world settings, game user settings.
@@ -42,12 +42,12 @@ Hermes reads every object from the engine's object table (`GUObjectArray`), the 
 
 ## Unity Mono
 
-Unity's Mono has no way to walk its heap: `mono_gc_walk_heap` belongs to Mono's SGen collector and does nothing in the Boehm collector Unity uses. Hermes uses Unity's own liveness calculation instead (`mono_unity_liveness_*`, which `Resources.UnloadUnusedAssets` uses). It finds the objects reachable from static fields and from Unity's objects.
+Unity's Mono has no way to walk its heap: `mono_gc_walk_heap` belongs to Mono's SGen collector and does nothing in the Boehm collector Unity uses. Grembyte uses Unity's own liveness calculation instead (`mono_unity_liveness_*`, which `Resources.UnloadUnusedAssets` uses). It finds the objects reachable from static fields and from Unity's objects.
 
 - **The game stands still** while the calculation runs, since it marks every object it visits. The status line says for how long.
 - **Objects only a thread's stack holds** are not found, e.g. a local variable of a method that is running right now.
 - **Singletons** are found through static fields that hold a class's only object, also through generic bases such as `Singleton<T>`.
-- Unity objects show with their name, which Hermes asks Unity for on the game's main thread.
+- Unity objects show with their name, which Grembyte asks Unity for on the game's main thread.
 
 Both generations of the API work: `calculation_begin`/`end` (Unity 4 to 2020) and `allocate_struct` (Unity 2021 and later), in 64-bit and [32-bit games](../engines/unity-mono.md#32-bit-games). The calculation runs on the game's main thread, also in games that [sleep out of focus](../engines/unity-mono.md#games-that-sleep-out-of-focus).
 

@@ -1,8 +1,8 @@
 """Tests for JSON UI theme loading and persistence."""
 
-from hermes.ui.styles.styles import build_stylesheet
-from hermes.ui.localization import load_translations
-from hermes.ui.styles.themes import COLOR_KEYS, ThemeManager
+from grembyte.ui.styles.styles import build_stylesheet
+from grembyte.ui.localization import load_translations
+from grembyte.ui.styles.themes import COLOR_KEYS, ThemeManager
 from PySide6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
 
 
@@ -18,7 +18,7 @@ class MemorySettings:
 
 
 def test_default_theme_is_github_dark():
-    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-grembyte-themes")
 
     assert manager.load_theme()["name"] == "Github-Dark"
     assert "Default" not in manager.available_themes()
@@ -30,7 +30,7 @@ def test_default_theme_is_github_dark():
 def test_unknown_saved_theme_falls_back_to_github_dark():
     settings = MemorySettings()
     settings.setValue("ui_theme", "Default")
-    manager = ThemeManager(settings=settings, user_theme_dir="/tmp/no-hermes-themes")
+    manager = ThemeManager(settings=settings, user_theme_dir="/tmp/no-grembyte-themes")
 
     assert manager.load_theme()["name"] == "Github-Dark"
 
@@ -44,7 +44,7 @@ def test_saved_theme_is_discovered_and_can_be_selected(tmp_path):
     saved_path = manager.save_theme("Night_Test", colors)
     manager.set_current("Night_Test")
 
-    assert saved_path.name == "hermes_themes_Night_Test.json"
+    assert saved_path.name == "grembyte_themes_Night_Test.json"
     assert manager.load_theme()["colors"]["background"] == "#102030"
     assert "$" not in manager.stylesheet()
     assert "#102030" in manager.stylesheet()
@@ -58,7 +58,7 @@ def test_user_theme_directory_is_stable_across_launch_methods(tmp_path, monkeypa
                              else tmp_path / "legacy"))
     manager = ThemeManager(settings=MemorySettings())
 
-    assert manager.user_theme_dir == tmp_path / "hermes-hook" / "themes"
+    assert manager.user_theme_dir == tmp_path / "grembyte" / "themes"
 
 
 def test_stylesheet_replaces_each_palette_color():
@@ -75,7 +75,7 @@ def test_all_theme_colors_have_english_and_german_labels():
 
 
 def test_malformed_theme_is_ignored(tmp_path):
-    (tmp_path / "hermes_themes_Broken.json").write_text('{"colors": {}}', encoding="utf-8")
+    (tmp_path / "grembyte_themes_Broken.json").write_text('{"colors": {}}', encoding="utf-8")
     manager = ThemeManager(settings=MemorySettings(), user_theme_dir=tmp_path)
 
     assert "Broken" not in manager.available_themes()
@@ -89,7 +89,7 @@ def test_older_user_theme_inherits_syntax_colors(tmp_path):
     for key in ("code_text", "code_keyword", "code_string", "code_number"):
         colors.pop(key)
     colors["background"] = "#102030"
-    (tmp_path / "hermes_themes_Old_Custom.json").write_text(
+    (tmp_path / "grembyte_themes_Old_Custom.json").write_text(
         json.dumps({"name": "Old_Custom", "colors": colors}), encoding="utf-8")
 
     loaded = manager.load_theme("Old_Custom")["colors"]
@@ -108,7 +108,7 @@ def test_user_theme_saved_before_content_colors_still_loads(tmp_path):
     for key in ("purple", "orange"):
         colors.pop(key)
     # Same name as the bundled theme: the missing colours come from that one.
-    (tmp_path / "hermes_themes_Github-Light.json").write_text(
+    (tmp_path / "grembyte_themes_Github-Light.json").write_text(
         json.dumps({"name": "Github-Light", "colors": colors}), encoding="utf-8")
 
     loaded = manager.load_theme("Github-Light")["colors"]
@@ -118,7 +118,7 @@ def test_user_theme_saved_before_content_colors_still_loads(tmp_path):
 
 
 def test_theme_qcolor_reads_css_rgba(monkeypatch):
-    from hermes.ui.widgets import icons
+    from grembyte.ui.widgets import icons
 
     monkeypatch.setattr(icons, "_theme_colors", {"selection": "rgba(9, 105, 218, 0.5)"})
 
@@ -130,7 +130,7 @@ def test_theme_qcolor_reads_css_rgba(monkeypatch):
 
 
 def test_color_swatch_labels_stay_readable():
-    from hermes.ui.widgets.theme_dialog import _label_color
+    from grembyte.ui.widgets.theme_dialog import _label_color
 
     assert _label_color("#ffffff", "#ffffff") == "#000000"
     assert _label_color("#0d1117", "#ffffff") == "#ffffff"
@@ -139,14 +139,14 @@ def test_color_swatch_labels_stay_readable():
 
 
 def test_solarized_themes_are_bundled():
-    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-grembyte-themes")
 
     assert manager.load_theme("Solarized-Dark")["colors"]["background"] == "#002b36"
     assert manager.load_theme("Solarized-Light")["colors"]["background"] == "#fdf6e3"
 
 
 def test_github_themes_are_bundled():
-    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-grembyte-themes")
 
     assert manager.load_theme("Github-Dark")["colors"]["background"] == "#0d1117"
     assert manager.load_theme("Github-Light")["colors"]["background"] == "#ffffff"
@@ -157,11 +157,11 @@ def test_existing_menu_icons_follow_theme(monkeypatch):
     from PySide6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
     from PySide6.QtWidgets import QApplication, QMenu  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.widgets.icons import apply_icon_theme, material_icon
+    from grembyte.ui.widgets.icons import apply_icon_theme, material_icon
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     application = QApplication.instance() or QApplication([])
-    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-grembyte-themes")
     default_colors = manager.load_theme("Github-Dark")["colors"]
     apply_icon_theme(default_colors)
     menu = QMenu()
@@ -186,11 +186,11 @@ def test_theme_colors_and_label_icons_follow_theme(monkeypatch):
     # pylint: disable=import-outside-toplevel
     from PySide6.QtWidgets import QApplication, QLabel  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.widgets.icons import apply_icon_theme, set_label_icon, theme_color
+    from grembyte.ui.widgets.icons import apply_icon_theme, set_label_icon, theme_color
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     application = QApplication.instance() or QApplication([])
-    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-grembyte-themes")
     default_colors = manager.load_theme("Github-Dark")["colors"]
     apply_icon_theme(default_colors)
     label = QLabel()
@@ -214,7 +214,7 @@ def test_theme_colors_and_label_icons_follow_theme(monkeypatch):
         application.processEvents()
 
 def test_check_boxes_use_theme_colors(tmp_path):
-    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-hermes-themes")
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-grembyte-themes")
     colors = manager.load_theme("Github-Light")["colors"]
 
     stylesheet = build_stylesheet(colors, indicator_dir=tmp_path)

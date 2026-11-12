@@ -1,4 +1,4 @@
-"""Copying rows and cells of tables (see hermes.ui.widgets.table)."""
+"""Copying rows and cells of tables (see grembyte.ui.widgets.table)."""
 
 from PySide6.QtCore import QStringListModel, Qt  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
@@ -14,8 +14,8 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QWidget,
 )
 
-from hermes.ui.widgets import table as table_module
-from hermes.ui.widgets.table import add_copy_actions, cell_text, copy_menu, row_text
+from grembyte.ui.widgets import table as table_module
+from grembyte.ui.widgets.table import add_copy_actions, cell_text, copy_menu, row_text
 
 from tests.test_hooks import fixture_qt_app, fixture_translations  # pylint: disable=unused-import
 

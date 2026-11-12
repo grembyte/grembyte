@@ -9,13 +9,13 @@ import struct
 import pytest
 import numpy as np
 
-from hermes.core import scanner
-from hermes.core.scanner import (
+from grembyte.core import scanner
+from grembyte.core.scanner import (
     MemorySnapshot, ScanResults, ScanWorker, ValueRange, ValueRefreshWorker,
 )
-from hermes.core.value_types import VALUE_TYPES
-from hermes.platform import linux
-from hermes.platform.linux import parse_maps
+from grembyte.core.value_types import VALUE_TYPES
+from grembyte.platform import linux
+from grembyte.platform.linux import parse_maps
 
 
 class FakeMemory:

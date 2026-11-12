@@ -1,6 +1,6 @@
 # Assembly (x86-64)
 
-The [code explorer](../guide/code-explorer.md), the [write watch](../guide/write-watch.md) and the [native tools](../guide/native-tools.md) show machine code as assembly: one line per instruction. You do not need to write assembly to use Hermes, but reading a few lines tells you what a function does, which arguments it takes and which value it changes. This page covers what that takes, for the x86-64 code of today's games; the [code explorer example](../examples/dummy-game-code-explorer.md) applies it step by step.
+The [code explorer](../guide/code-explorer.md), the [write watch](../guide/write-watch.md) and the [native tools](../guide/native-tools.md) show machine code as assembly: one line per instruction. You do not need to write assembly to use Grembyte, but reading a few lines tells you what a function does, which arguments it takes and which value it changes. This page covers what that takes, for the x86-64 code of today's games; the [code explorer example](../examples/dummy-game-code-explorer.md) applies it step by step.
 
 ## Reading a line
 
@@ -12,7 +12,7 @@ address   bytes         mnemonic  operands
 - **Address:** where the instruction is. The code explorer shows addresses of the file; in the running game the module may sit elsewhere (`module+0x6d7` stays the same).
 - **Bytes:** the machine code itself. Byte patterns for scripts are made of these, with `??` for the parts that change between builds.
 - **Mnemonic:** what the instruction does, here `mov` (copy).
-- **Operands:** what it works on. Hermes shows Intel syntax, the **destination comes first**: `mov rax, [rax + 0x28]` means *rax = the 8 bytes at address rax + 0x28*.
+- **Operands:** what it works on. Grembyte shows Intel syntax, the **destination comes first**: `mov rax, [rax + 0x28]` means *rax = the 8 bytes at address rax + 0x28*.
 
 Numbers are hexadecimal when they start with `0x`. A negative displacement reads `[rbp - 0x10]`.
 

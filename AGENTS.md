@@ -12,13 +12,13 @@ Guidance for AI coding agents working in this repository. Human contributors: se
 ## Translatable texts
 
 - Every text the user sees is translatable. Never hard-code UI strings in Python: put them
-  in `hermes/ui/localization/en.json` **and** `de.json` (at least these two) and read them
+  in `grembyte/ui/localization/en.json` **and** `de.json` (at least these two) and read them
   through `translations["…"]`.
 - Messages from the JavaScript agents are translatable too: throw
-  `hermesError('error.<area>.<name>', { params })` (`hermes/agent/messages.js`) and add the
-  key to both JSON files; the UI renders them with `hermes.core.messages.describe`.
+  `grembyteError('error.<area>.<name>', { params })` (`grembyte/agent/messages.js`) and add the
+  key to both JSON files; the UI renders them with `grembyte.core.messages.describe`.
 - `tests/test_localization.py` checks that both catalogs have the same keys and
-  placeholders and that every `hermesError` key is translated.
+  placeholders and that every `grembyteError` key is translated.
 - Reuse existing keys where the meaning matches. Use the prefix of the feature you are
   changing (`objects.…`, `inspector.…`, `error.monitor.…`) for new keys.
 
@@ -33,11 +33,11 @@ Guidance for AI coding agents working in this repository. Human contributors: se
 
 ## UI conventions
 
-- Icons: only Google Material Icons (Outlined), stored in `hermes/ui/resources/icons/`, used
-  through `material_icon` / `set_button_icon` (`hermes/ui/widgets/icons.py`).
+- Icons: only Google Material Icons (Outlined), stored in `grembyte/ui/resources/icons/`, used
+  through `material_icon` / `set_button_icon` (`grembyte/ui/widgets/icons.py`).
 - Colours come from the theme (`theme_qcolor("muted")` etc.), never hard-coded, so that
-  every theme in `hermes/ui/themes/` works.
-- Long dropdowns use `BoundedComboBox` (`hermes/ui/widgets/code_explorer.py`); a plain
+  every theme in `grembyte/ui/themes/` works.
+- Long dropdowns use `BoundedComboBox` (`grembyte/ui/widgets/code_explorer.py`); a plain
   `QComboBox` under the Fusion style covers the whole window.
 
 ## Code and tests
@@ -45,7 +45,7 @@ Guidance for AI coding agents working in this repository. Human contributors: se
 - Run the tests with `./.venv/bin/python -m pytest` before you report a change as done.
   Add or update tests for changed behaviour. Many tests attach Frida to small C programs and
   stand-in engines (Mono, IL2CPP, Unreal); they need `gcc` and `ptrace_scope=0`.
-- The engine facade (`hermes/engines/engine_facade.js`) throws for members an adapter does
+- The engine facade (`grembyte/engines/engine_facade.js`) throws for members an adapter does
   not define, so do not probe for optional members with `if (engine.foo)`. Check
   `engine.id` instead, or add the member to every adapter.
 - `docs/development/architecture.md` describes the packages and how to add an engine;

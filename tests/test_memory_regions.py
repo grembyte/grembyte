@@ -1,11 +1,11 @@
-"""Categories of writable memory for the pointer scan (hermes/core/memory_regions.py)."""
+"""Categories of writable memory for the pointer scan (grembyte/core/memory_regions.py)."""
 
 import os
 import subprocess
 import sys
 
-from hermes.core import memory_regions
-from hermes.core.memory_regions import (
+from grembyte.core import memory_regions
+from grembyte.core.memory_regions import (
     ENGINE,
     GAME,
     HEAP,
@@ -20,8 +20,8 @@ from hermes.core.memory_regions import (
     stack_ranges,
     summarize,
 )
-from hermes.platform import Mapping, read_mappings
-from hermes.platform.linux import thread_stack_pointers
+from grembyte.platform import Mapping, read_mappings
+from grembyte.platform.linux import thread_stack_pointers
 from tests.test_hooks import linux_only
 
 

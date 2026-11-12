@@ -14,25 +14,25 @@ from datetime import datetime
 from PySide6.QtCore import QObject, Qt, Signal  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import QSplitter  # pylint: disable=import-error,no-name-in-module
 
-from hermes.db.repository.assembly_selections import AssemblySelectionRepository
-from hermes.db.repository.favorites import FavoriteRepository
-from hermes.db.repository.hooks import HookRepository
-from hermes.engines.registry import engine_by_id
-from hermes.features.call_graph import Call
-from hermes.features.catalog import CatalogMethod
-from hermes.features.favorites import CATALOG, NATIVE_TRACE, TRACE
-from hermes.features.favorites import favorite_from_function, favorite_from_method
-from hermes.features.method_call import R4
-from hermes.features.native_trace import NativeFunction
-from hermes.ui.widgets import assemblies as assemblies_widget
-from hermes.ui.widgets import call_graph as call_graph_widget
-from hermes.ui.widgets import catalog as catalog_widget
-from hermes.ui.widgets import method_call as method_call_widget
-from hermes.ui.widgets import method_monitor as method_monitor_widget
-from hermes.ui.widgets import process_list as process_list_widget
-from hermes.ui.widgets import trace as trace_widget
-from hermes.ui.widgets.gas_attributes import hold_spec
-from hermes.ui.widgets.object_inspector import ObjectInspectorDialog
+from grembyte.db.repository.assembly_selections import AssemblySelectionRepository
+from grembyte.db.repository.favorites import FavoriteRepository
+from grembyte.db.repository.hooks import HookRepository
+from grembyte.engines.registry import engine_by_id
+from grembyte.features.call_graph import Call
+from grembyte.features.catalog import CatalogMethod
+from grembyte.features.favorites import CATALOG, NATIVE_TRACE, TRACE
+from grembyte.features.favorites import favorite_from_function, favorite_from_method
+from grembyte.features.method_call import R4
+from grembyte.features.native_trace import NativeFunction
+from grembyte.ui.widgets import assemblies as assemblies_widget
+from grembyte.ui.widgets import call_graph as call_graph_widget
+from grembyte.ui.widgets import catalog as catalog_widget
+from grembyte.ui.widgets import method_call as method_call_widget
+from grembyte.ui.widgets import method_monitor as method_monitor_widget
+from grembyte.ui.widgets import process_list as process_list_widget
+from grembyte.ui.widgets import trace as trace_widget
+from grembyte.ui.widgets.gas_attributes import hold_spec
+from grembyte.ui.widgets.object_inspector import ObjectInspectorDialog
 from studio import scene, settle
 
 # pylint: disable=protected-access  # the scenes answer for the workers
@@ -251,8 +251,8 @@ _PROCESSES = [
     _Process(4630, "steamwebhelper",
              "/home/user/.local/share/Steam/ubuntu12_64/steamwebhelper",
              ["/home/user/.local/share/Steam/ubuntu12_64/steamwebhelper"]),
-    _Process(48213, "dummy_game.exe", "/home/user/hermes-hook/build/dummy_game.exe",
-             ["./dummy_game.exe"], "/home/user/hermes-hook/build"),
+    _Process(48213, "dummy_game.exe", "/home/user/grembyte/build/dummy_game.exe",
+             ["./dummy_game.exe"], "/home/user/grembyte/build"),
     _Process(51790, "wineserver", f"{_PROTON}/wineserver", [f"{_PROTON}/wineserver"]),
     _wine(51802, "services.exe", r"C:\windows\system32\services.exe"),
     _wine(51811, "explorer.exe", r"C:\windows\system32\explorer.exe", "/desktop"),
@@ -263,7 +263,7 @@ _PROCESSES = [
     _wine(64102, "VRisingServer.e", _STEAM + r"\VRising\VRising_Server\VRisingServer.exe",
           "-batchMode", "-nographics"),
     _Process(66530, "python3", "/usr/bin/python3.14", ["python3", "main.py"],
-             "/home/user/hermes-hook"),
+             "/home/user/grembyte"),
 ]
 
 
@@ -763,7 +763,7 @@ _GAS_STATE = {
 def gas_attributes(studio):
     """The player's attribute sets in Avowed; the damage multiplier is held at 3."""
     # pylint: disable=import-outside-toplevel
-    from hermes.ui.widgets.gas_attributes import GasAttributesDialog
+    from grembyte.ui.widgets.gas_attributes import GasAttributesDialog
 
     studio.show_attached(_AVOWED_NAME, _AVOWED_PID, _AVOWED_DETAILS)
     worker = _GasWorker()
@@ -804,7 +804,7 @@ def assemblies(studio):
 def favorites(studio):
     """The favorites saved for Pillars of Eternity."""
     # pylint: disable=import-outside-toplevel
-    from hermes.ui.widgets.favorites import FavoritesDialog
+    from grembyte.ui.widgets.favorites import FavoritesDialog
 
     studio.show_attached(_POE_NAME, _POE_PID, _POE_DETAILS)
     dialog = studio.keep(FavoritesDialog(studio.translations, _favorites(studio),
@@ -888,7 +888,7 @@ _HEALTH_OBJECTS = [
 def object_browser(studio):
     """Pillars of Eternity's own classes, the objects of Health opened."""
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.ui.widgets.object_browser import GAME_PACKAGES, ObjectBrowserDialog
+    from grembyte.ui.widgets.object_browser import GAME_PACKAGES, ObjectBrowserDialog
 
     studio.show_attached(_POE_NAME, _POE_PID, _POE_DETAILS)
     worker = _BrowseWorker()

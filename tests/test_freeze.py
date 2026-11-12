@@ -6,10 +6,10 @@ import time
 
 import pytest
 
-from hermes.features import freeze
-from hermes.features.freeze import FreezeWorker, FrozenValue
-from hermes.core.pointer import PointerChain
-from hermes.core.value_types import value_type
+from grembyte.features import freeze
+from grembyte.features.freeze import FreezeWorker, FrozenValue
+from grembyte.core.pointer import PointerChain
+from grembyte.core.value_types import value_type
 
 
 class FakeMemory:

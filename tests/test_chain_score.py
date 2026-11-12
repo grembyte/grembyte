@@ -1,8 +1,8 @@
-"""Scores of pointer chains (hermes/core/chain_score.py)."""
+"""Scores of pointer chains (grembyte/core/chain_score.py)."""
 
-from hermes.core import memory_regions
-from hermes.core.chain_score import ranked, score
-from hermes.core.pointer import PointerChain
+from grembyte.core import memory_regions
+from grembyte.core.chain_score import ranked, score
+from grembyte.core.pointer import PointerChain
 
 
 def test_short_chains_with_small_offsets_from_the_game_score_best():

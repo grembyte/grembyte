@@ -1,4 +1,4 @@
-"""The code fields of scripts, hooks and templates (see hermes.ui.widgets.code_editor)."""
+"""The code fields of scripts, hooks and templates (see grembyte.ui.widgets.code_editor)."""
 
 from tests.test_hooks import fixture_qt_app, fixture_translations  # pylint: disable=unused-import
 
@@ -14,7 +14,7 @@ def test_tab_indents_by_two_spaces_and_shift_tab_outdents(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
     from PySide6.QtGui import QTextCursor  # pylint: disable=import-error,no-name-in-module
-    from hermes.ui.widgets.code_editor import CodeEditor
+    from grembyte.ui.widgets.code_editor import CodeEditor
 
     editor = CodeEditor("a\nb\nc")
     cursor = editor.textCursor()
@@ -47,7 +47,7 @@ def test_tab_indents_by_two_spaces_and_shift_tab_outdents(qt_app):
 
 def test_the_code_takes_the_height_the_window_grows_by(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.scripts import ScriptDialog
+    from grembyte.ui.widgets.scripts import ScriptDialog
 
     dialog = ScriptDialog(translations)
     dialog.show()
@@ -62,10 +62,10 @@ def test_the_code_takes_the_height_the_window_grows_by(qt_app, translations):
 
 def test_javascript_tokens_use_theme_colors(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.styles.themes import ThemeManager
-    from hermes.ui.widgets.code_editor import CodeEditor
+    from grembyte.ui.styles.themes import ThemeManager
+    from grembyte.ui.widgets.code_editor import CodeEditor
 
-    manager = ThemeManager(user_theme_dir="/tmp/no-hermes-themes")
+    manager = ThemeManager(user_theme_dir="/tmp/no-grembyte-themes")
     colors = manager.load_theme("Solarized-Light")["colors"]
     editor = CodeEditor("const player = 'Hero';\nconst health = 42;")
     editor.highlighter.set_colors(colors)
@@ -96,10 +96,10 @@ def test_pseudocode_tokens_use_theme_colors(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtWidgets import QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.styles.themes import ThemeManager
-    from hermes.ui.widgets.code_editor import PseudocodeHighlighter
+    from grembyte.ui.styles.themes import ThemeManager
+    from grembyte.ui.widgets.code_editor import PseudocodeHighlighter
 
-    colors = ThemeManager(user_theme_dir="/tmp/no-hermes-themes").load_theme(
+    colors = ThemeManager(user_theme_dir="/tmp/no-grembyte-themes").load_theme(
         "Solarized-Light")["colors"]
     editor = QPlainTextEdit("if (int32_t int32_1 = 42) {\n    return int32_1; // result\n}")
     PseudocodeHighlighter(editor.document(), colors)
@@ -126,15 +126,15 @@ def test_existing_code_editor_rehighlights_after_theme_change(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtWidgets import QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.styles.themes import ThemeManager
-    from hermes.ui.widgets.code_editor import (
+    from grembyte.ui.styles.themes import ThemeManager
+    from grembyte.ui.widgets.code_editor import (
         CodeEditor,
         PseudocodeHighlighter,
         apply_code_theme,
         code_theme_colors,
     )
 
-    manager = ThemeManager(user_theme_dir="/tmp/no-hermes-themes")
+    manager = ThemeManager(user_theme_dir="/tmp/no-grembyte-themes")
     editor = CodeEditor("return 12;")
     pseudocode = QPlainTextEdit("return 12;")
     pseudocode.pseudocode_highlighter = PseudocodeHighlighter(

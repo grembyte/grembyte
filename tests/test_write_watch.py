@@ -2,8 +2,8 @@
 
 import pytest
 
-from hermes.core.value_types import watch_size_for_type
-from hermes.features.write_watch import _build_agent_source
+from grembyte.core.value_types import watch_size_for_type
+from grembyte.features.write_watch import _build_agent_source
 
 
 @pytest.mark.parametrize(
@@ -44,8 +44,8 @@ def test_dialog_shows_the_time_of_the_last_write():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.write_watch import WriteWatchDialog
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.write_watch import WriteWatchDialog
 
     _app = QApplication.instance() or QApplication([])
     dialog = WriteWatchDialog("0x1000", 4, load_translations("de"))
@@ -70,8 +70,8 @@ def test_dialog_shows_reads_and_writes_and_hooks_only_writes():
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
     from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.write_watch import WriteWatchDialog
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.write_watch import WriteWatchDialog
 
     _app = QApplication.instance() or QApplication([])
     dialog = WriteWatchDialog("0x1000", 4, load_translations("de"), reads=True)
@@ -108,8 +108,8 @@ def test_dialog_names_jit_code_by_its_csharp_method():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.write_watch import WriteWatchDialog
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.write_watch import WriteWatchDialog
 
     _app = QApplication.instance() or QApplication([])
     dialog = WriteWatchDialog("0x1000", 4, load_translations("de"))

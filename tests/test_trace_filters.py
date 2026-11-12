@@ -6,10 +6,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from hermes.db.base import Base
-from hermes.db.repository.trace_filters import TraceFilterRepository
-from hermes.features.catalog import CatalogMethod
-from hermes.features.trace_filters import (
+from grembyte.db.base import Base
+from grembyte.db.repository.trace_filters import TraceFilterRepository
+from grembyte.features.catalog import CatalogMethod
+from grembyte.features.trace_filters import (
     BUILTIN_FILTERS,
     TraceFilter,
     has_number,
@@ -19,7 +19,7 @@ from hermes.features.trace_filters import (
     select_methods,
     word_matches,
 )
-from hermes.ui.localization import load_translations
+from grembyte.ui.localization import load_translations
 
 
 def _method(class_name, name, parameters="()", return_type="void", assembly="Assembly-CSharp",
@@ -126,7 +126,7 @@ def test_copy_of_a_builtin_filter_is_editable():
 
 @pytest.fixture(name="repository")
 def fixture_repository(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     return TraceFilterRepository(sessionmaker(bind=engine))
 
@@ -156,7 +156,7 @@ def fixture_qt_app():
 def test_panel_counts_and_selects(qt_app, repository):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
-    from hermes.ui.widgets.trace_filters import TraceFilterPanel
+    from grembyte.ui.widgets.trace_filters import TraceFilterPanel
 
     translations = load_translations("de")
     repository.save_filter(TraceFilter.from_text("Gold", "gold"))
@@ -178,7 +178,7 @@ def test_panel_counts_and_selects(qt_app, repository):
 
 def test_editor_saves_a_new_filter_without_repository(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
-    from hermes.ui.widgets.trace_filters import TraceFilterDialog, TraceFilterPanel
+    from grembyte.ui.widgets.trace_filters import TraceFilterDialog, TraceFilterPanel
 
     translations = load_translations("de")
     panel = TraceFilterPanel(translations)

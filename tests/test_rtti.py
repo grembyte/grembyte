@@ -1,5 +1,5 @@
 """Class names from C++ RTTI and engine names for the code explorer
-(see hermes/features/rtti.py and add_runtime_names)."""
+(see grembyte/features/rtti.py and add_runtime_names)."""
 
 import shutil
 import struct
@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from hermes.features.code_explorer import (
+from grembyte.features.code_explorer import (
     Image,
     ModuleChoice,
     Section,
@@ -15,7 +15,7 @@ from hermes.features.code_explorer import (
     load_image,
     module_of_symbols,
 )
-from hermes.features.rtti import itanium_class_name, msvc_class_name, rtti_names
+from grembyte.features.rtti import itanium_class_name, msvc_class_name, rtti_names
 
 _SOURCE = r"""
 #include <cstdio>

@@ -1,5 +1,5 @@
 """The code explorer: strings, references, functions and patterns of a module's file
-(see hermes/features/code_explorer.py)."""
+(see grembyte/features/code_explorer.py)."""
 
 # pylint: disable=protected-access
 
@@ -8,8 +8,8 @@ import subprocess
 
 import pytest
 
-from hermes.core import messages
-from hermes.features.code_explorer import (
+from grembyte.core import messages
+from grembyte.features.code_explorer import (
     CALL,
     DATA,
     POINTER,
@@ -17,7 +17,7 @@ from hermes.features.code_explorer import (
     load_image,
     parse_location,
 )
-from hermes.features.pseudocode import render as render_pseudocode
+from grembyte.features.pseudocode import render as render_pseudocode
 
 from tests.test_hooks import fixture_qt_app  # pylint: disable=unused-import
 
@@ -28,10 +28,10 @@ _SOURCE = r"""
 #include <stdio.h>
 
 int counter;
-const char *const commands[] = { "hermes_cmd_heal", "hermes_cmd_kill" };
+const char *const commands[] = { "grembyte_cmd_heal", "grembyte_cmd_kill" };
 
 __attribute__((noinline)) int use_message(int value) {
-    puts("Hermes marker: available only in debug mode.");
+    puts("Grembyte marker: available only in debug mode.");
     counter += value;
     return counter;
 }
@@ -72,7 +72,7 @@ def _string(index, text):
 
 def _check_index(index, symbols, rip=True):
     """What both formats must give for _SOURCE."""
-    message = _string(index, "Hermes marker: available only in debug mode.")
+    message = _string(index, "Grembyte marker: available only in debug mode.")
     refs = index.references(message)
     assert [ref.kind for ref in refs] == [DATA]
     use = index.function_at(refs[0].address)
@@ -86,13 +86,13 @@ def _check_index(index, symbols, rip=True):
                for ref in index.references(use.start) if ref.kind == CALL}
     assert len(callers) == 2
     # The command names are reached through a table of pointers
-    heal = _string(index, "hermes_cmd_heal")
+    heal = _string(index, "grembyte_cmd_heal")
     assert POINTER in {ref.kind for ref in index.references(heal)}
 
     # The function view names the string the instruction loads, and the
     # imported function it calls (through a PLT stub or an import slot)
     lines = index.disassemble(use)
-    assert any(line.comment == '"Hermes marker: available only in debug mode."'
+    assert any(line.comment == '"Grembyte marker: available only in debug mode."'
                for line in lines)
     assert any(line.comment.split("!")[-1] == "puts" for line in lines), \
         [line.comment for line in lines]
@@ -106,11 +106,11 @@ def _check_index(index, symbols, rip=True):
     # RIP-relative (position-independent) or an absolute address in the instruction
     assert "n.scan(" in script
     assert ("n.rip(at, " if rip else "readU32()") in script
-    assert '"Hermes marker' in script
+    assert '"Grembyte marker' in script
     assert "n.fn(at" in index.script(use.start)
     # The pseudocode names the string and the import, the argument by the convention
     pseudocode = render_pseudocode(index, use)
-    assert 'puts("Hermes marker: available only in debug mode.");' in pseudocode
+    assert 'puts("Grembyte marker: available only in debug mode.");' in pseudocode
     assert ("(int32_t a1 /* rdi */)" if index.image.format == "elf"
             else "(int32_t a1 /* rcx */)") in pseudocode
 
@@ -178,7 +178,7 @@ def test_other_files_are_refused(tmp_path):
 
 @pytest.mark.parametrize("symbol_path", [None, "local-symbols"])
 def test_local_pe_symbols_enrich_names_without_replacing_exports(monkeypatch, symbol_path):
-    from hermes.features import code_explorer
+    from grembyte.features import code_explorer
 
     image = code_explorer.Image("game.exe", "pe", 64, 0x140000000, b"\xc3" * 0x100)
     image.sections.append(code_explorer.Section(
@@ -206,9 +206,9 @@ def test_local_pe_symbols_enrich_names_without_replacing_exports(monkeypatch, sy
 
 @pytest.mark.usefixtures("qt_app")
 def test_symbol_folder_rebuilds_a_cached_module(monkeypatch):
-    from hermes.features.code_explorer import Image, ModuleChoice
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets import code_explorer
+    from grembyte.features.code_explorer import Image, ModuleChoice
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets import code_explorer
 
     image = Image("game.exe", "pe", 64, 0x140000000, b"")
     index = CodeIndex(image)
@@ -248,7 +248,7 @@ def test_dbghelp_symbols_are_scoped_and_resources_are_released(monkeypatch, fail
     import ctypes
     from types import SimpleNamespace
 
-    from hermes.platform import symbols
+    from grembyte.platform import symbols
 
     class NativeCall:
         def __init__(self, function):
@@ -319,7 +319,7 @@ def test_dbghelp_symbols_are_scoped_and_resources_are_released(monkeypatch, fail
 
 
 def test_pe_symbols_are_optional_without_windows(monkeypatch):
-    from hermes.platform import symbols
+    from grembyte.platform import symbols
 
     monkeypatch.setattr(symbols.sys, "platform", "linux")
     assert symbols.load_pe_symbols("game.exe", 0x140000000, 0x1000) == {}
@@ -332,8 +332,8 @@ def test_the_window_leads_from_a_string_to_its_function_and_back(tmp_path, qt_ap
 
     from PySide6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.localization import load_translations
-    from hermes.ui.widgets.code_explorer import CodeExplorerDialog, ModuleChoice
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.code_explorer import CodeExplorerDialog, ModuleChoice
 
     source = tmp_path / "game.c"
     source.write_text(_SOURCE)

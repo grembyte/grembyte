@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from hermes.features.native_monitor import (
+from grembyte.features.native_monitor import (
     argument_name,
     change_numbers,
     parse_location,
@@ -105,7 +105,7 @@ def test_arguments_values_and_changes_read_as_numbers():
 @requires_target
 def test_native_monitor_logs_arguments_result_caller_and_changes(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.native_monitor import NativeMonitorWorker
+    from grembyte.features.native_monitor import NativeMonitorWorker
 
     target = _Target(_build(tmp_path))
     worker = NativeMonitorWorker(target.pid)
@@ -170,8 +170,8 @@ def test_native_monitor_logs_arguments_result_caller_and_changes(tmp_path, qt_ap
 @requires_target
 def test_native_monitor_window_shows_calls_and_changed_fields(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.features.native_trace import NativeFunction
-    from hermes.ui.widgets.native_monitor import NativeMonitorDialog
+    from grembyte.features.native_trace import NativeFunction
+    from grembyte.ui.widgets.native_monitor import NativeMonitorDialog
 
     target = _Target(_build(tmp_path))
     dialog = NativeMonitorDialog(translations, target.pid)
@@ -251,7 +251,7 @@ def test_native_monitor_window_shows_calls_and_changed_fields(tmp_path, qt_app, 
 @requires_target
 def test_native_monitor_shows_float_arguments_and_results(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel
-    from hermes.ui.widgets.native_monitor import NativeMonitorDialog
+    from grembyte.ui.widgets.native_monitor import NativeMonitorDialog
 
     target = _Target(_build(tmp_path))
     dialog = NativeMonitorDialog(translations, target.pid)
@@ -297,7 +297,7 @@ def _second_instruction(binary, function):
 @requires_target
 def test_an_address_inside_a_function_is_probed_as_an_instruction(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
-    from hermes.features.native_monitor import FUNCTION, INSTRUCTION, NativeMonitorWorker
+    from grembyte.features.native_monitor import FUNCTION, INSTRUCTION, NativeMonitorWorker
 
     binary = _build(tmp_path)
     distance = _second_instruction(binary, "roll_abilities")
@@ -359,7 +359,7 @@ def test_an_address_inside_a_function_is_probed_as_an_instruction(tmp_path, qt_a
 @requires_target
 def test_window_offers_the_function_around_an_instruction(tmp_path, qt_app, translations):
     # pylint: disable=import-outside-toplevel
-    from hermes.ui.widgets.native_monitor import NativeMonitorDialog
+    from grembyte.ui.widgets.native_monitor import NativeMonitorDialog
 
     binary = _build(tmp_path)
     distance = _second_instruction(binary, "roll_abilities")

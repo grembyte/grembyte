@@ -1,4 +1,4 @@
-"""The activity log: what happened in Hermes, in order (see activity.py)."""
+"""The activity log: what happened in Grembyte, in order (see activity.py)."""
 
 import os
 import subprocess
@@ -8,7 +8,7 @@ import zipfile
 
 import pytest
 
-from hermes.core import activity, logs
+from grembyte.core import activity, logs
 
 from tests.test_hooks import (  # pylint: disable=unused-import
     _wait_for,
@@ -21,7 +21,7 @@ from tests.test_hooks import (  # pylint: disable=unused-import
 
 @pytest.fixture(name="activity_file")
 def fixture_activity_file(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMES_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("GREMBYTE_LOG_DIR", str(tmp_path))
     path = activity.setup()
     yield path
     activity.teardown()
@@ -38,7 +38,7 @@ def _events(path, *names):
 
 
 def test_nothing_is_written_before_setup(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMES_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("GREMBYTE_LOG_DIR", str(tmp_path))
     activity.record("click", text="x")
     handle = activity.rpc_started("agent#1", "scan")
     activity.rpc_ended(handle)
@@ -47,7 +47,7 @@ def test_nothing_is_written_before_setup(tmp_path, monkeypatch):
 
 
 @linux_only
-def test_an_activity_log_deleted_while_hermes_runs_is_written_again(activity_file):
+def test_an_activity_log_deleted_while_grembyte_runs_is_written_again(activity_file):
     activity.record("click", text="before")
     activity_file.unlink()
     activity.record("click", text="after")
@@ -57,9 +57,9 @@ def test_an_activity_log_deleted_while_hermes_runs_is_written_again(activity_fil
 def test_the_log_window_says_when_the_activity_log_is_off(tmp_path, monkeypatch, qt_app,
                                                           translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.log_view import LogDialog
+    from grembyte.ui.widgets.log_view import LogDialog
 
-    monkeypatch.setenv("HERMES_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("GREMBYTE_LOG_DIR", str(tmp_path))
     dialog = LogDialog(translations)
     dialog.source_combo.setCurrentIndex(1)
     text = dialog.text.toPlainText()
@@ -68,10 +68,10 @@ def test_the_log_window_says_when_the_activity_log_is_off(tmp_path, monkeypatch,
     dialog.close()
 
 
-def test_a_run_starts_with_what_hermes_runs_on(activity_file):
+def test_a_run_starts_with_what_grembyte_runs_on(activity_file):
     import frida  # pylint: disable=import-outside-toplevel
 
-    activity.record("click", window="Hermes", text="Prozess öffnen")
+    activity.record("click", window="Grembyte", text="Prozess öffnen")
     first, click = _entries(activity_file)
     assert first["event"] == "app_started"
     assert first["frida"] == frida.__version__
@@ -172,9 +172,9 @@ def test_the_report_holds_the_logs(activity_file, tmp_path):
         names = activity.export_report(target, tmp_path)
     finally:
         logs.teardown()
-    assert set(names) >= {"activity.jsonl", "hermes.log", "crash.log"}
+    assert set(names) >= {"activity.jsonl", "grembyte.log", "crash.log"}
     with zipfile.ZipFile(target) as archive:
-        assert "something went wrong" in archive.read("hermes.log").decode()
+        assert "something went wrong" in archive.read("grembyte.log").decode()
     assert _events(activity_file, "report_exported")[0]["files"] == names
 
 
@@ -194,7 +194,7 @@ def _wait_for_sleeping(pid, timeout=5.0):
 @requires_target
 def test_frida_sessions_note_agents_rpcs_and_their_end(activity_file):
     # pylint: disable=import-outside-toplevel
-    from hermes.attach.frida_attach import attach_session
+    from grembyte.attach.frida_attach import attach_session
 
     process = subprocess.Popen(["sleep", "30"])
     try:
@@ -235,7 +235,7 @@ def test_large_agents_reach_the_gadget_in_parts(activity_file):
     # pylint: disable=import-outside-toplevel
     import frida
 
-    from hermes.attach.frida_attach import GADGET_SOURCE_LIMIT, RecordedSession
+    from grembyte.attach.frida_attach import GADGET_SOURCE_LIMIT, RecordedSession
 
     process = subprocess.Popen(["sleep", "30"])
     try:
@@ -267,7 +267,7 @@ def test_clicks_actions_and_windows_are_recorded(activity_file, qt_app):
     # pylint: disable=import-outside-toplevel
     from PySide6.QtWidgets import QComboBox, QDialog, QMenu, QPushButton, QVBoxLayout  # pylint: disable=no-name-in-module
 
-    from hermes.ui.activity_recorder import UiRecorder
+    from grembyte.ui.activity_recorder import UiRecorder
 
     recorder = UiRecorder()
     try:
@@ -312,7 +312,7 @@ def test_clearing_a_filter_with_its_clear_button_is_recorded(activity_file, qt_a
     from PySide6.QtGui import QAction  # pylint: disable=no-name-in-module
     from PySide6.QtWidgets import QLineEdit  # pylint: disable=no-name-in-module
 
-    from hermes.ui.activity_recorder import UiRecorder
+    from grembyte.ui.activity_recorder import UiRecorder
 
     recorder = UiRecorder()
     try:
@@ -332,7 +332,7 @@ def test_clearing_a_filter_with_its_clear_button_is_recorded(activity_file, qt_a
 
 def test_the_log_window_shows_the_activity(activity_file, qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.log_view import LogDialog
+    from grembyte.ui.widgets.log_view import LogDialog
 
     activity.record("process_selected", pid=4711, name="Baldur.exe", wine=True, bits=64)
     activity.flush()

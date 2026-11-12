@@ -2,8 +2,8 @@
 
 import subprocess
 
-from hermes.hooks.engine import HookSpec
-from hermes.hooks.transforms import MultiplyTransform
+from grembyte.hooks.engine import HookSpec
+from grembyte.hooks.transforms import MultiplyTransform
 
 from tests.test_hooks import (  # pylint: disable=unused-import
     _Target,
@@ -94,7 +94,7 @@ def _symbol_offset(binary, name):
 @requires_target
 def test_stale_return_addresses_are_not_learned_and_old_ones_dropped(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel,too-many-locals
-    from hermes.hooks.engine import HookWorker
+    from grembyte.hooks.engine import HookWorker
 
     binary = _build(tmp_path)
     earn = _symbol_offset(binary, "earn")

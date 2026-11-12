@@ -8,9 +8,9 @@ import time
 from PySide6.QtCore import QThread  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
 
-from hermes.core import sessions
-from hermes.core.sessions import SESSIONS, frida_agents
-from hermes.ui.widgets.sessions import SessionsDialog, ShutdownDialog, duration_text
+from grembyte.core import sessions
+from grembyte.core.sessions import SESSIONS, frida_agents
+from grembyte.ui.widgets.sessions import SessionsDialog, ShutdownDialog, duration_text
 
 from tests.test_hooks import _wait_for, fixture_qt_app, fixture_translations, linux_only  # pylint: disable=unused-import
 
@@ -63,7 +63,7 @@ def test_window_lists_sessions_and_cuts_a_hanging_one(qt_app, translations):
     worker = _Worker(4243, hangs=True)
     session = _start(qt_app, worker)
     # A process without Frida agents (the tests' own may have one: the
-    # syntax check's, see hermes.hooks.syntax)
+    # syntax check's, see grembyte.hooks.syntax)
     clean = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     dialog = SessionsDialog(translations, lambda: clean.pid)
     try:
@@ -146,7 +146,7 @@ def test_workers_log_under_the_name_of_their_session(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument
     import logging
 
-    from hermes.core import logs
+    from grembyte.core import logs
 
     class Named(QThread):
         pid = 4711

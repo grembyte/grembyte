@@ -7,14 +7,14 @@ from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-na
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from hermes.db.base import Base
-from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-from hermes.db.repository.assembly_selections import AssemblySelectionRepository
-from hermes.db.repository.hooks import HookRepository
-from hermes.engines.registry import ENGINES
-from hermes.features.assemblies import chosen_assemblies, missing_assemblies
-from hermes.features.catalog import CatalogMethod
-from hermes.ui.localization import load_translations
+from grembyte.db.base import Base
+from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+from grembyte.db.repository.assembly_selections import AssemblySelectionRepository
+from grembyte.db.repository.hooks import HookRepository
+from grembyte.engines.registry import ENGINES
+from grembyte.features.assemblies import chosen_assemblies, missing_assemblies
+from grembyte.features.catalog import CatalogMethod
+from grembyte.ui.localization import load_translations
 
 
 MONO = ENGINES[0]
@@ -23,7 +23,7 @@ LOADED = ["mscorlib", "Assembly-CSharp", "UnityEngine", "Game.Data", "System.Cor
 
 @pytest.fixture(name="sessions")
 def fixture_sessions(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     yield sessionmaker(bind=engine)
     engine.dispose()
@@ -102,8 +102,8 @@ def test_window_selects_saves_and_clears(qt_app, repository, process_id, transla
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
 
-    from hermes.ui.widgets import assemblies
-    from hermes.ui.widgets.assemblies import AssemblyDialog, AssemblySelectionStore
+    from grembyte.ui.widgets import assemblies
+    from grembyte.ui.widgets.assemblies import AssemblyDialog, AssemblySelectionStore
 
     monkeypatch.setattr(assemblies, "CatalogWorker", FakeCatalogWorker)
     repository.save_assemblies(process_id, ["Gone"])
@@ -140,7 +140,7 @@ def test_window_selects_saves_and_clears(qt_app, repository, process_id, transla
 
 def test_catalog_shows_only_the_selected_assemblies(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from hermes.ui.widgets.catalog import CatalogModel
+    from grembyte.ui.widgets.catalog import CatalogModel
 
     def method(assembly, name):
         return CatalogMethod(assembly, "Game.Player", name, "()", "void", False, 1,

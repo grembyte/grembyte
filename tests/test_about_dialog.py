@@ -2,9 +2,9 @@
 
 import pytest
 
-from hermes import __version__
-from hermes.ui.localization import load_translations
-from hermes.ui.widgets.about_dialog import AboutDialog
+from grembyte import __version__
+from grembyte.ui.localization import load_translations
+from grembyte.ui.widgets.about_dialog import AboutDialog
 from PySide6.QtWidgets import QLabel  # pylint: disable=import-error,no-name-in-module
 from tests.test_hooks import fixture_qt_app  # pylint: disable=unused-import
 

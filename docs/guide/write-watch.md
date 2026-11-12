@@ -1,6 +1,6 @@
 # Write and read watch
 
-The address watch answers the question *which code changes this value?* It sets a hardware watchpoint on the address: the processor stops the game for a moment after every write (or every access), and Hermes records the instruction responsible.
+The address watch answers the question *which code changes this value?* It sets a hardware watchpoint on the address: the processor stops the game for a moment after every write (or every access), and Grembyte records the instruction responsible.
 
 <figure markdown="span">
   ![Write watch](../assets/screenshots/write-watch-dark.webp#only-dark)
@@ -13,7 +13,7 @@ The address watch answers the question *which code changes this value?* It sets 
 Right-click a tracked address or a scan result:
 
 - **Address watch (writes)** reports every instruction that writes the address.
-- **Address watch (all accesses)** also reports instructions that read it. x86 watchpoints trap on writes or on any access, there is no read-only mode; Hermes decodes each instruction to tell whether it reads, writes or both.
+- **Address watch (all accesses)** also reports instructions that read it. x86 watchpoints trap on writes or on any access, there is no read-only mode; Grembyte decodes each instruction to tell whether it reads, writes or both.
 
 Then do in the game what changes the value. Each code location gets one row, with how often it hit and the bytes it left at the address. The columns **Reads** and **Writes** show what the row's instruction does with the value. In Mono games a hit in JIT code also names its C# method; in IL2CPP games code in `GameAssembly` is named as the C# method it belongs to.
 
@@ -36,7 +36,7 @@ The watch (and hooks) run through Frida by default. **Settings → Backend (watc
 
 The status bar shows the backend in use.
 
-With `ptrace`, a watchpoint can cover 1, 2, 4 or 8 bytes only when its address is aligned to that size. Hermes rejects an unaligned address instead of setting the watchpoint.
+With `ptrace`, a watchpoint can cover 1, 2, 4 or 8 bytes only when its address is aligned to that size. Grembyte rejects an unaligned address instead of setting the watchpoint.
 
 !!! warning "Anti-tamper and debug registers"
-    Some anti-tamper protections detect the debug registers that watchpoints use; Dark Souls III crashed. Hermes points it out when a game ends shortly after debug registers were used.
+    Some anti-tamper protections detect the debug registers that watchpoints use; Dark Souls III crashed. Grembyte points it out when a game ends shortly after debug registers were used.

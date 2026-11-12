@@ -8,10 +8,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from hermes.db.base import Base
-from hermes.db import models  # noqa: F401  pylint: disable=unused-import
-from hermes.db.repository.hooks import HookRepository, hook_transform
-from hermes.hooks.transforms import (
+from grembyte.db.base import Base
+from grembyte.db import models  # noqa: F401  pylint: disable=unused-import
+from grembyte.db.repository.hooks import HookRepository, hook_transform
+from grembyte.hooks.transforms import (
     MultiplyTransform,
     ScriptTransform,
     TemplateTransform,
@@ -19,12 +19,12 @@ from hermes.hooks.transforms import (
     TransformParameter,
     example_templates,
 )
-from hermes.ui.localization import load_translations
+from grembyte.ui.localization import load_translations
 
 
 @pytest.fixture(name="repository")
 def fixture_repository(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     yield HookRepository(sessionmaker(bind=engine))
     engine.dispose()
@@ -167,8 +167,8 @@ def test_hooks_keep_their_copy_of_a_template(repository):
 
 def test_addresses_with_pointer_scan(tmp_path):
     # pylint: disable=import-outside-toplevel
-    from hermes.core.pointer import PointerChain
-    from hermes.db.repository.addresses import (
+    from grembyte.core.pointer import PointerChain
+    from grembyte.db.repository.addresses import (
         AddressRepository,
         SavedPointerScan,
         address_pointer,
@@ -212,7 +212,7 @@ def test_init_db_adds_new_nullable_columns(tmp_path):
     # pylint: disable=import-outside-toplevel
     import sqlite3
 
-    from hermes.db.engine import init_db
+    from grembyte.db.engine import init_db
 
     path = tmp_path / "old.db"
     connection = sqlite3.connect(path)
@@ -238,24 +238,24 @@ def test_init_db_adds_new_nullable_columns(tmp_path):
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="XDG_DATA_HOME is Linux only")
 def test_default_db_path_follows_environment(monkeypatch, tmp_path):
     # pylint: disable=import-outside-toplevel
-    from hermes.db.engine import default_db_path
+    from grembyte.db.engine import default_db_path
 
-    monkeypatch.delenv("HERMES_DB", raising=False)
+    monkeypatch.delenv("GREMBYTE_DB", raising=False)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    assert default_db_path() == tmp_path / "hermes-hook" / "hermes.db"
+    assert default_db_path() == tmp_path / "grembyte" / "grembyte.db"
 
-    monkeypatch.setenv("HERMES_DB", str(tmp_path / "custom.db"))
+    monkeypatch.setenv("GREMBYTE_DB", str(tmp_path / "custom.db"))
     assert default_db_path() == tmp_path / "custom.db"
 
 
 def test_legacy_db_is_copied_once(tmp_path):
     # pylint: disable=import-outside-toplevel
-    from hermes.db.engine import adopt_legacy_db
+    from grembyte.db.engine import adopt_legacy_db
 
-    legacy = tmp_path / "repo" / "hermes.db"
+    legacy = tmp_path / "repo" / "grembyte.db"
     legacy.parent.mkdir()
     legacy.write_bytes(b"old")
-    path = tmp_path / "data" / "hermes.db"
+    path = tmp_path / "data" / "grembyte.db"
     path.parent.mkdir()
 
     assert adopt_legacy_db(path, legacy)
@@ -269,13 +269,13 @@ def test_legacy_db_is_copied_once(tmp_path):
 
 def test_database_inserts_and_updates_are_logged_after_commit(caplog, tmp_path):
     # pylint: disable=import-outside-toplevel
-    from hermes.db.models import SettingRecord
+    from grembyte.db.models import SettingRecord
 
     engine = create_engine(f"sqlite:///{tmp_path / 'logged.db'}")
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine)
 
-    with caplog.at_level(logging.INFO, logger="hermes.db"):
+    with caplog.at_level(logging.INFO, logger="grembyte.db"):
         with sessions() as session:
             session.add(SettingRecord(key="refresh_interval_ms", value=100))
             session.commit()
@@ -285,7 +285,7 @@ def test_database_inserts_and_updates_are_logged_after_commit(caplog, tmp_path):
             session.commit()
 
     messages = [record.getMessage() for record in caplog.records
-                if record.name == "hermes.db"]
+                if record.name == "grembyte.db"]
     assert messages == [
         "database record created: settings",
         "database record updated: settings (fields: value)",
@@ -295,20 +295,20 @@ def test_database_inserts_and_updates_are_logged_after_commit(caplog, tmp_path):
 
 def test_rolled_back_database_changes_are_not_logged(caplog, tmp_path):
     # pylint: disable=import-outside-toplevel
-    from hermes.db.models import SettingRecord
+    from grembyte.db.models import SettingRecord
 
     engine = create_engine(f"sqlite:///{tmp_path / 'rollback.db'}")
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine)
 
-    with caplog.at_level(logging.INFO, logger="hermes.db"):
+    with caplog.at_level(logging.INFO, logger="grembyte.db"):
         with sessions() as session:
             session.add(SettingRecord(key="refresh_interval_ms", value=100))
             session.flush()
             session.rollback()
 
     assert not [record for record in caplog.records
-                if record.name == "hermes.db" and record.levelno == logging.INFO]
+                if record.name == "grembyte.db" and record.levelno == logging.INFO]
     engine.dispose()
 
 
@@ -316,7 +316,7 @@ def test_orm_and_bulk_deletes_are_logged_after_commit(caplog, tmp_path):
     # pylint: disable=import-outside-toplevel
     from sqlalchemy import delete
 
-    from hermes.db.models import SettingRecord
+    from grembyte.db.models import SettingRecord
 
     engine = create_engine(f"sqlite:///{tmp_path / 'deletes.db'}")
     Base.metadata.create_all(engine)
@@ -328,7 +328,7 @@ def test_orm_and_bulk_deletes_are_logged_after_commit(caplog, tmp_path):
         ])
         session.commit()
 
-    with caplog.at_level(logging.INFO, logger="hermes.db"):
+    with caplog.at_level(logging.INFO, logger="grembyte.db"):
         with sessions() as session:
             session.delete(session.get(SettingRecord, "orm_delete"))
             session.commit()
@@ -338,7 +338,7 @@ def test_orm_and_bulk_deletes_are_logged_after_commit(caplog, tmp_path):
             session.commit()
 
     messages = [record.getMessage() for record in caplog.records
-                if record.name == "hermes.db"]
+                if record.name == "grembyte.db"]
     assert messages == [
         "database record deleted: settings",
         "database records deleted: settings (count: 1)",
@@ -350,7 +350,7 @@ def test_rolled_back_deletes_are_not_logged(caplog, tmp_path):
     # pylint: disable=import-outside-toplevel
     from sqlalchemy import delete
 
-    from hermes.db.models import SettingRecord
+    from grembyte.db.models import SettingRecord
 
     engine = create_engine(f"sqlite:///{tmp_path / 'rollback-delete.db'}")
     Base.metadata.create_all(engine)
@@ -359,13 +359,13 @@ def test_rolled_back_deletes_are_not_logged(caplog, tmp_path):
         session.add(SettingRecord(key="to_keep", value=True))
         session.commit()
 
-    with caplog.at_level(logging.INFO, logger="hermes.db"):
+    with caplog.at_level(logging.INFO, logger="grembyte.db"):
         with sessions() as session:
             session.execute(delete(SettingRecord).where(SettingRecord.key == "to_keep"))
             session.rollback()
 
     assert not [record for record in caplog.records
-                if record.name == "hermes.db" and record.levelno == logging.INFO]
+                if record.name == "grembyte.db" and record.levelno == logging.INFO]
     engine.dispose()
 
 
@@ -373,9 +373,9 @@ def test_vacuum_frees_the_space_of_deleted_rows(tmp_path):
     # pylint: disable=import-outside-toplevel
     from sqlalchemy import text
 
-    from hermes.db.engine import database_size, vacuum_db
+    from grembyte.db.engine import database_size, vacuum_db
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
         connection.execute(text("CREATE TABLE junk (data BLOB)"))
@@ -392,8 +392,8 @@ def test_vacuum_frees_the_space_of_deleted_rows(tmp_path):
 
 def test_german_examples_and_their_hooks_become_english(repository):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.db.models import Hook, HookTemplate, MethodHook
-    from hermes.hooks.transforms import GERMAN_EXAMPLE_TEXTS
+    from grembyte.db.models import Hook, HookTemplate, MethodHook
+    from grembyte.hooks.transforms import GERMAN_EXAMPLE_TEXTS
 
     examples = example_templates()
     multiply = examples["multiply"].parameters_json()
@@ -453,7 +453,7 @@ def test_german_examples_and_their_hooks_become_english(repository):
 
 def test_an_english_name_taken_by_the_user_keeps_the_german_example(repository):
     # pylint: disable=import-outside-toplevel,protected-access
-    from hermes.db.models import HookTemplate
+    from grembyte.db.models import HookTemplate
 
     examples = example_templates()
     with repository._sessions() as session:
@@ -478,8 +478,8 @@ def test_init_db_sets_aside_a_table_of_the_first_versions(tmp_path):
     # pylint: disable=import-outside-toplevel
     import sqlite3
 
-    from hermes.db.engine import init_db
-    from hermes.db.repository.addresses import AddressRepository
+    from grembyte.db.engine import init_db
+    from grembyte.db.repository.addresses import AddressRepository
 
     path = tmp_path / "first.db"
     connection = sqlite3.connect(path)
@@ -526,11 +526,11 @@ def test_init_db_sets_aside_a_table_of_the_first_versions(tmp_path):
 
 def test_scripts_are_saved_changed_and_deleted_per_process(tmp_path):
     # pylint: disable=import-outside-toplevel
-    from hermes.db.repository.scripts import ScriptRepository
-    from hermes.features.scripts import (
+    from grembyte.db.repository.scripts import ScriptRepository
+    from grembyte.features.scripts import (
         ScriptParam, ScriptSpec, params_from_json, params_to_json)
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'hermes.db'}")
+    engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine)
     try:
@@ -575,7 +575,7 @@ def test_scripts_are_saved_changed_and_deleted_per_process(tmp_path):
 
 def test_script_spec_rejects_unknown_modes_and_busy_loops():
     # pylint: disable=import-outside-toplevel
-    from hermes.features.scripts import ScriptSpec
+    from grembyte.features.scripts import ScriptSpec
 
     with pytest.raises(ValueError):
         ScriptSpec("return 1;", "hourly", 60)
@@ -588,7 +588,7 @@ def test_script_spec_rejects_unknown_modes_and_busy_loops():
 
 def test_script_params_are_checked_and_typed():
     # pylint: disable=import-outside-toplevel
-    from hermes.features.scripts import ScriptParam, ScriptSpec, choice_matches
+    from grembyte.features.scripts import ScriptParam, ScriptSpec, choice_matches
 
     for bad in (dict(name="2nd"), dict(name="a b"), dict(name="x", kind="date"),
                 dict(name="x", kind="choice"), dict(name="x", kind="number", default="viel"),
