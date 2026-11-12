@@ -114,10 +114,10 @@ nav:
       - Scripts: examples/hermesquest-scripts.md
       - Code explorer: examples/dummy-game-code-explorer.md
       - Pointer chain from the code: examples/dummy-game-pointer-chain.md
-      - JavaScript in Grembyte: examples/javascript.md
   - Wine and Proton: wine-proton.md
   - Reference:
       - Files and environment: reference/files.md
+      - JavaScript in Grembyte: reference/javascript.md
       - Hook context (ctx): reference/hook-context.md
       - Script context (ctx): reference/script-context.md
       - Assembly (x86-64): reference/assembly.md

@@ -121,6 +121,7 @@ Combat.MeleeAttack / Combat.CastFireBolt
 1. [Scans and pointer scan](hermesquest-scans.md): find gold, mana and experience, and a pointer chain that survives a new game.
 2. [Hooks](hermesquest-hooks.md): multiply gold at the instruction that writes it, protect the player but not the enemies, change damage with method hooks.
 3. [Scripts](hermesquest-scripts.md): read and change the character from JavaScript, heal on a timer, scripts with parameters.
-4. [JavaScript in Grembyte](javascript.md): the language as far as hooks and scripts need it, explained along the examples.
+
+If JavaScript is new to you, [JavaScript in Grembyte](../reference/javascript.md) in the reference explains the language as far as hooks and scripts need it, along these examples.
 
 If you have never used Grembyte, do the [tutorial](../getting-started/first-hook.md) with the small C test game first; it explains the main window step by step.

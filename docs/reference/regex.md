@@ -1,6 +1,6 @@
 # Regular expressions
 
-A regular expression is a pattern for text: "starts with `BP_`", "ends in a number", "contains *potion*, in any case". In Grembyte they are useful in the JavaScript of [scripts](../guide/scripts.md), [hook templates](../guide/templates.md), method hooks and the options of choice parameters, wherever names or texts of the game are picked, cleaned up or taken apart. They are JavaScript's regular expressions; this page covers the part needed for that. If JavaScript itself is new to you, start with [JavaScript in Grembyte](../examples/javascript.md).
+A regular expression is a pattern for text: "starts with `BP_`", "ends in a number", "contains *potion*, in any case". In Grembyte they are useful in the JavaScript of [scripts](../guide/scripts.md), [hook templates](../guide/templates.md), method hooks and the options of choice parameters, wherever names or texts of the game are picked, cleaned up or taken apart. They are JavaScript's regular expressions; this page covers the part needed for that. If JavaScript itself is new to you, start with [JavaScript in Grembyte](javascript.md).
 
 The filters in Grembyte's own windows (catalog, code explorer, trace, monitor) are no regular expressions: they keep the rows containing every word typed.
 

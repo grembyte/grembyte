@@ -1,6 +1,6 @@
 # HermesQuest: scripts
 
-[Scripts](../guide/scripts.md) are JavaScript that Grembyte runs on the game's main thread, by hand or on a timer. They read and change the game's objects through their fields and call its methods – no addresses, no pointer chains. This page builds up from reading one value to scripts with parameters. If JavaScript is new to you, keep [JavaScript in Grembyte](javascript.md) open beside it.
+[Scripts](../guide/scripts.md) are JavaScript that Grembyte runs on the game's main thread, by hand or on a timer. They read and change the game's objects through their fields and call its methods – no addresses, no pointer chains. This page builds up from reading one value to scripts with parameters. If JavaScript is new to you, keep [JavaScript in Grembyte](../reference/javascript.md) open beside it.
 
 To create a script: attach to HermesQuest, open the **Scripts** tab, click **New …**, give it a name, choose **When** it runs, and type the code. **Run now** runs the selected script at once; what it logs and returns appears in the log below the scripts.
 

@@ -47,7 +47,7 @@ Select the `TakeDamage` row → **Create hook**. Instead of a built-in template,
 ctx => ctx.delta < 0 ? ctx.old + ctx.delta / 2 : ctx.new
 ```
 
-Read it as: *if the value goes down (`ctx.delta < 0`), store the old value plus half the change, otherwise keep what the game wrote.* The [JavaScript page](javascript.md#arrow-functions-and-the-conditional-operator) explains each part.
+Read it as: *if the value goes down (`ctx.delta < 0`), store the old value plus half the change, otherwise keep what the game wrote.* The [JavaScript page](../reference/javascript.md#arrow-functions-and-the-conditional-operator) explains each part.
 
 Although the instruction also lowers the enemies' health, the hook only acts on **its target**: the player's Health address, resolved through the pointer chain at every write. Enemies still take full damage. The debug window shows it – select the hook, click **Debug**, and fight: the enemies' writes appear as skipped, with the reason "writes another address".
 

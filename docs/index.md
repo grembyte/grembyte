@@ -86,7 +86,7 @@ markdown="span">
 1. [Download and install](getting-started/installation.md) Grembyte (no GitHub experience needed) and check the [permissions](getting-started/permissions.md) it needs on Linux.
 2. Follow the [tutorial](getting-started/first-hook.md): with the small test game in the repository you find a value, watch its writes and hook them, in about ten minutes.
 3. Read the [user guide](guide/scanning.md) for the details of each tool, and the [engine pages](engines/index.md) for Unity and Unreal games.
-4. Try everything on [HermesQuest](examples/index.md), a small Unity role-playing game made for it, with worked examples of pointer scans, hooks and scripts – and an introduction to [JavaScript in Grembyte](examples/javascript.md).
+4. Try everything on [HermesQuest](examples/index.md), a small Unity role-playing game made for it, with worked examples of pointer scans, hooks and scripts – and an introduction to [JavaScript in Grembyte](reference/javascript.md).
 
 !!! info "Under development"
     Grembyte is under active development. The [roadmap](https://github.com/grembyte/grembyte/blob/main/ROADMAP.md) lists what is planned and what is still open.

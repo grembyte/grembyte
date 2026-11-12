@@ -1,17 +1,17 @@
 # JavaScript in Grembyte
 
-Grembyte uses JavaScript wherever you tell it *what* to do with a value or with the game: hook templates, method hooks and scripts. You need little of the language for that. This page explains that part, along the [HermesQuest](index.md) examples – no previous knowledge of JavaScript assumed.
+Grembyte uses JavaScript wherever you tell it *what* to do with a value or with the game: hook templates, method hooks and scripts. You need little of the language for that. This page explains that part, along the [HermesQuest](../examples/index.md) examples – no previous knowledge of JavaScript assumed.
 
 ## Where JavaScript is used
 
 | Where | Shape | Runs | Gets | Its `return` |
 | --- | --- | --- | --- | --- |
 | [Hook template](../guide/templates.md) (value hook) | a **function**: `ctx => …` or `function (ctx) { … }` | after every hooked write, in the writing thread | `ctx.old`, `ctx.new`, `ctx.delta`, `ctx.params`, `ctx.state` | the value to store; nothing keeps the game's value |
-| [Method hook](hermesquest-hooks.md#method-hooks) with *Method script* | the **body** of a function: just the statements | before or after every call of the method | `ctx.args`, `ctx.this`, `ctx.result`, `ctx.phase`, `ctx.call`, `ctx.static`, `ctx.find` | after the call: the new result |
-| [Script](hermesquest-scripts.md) | the **body** of a function | by hand or on a timer, on the game's main thread | `ctx.static`, `ctx.find`, `ctx.call`, `ctx.args`, `ctx.state`, `ctx.log` | shown as the script's result |
+| [Method hook](../examples/hermesquest-hooks.md#method-hooks) with *Method script* | the **body** of a function: just the statements | before or after every call of the method | `ctx.args`, `ctx.this`, `ctx.result`, `ctx.phase`, `ctx.call`, `ctx.static`, `ctx.find` | after the call: the new result |
+| [Script](../examples/hermesquest-scripts.md) | the **body** of a function | by hand or on a timer, on the game's main thread | `ctx.static`, `ctx.find`, `ctx.call`, `ctx.args`, `ctx.state`, `ctx.log` | shown as the script's result |
 | Options of a choice parameter | the **body** of a function | when the run dialog asks for them | the same `ctx` as scripts | the list of options |
 
-All of them get one object, `ctx` (for *context*), through which they reach everything else. The [hook context](../reference/hook-context.md) and [script context](../reference/script-context.md) references list its fields.
+All of them get one object, `ctx` (for *context*), through which they reach everything else. The [hook context](hook-context.md) and [script context](script-context.md) references list its fields.
 
 A **function** is code with a name for its input; a **body** is just the code inside. A template is a function because Grembyte stores and tests it on its own; a script is a body because Grembyte wraps it into a function for you:
 
@@ -80,7 +80,7 @@ ctx.log(`${enemy.Name} has ${enemy.Stats.Health.toFixed(1)} health`);
 // Goblin has 7.5 health
 ```
 
-To test, take apart or clean up texts – names with a running number, numbers in a label – use [regular expressions](../reference/regex.md): `obj.name.replace(/_\d+$/, "")`.
+To test, take apart or clean up texts – names with a running number, numbers in a label – use [regular expressions](regex.md): `obj.name.replace(/_\d+$/, "")`.
 
 ### True and false
 
@@ -122,7 +122,7 @@ if (ctx.args.attacker.IsPlayer) {
 }
 ```
 
-The block in `{ … }` runs only if the condition in `( … )` is `true`. With a single statement the braces may be left out, as in the [hooks examples](hermesquest-hooks.md#only-the-player-hits-harder-and-takes-less).
+The block in `{ … }` runs only if the condition in `( … )` is `true`. With a single statement the braces may be left out, as in the [hooks examples](../examples/hermesquest-hooks.md#only-the-player-hits-harder-and-takes-less).
 
 `return` ends the script (or function) at once. Everything after it is skipped – that is how `if (game === null) return;` stops a script early.
 
