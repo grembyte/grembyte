@@ -132,7 +132,7 @@ class ObjectBrowserDialog(QDialog):
         mono = self.engine == "mono"
         layout.addWidget(DocsHint(
             t, t["objects.hint_mono" if mono else "objects.hint"],
-            "engines/unity-mono/#object-browser" if mono else "engines/unreal/#object-browser"))
+            "guide/object-browser/#unity-mono" if mono else "guide/object-browser/#unreal-engine"))
 
         top = QHBoxLayout()
         # Hundreds of packages: the list stays in the window, with a scroll bar

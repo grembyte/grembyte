@@ -10,7 +10,7 @@ Everything in the [engine overview](index.md) is available:
 - The **method monitor** logs calls with arguments and results; **method hooks** change arguments, fields or results with templates of their own.
 - The **call graph** shows which methods a method calls and which call it, from the IL code.
 - The **object inspector** shows the fields of C# objects, and **Call method** runs a static method on the game's main thread.
-- The **object browser** lists the live objects by class (see [below](#object-browser)).
+- The **object browser** lists the live objects by class (see the [guide](../guide/object-browser.md)).
   An enum argument is chosen from the enum's names, e.g. `StrongholdAdventure.Type`: `Minor (1)`, `Average (2)` …; a number can be typed in, too. Nested classes read as C# writes them (`StrongholdAdventure.Type`), not as Mono does (`StrongholdAdventure/Type`).
 
 !!! tip "Try it on HermesQuest"
@@ -18,14 +18,7 @@ Everything in the [engine overview](index.md) is available:
 
 ## Object browser
 
-**View → Object browser …** shows the game's live objects by class, as for [Unreal](unreal.md#object-browser): a package (here: assembly) to focus on, a filter on class and object names, and singletons only. Unity objects show with their name, strings with their text, other C# objects as `Class@address`; a double-click opens one in the [object inspector](index.md#object-inspector). The browser can be [docked](../guide/tools.md#docking-windows) beside the scanner.
-
-Unity's Mono has no heap walk: `mono_gc_walk_heap` belongs to the SGen collector and does nothing in Unity's Boehm GC. Hermes uses Unity's own liveness calculation instead (`mono_unity_liveness_*`, which `Resources.UnloadUnusedAssets` uses). It finds the objects reachable from the static fields and from Unity's objects. Objects only a thread's stack holds are not among them.
-
-- The calculation marks the objects it visits, so the game stands still while it runs. The status line says for how long; **Refresh** reads again.
-- *Singleton* names the static field that holds a class's only object, also through a generic base such as `Singleton<T>`. Game classes with exactly one object count as singletons too.
-
-Both generations of the API work: `calculation_begin`/`end` (Unity 4 to 2020, also Unity 4's old `mono.dll`) and `allocate_struct` (Unity 2021 and later), in 64-bit and 32-bit games. Tested in Pillars of Eternity (64-bit) and Might & Magic X – Legacy (Unity 4.2, 32-bit, Proton); the newer API so far against a stand-in runtime only.
+**View → Object browser …** lists the game's live objects by class and opens them in the object inspector. Unity's Mono has no heap walk, so Hermes uses Unity's own liveness calculation: it finds the objects reachable from static fields and from Unity's objects, and the game stands still for a moment while it runs. The [object browser guide](../guide/object-browser.md#unity-mono) explains it.
 
 ## 32-bit games
 

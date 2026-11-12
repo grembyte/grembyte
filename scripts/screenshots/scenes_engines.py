@@ -814,3 +814,96 @@ def favorites(studio):
     dialog.table.setFocus()
     settle()
     return dialog
+
+
+# --- Object browser -------------------------------------------------------------------------
+
+class _BrowseWorker(QObject):
+    """Answers for the object browser from the scene: the scripts worker's browse signals."""
+
+    classes_browsed = Signal(int, object)
+    browse_failed = Signal(int, str)
+    instances_browsed = Signal(int, object)
+    instances_failed = Signal(int, str)
+
+    def __init__(self):
+        super().__init__()
+        self._requests = itertools.count(1)
+        self.last = None
+        self.instances = {}  # klass -> request id of its objects
+
+    def browse_classes(self, _filter="", _internal=False):
+        self.last = next(self._requests)
+        return self.last
+
+    def browse_instances(self, klass, _filter="", _internal=False):
+        self.instances[klass] = next(self._requests)
+        return self.instances[klass]
+
+
+class _BrowsePanel:
+    """Stands in for the scripts tab: its worker, no inspector."""
+
+    inspections = None
+
+    def __init__(self, worker):
+        self._worker = worker
+
+    def worker(self):
+        return self._worker
+
+
+def _browse_class(klass, name, assembly, count, role=None):
+    return {"klass": klass, "name": name, "cppName": name, "package": assembly,
+            "count": count, "role": role, "matched": 0}
+
+
+_BROWSE_CLASSES = [
+    _browse_class("0x1a2c0", "Health", "Assembly-CSharp", 6),
+    _browse_class("0x1a3c0", "CharacterStats", "Assembly-CSharp", 14),
+    _browse_class("0x1a4c0", "Equipment", "Assembly-CSharp", 14),
+    _browse_class("0x1a5c0", "Inventory", "Assembly-CSharp", 9),
+    _browse_class("0x1a6c0", "PartyMemberAI", "Assembly-CSharp", 6),
+    _browse_class("0x1a7c0", "Faction", "Assembly-CSharp", 38),
+    _browse_class("0x1a8c0", "GameState", "Assembly-CSharp", 1, "GameState.s_Instance"),
+    _browse_class("0x1a9c0", "QuestManager", "Assembly-CSharp", 1, "QuestManager.Instance"),
+    _browse_class("0x1aac0", "InGameHUD", "Assembly-CSharp", 1),
+    _browse_class("0x1abc0", "AttackMelee", "Assembly-CSharp", 21),
+    _browse_class("0x1acc0", "Item", "Assembly-CSharp", 412),
+    _browse_class("0x2a0c0", "UnityEngine.GameObject", "UnityEngine", 2875),
+    _browse_class("0x2a1c0", "UnityEngine.Transform", "UnityEngine", 2875),
+    _browse_class("0x3a0c0", "System.String", "mscorlib", 18432),
+]
+
+_HEALTH_OBJECTS = [
+    {"address": f"0x2a41c80a{index:x}e0", "name": name, "outer": None}
+    for index, name in enumerate(("Player_New_Game(Clone)", "Companion_Eder(Clone)_0",
+                                  "Companion_Aloth(Clone)_0", "CRE_Xaurip_Skirmisher(Clone)_0",
+                                  "CRE_Xaurip_Skirmisher(Clone)_1", "CRE_Xaurip_Priest(Clone)_0"))
+]
+
+
+@scene("object-browser", size=(1100, 640),
+       description="Object browser: the live objects of a Unity Mono game by class")
+def object_browser(studio):
+    """Pillars of Eternity's own classes, the objects of Health opened."""
+    # pylint: disable=import-outside-toplevel,protected-access
+    from hermes.ui.widgets.object_browser import GAME_PACKAGES, ObjectBrowserDialog
+
+    studio.show_attached(_POE_NAME, _POE_PID, _POE_DETAILS)
+    worker = _BrowseWorker()
+    mono = engine_by_id("mono")
+    dialog = studio.keep(ObjectBrowserDialog(
+        studio.translations, _BrowsePanel(worker), is_framework=mono.is_framework_assembly,
+        engine="mono", parent=studio.window))
+    worker.classes_browsed.emit(worker.last, {
+        "classes": _BROWSE_CLASSES, "objects": 31842, "stats": {"stoppedMs": 184}})
+    dialog.package_combo.setCurrentIndex(dialog.package_combo.findData(GAME_PACKAGES))
+    health = dialog.tree.topLevelItem(0)
+    health.setExpanded(True)
+    worker.instances_browsed.emit(worker.instances["0x1a2c0"], {
+        "count": 6, "truncated": False, "instances": _HEALTH_OBJECTS})
+    dialog.tree.setCurrentItem(health.child(1))
+    dialog.tree.setFocus()
+    settle()
+    return dialog

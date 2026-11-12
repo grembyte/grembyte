@@ -20,7 +20,7 @@ Use of the feature for restoring memory modifications may be detected by anti-ta
 - **Hook templates**, testable without a game, and a debug window for hooks
 - **Scripts** that call game code on a schedule or by hand
 - **Native trace and function monitor** for any engine
-- **Unity (Mono and IL2CPP) and Unreal Engine**: catalog of classes and methods, trace, method monitor, object inspector, method hooks and calls; GAS attributes for Unreal
+- **Unity (Mono and IL2CPP) and Unreal Engine**: catalog of classes and methods, trace, method monitor, object inspector, object browser (Mono and Unreal), method hooks and calls; GAS attributes for Unreal
 - **Wine and Proton** support through Frida's Windows gadget
 - Memory viewer, sessions, activity log, export and import per game, color themes, German and English
 
