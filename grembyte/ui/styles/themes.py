@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings, QStandardPaths  # pylint: disable=import-error,no-name-in-module
 
+from grembyte.core.messages import LocalizedValueError
 from grembyte.ui.styles.styles import _STYLE_COLOR_KEYS, build_stylesheet
 
 
@@ -79,17 +80,17 @@ class ThemeManager:
     def set_current(self, name):
         """Persist the active theme name."""
         if name not in self.available_themes():
-            raise ValueError(f"Unknown theme: {name}")
+            raise LocalizedValueError("error.theme.unknown", name=name)
         self.settings.setValue("ui_theme", name)
 
     def save_theme(self, name, colors):
         """Save a theme to the writable user theme directory."""
         if not _THEME_NAME.fullmatch(name):
-            raise ValueError("Theme names may contain letters, numbers, '_' and '-'.")
+            raise LocalizedValueError("error.theme.invalid_name")
         if set(colors) != set(COLOR_KEYS) or any(
                 not isinstance(value, str) or not _valid_color(value)
                 for value in colors.values()):
-            raise ValueError("Theme colors must be hexadecimal or CSS rgba colors.")
+            raise LocalizedValueError("error.theme.invalid_colors")
         self.user_theme_dir.mkdir(parents=True, exist_ok=True)
         path = self.user_theme_dir / f"{THEME_PREFIX}{name}.json"
         path.write_text(json.dumps({"name": name, "colors": colors}, indent=2) + "\n",

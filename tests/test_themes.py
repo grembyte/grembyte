@@ -4,6 +4,9 @@ from grembyte.ui.styles.styles import build_stylesheet
 from grembyte.ui.localization import load_translations
 from grembyte.ui.styles.themes import COLOR_KEYS, ThemeManager
 from PySide6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
+import pytest
+
+from grembyte.core.messages import LocalizedValueError
 
 
 class MemorySettings:
@@ -48,6 +51,24 @@ def test_saved_theme_is_discovered_and_can_be_selected(tmp_path):
     assert manager.load_theme()["colors"]["background"] == "#102030"
     assert "$" not in manager.stylesheet()
     assert "#102030" in manager.stylesheet()
+
+
+
+@pytest.mark.parametrize(("name", "broken", "key"), [
+    ("Night Test", False, "error.theme.invalid_name"),
+    ("Night_Test", True, "error.theme.invalid_colors"),
+])
+def test_theme_save_errors_are_translated(tmp_path, name, broken, key):
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir=tmp_path)
+    colors = dict(manager.load_theme("Github-Dark")["colors"])
+    if broken:
+        colors["background"] = "not a colour"
+    with pytest.raises(LocalizedValueError) as raised:
+        manager.save_theme(name, colors)
+    assert raised.value.key == key
+    with pytest.raises(LocalizedValueError) as raised:
+        manager.set_current("Missing")
+    assert raised.value.key == "error.theme.unknown"
 
 
 def test_user_theme_directory_is_stable_across_launch_methods(tmp_path, monkeypatch):
