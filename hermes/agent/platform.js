@@ -117,6 +117,51 @@ function mainThreadId() {
   return mainThread;
 }
 
+// Unity games out of focus may stop running frames: the main thread then
+// waits in GetMessage for its window's next message, and calls nothing an
+// engine's main-thread hook (runtime_invoke) sees. wakeMainThread hooks the
+// main thread's next GetMessage and posts it an empty message (WM_NULL, which
+// programs ignore), so ``onMain`` runs there, between two passes of its
+// message loop. Windows (and Wine) only; elsewhere it does nothing.
+//
+// The thread then sleeps in the hooked GetMessage again, and Frida waits for
+// it to leave before the script can unload: detaching posts another empty
+// message, so it leaves at once.
+
+const WM_NULL = 0;
+
+function wakeMainThread(onMain) {
+  // [listener] to detach once ``onMain`` did its work; [] if not Windows.
+  if (Process.platform !== 'windows')
+    return [];
+  const user32 = Process.findModuleByName('user32.dll');
+  const post = user32 === null ? null : user32.findExportByName('PostThreadMessageW');
+  if (post === null)
+    return [];
+  const postMessage = new NativeFunction(post, 'int', ['uint32', 'uint32', 'pointer', 'pointer']);
+  const main = mainThreadId();
+  const listeners = [];
+  for (const name of ['GetMessageA', 'GetMessageW']) {
+    const address = user32.findExportByName(name);
+    if (address !== null)
+      listeners.push(Interceptor.attach(address, {
+        onEnter() {
+          if (Process.getCurrentThreadId() === main)
+            onMain();
+        }
+      }));
+  }
+  if (listeners.length === 0)
+    return [];
+  postMessage(main, WM_NULL, NULL, NULL);
+  return [{
+    detach() {
+      listeners.forEach(listener => listener.detach());
+      postMessage(main, WM_NULL, NULL, NULL);
+    }
+  }];
+}
+
 let threadPauser = null;
 
 function pauseThreads() {

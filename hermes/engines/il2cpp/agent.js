@@ -905,7 +905,7 @@ const il2cpp = (() => {
 
   const MAIN_TIMEOUT = 3000;
   const mainQueue = [];
-  let mainHook = null;
+  let mainHooks = null;  // the listeners waiting for the main thread
   let draining = false;
 
   function isMainThread() {
@@ -929,10 +929,11 @@ const il2cpp = (() => {
     } finally {
       draining = false;
     }
-    if (mainHook !== null) {
-      const hook = mainHook;
-      mainHook = null;
-      setTimeout(() => hook.detach(), 0);
+    if (mainHooks !== null) {
+      const hooks = mainHooks;
+      mainHooks = null;
+      // not from within their own callbacks
+      setTimeout(() => hooks.forEach(hook => hook.detach()), 0);
     }
   }
 
@@ -953,12 +954,13 @@ const il2cpp = (() => {
         reject(hermesError('error.il2cpp.main_thread_timeout'));
       }, MAIN_TIMEOUT);
       mainQueue.push(job);
-      if (mainHook === null)
-        mainHook = Interceptor.attach(o.runtimeInvokeAddress, {
+      if (mainHooks === null)
+        // Also when the game sleeps out of focus (see wakeMainThread)
+        mainHooks = [Interceptor.attach(o.runtimeInvokeAddress, {
           onEnter() {
             drainMain();
           }
-        });
+        }), ...wakeMainThread(drainMain)];
     });
   }
 

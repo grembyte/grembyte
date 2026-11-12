@@ -1427,11 +1427,13 @@ gpointer run_batch (gpointer data) {
   // Game code that Unity only allows on its main thread (Unity API, game
   // logic) runs there via onMainThread: the next time the main thread starts
   // a script method through mono_runtime_invoke, the queued work runs first.
-  // Which thread that is, see mainThreadId (platform layer).
+  // A game that sleeps out of focus (Unity 4: Might & Magic X) calls none; it
+  // is woken in its message loop instead (wakeMainThread). Which thread is the
+  // main one, see mainThreadId (platform layer).
 
   const MAIN_TIMEOUT = 3000;
   const mainQueue = [];
-  let mainHook = null;
+  let mainHooks = null;  // the listeners waiting for the main thread
   let draining = false;
 
   function isMainThread() {
@@ -1456,10 +1458,11 @@ gpointer run_batch (gpointer data) {
     } finally {
       draining = false;
     }
-    if (mainHook !== null) {
-      const hook = mainHook;
-      mainHook = null;
-      setTimeout(() => hook.detach(), 0);  // not from within its own callback
+    if (mainHooks !== null) {
+      const hooks = mainHooks;
+      mainHooks = null;
+      // not from within their own callbacks
+      setTimeout(() => hooks.forEach(hook => hook.detach()), 0);
     }
   }
 
@@ -1477,12 +1480,13 @@ gpointer run_batch (gpointer data) {
         reject(hermesError('error.mono.main_thread_timeout'));
       }, MAIN_TIMEOUT);
       mainQueue.push(job);
-      if (mainHook === null)
-        mainHook = Interceptor.attach(api.invoke.runtimeInvokeAddress, {
+      if (mainHooks === null)
+        // Also when the game sleeps out of focus (see wakeMainThread)
+        mainHooks = [Interceptor.attach(api.invoke.runtimeInvokeAddress, {
           onEnter() {
             drainMain();
           }
-        });
+        }), ...wakeMainThread(drainMain)];
     });
   }
 
@@ -1786,10 +1790,18 @@ gpointer run_batch (gpointer data) {
     // The three callbacks (see above), for the platform's calling convention.
     const code = allocateCode(Process.pageSize);
     let entries;
+    let failure = null;
     Memory.patchCode(code, Process.pageSize, memory => {
-      entries = writeLivenessCode(new X86Writer(memory, { pc: code }),
-                                  Process.platform === 'windows');
+      try {
+        const w = new X86Writer(memory, { pc: code });
+        entries = Process.pointerSize === 4 ? writeLivenessCode32(w)
+          : writeLivenessCode(w, Process.platform === 'windows');
+      } catch (error) {
+        failure = error;  // patchCode would not say
+      }
     });
+    if (failure !== null)
+      throw failure;
     return entries;
   }
 
@@ -1838,6 +1850,67 @@ gpointer run_batch (gpointer data) {
     w.putRet();
     w.putLabel('none');
     w.putXorRegReg('rax', 'rax');
+    w.putRet();
+    // void nothing(void)
+    entries.nothing = w.pc;
+    w.putRet();
+    w.flush();
+    return entries;
+  }
+
+  function writeLivenessCode32(w) {
+    // The callbacks of writeLivenessCode for 32-bit x86 (cdecl: the arguments
+    // on the stack). The buffer keeps its layout: each pointer in the low half
+    // of a 64-bit slot, the high half zero; the count in the low half too.
+    const entries = {};
+    // void collect(MonoObject **objects, int count, Buffer *buffer)
+    entries.collect = w.pc;
+    w.putPushReg('esi');
+    w.putPushReg('edi');
+    w.putPushReg('ebx');
+    w.putMovRegRegOffsetPtr('esi', 'esp', 16);  // objects
+    w.putMovRegRegOffsetPtr('ecx', 'esp', 20);  // count
+    w.putMovRegRegOffsetPtr('edi', 'esp', 24);  // buffer
+    w.putLabel('next');
+    w.putTestRegReg('ecx', 'ecx');
+    w.putJccShortLabel('je', 'done', 'no-hint');
+    w.putMovRegRegPtr('eax', 'esi');  // the object
+    w.putMovRegRegPtr('edx', 'eax');  // its vtable, marked in bit 0
+    w.putAndRegU32('edx', 0xfffffffe);
+    w.putMovRegRegPtr('edx', 'edx');  // the vtable's class
+    w.putMovRegRegPtr('ebx', 'edi');  // count
+    w.putCmpRegOffsetPtrReg('edi', 8, 'ebx');  // capacity - count
+    w.putJccShortLabel('jbe', 'counted', 'no-hint');
+    w.putShlRegU8('ebx', 4);
+    w.putAddRegReg('ebx', 'edi');
+    w.putMovRegOffsetPtrReg('ebx', LIVENESS_HEADER, 'eax');
+    w.putMovRegOffsetPtrU32('ebx', LIVENESS_HEADER + 4, 0);
+    w.putMovRegOffsetPtrReg('ebx', LIVENESS_HEADER + 8, 'edx');
+    w.putMovRegOffsetPtrU32('ebx', LIVENESS_HEADER + 12, 0);
+    w.putLabel('counted');
+    w.putIncRegPtr('dword', 'edi');
+    w.putAddRegImm('esi', 4);
+    w.putDecReg('ecx');
+    w.putJmpShortLabel('next');
+    w.putLabel('done');
+    w.putPopReg('ebx');
+    w.putPopReg('edi');
+    w.putPopReg('esi');
+    w.putRet();
+    // void *allocate(void *block, int size, Buffer *buffer)
+    entries.allocate = w.pc;
+    w.putMovRegRegOffsetPtr('ecx', 'esp', 8);  // size
+    w.putTestRegReg('ecx', 'ecx');
+    w.putJccShortLabel('je', 'none', 'no-hint');
+    w.putMovRegRegOffsetPtr('edx', 'esp', 12);  // buffer
+    w.putMovRegRegOffsetPtr('eax', 'edx', 16);  // pool next
+    w.putAddRegReg('ecx', 'eax');
+    w.putCmpRegOffsetPtrReg('edx', 24, 'ecx');  // pool end - new next
+    w.putJccShortLabel('jb', 'none', 'no-hint');
+    w.putMovRegOffsetPtrReg('edx', 16, 'ecx');
+    w.putRet();
+    w.putLabel('none');
+    w.putXorRegReg('eax', 'eax');
     w.putRet();
     // void nothing(void)
     entries.nothing = w.pc;
