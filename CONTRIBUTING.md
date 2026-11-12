@@ -31,7 +31,7 @@ Many tests compile a small C program and attach to it with Frida; they are skipp
 ## Pull requests
 
 - Keep a pull request to one topic and base it on `main`.
-- Add or update tests for changed behaviour, and run `pytest` before you push.
+- Add or update tests for changed behaviour, and run `pytest` before you push. For a small change confined to one place, the tests that cover it are enough (`pytest tests/test_<area>.py`); run the full suite when you touch shared code (attach, hooks, trace, engine adapters, the JavaScript agents) or an interface other modules use, or when you are not sure what a change affects. Changes to the documentation only need `mkdocs build --strict`.
 - Comments, docstrings, documentation and commit messages are in English. Commit messages start with a verb in the imperative ("Add …", "Fix …").
 - UI texts go into both `grembyte/ui/localization/en.json` and `de.json`. If you do not speak German, add the English text to both and say so in the pull request.
 - Icons are Google Material Icons (Outlined), stored in `grembyte/ui/resources/icons/`.

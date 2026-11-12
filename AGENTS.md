@@ -45,6 +45,13 @@ Guidance for AI coding agents working in this repository. Human contributors: se
 - Run the tests with `./.venv/bin/python -m pytest` before you report a change as done.
   Add or update tests for changed behaviour. Many tests attach Frida to small C programs and
   stand-in engines (Mono, IL2CPP, Unreal); they need `gcc` and `ptrace_scope=0`.
+- The full suite takes a few minutes. For a small change confined to one place, run only
+  the tests that cover it (`pytest tests/test_<area>.py`), for example a change to a single
+  test, a translation text (`tests/test_localization.py`) or a local fix in one module
+  whose callers do not change. Say in your report which tests you ran. Run the full suite
+  when a change touches shared code (attach, hooks, trace, engine adapters, the JavaScript
+  agents), changes an interface other modules use, or when you are not sure what it affects.
+  Changes to documentation only need `mkdocs build --strict`, not `pytest`.
 - The engine facade (`grembyte/engines/engine_facade.js`) throws for members an adapter does
   not define, so do not probe for optional members with `if (engine.foo)`. Check
   `engine.id` instead, or add the member to every adapter.
