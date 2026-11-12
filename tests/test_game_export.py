@@ -245,6 +245,15 @@ def test_only_exports_of_grembyte_are_read(tmp_path, repository):
             read_export(path)
 
 
+
+def test_exports_from_before_the_rename_are_read(tmp_path, repository):
+    path = tmp_path / "export.json"
+    repository.write_export("DarkSoulsIII.ex", path)
+    export = json.loads(path.read_text(encoding="utf-8"))
+    export["format"] = "hermes-hook-export"
+    path.write_text(json.dumps(export), encoding="utf-8")
+    assert read_export(path)["game"] == "DarkSoulsIII.ex"
+
 def test_import_dialog_selects_the_target_and_imports(qt_app, translations, sessions,
                                                       repository, tmp_path, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument

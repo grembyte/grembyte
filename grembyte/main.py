@@ -8,7 +8,7 @@ from PySide6.QtCore import QStandardPaths, QTimer  # pylint: disable=import-erro
 from PySide6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
-from grembyte.core import activity, logs, settings
+from grembyte.core import activity, former_name, logs, settings
 from grembyte.core.sessions import SESSIONS
 from grembyte.db.engine import init_db
 from grembyte.db.repository.settings import SettingsRepository
@@ -59,10 +59,19 @@ def _follow_activity_setting(changed):
 
 def main() -> int:
     """Initialize the database and run the application event loop."""
+    # Before anything opens the database, the logs or the Qt settings.
+    try:
+        adopted, adopt_error = former_name.adopt(), None
+    except OSError as error:
+        adopted, adopt_error = [], error
     try:
         logs.setup()
     except OSError as error:
         print(f"Grembyte cannot write its log: {error}", file=sys.stderr)
+    for step in adopted:
+        logs.log.info("taken over from Hermes Hook: %s", step)
+    if adopt_error is not None:
+        logs.log.error("cannot take over the files of Hermes Hook: %s", adopt_error)
     logs.install_exception_hooks()
     init_db()
     settings.load(SettingsRepository().load())

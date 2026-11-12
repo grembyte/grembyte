@@ -13,7 +13,13 @@
 
 Bundled themes ship in `grembyte/ui/themes/`, as `grembyte_themes_<name>.json` like your own.
 
-If there is no database yet but one from earlier versions at `data/grembyte.db` in the project directory, Grembyte copies it once; the original stays.
+If there is no database yet but one from earlier versions at `data/hermes.db` in the project directory, Grembyte copies it once; the original stays.
+
+### Files from Hermes Hook
+
+Up to version 0.6 Grembyte was called Hermes Hook and kept its files in folders named `hermes-hook`. On its first start Grembyte moves these folders to `grembyte`, renames `hermes.db`, `hermes.log` and your themes (`hermes_themes_*.json` to `grembyte_themes_*.json`) and copies the window sizes from the old Qt settings. A file that already exists under the new name is kept. The log lists what was taken over.
+
+The environment variables changed their names too: set `GREMBYTE_DB` instead of `HERMES_DB`, and so on. A menu entry or Start menu shortcut installed for Hermes Hook is replaced when you run the install script again (see [Installation](../getting-started/installation.md)).
 
 ## Environment variables
 

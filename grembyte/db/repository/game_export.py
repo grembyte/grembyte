@@ -40,6 +40,8 @@ from grembyte.db.models import (
 )
 
 EXPORT_FORMAT = "grembyte-export"
+# What exports said before the project was renamed from Hermes Hook; still read.
+LEGACY_EXPORT_FORMATS = ("hermes-hook-export",)
 EXPORT_VERSION = 1
 LINUX, WINDOWS = "Linux", "Windows"
 # Characters a file name must not hold on Windows or Linux
@@ -279,7 +281,8 @@ def read_export(path):
             export = json.load(file)
     except json.JSONDecodeError as error:
         raise ImportFormatError("error.game_export.not_json", error=error) from error
-    if not isinstance(export, dict) or export.get("format") != EXPORT_FORMAT:
+    formats = (EXPORT_FORMAT, *LEGACY_EXPORT_FORMATS)
+    if not isinstance(export, dict) or export.get("format") not in formats:
         raise ImportFormatError("error.game_export.not_export")
     if not isinstance(export.get("version"), int) or export["version"] > EXPORT_VERSION:
         raise ImportFormatError("error.game_export.version", version=export.get("version"))

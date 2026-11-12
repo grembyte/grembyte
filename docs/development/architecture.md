@@ -32,7 +32,7 @@ flowchart BT
 | --- | --- |
 | `grembyte/agent` | What every agent builds on: loading agent sources (`source.py`), errors in the user's language (`messages.js`), what differs between Linux and Windows inside the game (`platform.js`). Imports nothing else from Grembyte. |
 | `grembyte/platform` | Grembyte's own side of a process: reading memory and mappings, process facts (`linux.py`, `windows.py`), PE images of Wine processes (`wine.py`). |
-| `grembyte/core` | Memory access, the value scanner, pointer chains and value types; settings, logs, the activity log and the session registry. |
+| `grembyte/core` | Memory access, the value scanner, pointer chains and value types; settings, logs, the activity log, the session registry, and taking over the files of Hermes Hook, the former name (`former_name.py`). |
 | `grembyte/attach` | Getting into a process: Frida sessions (`frida_attach.py`), the Wine gadget and its Windows helper (`wine_gadget.py`, `wine_helper.py`, `inject/`), shared ptrace machinery (`ptrace_engine.py`), the watch backend names. |
 | `grembyte/engines` | One adapter per engine (`mono/`, `il2cpp/`, `unreal/`), each with a Python adapter and its agent; `registry.py` combines them into the engine agent the features load. |
 | `grembyte/hooks` | The hook engine (`engine.py` + `engine.js`), the ptrace hook, the built-in manipulations and templates (`transforms.py`), the script sandbox. |

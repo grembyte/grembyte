@@ -9,6 +9,8 @@ APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 # The file name has to match DESKTOP_FILE_NAME in grembyte/main.py, so that
 # Wayland shows the icon of this entry.
 DESKTOP_FILE="$APPS_DIR/grembyte.desktop"
+# The entry of Hermes Hook, as the project was called up to 0.6
+OLD_DESKTOP_FILE="$APPS_DIR/hermes-hook.desktop"
 
 refresh_menu() {
     command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" || true
@@ -16,12 +18,13 @@ refresh_menu() {
 }
 
 if [[ "${1:-}" == "--uninstall" ]]; then
-    rm -f "$DESKTOP_FILE"
+    rm -f "$DESKTOP_FILE" "$OLD_DESKTOP_FILE"
     refresh_menu
     echo "Removed $DESKTOP_FILE"
     exit 0
 fi
 
+rm -f "$OLD_DESKTOP_FILE"
 chmod +x "$PROJECT_DIR/scripts/grembyte.sh"
 mkdir -p "$APPS_DIR"
 cat > "$DESKTOP_FILE" <<ENTRY

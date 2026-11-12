@@ -14,12 +14,16 @@ $IconFile = Join-Path $env:LOCALAPPDATA "grembyte\grembyte.ico"
 # Has to match WINDOWS_APP_ID in grembyte/main.py, so that the pinned shortcut
 # and the running window share one taskbar button.
 $AppId = "grembyte.win"
+# The shortcut of Hermes Hook, as the project was called up to 0.6
+$OldShortcutFile = Join-Path ([Environment]::GetFolderPath("Programs")) "Hermes Hook.lnk"
 
 if ($Uninstall) {
-    Remove-Item -Force -ErrorAction SilentlyContinue $ShortcutFile, $IconFile
+    Remove-Item -Force -ErrorAction SilentlyContinue $ShortcutFile, $IconFile, $OldShortcutFile
     Write-Output "Removed $ShortcutFile"
     exit 0
 }
+
+Remove-Item -Force -ErrorAction SilentlyContinue $OldShortcutFile
 
 $Pythonw = Join-Path $VenvDir "Scripts\pythonw.exe"
 if (-not (Test-Path $Pythonw)) {
