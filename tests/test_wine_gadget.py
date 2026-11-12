@@ -5,6 +5,7 @@ import io
 import json
 import lzma
 import struct
+import urllib.parse
 
 import pytest
 
@@ -30,7 +31,11 @@ def _serve(monkeypatch, dll, digest="right"):
 
     def urlopen(request, timeout):  # pylint: disable=unused-argument
         url = getattr(request, "full_url", request)
-        body = json.dumps(release).encode() if "api.github.com" in url else compressed
+        body = (
+            json.dumps(release).encode()
+            if urllib.parse.urlsplit(url).hostname == "api.github.com"
+            else compressed
+        )
         return io.BytesIO(body)
 
     monkeypatch.setattr(wine_gadget.urllib.request, "urlopen", urlopen)
