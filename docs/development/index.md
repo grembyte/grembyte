@@ -32,6 +32,8 @@ The documentation is built with [MkDocs](https://www.mkdocs.org/) and [Material 
 
 The screenshots are rendered by a script; see [Screenshots](screenshots.md).
 
+The logo is generated too: `scripts/make_logo.py` writes the app icon (`grembyte/ui/resources/favicon.svg`, square), the docs logo (only the grid, as wide as the header allows) and favicon (drawn on the 16 px grid) and the wordmarks for dark and light backgrounds (`docs/assets/wordmark-*.svg`). The icon shows the bits `0110 0111`, the byte `0x67`, ASCII "g". The wordmark is set in Source Code Pro Bold and stored as paths, so no font is needed to show it; the script takes the font file as an optional argument.
+
 ### Publishing on GitHub Pages
 
 The workflow [`.github/workflows/docs.yml`](https://github.com/grembyte/grembyte/blob/main/.github/workflows/docs.yml) builds the site with `mkdocs build --strict` on every push to `main` that changes `docs/` or `mkdocs.yml`, and publishes it at <https://grembyte.github.io/grembyte/>. It can also be started by hand under *Actions → docs → Run workflow*. GitHub Pages must be set to *Settings → Pages → Source: GitHub Actions*.

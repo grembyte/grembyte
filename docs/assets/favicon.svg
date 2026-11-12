@@ -1,0 +1,13 @@
+<!-- Grembyte icon for 16 px (and 32 px): the bits 0110 0111 (0x67, ASCII "g") as two rows of four squares; filled = 1, outlined = 0 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">
+    <g fill="#8cfa5a">
+      <path d="M0 4h3v3h-3zM1 5v1h1v-1z" fill-rule="evenodd"/>
+      <rect x="4" y="4" width="3" height="3"/>
+      <rect x="8" y="4" width="3" height="3"/>
+      <path d="M12 4h3v3h-3zM13 5v1h1v-1z" fill-rule="evenodd"/>
+      <path d="M0 8h3v3h-3zM1 9v1h1v-1z" fill-rule="evenodd"/>
+      <rect x="4" y="8" width="3" height="3"/>
+      <rect x="8" y="8" width="3" height="3"/>
+      <rect x="12" y="8" width="3" height="3"/>
+    </g>
+</svg>
