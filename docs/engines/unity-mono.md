@@ -42,11 +42,9 @@ Pillars of Eternity (native Linux build) shows what the engine tools do in a rea
 
 Its assembly keeps a static class `Scripts` with the developers' console commands. Typing `scripts player` into the catalog's filter finds them, among them `GivePlayerMoney (int)`:
 
-<figure markdown="span">
-  ![Catalog in Pillars of Eternity](../assets/photos/mono-pillars-catalog-dark.webp#only-dark)
-  ![Catalog in Pillars of Eternity](../assets/photos/mono-pillars-catalog-light.webp#only-light)
-  <figcaption>The catalog filtered for <code>scripts player</code>: 8 of 30480 methods.</figcaption>
-</figure>
+!!! screenshot "Screenshot to add: Catalog in Pillars of Eternity"
+    The catalog filtered for `scripts player`: 8 of 30480 methods.
+    File: `docs/assets/photos/mono-pillars-catalog-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
 
 A [script](../guide/scripts.md) with a number parameter `amount` calls it. **Copy signature** in the catalog gives the name to paste:
 
@@ -58,11 +56,9 @@ return "Gold increased by " + value;
 
 `ctx.call` ignores the parameter list `(int)`; it picks the method with as many parameters as arguments given. `Math.trunc` cuts off decimals that someone may type into the number field.
 
-<figure markdown="span">
-  ![Script giving money in Pillars of Eternity](../assets/photos/mono-pillars-script-money-dark.webp#only-dark)
-  ![Script giving money in Pillars of Eternity](../assets/photos/mono-pillars-script-money-light.webp#only-light)
-  <figcaption>The script's result in the log, and the game's own message: the money went through the game's code.</figcaption>
-</figure>
+!!! screenshot "Screenshot to add: Script giving money in Pillars of Eternity"
+    The script's result in the log, and the game's own message: the money went through the game's code.
+    File: `docs/assets/photos/mono-pillars-script-money-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
 
 ### A method hook on the damage
 
@@ -87,27 +83,21 @@ ctx.log("Damagebase old/new:", base_old, "/", ctx.args.damage.m_damageBase);
 
 === "1. Monitor"
 
-    <figure markdown="span">
-      ![Method monitor on Health:DoDamage](../assets/photos/mono-pillars-dodamage-monitor-dark.webp#only-dark)
-      ![Method monitor on Health:DoDamage](../assets/photos/mono-pillars-dodamage-monitor-light.webp#only-light)
-      <figcaption>One call of <code>Health:DoDamage</code>: a companion hits a forest troll for 4.78.</figcaption>
-    </figure>
+    !!! screenshot "Screenshot to add: Method monitor on Health:DoDamage"
+        One call of `Health:DoDamage`: a companion hits a forest troll for 4.78.
+        File: `docs/assets/photos/mono-pillars-dodamage-monitor-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
 
 === "2. Hook"
 
-    <figure markdown="span">
-      ![Method hook on Health:DoDamage](../assets/photos/mono-pillars-dodamage-hook-definition-dark.webp#only-dark)
-      ![Method hook on Health:DoDamage](../assets/photos/mono-pillars-dodamage-hook-definition-light.webp#only-light)
-      <figcaption>The hook: template <b>Method script</b>, before the call.</figcaption>
-    </figure>
+    !!! screenshot "Screenshot to add: Method hook on Health:DoDamage"
+        The hook: template **Method script**, before the call.
+        File: `docs/assets/photos/mono-pillars-dodamage-hook-definition-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
 
 === "3. In the game"
 
-    <figure markdown="span">
-      ![The hook in the game](../assets/photos/mono-pillars-dodamage-hook-running-dark.webp#only-dark)
-      ![The hook in the game](../assets/photos/mono-pillars-dodamage-hook-running-light.webp#only-light)
-      <figcaption>The hook log shows the base damage raised from 8.07 to 161.46; the game reports a critical hit for 469.</figcaption>
-    </figure>
+    !!! screenshot "Screenshot to add: The hook in the game"
+        The hook log shows the base damage raised from 8.07 to 161.46; the game reports a critical hit for 469.
+        File: `docs/assets/photos/mono-pillars-dodamage-hook-running-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
 
 The [HermesQuest examples](../examples/hermesquest-hooks.md#method-hooks) explain method hooks step by step.
 

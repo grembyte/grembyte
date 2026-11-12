@@ -14,11 +14,9 @@ gcc -O2 test_app/dummy_game.c -o build/dummy_game.exe $(pkg-config --cflags --li
 ./build/dummy_game.exe
 ```
 
-<figure markdown="span">
-  ![Grembyte next to the test game](../assets/photos/dummy-game-dark.webp#only-dark)
-  ![Grembyte next to the test game](../assets/photos/dummy-game-light.webp#only-light)
-  <figcaption>Where this tutorial leads: the test game on the right, Grembyte on the left with its gold found and tracked through a pointer chain.</figcaption>
-</figure>
+!!! screenshot "Screenshot to add: Grembyte next to the test game"
+    Where this tutorial leads: the test game on the right, Grembyte on the left with its gold found and tracked through a pointer chain.
+    File: `docs/assets/photos/dummy-game-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
 
 ## 1. Attach to the game
 

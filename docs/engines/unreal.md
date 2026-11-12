@@ -59,19 +59,15 @@ In Avowed, filter the window for `might` and double-click the base value: the ch
 
 === "Before"
 
-    <figure markdown="span">
-      ![Might 1 in Avowed](../assets/photos/unreal-avowed-gas-before-dark.webp#only-dark)
-      ![Might 1 in Avowed](../assets/photos/unreal-avowed-gas-before-light.webp#only-light)
-      <figcaption>Might at its base value 1.</figcaption>
-    </figure>
+    !!! screenshot "Screenshot to add: Might 1 in Avowed"
+        Might at its base value 1.
+        File: `docs/assets/photos/unreal-avowed-gas-before-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
 
 === "After"
 
-    <figure markdown="span">
-      ![Might 30 in Avowed](../assets/photos/unreal-avowed-gas-after-dark.webp#only-dark)
-      ![Might 30 in Avowed](../assets/photos/unreal-avowed-gas-after-light.webp#only-light)
-      <figcaption>Base value set to 30: the game shows Might 30 with +45 % damage. It counts the points as spent, so the points available drop below zero.</figcaption>
-    </figure>
+    !!! screenshot "Screenshot to add: Might 30 in Avowed"
+        Base value set to 30: the game shows Might 30 with +45 % damage. It counts the points as spent, so the points available drop below zero.
+        File: `docs/assets/photos/unreal-avowed-gas-after-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
 
 ## Example: a script with a choice parameter
 
@@ -79,19 +75,15 @@ In Gothic 1 Remake, a manual [script](../guide/scripts.md) adds any item to the 
 
 === "Run dialog"
 
-    <figure markdown="span">
-      ![Run dialog of a script in Gothic 1 Remake](../assets/photos/unreal-gothic-script-before-dark.webp#only-dark)
-      ![Run dialog of a script in Gothic 1 Remake](../assets/photos/unreal-gothic-script-before-light.webp#only-light)
-      <figcaption>The run dialog asks for the item and the count; <b>Reload options</b> runs the options code again.</figcaption>
-    </figure>
+    !!! screenshot "Screenshot to add: Run dialog of a script in Gothic 1 Remake"
+        The run dialog asks for the item and the count; **Reload options** runs the options code again.
+        File: `docs/assets/photos/unreal-gothic-script-before-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
 
 === "Result"
 
-    <figure markdown="span">
-      ![The item in Gothic 1 Remake's inventory](../assets/photos/unreal-gothic-script-after-dark.webp#only-dark)
-      ![The item in Gothic 1 Remake's inventory](../assets/photos/unreal-gothic-script-after-light.webp#only-light)
-      <figcaption>The ore nuggets in the inventory and the script's result in the log.</figcaption>
-    </figure>
+    !!! screenshot "Screenshot to add: The item in Gothic 1 Remake's inventory"
+        The ore nuggets in the inventory and the script's result in the log.
+        File: `docs/assets/photos/unreal-gothic-script-after-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
 
 ## Not yet available
 
