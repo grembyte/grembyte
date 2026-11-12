@@ -239,6 +239,24 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   Test: `test_monitor_leaves_exceptions_thrown_through_the_method_to_the_game` with
   `Rumors.Parse` in HermesQuest (fails without it: Unity logs the unhandled exception).
 
+- **Main thread of a game out of focus (2026-11-12):** Might & Magic X – Legacy (Unity 4.2,
+  32-bit, Proton) stops running frames when its window loses focus. Its main thread then
+  sits in a single `GetMessageA` call and calls nothing else, not even `mono_runtime_invoke`
+  (about 40,000 calls a second while it runs), so every main-thread request timed out after
+  3 s. `wakeMainThread` (`hermes/agent/platform.js`) hooks `GetMessageA`/`GetMessageW` while a
+  request waits and posts the main thread a `WM_NULL` (`PostThreadMessageW`); the work runs in
+  the next `GetMessage` call, between two passes of the message loop. Mono and IL2CPP use it
+  beside their `runtime_invoke` hook. Learned: Frida waits for every thread to leave a hooked
+  function before a script unloads (it replaces the return address also for `onEnter` only,
+  see above), and the sleeping main thread stays inside the hooked `GetMessage`: unloading
+  hung until the game got a message. Detaching therefore posts a second `WM_NULL`.
+- **Object browser in 32-bit Mono games (2026-11-12):** the callbacks of Unity's liveness
+  calculation are written as machine code (no JavaScript may run while the world is
+  stopped); there was only an x64 version, and on 32 bit the writer failed inside
+  `Memory.patchCode`, which swallowed the error (`Cannot read property 'collect' of
+  undefined`). `writeLivenessCode32` is the cdecl version; the buffer keeps its layout, with
+  pointers in the low half of 64-bit slots. Checked in Might & Magic X – Legacy.
+
 ## Write hooks under anti-tamper protection
 
 Found with Dark Souls III (Arxan/GuardIT):

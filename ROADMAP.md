@@ -226,8 +226,8 @@ the class tree, the dropdown and the filter, and can become two views of one win
   objects of the engine's single-instance classes (`GameInstance`, subsystems, `GameModeBase`,
   `GameStateBase`, `WorldSettings`, `GameUserSettings`), and game classes with exactly one
   live instance.
-- **Mono, prototype:** done against a stand-in runtime (see the
-  [Mono page](docs/engines/unity-mono.md#object-browser)), to try in Pillars of Eternity:
+- **Mono:** done (see the [Mono page](docs/engines/unity-mono.md#object-browser)), tested in
+  Pillars of Eternity (64-bit) and Might & Magic X – Legacy (Unity 4.2, 32-bit):
   Unity's liveness calculation (`mono_unity_liveness_*`, both API generations) from the
   statics and from all Unity objects, with the world stopped; its callbacks are a few
   instructions of machine code, since no JavaScript may run then. Open: how long a large

@@ -25,8 +25,15 @@ Unity's Mono has no heap walk: `mono_gc_walk_heap` belongs to the SGen collector
 - The calculation marks the objects it visits, so the game stands still while it runs. The status line says for how long; **Refresh** reads again.
 - *Singleton* names the static field that holds a class's only object, also through a generic base such as `Singleton<T>`. Game classes with exactly one object count as singletons too.
 
-!!! note "Prototype"
-    So far tested against a stand-in runtime only, in both generations of the API (Unity 2017–2020 with `calculation_begin`/`end`, Unity 2021 and later with `allocate_struct`).
+Both generations of the API work: `calculation_begin`/`end` (Unity 4 to 2020, also Unity 4's old `mono.dll`) and `allocate_struct` (Unity 2021 and later), in 64-bit and 32-bit games. Tested in Pillars of Eternity (64-bit) and Might & Magic X – Legacy (Unity 4.2, 32-bit, Proton); the newer API so far against a stand-in runtime only.
+
+## 32-bit games
+
+32-bit Unity games under Wine/Proton work with all Mono tools: catalog, trace, method monitor, object inspector, **Call method** and the object browser. Mono features always go through the Frida gadget; value hooks and the write watch use ptrace in 32-bit games (see [backends](../guide/write-watch.md#backends-frida-or-ptrace)).
+
+## Games that sleep out of focus
+
+Some Unity games stop running frames when their window loses focus (Unity's *Run In Background* switched off), e.g. Might & Magic X – Legacy in window mode. Getters, **Call method**, Unity object names and the object browser run on the game's main thread, which then waits for the next window message instead of running game code. Hermes wakes it with an empty window message and does its work there, so these tools also work while you are in Hermes; the game itself stays paused.
 
 ## Mono and value hooks
 
@@ -113,6 +120,6 @@ The [HermesQuest examples](../examples/hermesquest-hooks.md#method-hooks) explai
 
 ## Tested games
 
-Pillars of Eternity, Pillars of Eternity II, Kathy Rain 2 (Proton) and Shadowrun Returns (32-bit, Proton).
+Pillars of Eternity, Pillars of Eternity II, Kathy Rain 2 (Proton), Shadowrun Returns (32-bit, Proton) and Might & Magic X – Legacy (Unity 4.2, 32-bit, Proton).
 
 <small>The screenshots of Pillars of Eternity on this page only illustrate how Hermes Hook works. All game names, trademarks and game content belong to their respective owners. Hermes Hook is not affiliated with, endorsed or sponsored by them.</small>
