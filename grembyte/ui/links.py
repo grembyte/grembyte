@@ -1,7 +1,7 @@
 """Addresses of the project on the web that the application opens."""
 
 # The online documentation; pages are given relative to it, e.g. "guide/scripts/".
-DOCS_URL = "https://grembyte.github.io/grembyte/"
+DOCS_URL = "https://grembyte.com/"
 # The bug report form of the issue tracker
 BUG_REPORT_URL = "https://github.com/grembyte/grembyte/issues/new?template=bug_report.yml"
 

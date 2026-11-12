@@ -7,7 +7,7 @@
 
 Grembyte is a desktop application for inspecting and manipulating the memory of running games. It runs on Linux, including Windows games under Wine/Proton, and on Windows. The project is under development.
 
-**Documentation: <https://grembyte.github.io/grembyte/>** – installation, tutorials, the user guide and examples with screenshots. Its sources are in [`docs/`](docs/index.md); `mkdocs serve` shows them locally (see [Development](docs/development/index.md#documentation)).
+**Documentation: <https://grembyte.com/>** – installation, tutorials, the user guide and examples with screenshots. Its sources are in [`docs/`](docs/index.md); `mkdocs serve` shows them locally (see [Development](docs/development/index.md#documentation)).
 
 ## Disclaimer
 
@@ -39,7 +39,7 @@ python3 -m venv .venv
 ./.venv/bin/grembyte
 ```
 
-On Linux, Grembyte needs `kernel.yama.ptrace_scope=0` to access a game started separately. The [installation guide](https://grembyte.github.io/grembyte/getting-started/installation/), the [permissions](https://grembyte.github.io/grembyte/getting-started/permissions/) and a [tutorial](https://grembyte.github.io/grembyte/getting-started/first-hook/) with the test game in `test_app/` have the details.
+On Linux, Grembyte needs `kernel.yama.ptrace_scope=0` to access a game started separately. The [installation guide](https://grembyte.com/getting-started/installation/), the [permissions](https://grembyte.com/getting-started/permissions/) and a [tutorial](https://grembyte.com/getting-started/first-hook/) with the test game in `test_app/` have the details.
 
 ## License
 

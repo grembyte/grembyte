@@ -36,7 +36,7 @@ The logo is generated too: `scripts/make_logo.py` writes the app icon (`grembyte
 
 ### Publishing on GitHub Pages
 
-The workflow [`.github/workflows/docs.yml`](https://github.com/grembyte/grembyte/blob/main/.github/workflows/docs.yml) builds the site with `mkdocs build --strict` on every push to `main` that changes `docs/` or `mkdocs.yml`, and publishes it at <https://grembyte.github.io/grembyte/>. It can also be started by hand under *Actions → docs → Run workflow*. GitHub Pages must be set to *Settings → Pages → Source: GitHub Actions*.
+The workflow [`.github/workflows/docs.yml`](https://github.com/grembyte/grembyte/blob/main/.github/workflows/docs.yml) builds the site with `mkdocs build --strict` on every push to `main` that changes `docs/` or `mkdocs.yml`, and publishes it at <https://grembyte.com/>. It can also be started by hand under *Actions → docs → Run workflow*. GitHub Pages must be set to *Settings → Pages → Source: GitHub Actions*. The custom domain `grembyte.com` is set there too (*Custom domain*, *Enforce HTTPS*), not through a `CNAME` file; the old address `grembyte.github.io/grembyte/` redirects to it.
 
 The workflow pins the versions of `mkdocs-material` and `mkdocs-glightbox`; raise them there after checking a local build with the new versions.
 

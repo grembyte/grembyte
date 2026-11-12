@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/grembyte/grembyte/security/advisories/new
     about: Please report security problems privately, not as a public issue.
   - name: Documentation
-    url: https://grembyte.github.io/grembyte/
+    url: https://grembyte.com/
     about: Installation, permissions, tutorials and the user guide.

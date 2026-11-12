@@ -1,7 +1,7 @@
 site_name: Grembyte
 site_description: Memory scanner, hook engine and reverse engineering tool for games on Linux (also under Wine/Proton) and Windows
 site_author: Frank Hoogen
-site_url: https://grembyte.github.io/grembyte/
+site_url: https://grembyte.com/
 repo_url: https://github.com/grembyte/grembyte
 repo_name: grembyte/grembyte
 edit_uri: edit/main/docs/
