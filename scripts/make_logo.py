@@ -15,7 +15,8 @@ from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication, QPainterPath
 ROOT = Path(__file__).resolve().parent.parent
 FONT_FILE = sys.argv[1] if len(sys.argv) > 1 else "/usr/share/fonts/adobe-source-code-pro-fonts/SourceCodePro-Bold.otf"
 
-LIME = "#8cfa5a"        # brand green on dark backgrounds
+LIME = "#8cfa5a"        # brand green on dark backgrounds; icons.py replaces it in
+                        # the toolbar logo with the theme's "brand" colour
 GREEN_LIGHT = "#2b8a00"  # brand green on light backgrounds
 INK_DARK = "#e6edf3"     # "grem" on dark
 INK_LIGHT = "#1f2328"    # "grem" on light

@@ -234,6 +234,50 @@ def test_theme_colors_and_label_icons_follow_theme(monkeypatch):
         label.deleteLater()
         application.processEvents()
 
+def test_toolbar_logo_follows_the_theme(monkeypatch):
+    # pylint: disable=import-outside-toplevel
+    from PySide6.QtWidgets import QApplication, QLabel  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.ui.widgets.icons import apply_icon_theme, set_brand_icon
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    application = QApplication.instance() or QApplication([])
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-grembyte-themes")
+    default_colors = manager.load_theme("Github-Dark")["colors"]
+    apply_icon_theme(default_colors)
+    label = QLabel()
+    set_brand_icon(label, 64)
+
+    def opaque_colors():
+        image = label.pixmap().toImage()
+        return {
+            image.pixelColor(x, y).name()
+            for x in range(image.width())
+            for y in range(image.height())
+            if image.pixelColor(x, y).alpha() == 255
+        }
+
+    try:
+        assert default_colors["brand"] in opaque_colors()
+        light = manager.load_theme("Github-Light")["colors"]
+        apply_icon_theme(light)
+        assert light["brand"] != default_colors["brand"]
+        assert opaque_colors() == {light["brand"]}
+    finally:
+        apply_icon_theme(default_colors)
+        label.deleteLater()
+        application.processEvents()
+
+
+def test_toolbar_name_has_the_logo_colour():
+    manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-grembyte-themes")
+    for name in ("Github-Dark", "Github-Light", "Solarized-Light"):
+        colors = manager.load_theme(name)["colors"]
+        stylesheet = build_stylesheet(colors)
+        title = stylesheet[stylesheet.index("QLabel#lbl_title"):]
+        assert title[:title.index("}")].count(colors["brand"]) == 1
+
+
 def test_check_boxes_use_theme_colors(tmp_path):
     manager = ThemeManager(settings=MemorySettings(), user_theme_dir="/tmp/no-grembyte-themes")
     colors = manager.load_theme("Github-Light")["colors"]

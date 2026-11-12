@@ -17,11 +17,13 @@ CODE_COLOR_KEYS = ("code_text", "code_keyword", "code_string", "code_number")
 # Colours widgets use for their content (pointers, method templates; value
 # types, changed bytes) rather than the stylesheet.
 CONTENT_COLOR_KEYS = ("purple", "orange")
+# The colour of the logo and the name in the toolbar (icons.set_brand_icon, styles.py)
+BRAND_COLOR_KEYS = ("brand",)
 COLOR_KEYS = tuple(dict.fromkeys(
-    (*_STYLE_COLOR_KEYS.values(), *CONTENT_COLOR_KEYS, *CODE_COLOR_KEYS)))
+    (*_STYLE_COLOR_KEYS.values(), *CONTENT_COLOR_KEYS, *CODE_COLOR_KEYS, *BRAND_COLOR_KEYS)))
 # Keys added after themes were first saved: a theme without them takes them
 # from the bundled theme of its name, or from Github-Dark.
-_LATER_COLOR_KEYS = (*CONTENT_COLOR_KEYS, *CODE_COLOR_KEYS)
+_LATER_COLOR_KEYS = (*CONTENT_COLOR_KEYS, *CODE_COLOR_KEYS, *BRAND_COLOR_KEYS)
 _THEME_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 _COLOR = re.compile(
     r"(?:#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?|"

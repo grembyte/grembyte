@@ -354,7 +354,7 @@ STYLE = """
         font-family: __MONO__;
     }
     QLabel#lbl_title {
-        color: #58a6ff;
+        color: #8cfa5a;
         font-size: 15px;
         font-weight: bold;
     }
@@ -516,6 +516,7 @@ _STYLE_COLOR_KEYS = {
     "#6e7681": "handle",
     "#3fb950": "success",
     "#f0883e": "warning",
+    "#8cfa5a": "brand",
 }
 
 

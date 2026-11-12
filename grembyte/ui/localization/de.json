@@ -138,6 +138,7 @@
   "theme.color.code_keyword": "Code-Schlüsselwörter",
   "theme.color.code_string": "Code-Zeichenfolgen",
   "theme.color.code_number": "Code-Zahlen",
+  "theme.color.brand": "Logo",
   "settings.title": "Einstellungen",
   "settings.restart": "Die Sprache wechselt beim nächsten Start von Grembyte.",
   "settings.defaults": "Standardwerte",

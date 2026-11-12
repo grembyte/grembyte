@@ -15,6 +15,10 @@ from PySide6.QtSvg import QSvgRenderer  # pylint: disable=import-error,no-name-i
 from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
 ICONS_DIR = Path(__file__).resolve().parent.parent / "resources" / "icons"
+# The logo, and the colour it is drawn in (scripts/make_logo.py); the toolbar
+# shows it in the theme's "brand" colour instead.
+BRAND_ICON = ICONS_DIR.parent / "favicon.svg"
+_BRAND_FILE_COLOR = "#8cfa5a"
 # The default theme, whose colours apply until a theme is applied (tests,
 # widgets built without the main window).
 _DEFAULT_THEME = (Path(__file__).resolve().parent.parent / "themes"
@@ -59,7 +63,12 @@ def _render(name, color, size, ratio):
     """Paint the icon ``name`` in ``color`` on a square pixmap."""
     svg = (ICONS_DIR / f"{name}.svg").read_text(encoding="utf-8")
     svg = re.sub(r'(<svg\b[^>]*?)\s+fill=(["\']).*?\2', r"\1", svg, count=1)
-    renderer = QSvgRenderer(QByteArray(svg.replace("<svg ", f'<svg fill="{color}" ', 1).encode()))
+    return _paint(svg.replace("<svg ", f'<svg fill="{color}" ', 1), size, ratio)
+
+
+def _paint(svg, size, ratio):
+    """Paint the SVG text ``svg`` on a square pixmap of ``size`` logical pixels."""
+    renderer = QSvgRenderer(QByteArray(svg.encode()))
     pixmap = QPixmap(round(size * ratio), round(size * ratio))
     pixmap.setDevicePixelRatio(ratio)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -155,6 +164,28 @@ def set_label_icon(label, name, color_key, size=16):
     label.setPixmap(_render(name, theme_color(color_key), size, label.devicePixelRatioF()))
 
 
+class _BrandIcon(QObject):
+    """Marks a label that shows the logo, to colour it anew with the theme."""
+
+    def __init__(self, label):
+        super().__init__(label)
+        self.size = 16
+
+
+def set_brand_icon(label, size):
+    """Show the logo on ``label`` in the theme's "brand" colour.
+
+    The bright green of the logo file is hard to see on light themes; they
+    give a darker one.
+    """
+    holder = label.findChild(_BrandIcon, options=Qt.FindChildOption.FindDirectChildrenOnly)
+    if holder is None:
+        holder = _BrandIcon(label)
+    holder.size = size
+    svg = BRAND_ICON.read_text(encoding="utf-8").replace(_BRAND_FILE_COLOR, theme_color("brand"))
+    label.setPixmap(_paint(svg, size, label.devicePixelRatioF()))
+
+
 def apply_icon_theme(colors):
     """Tint menu, button and label icons to match a theme, updating existing
     widgets; theme_color gives its colours from now on."""
@@ -187,3 +218,7 @@ def apply_icon_theme(colors):
             _LabelIcon, options=Qt.FindChildOption.FindDirectChildrenOnly)
         if label_icon is not None:
             set_label_icon(widget, label_icon.name, label_icon.color_key, label_icon.size)
+        brand_icon = widget.findChild(
+            _BrandIcon, options=Qt.FindChildOption.FindDirectChildrenOnly)
+        if brand_icon is not None:
+            set_brand_icon(widget, brand_icon.size)

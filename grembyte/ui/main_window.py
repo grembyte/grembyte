@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 from PySide6.QtCore import (  # pylint: disable=import-error,no-name-in-module
     Qt, QSize, QTimer, QSettings, QUrl, Slot,
 )
-from PySide6.QtGui import QActionGroup, QDesktopServices, QIcon  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QActionGroup, QDesktopServices  # pylint: disable=import-error,no-name-in-module
 
 from grembyte import __version__
 from grembyte.ui.links import BUG_REPORT_URL, docs_url
@@ -31,7 +31,8 @@ from grembyte.ui.widgets.dialog_buttons import dialog_button_row
 from grembyte.ui.widgets.code_editor import apply_code_theme
 from grembyte.ui.widgets.about_dialog import AboutDialog
 from grembyte.ui.widgets.icons import (
-    apply_icon_theme, material_icon, set_button_icon, set_label_icon, theme_color, theme_qcolor,
+    apply_icon_theme, material_icon, set_brand_icon, set_button_icon, set_label_icon,
+    theme_color, theme_qcolor,
 )
 from grembyte.ui.widgets.process_list import ProcessSelectDialog
 from grembyte.ui.widgets.table import (
@@ -143,7 +144,7 @@ STATIC_BASES_RETRY_S = 30
 # The app icon (window and taskbar, see grembyte.main; toolbar)
 ICON_PATH = Path(__file__).parent / "resources" / "favicon.svg"
 # Its size next to the name in the toolbar
-BRAND_ICON_SIZE = 22
+BRAND_ICON_SIZE = 28
 
 
 class GadgetProgressDialog(QProgressDialog):
@@ -895,8 +896,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(tb)
 
         logo = QLabel()
-        logo.setPixmap(QIcon(str(ICON_PATH)).pixmap(
-            QSize(BRAND_ICON_SIZE, BRAND_ICON_SIZE), self.devicePixelRatioF()))
+        set_brand_icon(logo, BRAND_ICON_SIZE)
         logo.setContentsMargins(8, 0, 0, 0)
         tb.addWidget(logo)
         title = QLabel(self.translations["app.brand"])
