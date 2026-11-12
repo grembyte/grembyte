@@ -25,7 +25,7 @@ Unity's Mono has no heap walk: `mono_gc_walk_heap` belongs to the SGen collector
 - The calculation marks the objects it visits, so the game stands still while it runs. The status line says for how long; **Refresh** reads again.
 - *Singleton* names the static field that holds a class's only object, also through a generic base such as `Singleton<T>`. Game classes with exactly one object count as singletons too.
 
-Both generations of the API work: `calculation_begin`/`end` (Unity 4 to 2020, also Unity 4's old `mono.dll`) and `allocate_struct` (Unity 2021 and later), in 64-bit and 32-bit games. Tested in Might & Magic X – Legacy (Unity 4.2, 32-bit, Proton); the newer API so far against a stand-in runtime only.
+Both generations of the API work: `calculation_begin`/`end` (Unity 4 to 2020, also Unity 4's old `mono.dll`) and `allocate_struct` (Unity 2021 and later), in 64-bit and 32-bit games. Tested in Pillars of Eternity (64-bit) and Might & Magic X – Legacy (Unity 4.2, 32-bit, Proton); the newer API so far against a stand-in runtime only.
 
 ## 32-bit games
 
