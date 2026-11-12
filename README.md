@@ -1,4 +1,9 @@
-# Grembyte
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/wordmark-dark.svg">
+    <img alt="Grembyte" src="docs/assets/wordmark-light.svg" width="360">
+  </picture>
+</h1>
 
 Grembyte is a desktop application for inspecting and manipulating the memory of running games. It runs on Linux, including Windows games under Wine/Proton, and on Windows. The project is under development.
 
