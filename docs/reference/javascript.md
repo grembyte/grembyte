@@ -91,7 +91,7 @@ Comparisons give `true` or `false`:
 | `a === b`, `a !== b` | equal, not equal |
 | `a < b`, `a <= b`, `a > b`, `a >= b` | smaller, greater … |
 | `x && y` | `x` **and** `y` |
-| `x \|\| y` | `x` **or** `y` |
+| `x || y` | `x` **or** `y` |
 | `!x` | **not** `x` |
 
 Always use `===` and `!==`. The shorter `==` converts values before comparing (`"1" == 1` is `true`), which hides mistakes.
