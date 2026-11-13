@@ -1,9 +1,5 @@
 """Process selection dialog widget."""
 
-import ntpath
-import os
-import re
-
 import psutil
 
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
@@ -12,49 +8,13 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QHeaderView, QAbstractItemView, QMessageBox,
 )
 
+from grembyte.core import cli_link
+from grembyte.core.programs import resolve_display
 from grembyte.engines.unreal.adapter import bootstrapped_game
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
 from grembyte.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from grembyte.ui.localization import load_translations
-from grembyte.ui.widgets.icons import theme_qcolor
-
-
-_PYTHON_NAME = re.compile(r"^python[\d.]*w?$")
-# The Linux programs that run Windows programs under Wine/Proton
-_WINE_LOADER = re.compile(r"^wine(64)?(-preloader)?$")
-# Python options that consume the following argument.
-_PYTHON_OPTS_WITH_ARG = {"-c", "-m", "-W", "-X", "--check-hash-based-pycs"}
-
-
-def _resolve_display(name, exe, cmdline, cwd):
-    """Return (name, path) to display: the script of a Python process, the
-    Windows program of a Wine process.
-
-    For interpreters, the kernel only knows the interpreter binary; the
-    script is merely an argument in the command line.
-    """
-    if cmdline and _WINE_LOADER.match(os.path.basename(exe)):
-        # The kernel's name of a Wine process is that of its main thread,
-        # which games rename (Unreal: "GameThread"); its program is the
-        # Windows path in the command line.
-        program = cmdline[0].strip()
-        if program.lower().endswith(".exe"):
-            return ntpath.basename(program), program
-    if not cmdline or not _PYTHON_NAME.match(os.path.basename(cmdline[0]) or name):
-        return name, exe
-    args = iter(cmdline[1:])
-    for arg in args:
-        if arg == "-m":
-            module = next(args, "")
-            return (f"{name} -m {module}" if module else name), exe
-        if arg in _PYTHON_OPTS_WITH_ARG:
-            next(args, None)
-            continue
-        if arg.startswith("-"):
-            continue
-        script = arg if os.path.isabs(arg) or not cwd else os.path.join(cwd, arg)
-        return os.path.basename(arg), os.path.normpath(script)
-    return name, exe
+from grembyte.ui.widgets.icons import material_icon, theme_qcolor
 
 
 class ProcessSelectDialog(QDialog):
@@ -111,12 +71,14 @@ class ProcessSelectDialog(QDialog):
 
     def _load_processes(self):
         """Loads the process list via psutil."""
+        # Games that grembyte-cli runs are marked: attaching takes them over.
+        self._cli_games = cli_link.cli_games()
         try:
             self._all_procs = []
             for proc in psutil.process_iter(["pid", "name", "exe", "cmdline", "cwd"]):
                 try:
                     info = proc.info
-                    name, path = _resolve_display(
+                    name, path = resolve_display(
                         info["name"] or "",
                         info["exe"] or "",
                         info["cmdline"],
@@ -142,7 +104,13 @@ class ProcessSelectDialog(QDialog):
             pid_item = QTableWidgetItem(pid)
             pid_item.setForeground(theme_qcolor("accent"))
             self.list.setItem(row, 0, pid_item)
-            self.list.setItem(row, 1, QTableWidgetItem(name))
+            name_item = QTableWidgetItem(name)
+            cli = self._cli_games.get(int(pid))
+            if cli is not None:
+                name_item.setIcon(material_icon("link"))
+                name_item.setToolTip(self.translations["process.cli_tooltip"].format(
+                    cli_pid=cli["pid"]))
+            self.list.setItem(row, 1, name_item)
             path_item = QTableWidgetItem(exe)
             path_item.setForeground(theme_qcolor("muted"))
             self.list.setItem(row, 2, path_item)

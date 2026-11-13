@@ -105,7 +105,7 @@ from grembyte.ui.widgets.scripts import ScriptPanel
 from grembyte.ui.widgets.memory_view import MemoryViewerDialog
 from grembyte.ui.widgets.settings_dialog import SettingsDialog
 from grembyte.ui.widgets.theme_dialog import ThemeDialog
-from grembyte.core import activity, logs, messages, sessions
+from grembyte.core import activity, cli_link, logs, messages, sessions
 from grembyte.core import settings as app_settings
 from grembyte.ui import workers
 from grembyte.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
@@ -480,6 +480,8 @@ class MainWindow(QMainWindow):
         apply_code_theme(self._theme_manager.load_theme()["colors"])
 
         self._current_pid = None
+        # The hold on a game taken over from grembyte-cli (cli_link.CliClaim)
+        self._cli_claim = None
         self._process_start_time = None
         # Name and bitness (32/64, None if unknown) of the attached program
         self._current_name = None
@@ -2559,8 +2561,13 @@ class MainWindow(QMainWindow):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             if dlg.selected_pid is None:
                 return
+            taken, claim = self._take_over_from_cli(dlg.selected_pid, dlg.selected_name)
+            if not taken:
+                return
             ready, downloaded = self._prepare_wine_gadget(dlg.selected_pid)
             if not ready:
+                if claim is not None:
+                    claim.release()
                 return
             changed = dlg.selected_pid != self._current_pid
             activity.record("process_selected", name=dlg.selected_name, changed=changed,
@@ -2583,6 +2590,10 @@ class MainWindow(QMainWindow):
                 self.hook_panel.set_process(dlg.selected_pid, process_id)
             if self.script_panel is not None:
                 self.script_panel.set_process(dlg.selected_pid, process_id)
+            if changed or claim is not None:
+                # The workers on the previous game have stopped: give it back.
+                self._release_cli_claim()
+                self._cli_claim = claim
             self._current_pid = dlg.selected_pid
             if changed:
                 self._process_start_time = process_start_time(dlg.selected_pid)
@@ -2603,6 +2614,45 @@ class MainWindow(QMainWindow):
                 self.btn_first_scan.setEnabled(True)
             self._update_catalog_button()
             self._show_attached()
+
+    def _take_over_from_cli(self, pid, name):
+        """Offer to take ``pid`` over from the grembyte-cli that runs it.
+
+        Returns ``(attach, claim)``: whether to attach, and the new hold on the
+        game (None if no grembyte-cli runs it or the window holds it already).
+        """
+        if self._cli_claim is not None and self._cli_claim.game_pid == pid:
+            return True, None
+        state = cli_link.find_cli(pid)
+        if state is None:
+            return True, None
+        answer = QMessageBox.question(
+            self, self.translations["cli.takeover_title"],
+            self.translations["cli.takeover_prompt"].format(
+                name=name, pid=pid, cli_pid=state["pid"]),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return False, None
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            claim = cli_link.claim(state, pid)
+        except OSError as error:
+            QMessageBox.warning(self, self.translations["cli.takeover_title"],
+                                messages.describe(error))
+            return False, None
+        finally:
+            QApplication.restoreOverrideCursor()
+        activity.record("cli_taken_over", pid=pid, cli_pid=state["pid"])
+        return True, claim
+
+    def _release_cli_claim(self):
+        """Let the grembyte-cli attach again to the game the window took over."""
+        claim, self._cli_claim = self._cli_claim, None
+        if claim is not None:
+            activity.record("cli_given_back", pid=claim.game_pid, cli_pid=claim.cli_pid)
+            claim.release()
 
     def _prepare_wine_gadget(self, pid):
         """Ask permission and fetch a missing Wine gadget before workers attach."""
@@ -2755,6 +2805,7 @@ class MainWindow(QMainWindow):
         if self.script_panel is not None:
             self.script_panel.set_process(None)
         self._close_process_tools()
+        self._release_cli_claim()
 
         self._current_pid = None
         self._debug_registers_used = None
@@ -3208,6 +3259,7 @@ class MainWindow(QMainWindow):
             refresh_worker.wait()
         if worker is not None and worker.isRunning():
             worker.wait()
+        self._release_cli_claim()
 
         a0.accept()
 

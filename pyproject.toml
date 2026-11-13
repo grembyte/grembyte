@@ -24,6 +24,7 @@ docs = ["mkdocs-material", "mkdocs-glightbox"]
 
 [project.scripts]
 grembyte = "grembyte.main:main"
+grembyte-cli = "grembyte.cli:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "grembyte.__version__"}

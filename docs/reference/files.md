@@ -9,6 +9,7 @@
 | Wine/Proton gadgets | `gadget/` beside the database | – |
 | Logs (`grembyte.log`, `crash.log`, `activity.jsonl`) | `~/.local/state/grembyte/` (`$XDG_STATE_HOME/grembyte/`) | `%LOCALAPPDATA%\grembyte\logs\` |
 | Themes of your own | `~/.config/grembyte/themes/` (`$XDG_CONFIG_HOME/grembyte/themes/`) | `%APPDATA%\grembyte\themes\` |
+| Link between the window and [grembyte-cli](../guide/launch-option.md) (`cli-<pid>.json`, `cli-<pid>.sock`) | `$XDG_RUNTIME_DIR/grembyte/` (else `grembyte-<user>/` in the temp folder) | – |
 | Window sizes and UI state | Qt settings `grembyte/grembyte` | Qt settings (registry) |
 
 Bundled themes ship in `grembyte/ui/themes/`, as `grembyte_themes_<name>.json` like your own.

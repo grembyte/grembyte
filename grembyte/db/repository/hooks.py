@@ -69,6 +69,13 @@ class HookRepository:
                 session.commit()
             return process.id
 
+    def find_process(self, name, path):
+        """Return the id of the process entry for ``name`` and ``path``, or None."""
+        with self._sessions() as session:
+            return session.scalars(
+                select(Process.id).where(Process.name == name, Process.path == path)
+            ).first()
+
     def list_hooks(self, process_id):
         """Return the saved hooks of a process in creation order."""
         with self._sessions() as session:

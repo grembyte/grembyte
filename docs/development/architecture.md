@@ -40,6 +40,8 @@ flowchart BT
 | `grembyte/db` | SQLite through SQLAlchemy: models and repositories, export and import. |
 | `grembyte/ui` | The main window, widgets, localization, themes, icons. |
 
+`grembyte/cli.py` is `grembyte-cli` (see [Starting games with grembyte-cli](../guide/launch-option.md)): it uses `core`, `hooks`, `features` and `db` like the window, but no widgets. `core/programs.py` names a process as the process list does, `hooks/saved.py` turns saved rows into hook specs, and `core/cli_link.py` is how the window takes a game over from `grembyte-cli`.
+
 ## Agents
 
 A feature's agent is put together from parts: the platform helpers (`agent/platform.js` with `agent/messages.js`), the engine prelude, every engine adapter's agent, the engine facade, and the feature's own script. The engine adapters register themselves; the facade picks the one whose runtime the game has loaded, so features use one `engine` object whatever the engine.

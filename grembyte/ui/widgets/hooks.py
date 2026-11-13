@@ -28,9 +28,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QWidget,
 )
 
-from grembyte.core.pointer import PointerChain
-from grembyte.db.repository.hooks import hook_transform
-from grembyte.hooks.engine import MAX_CALLER_DEPTH, HookSpec, create_hook_worker
+from grembyte.hooks.engine import MAX_CALLER_DEPTH, create_hook_worker
 from grembyte.features.method_hooks import PHASES, MethodHookSpec, MethodHookWorker
 from grembyte.attach.backends import BACKEND_FRIDA
 from grembyte.hooks.transforms import (
@@ -38,6 +36,7 @@ from grembyte.hooks.transforms import (
     as_template_transform,
     example_templates,
 )
+from grembyte.hooks.saved import method_spec_from_saved, persistable_callers, spec_from_saved
 from grembyte.hooks.syntax import BODY
 from grembyte.ui.widgets.code_editor import CodeEditor
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
@@ -403,15 +402,6 @@ class HookDialog(QDialog):
         self.accept()
 
 
-def persistable_callers(callers):
-    """Keep the caller signatures whose frames all lie inside a module."""
-    return [
-        [tuple(frame) for frame in frames]
-        for frames in callers
-        if all(frame is not None for frame in frames)
-    ]
-
-
 def describe_callers(callers):
     """Return a readable list of caller signatures."""
     return "\n".join(
@@ -438,31 +428,6 @@ def method_display_signature(signature, parameters):
     """Use the runtime's named parameters for a method's display signature."""
     head, separator, _ = signature.partition(" (")
     return f"{head} ({','.join(parameters)})" if separator and parameters else signature
-
-
-def spec_from_saved(saved):
-    """Build the HookSpec that reinstalls a hook saved in the database.
-
-    A hook on JIT code (no module) is found again by its C# method if it
-    has one (Mono games), else trained again via its signature.
-    """
-    jit = not saved.module
-    return HookSpec(
-        None,
-        saved.value_type,
-        hook_transform(saved),
-        module=None if jit else saved.module,
-        module_offset=None if jit else saved.module_offset,
-        signature=saved.signature if jit else None,
-        managed=saved.managed if jit else None,
-        breakpoint=bool(saved.breakpoint),
-        instruction_bytes=saved.instruction_bytes,
-        enabled=saved.enabled,
-        caller_depth=saved.caller_depth,
-        callers=persistable_callers(saved.callers),
-        pointer=None if saved.pointer is None else PointerChain.from_json(saved.pointer),
-        label=saved.label,
-    )
 
 
 class HookPanel(QGroupBox):
@@ -1139,9 +1104,7 @@ class HookPanel(QGroupBox):
             self._repository.list_method_hooks, self._process_id) or []
         for saved in saved_method_hooks:
             try:
-                spec = MethodHookSpec(saved.managed, hook_transform(saved, kind="method"),
-                                      enabled=saved.enabled, label=saved.label,
-                                      phase=saved.phase or "after")
+                spec = method_spec_from_saved(saved)
             except (TypeError, ValueError) as error:
                 self.status_label.setText(
                     self.translations["hooks.restore_failed"].format(

@@ -102,6 +102,7 @@ nav:
       - Docking, memory, sessions and logs: guide/tools.md
       - Settings and themes: guide/settings.md
       - Saving, export and import: guide/data.md
+      - Starting games with grembyte-cli: guide/launch-option.md
   - Engines:
       - engines/index.md
       - Unity (Mono): engines/unity-mono.md
