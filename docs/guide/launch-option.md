@@ -25,7 +25,7 @@ Options go before `%command%`, for example `/path/to/grembyte-cli --delay 15 %co
 ## What it installs
 
 - **Hooks** and **method hooks**, as the hook panel restores them at attach. A hook that learns its callers or its C# method keeps them, as in the window.
-- **Scripts** that run once or repeatedly. Manual scripts are left out: only the window can run them.
+- **Scripts** that run once or repeatedly, and manual scripts with a [hotkey](scripts.md#hotkeys): pressed in the game, it runs the script with the defaults of its parameters. Manual scripts without a hotkey are left out: only the window can run them.
 - If a session ends while the game still runs, `grembyte-cli` starts it again up to three times.
 
 Its messages go to the terminal (start Steam from a terminal to see them) and to `grembyte.log` (see [Files and environment](../reference/files.md)).

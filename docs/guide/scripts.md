@@ -16,11 +16,20 @@ Scripts reach game objects and methods through the engine adapters of [Unity and
 | --- | --- |
 | **Once** | after the configured delay, each time the script starts |
 | **Repeat** | every configured interval; the next interval starts after the previous run finished, so runs do not overlap |
-| **Manual** | only when you click **Run now** |
+| **Manual** | only when you click **Run now**, or press its hotkey in the game |
+
+### Hotkeys
+
+A manual script can have a **Hotkey**, for example ++ctrl+shift+g++. Pressed while the game has the focus, it runs the script with the defaults of its parameters, without asking. This also works when the game was started through [grembyte-cli](launch-option.md), with no window open. The table shows the hotkey next to *On request*.
+
+- A hotkey is one key (a letter, a digit, ++f1++ to ++f12++, ++insert++, ++delete++, ++home++, ++end++, ++page-up++, ++page-down++, ++pause++ or ++space++) with any of ++ctrl++, ++shift++, ++alt++ and ++meta++. It fires once per press, only with exactly its modifiers: ++ctrl+g++ does not fire on ++ctrl+shift+g++.
+- The game gets the keys as well; Grembyte only reads them. Pick a combination the game does not use.
+- A paused script does not react to its hotkey.
+- On Linux, Grembyte reads the keyboard through X11. Games under Wayland run through XWayland, so this covers native games and Proton alike. A game that is a Wayland client itself is not seen.
 
 ## Parameters
 
-Scripts can have parameters of the types text, number, yes/no or choice. A manual run asks for their values; scheduled runs use their defaults. The script reads them from `ctx.args`.
+Scripts can have parameters of the types text, number, yes/no or choice. A manual run asks for their values; scheduled runs and hotkeys use their defaults. The script reads them from `ctx.args`.
 
 <figure markdown="span">
   ![Script parameters](../assets/screenshots/script-params-dark.webp#only-dark){ width="560" }

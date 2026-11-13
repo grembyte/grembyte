@@ -259,8 +259,89 @@ def test_the_window_takes_the_game_over_and_gives_it_back(tmp_path):
     assert not list(folder.iterdir())
 
 
-def test_only_scripts_that_run_by_time_are_started():
+def test_scripts_that_run_by_time_or_by_a_hotkey_are_started():
     from types import SimpleNamespace  # pylint: disable=import-outside-toplevel
 
-    rows = [SimpleNamespace(mode=mode) for mode in ("manual", "repeat", "once")]
-    assert [row.mode for row in cli.timed_scripts(rows)] == ["repeat", "once"]
+    rows = [SimpleNamespace(mode=mode, hotkey=hotkey) for mode, hotkey in (
+        ("manual", None), ("repeat", None), ("once", None), ("manual", "Ctrl+G"))]
+    assert [(row.mode, row.hotkey) for row in cli.cli_scripts(rows)] == [
+        ("repeat", None), ("once", None), ("manual", "Ctrl+G")]
+
+
+def test_grembyte_cli_runs_manual_scripts_by_their_hotkeys(monkeypatch, capsys):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import itertools
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.core import messages
+    from grembyte.features import scripts
+    from grembyte.platform import keyboard as keyboard_module
+    from grembyte.ui.localization import load_translations
+    from tests.test_hotkeys import FakeKeyboard
+
+    messages.use(load_translations("en"))
+
+    class Signals(QObject):  # pylint: disable=too-few-public-methods
+        worker_failed = Signal(str)
+        script_added = Signal(int)
+        script_failed = Signal(int, str)
+        script_ran = Signal(int, object)
+
+    class FakeWorker:
+        ids = itertools.count(1)
+
+        def __init__(self, _pid, language="en"):
+            self.signals = Signals()
+            for name in ("worker_failed", "script_added", "script_failed", "script_ran"):
+                setattr(self, name, getattr(self.signals, name))
+            self.runs = []
+
+        def start(self):
+            pass
+
+        def add_script(self, _spec):
+            return next(self.ids)
+
+        def run_now(self, script_id, args=None):
+            self.runs.append((script_id, args))
+
+        def requestInterruption(self):  # pylint: disable=invalid-name
+            pass
+
+        def wait(self, _ms):
+            pass
+
+        def isRunning(self):  # pylint: disable=invalid-name
+            return False
+
+    keyboard = FakeKeyboard(focused=4242)
+    monkeypatch.setattr(scripts, "ScriptWorker", FakeWorker)
+    monkeypatch.setattr(keyboard_module, "open_reader", lambda: keyboard)
+
+    def row(row_id, label, mode, hotkey=None, enabled=True):
+        return SimpleNamespace(id=row_id, label=label, source="return 1;", mode=mode,
+                               seconds=5.0, enabled=enabled, params=None, hotkey=hotkey)
+
+    rows = [row(1, "Gold", "manual", "Ctrl+G"), row(2, "Heal", "manual"),
+            row(3, "Paused", "manual", "F9", enabled=False), row(4, "Tick", "repeat")]
+    repository = SimpleNamespace(list_scripts=lambda _process_id: rows)
+    game = cli.AttachedGame(4242, "PillarsOfEternity", 1, None, repository)
+    game._start("scripts")
+    try:
+        worker = game.workers["scripts"]
+        assert game.hotkeys is not None and game.hotkeyed == {1: "Ctrl+G"}
+        game.hotkeys.poll()
+        keyboard.down = {"ctrl", "G"}
+        game.hotkeys.poll()
+        assert worker.runs == [(1, None)]
+        worker.script_ran.emit(1, {"result": "Gold +1000", "error": None})
+        worker.script_added.emit(1)
+    finally:
+        game.stop()
+    assert keyboard.closed
+    output = capsys.readouterr().err
+    assert 'Ctrl+G: running script "Gold".' in output
+    assert 'Script "Gold": Gold +1000' in output
+    assert 'Script "Gold" runs on Ctrl+G.' in output

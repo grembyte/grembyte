@@ -6,7 +6,11 @@ import json
 from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal  # pylint: disable=import-error,no-name-in-module
-from PySide6.QtGui import QColor, QFontDatabase  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
+    QColor,
+    QFontDatabase,
+    QKeySequence,
+)
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QComboBox,
@@ -15,6 +19,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QKeySequenceEdit,
     QLabel,
     QLineEdit,
     QMenu,
@@ -30,9 +35,10 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 from sqlalchemy.exc import SQLAlchemyError
 
-from grembyte.core import messages
+from grembyte.core import hotkeys, messages
 from grembyte.features.scripts import (
-    MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker, params_from_json, params_to_json)
+    MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker, params_to_json, spec_from_saved)
+from grembyte.platform.keyboard import open_reader
 from grembyte.hooks.syntax import BODY
 from grembyte.ui.widgets.code_editor import CodeEditor
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
@@ -75,6 +81,8 @@ return `Healed ${healed.toFixed(1)} health`;
 def timing_text(translations, spec):
     """When a script runs, as the table shows it."""
     if spec.mode == "manual":
+        if spec.hotkey:
+            return translations["scripts.timing_hotkey"].format(hotkey=spec.hotkey)
         return translations["scripts.timing_manual"]
     seconds = f"{spec.seconds:g}"
     return translations[f"scripts.timing_{spec.mode}"].format(seconds=seconds)
@@ -109,6 +117,11 @@ class ScriptDialog(QDialog):
         timing.addWidget(self.mode_combo, 1)
         timing.addWidget(self.seconds_spin)
         form.addRow(translations["scripts.when"], timing)
+        self.hotkey_edit = QKeySequenceEdit(QKeySequence(spec.hotkey if spec else ""))
+        self.hotkey_edit.setMaximumSequenceLength(1)
+        self.hotkey_edit.setClearButtonEnabled(True)
+        self.hotkey_edit.setToolTip(translations["scripts.hotkey_tooltip"])
+        form.addRow(translations["scripts.hotkey"], self.hotkey_edit)
         self.mode_combo.currentIndexChanged.connect(self._update_seconds)
         self._update_seconds()
 
@@ -140,7 +153,14 @@ class ScriptDialog(QDialog):
         self._enabled = spec.enabled if spec else True
 
     def _update_seconds(self):
-        self.seconds_spin.setEnabled(self.mode_combo.currentData() != "manual")
+        manual = self.mode_combo.currentData() == "manual"
+        self.seconds_spin.setEnabled(not manual)
+        self.hotkey_edit.setEnabled(manual)
+
+    def hotkey(self):
+        """The hotkey typed in, as Qt writes it ("" for none)."""
+        return self.hotkey_edit.keySequence().toString(
+            QKeySequence.SequenceFormat.PortableText)
 
     def _accept(self):
         source = self.code_edit.toPlainText()
@@ -165,8 +185,13 @@ class ScriptDialog(QDialog):
                 self.translations["scripts.error_interval"].format(seconds=MIN_REPEAT_SECONDS))
             return
         try:
+            hotkey = hotkeys.normalized(self.hotkey()) if mode == "manual" else ""
+        except ValueError as error:
+            self.error_label.setText(messages.describe(error))
+            return
+        try:
             self.spec = ScriptSpec(source, mode, seconds, self._enabled,
-                                   self.label_edit.text().strip(), params)
+                                   self.label_edit.text().strip(), params, hotkey)
         except ValueError as error:
             self.tabs.setCurrentIndex(1)
             self.error_label.setText(messages.describe(error))
@@ -203,6 +228,8 @@ class ScriptPanel(QGroupBox):
         self._pid = None
         self._process_id = None
         self._worker = None
+        # runs manual scripts by their hotkeys while the game has the focus
+        self._hotkeys = None
         # the inspectors of objects scripts returned (with the worker's agent)
         self.inspections = None
         # objects scripts returned, by their number in the log's links
@@ -413,12 +440,16 @@ class ScriptPanel(QGroupBox):
         self.count_changed.emit(0)
         self._update_buttons()
         self._restore_saved_scripts()
+        self._update_hotkeys()
 
     def shutdown(self):
         """Stop the worker; the game keeps nothing of the scripts. The object
         inspectors opened from its results close: their objects are gone."""
         worker = self._worker
         self._worker = None
+        if self._hotkeys is not None:
+            self._hotkeys.close()
+            self._hotkeys = None
         self._close_inspections()
         if worker is not None:
             worker.requestInterruption()
@@ -448,8 +479,7 @@ class ScriptPanel(QGroupBox):
         saved_scripts = self._store(self._repository.list_scripts, self._process_id) or []
         for saved in saved_scripts:
             try:
-                spec = ScriptSpec(saved.source, saved.mode, saved.seconds, saved.enabled,
-                                  saved.label, params_from_json(saved.params))
+                spec = spec_from_saved(saved)
                 last_args = json.loads(saved.last_args) if saved.last_args else {}
             except (ValueError, KeyError, TypeError) as error:
                 self.status_label.setText(self.translations["scripts.restore_failed"].format(
@@ -491,7 +521,7 @@ class ScriptPanel(QGroupBox):
             saved_id = self._store(self._repository.add_script, self._process_id,
                                    label=spec.label, source=spec.source, mode=spec.mode,
                                    seconds=spec.seconds, enabled=spec.enabled,
-                                   params=params_to_json(spec.params))
+                                   params=params_to_json(spec.params), hotkey=spec.hotkey)
         script_id = self._ensure_worker().add_script(spec)
         self._scripts[script_id] = {"spec": spec, "saved_id": saved_id, "status": "starting",
                                     "runs": 0, "last": "", "last_args": last_args or {},
@@ -504,6 +534,7 @@ class ScriptPanel(QGroupBox):
         self._show(script_id)
         self.table.selectRow(row)
         self.count_changed.emit(len(self._scripts))
+        self._update_hotkeys()
         return script_id
 
     def _new_script(self):
@@ -544,7 +575,8 @@ class ScriptPanel(QGroupBox):
         if state["saved_id"] is not None:
             self._store(self._repository.update_script, state["saved_id"], label=spec.label,
                         source=spec.source, mode=spec.mode, seconds=spec.seconds,
-                        enabled=spec.enabled, params=params_to_json(spec.params) or "")
+                        enabled=spec.enabled, params=params_to_json(spec.params) or "",
+                        hotkey=spec.hotkey)
         if state["status"] in _STOPPED:
             # Its code did not compile, or its session ended: try it as a new
             # script of the (new) worker.
@@ -553,6 +585,7 @@ class ScriptPanel(QGroupBox):
             return
         self._ensure_worker().update_script(script_id, spec)
         self._show(script_id)
+        self._update_hotkeys()
 
     def _toggle_selected(self):
         script_id = self._selected_id()
@@ -590,6 +623,45 @@ class ScriptPanel(QGroupBox):
         self.remove_script(self._selected_id())
 
     # ------------------------------------------------------------------
+    # Hotkeys
+    # ------------------------------------------------------------------
+    def _hotkey_scripts(self, hotkey=None):
+        """The ids of the active manual scripts with a hotkey (``hotkey`` only)."""
+        return [script_id for script_id, state in self._scripts.items()
+                if state["spec"].hotkey and state["spec"].enabled
+                and state["status"] not in _STOPPED
+                and (hotkey is None or state["spec"].hotkey == hotkey)]
+
+    def _update_hotkeys(self):
+        """Listen for the hotkeys of the scripts, or stop when none has one."""
+        wanted = {self._scripts[script_id]["spec"].hotkey
+                  for script_id in self._hotkey_scripts()}
+        if self._pid is None or (not wanted and self._hotkeys is None):
+            return
+        if self._hotkeys is None:
+            try:
+                reader = open_reader()
+            except OSError as error:
+                reader = None
+                self.status_label.setText(
+                    self.translations["scripts.hotkeys_unavailable"].format(message=error))
+            self._hotkeys = hotkeys.HotkeyListener({self._pid}, reader, self)
+            self._hotkeys.triggered.connect(self._on_hotkey)
+        self._hotkeys.set_hotkeys(sorted(wanted))
+
+    def _on_hotkey(self, hotkey):
+        if self._worker is None:
+            return
+        for script_id in self._hotkey_scripts(hotkey):
+            if self._scripts[script_id]["status"] == "starting":
+                continue
+            label = self._scripts[script_id]["spec"].label or f"#{script_id}"
+            self._log(f"{datetime.now().strftime('%H:%M:%S')} " + self.translations[
+                "scripts.hotkey_pressed"].format(hotkey=hotkey, label=label))
+            self._set_status(script_id, "running")
+            self._worker.run_now(script_id)
+
+    # ------------------------------------------------------------------
     # For other windows (e.g. the GAS attributes window)
     # ------------------------------------------------------------------
     def worker(self):
@@ -622,6 +694,7 @@ class ScriptPanel(QGroupBox):
         if self._worker is not None and state["status"] != "failed":
             self._worker.remove_script(script_id)
         self._drop_row(script_id)
+        self._update_hotkeys()
 
     def _drop_row(self, script_id):
         row = self._row_of(script_id)

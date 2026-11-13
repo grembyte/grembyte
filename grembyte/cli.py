@@ -8,6 +8,8 @@ It starts the command, finds the game among the processes the command
 starts and installs the hooks, method hooks and scripts the window saved for
 that program (see ``grembyte.db.models.Process``). It needs no window: the
 game is set up once in Grembyte, then played through the launch option.
+Manual scripts with a hotkey run when it is pressed while the game has the
+focus (grembyte.core.hotkeys); other manual scripts are left out.
 
 Finding the game
     Every process of the launch carries ``GREMBYTE_LAUNCHER=<pid>`` in its
@@ -425,7 +427,7 @@ class Launch:
     def _has_profile(self, process_id):
         return bool(self.hook_repository.list_hooks(process_id)
                     or self.hook_repository.list_method_hooks(process_id)
-                    or timed_scripts(self.script_repository.list_scripts(process_id)))
+                    or cli_scripts(self.script_repository.list_scripts(process_id)))
 
     def _attach(self):
         pid, name, _path, process_id = self.target
@@ -441,9 +443,10 @@ class Launch:
         return self._attached.stop()
 
 
-def timed_scripts(rows):
-    """The saved scripts that run by time; a manual one needs the window to run it."""
-    return [row for row in rows if row.mode != "manual"]
+def cli_scripts(rows):
+    """The saved scripts grembyte-cli runs: by time, or manual ones by their
+    hotkey; a manual one without needs the window to run it."""
+    return [row for row in rows if row.mode != "manual" or row.hotkey]
 
 
 def _alive(pid):
@@ -542,6 +545,9 @@ class AttachedGame:
         # hook id -> saved row, per kind
         self.saved = {"hooks": {}, "method_hooks": {}, "scripts": {}}
         self.backend = None
+        # script id -> hotkey of the manual scripts the scripts worker runs
+        self.hotkeyed = {}
+        self.hotkeys = None
 
     def start(self):
         # pylint: disable=import-outside-toplevel
@@ -554,7 +560,7 @@ class AttachedGame:
         scripts = self.script_repository.list_scripts(self.process_id)
         counts = {"hooks": len(self.hook_repository.list_hooks(self.process_id)),
                   "method_hooks": len(self.hook_repository.list_method_hooks(self.process_id)),
-                  "scripts": len(timed_scripts(scripts))}
+                  "scripts": len(cli_scripts(scripts))}
         say("cli.attaching", name=self.name, pid=self.pid, **counts)
         manual = len(scripts) - counts["scripts"]
         if manual:
@@ -583,12 +589,14 @@ class AttachedGame:
         # pylint: disable=import-outside-toplevel
         from grembyte.core import messages, settings
         from grembyte.features.method_hooks import MethodHookWorker
-        from grembyte.features.scripts import ScriptSpec, ScriptWorker, params_from_json
+        from grembyte.features.scripts import ScriptWorker, spec_from_saved as script_spec
         from grembyte.hooks.engine import create_hook_worker
         from grembyte.hooks.saved import method_spec_from_saved, spec_from_saved
 
         self.starts[kind] = self.starts.get(kind, 0) + 1
         self.saved[kind] = {}
+        if kind == "scripts":
+            self.hotkeyed = {}
         if kind == "hooks":
             worker = create_hook_worker(self.backend, self.pid)
             rows = self.hook_repository.list_hooks(self.process_id)
@@ -599,11 +607,8 @@ class AttachedGame:
             build = method_spec_from_saved
         else:
             worker = ScriptWorker(self.pid, language=settings.language() or "en")
-            rows = timed_scripts(self.script_repository.list_scripts(self.process_id))
-
-            def build(saved):
-                return ScriptSpec(saved.source, saved.mode, saved.seconds, saved.enabled,
-                                  saved.label, params_from_json(saved.params))
+            rows = cli_scripts(self.script_repository.list_scripts(self.process_id))
+            build = script_spec
         self._connect(kind, worker)
         self.workers[kind] = worker
         worker.start()
@@ -616,6 +621,36 @@ class AttachedGame:
                 continue
             item_id = worker.add_script(spec) if kind == "scripts" else worker.add_hook(spec)
             self.saved[kind][item_id] = saved
+            if kind == "scripts" and spec.hotkey and spec.enabled:
+                self.hotkeyed[item_id] = spec.hotkey
+        if kind == "scripts":
+            self._listen_for_hotkeys()
+
+    def _listen_for_hotkeys(self):
+        """Run the manual scripts by their hotkeys (see grembyte.core.hotkeys)."""
+        # pylint: disable=import-outside-toplevel
+        from grembyte.core.hotkeys import HotkeyListener
+        from grembyte.platform.keyboard import open_reader
+        if not self.hotkeyed and self.hotkeys is None:
+            return
+        if self.hotkeys is None:
+            try:
+                reader = open_reader()
+            except OSError as error:
+                reader = None
+                say("cli.hotkeys_unavailable", message=error)
+            self.hotkeys = HotkeyListener({self.pid}, reader)
+            self.hotkeys.triggered.connect(self._on_hotkey)
+        self.hotkeys.set_hotkeys(sorted(set(self.hotkeyed.values())))
+
+    def _on_hotkey(self, hotkey):
+        worker = self.workers.get("scripts")
+        if worker is None:
+            return
+        for item_id, wanted in self.hotkeyed.items():
+            if wanted == hotkey:
+                say("cli.hotkey_pressed", hotkey=hotkey, label=self._label("scripts", item_id))
+                worker.run_now(item_id)
 
     def _label(self, kind, item_id):
         saved = self.saved[kind].get(item_id)
@@ -682,6 +717,8 @@ class AttachedGame:
         label = self._label("scripts", item_id)
         if not saved.enabled:
             say("cli.script_paused", label=label)
+        elif saved.mode == "manual":
+            say("cli.script_hotkey", label=label, hotkey=self.hotkeyed.get(item_id, ""))
         else:
             say(f"cli.script_{saved.mode}", label=label, seconds=f"{saved.seconds:g}")
 
@@ -689,6 +726,9 @@ class AttachedGame:
         if result.get("error"):
             say("cli.script_failed", label=self._label("scripts", item_id),
                 message=result["error"])
+        elif item_id in self.hotkeyed and result.get("result"):
+            say("cli.script_result", label=self._label("scripts", item_id),
+                result=result["result"])
 
     def _on_callers_learned(self, item_id, callers):
         # As the hook panel does: a saved hook keeps the callers it learned.
@@ -712,6 +752,9 @@ class AttachedGame:
         workers = list(self.workers.values())
         self.workers = {}
         self.retry_at = {}
+        if self.hotkeys is not None:
+            self.hotkeys.close()
+            self.hotkeys = None
         for worker in workers:
             worker.requestInterruption()
         deadline = time.monotonic() + 3.0

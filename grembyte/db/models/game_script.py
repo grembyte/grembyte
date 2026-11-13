@@ -29,6 +29,7 @@ class GameScript(Base):  # pylint: disable=too-few-public-methods
     enabled = Column(Boolean, nullable=False, default=True)
     params = Column(Text, nullable=True)
     last_args = Column(Text, nullable=True)
+    hotkey = Column(String, nullable=True)  # e.g. "Ctrl+Shift+G", see grembyte.core.hotkeys
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     process = relationship("Process", back_populates="scripts")

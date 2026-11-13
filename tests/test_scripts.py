@@ -62,6 +62,73 @@ def test_the_dialog_builds_a_script_and_rejects_busy_loops(qt_app, language):
     assert dialog.spec == ScriptSpec("return 1;", "manual", 0.0, False, "Later")
 
 
+def test_only_manual_scripts_keep_a_hotkey(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from PySide6.QtGui import QKeySequence  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.ui.widgets.scripts import ScriptDialog, timing_text
+
+    assert ScriptSpec("return 1;", "repeat", 5, hotkey="F9").hotkey == ""
+    assert ScriptSpec("return 1;", hotkey="shift+ctrl+g").hotkey == "Ctrl+Shift+G"
+    translations = load_translations("en")
+    dialog = ScriptDialog(translations)
+    dialog.code_edit.setPlainText("return 1;")
+    dialog.mode_combo.setCurrentIndex(dialog.mode_combo.findData("manual"))
+    assert dialog.hotkey_edit.isEnabled()
+    dialog.hotkey_edit.setKeySequence(QKeySequence("Ctrl+Shift+G"))
+    dialog._accept()
+    assert dialog.spec.hotkey == "Ctrl+Shift+G"
+    assert "Ctrl+Shift+G" in timing_text(translations, dialog.spec)
+
+    dialog = ScriptDialog(translations, spec=dialog.spec)
+    assert dialog.hotkey() == "Ctrl+Shift+G"
+    dialog.hotkey_edit.setKeySequence(QKeySequence("Ctrl+Tab"))
+    dialog._accept()
+    assert dialog.spec is None and "Tab" in dialog.error_label.text()
+    dialog.mode_combo.setCurrentIndex(dialog.mode_combo.findData("repeat"))
+    dialog.seconds_spin.setValue(30)
+    assert not dialog.hotkey_edit.isEnabled()
+    dialog._accept()
+    assert dialog.spec.hotkey == ""
+
+
+def test_the_panel_runs_manual_scripts_by_their_hotkeys(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from grembyte.ui.widgets import scripts
+    from tests.test_hotkeys import FakeKeyboard
+
+    keyboard = FakeKeyboard(focused=4242)
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    monkeypatch.setattr(scripts, "open_reader", lambda: keyboard)
+    panel = scripts.ScriptPanel(load_translations("en"))
+    try:
+        panel.set_process(4242)
+        assert panel._hotkeys is None  # no script has a hotkey
+        gold = panel.add_script(ScriptSpec("return 1;", label="Gold", hotkey="Ctrl+G"))
+        paused = panel.add_script(ScriptSpec("return 2;", label="Paused", enabled=False,
+                                             hotkey="F9"))
+        worker = panel._worker
+        worker.script_added.emit(gold)
+        worker.script_added.emit(paused)
+        panel._hotkeys.poll()
+        keyboard.down = {"ctrl", "G"}
+        panel._hotkeys.poll()
+        keyboard.down = {"F9"}
+        panel._hotkeys.poll()
+        assert [request for request in worker.requests if request[0] == "run"] == [
+            ("run", gold, None)]
+        assert "Ctrl+G" in panel.log_view.toPlainText()
+
+        # Without a script with a hotkey it stops listening
+        panel.remove_script(gold)
+        panel.remove_script(paused)
+        assert not panel._hotkeys._timer.isActive()
+    finally:
+        panel.shutdown()
+        panel.deleteLater()
+    assert keyboard.closed
+
+
 def test_the_address_search_folds_away_and_stays_so(qt_app, tmp_path, monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access,unused-argument
     import shiboken6  # pylint: disable=import-error,no-name-in-module
