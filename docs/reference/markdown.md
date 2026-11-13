@@ -111,7 +111,6 @@ The text stays as written; only the preview differs from GitHub:
 - **HTML** (`<b>`, `<kbd>`, `<details>` …) is not supported. Something that looks like a tag, `List<Item>` outside backticks, can even hide the rest of the paragraph.
 - **Footnotes** (`[^1]`), **emoji** codes (`:smile:`) and **highlighting** (`==text==`) stay plain text.
 - **Images** (`![name](https://…)`) from the web are not loaded.
-- **Code** has no colors.
 - `_text_` is underlined, not italic (see [Text](#text)).
 
 ## An example

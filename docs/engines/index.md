@@ -20,6 +20,7 @@ Which of Grembyte's engine tools are available for games built on each engine. T
 | [Call graph](#call-graph) | :material-check: | – | – |
 | [Scripts](../guide/scripts.md) | :material-check: | :material-check: | :material-check: |
 | [Object browser](../guide/object-browser.md) | :material-check: | – | :material-check: |
+| [Engine names](../guide/code-explorer.md#names-from-the-engine) in the code explorer | – | :material-check: | :material-check: |
 | [GAS attributes](unreal.md#gas-attributes) | – | – | :material-check: |
 
 The engine pages describe the details: [Unity (Mono)](unity-mono.md), [Unity (IL2CPP)](unity-il2cpp.md), [Unreal Engine](unreal.md).
@@ -69,9 +70,23 @@ It shares the limits of the trace: calls Mono has inlined are missing. In Unreal
   ![Method monitor](../assets/screenshots/method-monitor-light.webp#only-light)
 </figure>
 
+## Favorites
+
+Methods and functions found in the catalog, a trace or the [native trace](../guide/native-tools.md) can be marked with ★ in the first column. **View → Favorites …** lists them per program with a note, and hands them to the [method monitor](#method-monitor) or the [native function monitor](../guide/native-tools.md#native-function-monitor). Favorites are saved at once, so they survive a frozen or crashed game.
+
+<figure markdown="span">
+  ![Favorites](../assets/screenshots/favorites-dark.webp#only-dark)
+  ![Favorites](../assets/screenshots/favorites-light.webp#only-light)
+</figure>
+
 ## Object inspector
 
-The object inspector shows the fields of an object – for Unity also static fields and properties, for Unreal the UProperties of objects and structs – evaluated on the game's main thread. Open it from an object in the monitor or a script result; fields that hold a value can be handed to the tracked addresses. The filter above the fields keeps those whose name or type contains every word typed, e.g. `health` among the hundreds of fields of an Unreal player character.
+The object inspector shows the fields of an object – for Unity also static fields and properties, for Unreal the UProperties of objects and structs – evaluated on the game's main thread. Open it from an object in the monitor, a script result or the [object browser](../guide/object-browser.md). The filter above the fields keeps those whose name or type contains every word typed, e.g. `health` among the hundreds of fields of an Unreal player character.
+
+- **Fields**: their current values; **open** shows an object field in an inspector of its own. **Live** reads them again twice a second. **Add to address list** (also in the context menu) puts the selected number field on the [tracked addresses](../guide/addresses.md), to watch, change or freeze it there.
+- **Getter methods – called in the game**: the object's properties (C# properties such as `IsPartyMember`) and, for GameObjects, its components. Their value is not necessarily stored in a field, so they are called in the game: **evaluate** one, or **Evaluate all**. A property with a setter can be changed with **set …**, which runs the setter on the game's main thread.
+- **Methods – called in the game**: the object's instance methods (Unreal: its UFunctions). **call …** asks for the arguments and runs the method on this object. **Base classes** adds the inherited methods, often hundreds for Unity components. In Unity Mono this is how instance methods are called; [Call method](#call-method) runs static ones.
+- The arrow in a section's header folds it; inspectors remember which sections are folded.
 
 Inspectors can be [docked](../guide/tools.md#docking-windows) beside the scanner; an object opened from a docked inspector opens as a tab beside it.
 
@@ -86,7 +101,7 @@ Inspectors can be [docked](../guide/tools.md#docking-windows) beside the scanner
 
 A method hook changes a method's arguments or the fields of its object before it runs, or its result after it. Like value hooks, method hooks use [templates](../guide/templates.md) – their script sees the method's arguments and `ctx.this` – and they are stored per program and reinstalled at the next start.
 
-Method hook scripts can reach other game code: `ctx.call` calls a static method, `ctx.static` reads static fields, `ctx.find("ClassName")` gives a live object of a class.
+Method hook scripts can reach other game code: `ctx.call` calls a static method, `ctx.static` reads static fields, `ctx.find("ClassName")` gives a live object of a class (in Unity games only Unity objects: GameObjects and components).
 
 ## Call method
 

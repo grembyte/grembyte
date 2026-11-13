@@ -23,7 +23,17 @@ reads as: take the pointer at offset `0x4040` of the module `dummy_game.exe`, ad
 
 From now on the tracked address resolves correctly after every restart, and hooks created from it follow the value too (see [hooks after a restart](hooks.md#after-a-restart)).
 
-If the address lies in the program's static memory, no pointer scan is needed; the dialog says so.
+If the address lies in the program's static memory, no pointer scan is needed; the dialog says so, and **Use static address** puts it on the address list as it is.
+
+## Search limits
+
+| Field | Meaning | Default |
+|---|---|---|
+| Max. depth | How many pointers a chain follows at most (1 to 7). More depth finds more but takes longer. | 5 |
+| Max. offset | The largest distance between a pointer and the next target, i.e. how far into an object a field may lie | `0x1000` |
+| Max. results | How many chains are kept | 10 000 |
+
+Chains are collected shortest first. When **Max. results** is reached, the dialog says so: chains of the deepest level found may be incomplete, deeper ones are missing. Raise the limit or lower the depth.
 
 ## Memory regions
 
@@ -40,7 +50,7 @@ The dialog sorts the program's writable memory into groups, each with its size; 
 | System modules | The system, Wine and the drivers: libc, ntdll, kernel32, Mesa … | off |
 | Other modules | Everything else, e.g. Steam's overlay | off |
 
-**Chains pass through** the heap, which is always searched, and the thread stacks (off by default). Stack contents change all the time; leaving them out gives fewer chance hits and a faster scan. On Linux, Wine included, a thread's stack is the memory around its stack pointer, on Windows the memory above its guard page.
+**Chains pass through** the heap, which is always searched, and the thread stacks (off by default). Stack contents change all the time; leaving them out gives fewer chance hits and a faster scan.
 
 Turn on system or other modules only if no chain from the game's own modules survives a restart. The choice is kept for the next scan.
 
@@ -54,7 +64,7 @@ With the game's assemblies marked under **Assemblies**, **Marked assemblies** ma
 [Assembly-CSharp] GameState.s_Instance → 0x5d0 → 0x1f0
 ```
 
-Grembyte looks the blocks up through the Mono runtime at the start of the scan, and again after each restart of the game for the classes the saved chains need. Until it has, such an entry on the address list shows as not resolved. A class whose static constructor has not run yet has no block; it is looked for again every 30 seconds.
+After a restart of the game such an entry on the address list shows as not resolved until Grembyte has found the class's block again; a class the game has not used yet has none, and Grembyte keeps looking for it.
 
 ## Alignment
 

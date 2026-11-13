@@ -17,7 +17,7 @@ Right-click a tracked address or a scan result:
 
 Then do in the game what changes the value. Each code location gets one row, with how often it hit and the bytes it left at the address. The columns **Reads** and **Writes** show what the row's instruction does with the value. In Mono games a hit in JIT code also names its C# method; in IL2CPP games code in `GameAssembly` is named as the C# method it belongs to.
 
-Select a writing row and click **Create hook** to [hook](hooks.md) it. Hooks can only be set on writing instructions.
+Select a writing row and click **Create hook …** to [hook](hooks.md) it. Hooks can only be set on writing instructions. **Monitor location** hands the row's code location to the [native function monitor](native-tools.md#native-function-monitor): the registers at every pass, and if wanted the function it lies in. **Stop monitoring** ends the watch.
 
 The watch can be [docked](tools.md#docking-windows) beside the scanner, so it stays in view while you play.
 

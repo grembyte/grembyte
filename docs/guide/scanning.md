@@ -29,18 +29,18 @@ First scan:
 | Scan type | Finds |
 | --- | --- |
 | Exact value | Addresses holding the value |
-| Greater than / less than | Values above or below the number |
-| Range | Values between two numbers |
+| Greater than / Less than | Values above or below the number |
+| Between | Values between two numbers |
 | Unknown initial value | Every address; useful when the game shows no number, e.g. a health bar |
 
 Next scan, compared with the previous scan:
 
 | Scan type | Keeps addresses whose value |
 | --- | --- |
-| Changed / unchanged | changed or stayed the same |
-| Increased / decreased | went up or down |
-| Increased by … / decreased by … / changed by … | changed by the given amount |
-| Exact value, greater, less, range | as in the first scan, against the current value |
+| Changed value / Unchanged value | changed or stayed the same |
+| Increased (> last scan) / Decreased (< last scan) | went up or down |
+| Increased by … / Decreased by … / Changed by … | changed by the given amount |
+| Exact value, Greater than, Less than, Between | as in the first scan, against the current value |
 
 !!! tip "Unknown values"
     For a health bar without a number: **Unknown initial value**, take damage, **Decreased**, wait, **Unchanged**, heal, **Increased** – a few rounds leave few addresses.

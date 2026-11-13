@@ -5,6 +5,7 @@ The screenshots in this documentation are rendered by a script, so they can be r
 ```bash
 ./.venv/bin/python scripts/screenshots/run.py                  # every scene, dark and light
 ./.venv/bin/python scripts/screenshots/run.py hook             # scenes whose name starts with "hook"
+./.venv/bin/python scripts/screenshots/run.py --theme dark     # only the dark images
 ./.venv/bin/python scripts/screenshots/run.py --list           # list the scenes
 ```
 

@@ -200,7 +200,7 @@ What `ctx.static`, `ctx.find`, `ctx.args`, `ctx.this` or a method give you for a
 
 Because every read goes to the game, a value read twice may differ – mana regenerates between the two reads. Read it once into a `const` if you need it several times.
 
-The wrapper's own names come first: `name`, `className`, `field`, `get`, `call`, and in Unity `component`. If the game has a field of one of these names, read it with `obj.field("name")`.
+The wrapper's own names come first: `name`, `className`, `address`, `field`, `get`, `call`, and in Unity `component`. If the game has a field of one of these names, read it with `obj.field("name")`. All that a wrapper offers is listed in the [script context reference](script-context.md#object-wrappers).
 
 !!! tip "Finding the names"
     Return an object from a script, or click an object in the method monitor: the **object inspector** lists its fields, properties and methods with their exact names and types. The [catalog](../engines/index.md#catalog) lists every class and method.

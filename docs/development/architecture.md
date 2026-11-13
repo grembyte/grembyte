@@ -4,7 +4,7 @@ Grembyte is a PySide6 application in one Python package, `grembyte`. The code th
 
 ## Packages
 
-The packages form layers; each depends only on the layers below it.
+The packages form layers; each depends on the layers below it. There are two exceptions: `platform` raises the translatable errors of `core/messages.py` (`LocalizedOSError`), and `hooks/saved.py`, which turns saved rows into hook specs for the window and `grembyte-cli`, uses `db` and `features`.
 
 ```mermaid
 flowchart BT
@@ -40,7 +40,7 @@ flowchart BT
 | `grembyte/db` | SQLite through SQLAlchemy: models and repositories, export and import. |
 | `grembyte/ui` | The main window, widgets, localization, themes, icons. |
 
-`grembyte/cli.py` is `grembyte-cli` (see [Starting games with grembyte-cli](../guide/launch-option.md)): it uses `core`, `hooks`, `features` and `db` like the window, but no widgets. `core/programs.py` names a process as the process list does, `hooks/saved.py` turns saved rows into hook specs, and `core/cli_link.py` is how the window takes a game over from `grembyte-cli`.
+`grembyte/cli.py` is `grembyte-cli` (see [Starting games with grembyte-cli](../guide/launch-option.md)): it uses `core`, `hooks`, `features` and `db` like the window, but no widgets; from `ui` it only loads the translations (`ui/localization`). `core/programs.py` names a process as the process list does, `hooks/saved.py` turns saved rows into hook specs, and `core/cli_link.py` is how the window takes a game over from `grembyte-cli`.
 
 ## Agents
 
@@ -54,8 +54,8 @@ The example templates (Multiplier, Fixed value, Clamp and the method templates) 
 
 ## Adding an engine
 
-1. Add a subpackage under `grembyte/engines/` with an `EngineAdapter` subclass (see `engines/base.py`) and an `agent.js` that registers itself with `registerEngine(...)`.
+1. Add a subpackage under `grembyte/engines/` with an `EngineAdapter` subclass in `adapter.py` (see `engines/base.py`), an `agent.js` that registers itself with `registerEngine(...)`, and an `agent.py` that loads it as the adapter's agent source.
 2. List the adapter in `ENGINES` in `engines/registry.py`; the order is the order in which the agent looks for runtimes.
-3. Declare its capabilities; the UI enables the tools the adapter supports.
+3. Declare its `capabilities` (constants in `engines/base.py`, e.g. `CATALOG`, `TRACE`, `MONITOR`, `METHOD_HOOKS`, `CALL`, `OBJECT_BROWSER`); the UI enables the tools the adapter supports, and the agent needs only the members its capabilities promise (the module docstring of `base.py` lists them).
 
 The [roadmap](https://github.com/grembyte/grembyte/blob/main/ROADMAP.md) discusses candidates such as Godot, Lua engines, RPG Maker and Ren'Py.

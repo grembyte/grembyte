@@ -67,8 +67,8 @@ The native trace and the native function monitor exist (see the
   native tools ask first: they crashed it).
 - Callers: the sequence shows the call site of the first call per thread. A list of all
   callers per function (a count per call site and target) is still missing.
-- A disassembler view and a hook on a function found in the trace; update-proof byte
-  signatures are point 5.
+- A hook on a function found in the trace (the [code explorer](docs/guide/code-explorer.md)
+  shows its disassembly and pseudocode); update-proof byte signatures are point 5.
 - Threads created during the trace are not followed.
 - The native function monitor has not been tried in Baldur's Gate (native, Linux) yet.
 
@@ -101,8 +101,8 @@ usually lie next to it.
   [code explorer](docs/guide/code-explorer.md)): strings, the instructions and pointers
   referring to them, functions and callers. Open: strings only present at run time (built or
   decrypted in memory), and Mono/IL2CPP metadata strings.
-- **C++ RTTI:** type names (MSVC `.?AV…@@`, Itanium `typeinfo`) lead to vtables, i.e. to
-  class names for objects in memory. An address then becomes "`CPlayerStats`+0x48".
+- **C++ RTTI:** done in the code explorer (see "Names without PDB" above); class names for
+  objects in memory are open there.
 - **Symbols:** native Linux games are often not fully stripped. The native trace and monitor
   already use exported and debug symbols (`DebugSymbol`); the scanner, watch and hooks still
   show `module+0x…`.
@@ -222,48 +222,22 @@ types the adapters know, searchable like the catalog:
   entered by field names instead of hex offsets.
 - Type names as C# writes them (`StrongholdAdventure.Type`), as the catalog shows them.
 
-### Object browser (Unreal, then Mono/IL2CPP)
+### Object browser: follow-ups
 
-Today a live object is reached through `ctx.find`/`ctx.forEach` or a link in the inspector,
-which needs its class name first. An object browser shows which objects exist: a tree with
-the classes on the first level (with their number of instances) and below them the instances
-as `"name"@address`, opened in the object inspector from there (double click or context
-menu, also "copy address"). Above the tree: a dropdown to focus on one assembly or package
-(also "game only", without the framework ones), a filter on class and instance names, and a
-checkbox for singletons only. It is the instance side of the type explorer above; both share
-the class tree, the dropdown and the filter, and can become two views of one window.
+Done for Unreal and Unity Mono (see the [object browser](docs/guide/object-browser.md)):
+the classes with their number of live objects, the objects below them, opened in the object
+inspector; filters by package or assembly, by name and for singletons. Tested in Avowed,
+Pillars of Eternity, Might & Magic X – Legacy (Unity 4.2, 32-bit) and Vampire Survivors
+(Unity 6). Open:
 
-- **Unreal (first):** `GUObjectArray` holds every UObject, so one pass over the object table
-  (as `findObjects` reads it) gives all of them, grouped by their exact class. The dropdown
-  lists the packages as the catalog groups them (`/Script/<Module>`, `/Game/<Folder>`). Class
-  default objects, archetypes and the reflection objects themselves (classes, functions,
-  packages) are left out unless asked for. Games keep hundreds of thousands of objects: the
-  classes come first with their counts, the instances of a class only when it is opened, and
-  the filter runs in the agent (a class matches by its name or by those of its instances).
-  `FName`s repeat, so the outer name (`ctx.outerName`) shows in the tooltip. Singletons:
-  objects of the engine's single-instance classes (`GameInstance`, subsystems, `GameModeBase`,
-  `GameStateBase`, `WorldSettings`, `GameUserSettings`), and game classes with exactly one
-  live instance.
-- **Mono:** done (see the [Mono page](docs/engines/unity-mono.md#object-browser)), tested in
-  Pillars of Eternity (64-bit) and Might & Magic X – Legacy (Unity 4.2, 32-bit):
-  Unity's liveness calculation (`mono_unity_liveness_*`, both API generations) from the
-  statics and from all Unity objects, with the world stopped; its callbacks are a few
-  instructions of machine code, since no JavaScript may run then. Open: how long a large
-  heap stands still, objects only stacks hold, the statics holding an object as chain bases
-  for the pointer scan, IL2CPP (`il2cpp_unity_liveness_*`).
-- **Mono/IL2CPP, first thoughts:** `FindObjectsOfType` only gives `UnityEngine.Object`s (GameObjects,
-  components, ScriptableObjects), of active GameObjects, on the main thread. One call for
-  `UnityEngine.Object`, grouped by class, gives those; `Resources.FindObjectsOfTypeAll`
-  would add inactive objects and assets (a checkbox). Plain C# objects, where much game state
-  lives (`GameState.s_playerCharacter → m_Inventory`), are not in it. A heap walk
-  (`mono_gc_walk_heap`, Boehm GC) would find them but stops the game and is risky in old
-  Monos (PoE2), so they are reached through static fields instead.
-- **Singletons (Mono/IL2CPP):** a static field whose type is its own class or a subclass and
-  which holds an object (`Instance`, `s_instance`, `<Instance>k__BackingField`), also through
-  generic bases such as `Singleton<T>`. This reaches plain C# objects too, and is what the
-  pointer scan wants as chain bases.
-- Objects die: the tree is a snapshot with a refresh button, and an instance is checked again
-  before the inspector opens it.
+- **IL2CPP:** through Unity's liveness calculation for IL2CPP (`il2cpp_unity_liveness_*`), as
+  for Mono.
+- **Mono:** how long a large heap stands still while the objects are read; objects that only
+  stacks hold are not found.
+- **Statics as chain bases:** the static fields that hold an object, offered as bases for the
+  pointer scan.
+- It is the instance side of the type explorer above; both could become two views of one
+  window.
 
 ### More adapters
 
@@ -288,9 +262,8 @@ the class tree, the dropdown and the filter, and can become two views of one win
 
 ### IL2CPP: open
 
-- The **Call method** dialog. Unity calls `il2cpp_runtime_invoke` on the main thread about
-  17,000 times a second (also on job threads, to be filtered out), so the Mono way of running
-  work on the main thread carries over. Arguments: IL2CPP passes a hidden `MethodInfo*` last.
+- The **Call method** dialog; the Mono way of running work on the main thread carries over
+  (findings in the [implementation notes](docs/development/implementation-notes.md#il2cpp-adapter)).
 - The call graph would need disassembly instead of IL.
 - ECS games run most gameplay as Burst code (530 of 538 `OnUpdate` methods in V Rising), with
   their data in ECS chunks rather than objects; method hooks do not see it.
@@ -342,6 +315,37 @@ up in Grembyte without its window. Draft of the format:
 
 Open: identities of Unreal values and methods, signing packages (Ed25519) and showing their
 code before the first load, since packages run code in the game's process.
+
+## Code health
+
+Left over from the code review of 2026-10-29 (the review itself is in the git history,
+`docs/review-2026-10-29.md`). Checked again on 2026-11-13: the first four points are still
+open; the rest was not checked again.
+
+- **CModules as C files:** about 1200 lines of C are embedded in JavaScript as Frida CModules
+  (`FAST_SOURCE` in `hooks/engine.js`, `BATCH_SOURCE` in `engines/mono/agent.js`, `C_SOURCE`
+  in `features/trace.js` and `features/native_trace.js`). Proposed: each as a `.c` file next
+  to its agent, loaded with `load_agent_source`, with the few `${…}` values prepended as
+  `#define`s, and a test that compiles every source as a CModule. Not a central `kernel/`
+  folder: each CModule changes together with its JavaScript, TinyCC cannot include local
+  headers, and `inject.c` is package data.
+- **`main_window.py`** has grown to about 3700 lines. Candidates to split out: a scan
+  controller, the address list, one attach/switch/detach path, a window registry.
+- **Scanner:** after an "Unknown initial value" scan (a memory snapshot) a newly chosen type
+  is ignored. `value_types.py` reads integers with `int(text, 0)`, which rejects leading
+  zeros (`010`).
+- **Native trace:** modules loaded during a trace are not excluded from Stalker; excluding
+  them while threads are followed crashed games under Proton.
+- **Smaller points:** `wine_gadget.py` does not detect forwarded exports; a gadget that loaded
+  but never listened is retried with `LoadLibraryW`, which does not run its init again.
+  `inject.c` returns the HMODULE through the thread's 32-bit exit code. Modules are keyed by
+  base name (system32/syswow64 collide). `build.sh` runs `python3 -m ziglang` from `PATH`, not
+  the venv. `MEMORY_BASIC_INFORMATION` is wrong under 32-bit Python on Windows. `engine.js`:
+  a pending JavaScript entry can outlive a write whose `after` never ran; the C range list is
+  cut at 4096; C reads `uint64` as signed. `ptrace_hook.py`: one `ctx.state` for all hooks,
+  `OverflowError` for large floats, failed writes are swallowed. `native_monitor.js`: `this`
+  of 32-bit MSVC methods is in `ecx`. `method_call.py` rounds I8/U8 values above 2^53. The
+  translation key `address_table.yes` is unused.
 
 ## Binary distribution (PyInstaller) and licenses
 

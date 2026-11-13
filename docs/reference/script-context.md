@@ -21,16 +21,21 @@ The object a script in the [Scripts](../guide/scripts.md) tab receives. It is se
 
 ## Object wrappers
 
-Objects from `ctx.find`, `ctx.forEach` and method results are wrappers:
+Objects of the game – from `ctx.find`, `ctx.forEach`, `ctx.static` and method results in scripts, `ctx.this`, object arguments and results in [method hooks](hook-context.md#method-hooks) – are wrappers. Every use reads from or writes to the game at that moment:
 
 | Use | Example |
 | --- | --- |
-| Call an instance method | `player.call("AddCurrency", 100)` |
-| Read a field or property | `player.Health` |
-| Write a field | `player.Stats.Gold = 500` |
-| Read a field whose name clashes | `player.field("call")` |
+| Read a field or property (a property runs its getter in the game) | `player.Health`, `player.IsDead` |
+| Write a field, or a property (which calls its setter) | `player.Stats.Gold = 500` |
+| Call a method, instance or static, with its result | `player.Heal(10)` |
 | Read or write a static field of the object's class (Mono, IL2CPP), the same as `ctx.static` | `gameState.s_playerCharacter` |
-| Unity: get a component of a GameObject (or of a component's GameObject) by class name, or `null` | `attacker.component("CharacterStats")` |
+| The class name | `player.className` |
+| The address of the object | `player.address` |
+| Unity: the name of a GameObject or component, else `null`; Unreal: the object's name | `player.name` |
+| Unity: a component of a GameObject (or of a component's GameObject) by class name, or `null` | `attacker.component("CharacterStats")` |
+| Call a method by name, read a field or a property by name | `player.call("Heal", 10)`, `player.field("Gold")`, `player.get("IsDead")` |
+
+The wrapper's own names come first: `name`, `className`, `address`, `field`, `get`, `call` and `component`. If the game has a field or method of one of these names, use `.field("name")`, `.get("name")` or `.call("name", …)`.
 
 A wrapper returned from the script is shown as the result and can be opened in the object inspector.
 

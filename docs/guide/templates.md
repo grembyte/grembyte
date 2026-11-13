@@ -17,7 +17,7 @@ The fields of `ctx` are listed in the [hook context reference](../reference/hook
 
 ## Managing templates
 
-Manipulations are stored in the database as **hook templates** and managed under **View → Hook templates …**. At first start Grembyte creates the examples **Multiplier**, **Fixed value** and **Clamp**; they can be changed or deleted like templates of your own. Their texts are English whatever the language of the interface, since templates are data that exports share.
+Manipulations are stored in the database as **hook templates** and managed under **View → Hook templates …**. At first start Grembyte creates the examples **Multiplier**, **Fixed value** and **Clamp** for value hooks and **Result × factor** and **Method script** for [method hooks](../engines/index.md); they can be changed or deleted like templates of your own. Their texts are English whatever the language of the interface, since templates are data that exports share.
 
 <figure markdown="span">
   ![Hook templates](../assets/screenshots/hook-templates-dark.webp#only-dark)
@@ -25,7 +25,7 @@ Manipulations are stored in the database as **hook templates** and managed under
   <figcaption>The built-in Multiplier with its parameters and its function.</figcaption>
 </figure>
 
-A template consists of a name, an optional description, the JavaScript function and parameters. Each parameter has
+A template consists of a name, an optional description, its **Kind**, the JavaScript function and parameters. The kind says what the template is for: a **Value hook** changes a written value (`ctx.old`, `ctx.new`), a **Method hook** the arguments or the result of a method (`ctx.args`, `ctx.result`, see [method hooks](../reference/hook-context.md#method-hooks)). The hook dialogs offer only templates of their kind. Each parameter has
 
 - a **name** – `ctx.params.<name>` in the script,
 - a **label** shown in the hook dialog,
@@ -40,7 +40,9 @@ ctx => ctx.delta >= ctx.params.threshold ? ctx.new : ctx.old
 
 ## Testing without a game
 
-**Test** runs the function without a game process: enter the value type, the old value (`ctx.old`) and the value written by the game (`ctx.new`) and run it. It shows the stored value, the output of `ctx.log`/`console.log`, and errors. `ctx.state` is kept between test runs until it is reset.
+**Test** runs the function without a game process: enter the value type, the old value (`ctx.old`) and the value written by the game (`ctx.new`) and run it. It shows the stored value, the output of `ctx.log`/`console.log`, and errors. `ctx.state` is kept between test runs until **Reset state** clears it.
+
+A method template is tested with a **Result of the method** instead. Without the game there are no arguments and objects: `ctx.args` and `ctx.refs` are empty, `ctx.this` and `ctx.caller` are `null`, and `ctx.call()` throws.
 
 !!! note
     The test runs in Qt's JavaScript engine rather than in Frida, so Frida APIs such as `ptr()` or `Memory` are not available there.

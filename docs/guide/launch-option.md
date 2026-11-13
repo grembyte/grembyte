@@ -32,6 +32,12 @@ Its messages go to the terminal (start Steam from a terminal to see them) and to
 
 `grembyte-cli` never attaches to a game that ships EasyAntiCheat or BattlEye. The game then runs without Grembyte.
 
+`grembyte-cli` runs on Linux only: it finds the game through `/proc`.
+
+## Proton games
+
+`grembyte-cli` loads the [Frida gadget](../wine-proton.md#the-frida-gadget) as the window does, but it never asks: if the matching gadget is missing and automatic downloads are off (the default), it reports that it could not attach, and the game runs without Grembyte. Attach to the game once in the window, which offers the download, or switch automatic downloads on in the [settings](settings.md). For 32-bit games it picks the ptrace backend for hooks by itself, as the window does (see [32-bit games](../wine-proton.md#32-bit-games)).
+
 ## Permissions
 
 Since the game is a child of `grembyte-cli`, attaching also works with `kernel.yama.ptrace_scope = 1`, as long as the game stays a descendant. If a launcher starts the game and then exits, the game is no longer a descendant. It then needs `ptrace_scope = 0`, as with the window (see [Permissions](../getting-started/permissions.md)).

@@ -78,7 +78,9 @@ A string is not always loaded by the code directly. Tables of names (commands, s
 
 The explorer uses names wherever available: in the function list, references,
 disassembly, pseudocode and **Go to**. ELF files supply their symbol tables;
-PE files supply exports and imports.
+PE files supply exports and imports. On Windows the folder button next to the
+file (**Symbol folder**) reads the names from matching PDB files in a folder you
+choose, through Windows' DbgHelp, and loads the module again.
 
 ### Names from the engine
 

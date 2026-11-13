@@ -11,17 +11,17 @@
 
 | Setting | Meaning |
 | --- | --- |
-| Language | Deutsch, English, or as the system. Takes effect at the next start. |
-| Refresh remembered addresses every (ms) | How often tracked addresses read their values. |
-| Record the activity log | Write the [activity log](tools.md#log-and-activity). Takes effect at once. |
+| Language | Deutsch, English, or as the system (the default). Takes effect at the next start. |
+| Refresh remembered addresses every (ms) | How often tracked addresses read their values (default 1000, 100 to 10 000). |
+| Record the activity log | Write the [activity log](tools.md#log-and-activity) (off by default). Takes effect at once. |
 | Aligned addresses only | The first [value scan](scanning.md#data-types) checks only addresses that are a multiple of the type's size (on by default). Faster and uses far less memory. |
 | Trace under Wine/Proton: at most methods | Most methods a trace hooks in a Wine/Proton game (default 5000, or no limit). Traces of tens of thousands of methods froze or crashed games there. |
-| Trace: ask first from methods | From this many methods the trace asks before it starts; Mono has to compile them all. |
-| Trace: entries in the sequence | How many calls the trace and the native trace keep in order during the scenario; raise it when the window reports dropped ones. |
+| Trace: ask first from methods | From this many methods the trace asks before it starts; Mono has to compile them all (default 5000). |
+| Trace: entries in the sequence | How many calls the trace and the native trace keep in order during the scenario (default 100 000, up to 500 000); raise it when the window reports dropped ones. |
 | Automatically download the Wine/Proton Frida gadget | Off by default; see [Wine and Proton](../wine-proton.md). |
-| Hooks: short jump in tight spots (experimental) | See the [hook limitations](hooks.md#limitations). |
-| Hooks: patch hooks the game removed again | For games that check and restore their code, e.g. Dark Souls III. Grembyte checks every second and patches again. Can be detected by anti-tamper systems. |
-| Hooks: measure their cost | Measures every write at a hooked site: calls per second, skipped writes, waiting time and run time. Shown in the tooltip of the "Applied" column and in `grembyte.log`. |
+| Hooks: short jump in tight spots (experimental) | Off by default; see the [hook limitations](hooks.md#limitations). |
+| Hooks: patch hooks the game removed again | Off by default. For games that check and restore their code, e.g. Dark Souls III. Grembyte checks every second and patches again. Can be detected by anti-tamper systems. |
+| Hooks: measure their cost | Off by default. Measures every write at a hooked site: calls per second, skipped writes, waiting time and run time. Shown in the tooltip of the "Applied" column and in `grembyte.log`. |
 | Object browser: objects read (Unity Mono) | How many live objects the [object browser](object-browser.md#unity-mono) keeps per read (default 2 million, up to 10 million). Each takes 16 bytes in the game while Grembyte is attached. Raise it when the browser reports that not all objects could be kept. Takes effect at the next refresh. |
 
 **Defaults** fills in the default values on every page; **Save** stores them.

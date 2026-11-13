@@ -9,11 +9,13 @@ Unity games built with IL2CPP translate their C# code to C++ ahead of time; ther
 
 ## Shared code
 
-Many methods share one piece of code: the linker folds identical functions, and generic code is shared. Their names end in `[shared with N]`, and the trace counts them under the first. A hook on such code affects every method sharing it.
+Many methods share one piece of code: the linker folds identical functions, and generic code is shared. Their names end in `[shared with N]`, and the trace counts them under the first; the code explorer's [engine names](../guide/code-explorer.md#names-from-the-engine) write the same as `[+N]`. A hook on such code affects every method sharing it.
 
 ## Not yet available
 
-- The **Call method** dialog and the **call graph** (IL2CPP keeps no IL).
+- The **Call method** dialog. Running methods on the game's main thread is not built for IL2CPP yet.
+- The **call graph**: it reads a method's IL code, which IL2CPP does not keep.
+- The **[object browser](../guide/object-browser.md#not-yet-available)**.
 - Games built on Unity's ECS run much of their logic as Burst code, which method hooks do not see. In V Rising most gameplay systems are Burst-compiled; their data lies in ECS chunks rather than objects.
 
 ## Tested games

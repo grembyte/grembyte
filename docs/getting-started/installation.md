@@ -147,6 +147,19 @@ The Python dependencies, PySide6 (Qt) among them, are installed with `pip` from 
 
 On a Wayland session Qt uses its `wayland` plugin, whose libraries every Wayland desktop already has. The XCB packages are still worth installing: Qt falls back to `xcb` (through XWayland) when the Wayland plugin cannot start. If Grembyte still does not start, see [Troubleshooting](#troubleshooting).
 
+### For Windows games under Wine or Proton
+
+Grembyte builds a small Windows helper the first time a Wine/Proton game needs it (see [Wine and Proton](../wine-proton.md#loading-the-gadget)). It needs MinGW, the compilers `x86_64-w64-mingw32-gcc` and `i686-w64-mingw32-gcc`:
+
+| System | Packages |
+| --- | --- |
+| Debian, Ubuntu, Linux Mint | `gcc-mingw-w64-x86-64 gcc-mingw-w64-i686` |
+| Fedora | `mingw64-gcc mingw32-gcc` |
+| Arch, Manjaro | `mingw-w64-gcc` |
+| openSUSE | `mingw64-cross-gcc mingw32-cross-gcc` |
+
+Without MinGW it uses zig instead, if `python3 -m ziglang` works (`pip install ziglang`).
+
 On Windows nothing besides Python is needed: install it from <https://www.python.org/downloads/windows/> (tick *Add python.exe to PATH*) or with `winget install --id Python.Python.3.13 -e`.
 
 ### Supported platforms
@@ -235,12 +248,7 @@ Or straight from the project directory, without activating anything:
 
 ## Language
 
-The interface is German or English, depending on the system locale (English for any other locale). Choose it under **Settings → General …**, or for one start with an environment variable, which applies while the setting is "as the system":
-
-```bash
-GREMBYTE_LANGUAGE=en grembyte
-GREMBYTE_LANGUAGE=de grembyte
-```
+The interface is German or English, depending on the system locale (English for any other locale). Choose it under [Settings → General …](../guide/settings.md), or for one start with `GREMBYTE_LANGUAGE=en` or `de` (see [environment variables](../reference/files.md)).
 
 ## First start
 

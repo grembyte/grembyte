@@ -59,31 +59,47 @@ In Avowed, filter the window for `might` and double-click the base value: the ch
 
 === "Before"
 
-    !!! screenshot "Screenshot to add: Might 1 in Avowed"
-        Might at its base value 1.
-        File: `docs/assets/photos/unreal-avowed-gas-before-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
+    <figure markdown="span">
+      ![Might 1 in Avowed](../assets/photos/unreal-avowed-gas-before-dark.webp#only-dark)
+      ![Might 1 in Avowed](../assets/photos/unreal-avowed-gas-before-light.webp#only-light)
+      <figcaption>Might at its base value 1.</figcaption>
+    </figure>
 
 === "After"
 
-    !!! screenshot "Screenshot to add: Might 30 in Avowed"
-        Base value set to 30: the game shows Might 30 with +45 % damage. It counts the points as spent, so the points available drop below zero.
-        File: `docs/assets/photos/unreal-avowed-gas-after-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
+    <figure markdown="span">
+      ![Might 30 in Avowed](../assets/photos/unreal-avowed-gas-after-dark.webp#only-dark)
+      ![Might 30 in Avowed](../assets/photos/unreal-avowed-gas-after-light.webp#only-light)
+      <figcaption>Base value set to 30: the game shows Might 30 with +45 % damage. It counts the points as spent, so the points available drop below zero.</figcaption>
+    </figure>
 
 ## Example: a script with a choice parameter
 
 In Gothic 1 Remake, a manual [script](../guide/scripts.md) adds any item to the inventory. Its parameter *Item Name* is a choice: its options code reads the game's item list, so the run dialog offers every item by name, filtered as you type; *Count* is a number.
 
+=== "Script"
+
+    <figure markdown="span">
+      ![The script in Gothic 1 Remake](../assets/photos/unreal-gothic-script-definition-dark.webp#only-dark)
+      ![The script in Gothic 1 Remake](../assets/photos/unreal-gothic-script-definition-light.webp#only-light)
+      <figcaption>The script in the editor: it finds the player, looks the chosen item up in the game's item list and hands the count to <code>CheatModeHelper:AddItemsToInventory</code>.</figcaption>
+    </figure>
+
 === "Run dialog"
 
-    !!! screenshot "Screenshot to add: Run dialog of a script in Gothic 1 Remake"
-        The run dialog asks for the item and the count; **Reload options** runs the options code again.
-        File: `docs/assets/photos/unreal-gothic-script-before-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
+    <figure markdown="span">
+      ![Run dialog of a script in Gothic 1 Remake](../assets/photos/unreal-gothic-script-before-dark.webp#only-dark)
+      ![Run dialog of a script in Gothic 1 Remake](../assets/photos/unreal-gothic-script-before-light.webp#only-light)
+      <figcaption>The run dialog asks for the item and the count; <b>Reload options</b> runs the options code again.</figcaption>
+    </figure>
 
 === "Result"
 
-    !!! screenshot "Screenshot to add: The item in Gothic 1 Remake's inventory"
-        The ore nuggets in the inventory and the script's result in the log.
-        File: `docs/assets/photos/unreal-gothic-script-after-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
+    <figure markdown="span">
+      ![The item in Gothic 1 Remake's inventory](../assets/photos/unreal-gothic-script-after-dark.webp#only-dark)
+      ![The item in Gothic 1 Remake's inventory](../assets/photos/unreal-gothic-script-after-light.webp#only-light)
+      <figcaption>The ore nuggets in the inventory and the script's result in the log.</figcaption>
+    </figure>
 
 ## Not yet available
 
