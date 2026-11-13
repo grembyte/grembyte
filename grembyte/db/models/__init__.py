@@ -5,6 +5,7 @@
 from grembyte.db.models.address import Address  # noqa: F401
 from grembyte.db.models.assembly_selection import AssemblySelectionRecord  # noqa: F401
 from grembyte.db.models.favorite import FavoriteRecord  # noqa: F401
+from grembyte.db.models.game_note import GameNote  # noqa: F401
 from grembyte.db.models.game_script import GameScript  # noqa: F401
 from grembyte.db.models.hook import Hook  # noqa: F401
 from grembyte.db.models.method_hook import MethodHook  # noqa: F401

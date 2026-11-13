@@ -95,11 +95,13 @@ from grembyte.ui.widgets.assemblies import AssemblyDialog, AssemblySelectionStor
 from grembyte.ui.widgets.catalog import CatalogDialog
 from grembyte.ui.widgets.call_graph import CallGraphDialog
 from grembyte.ui.widgets.known_games import KnownGamesDialog
+from grembyte.ui.widgets.saved_games import SavedGamesDialog
 from grembyte.ui.widgets.database_entries import DeleteEntriesDialog
 from grembyte.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 from grembyte.ui.widgets.gas_attributes import GasAttributesDialog
 from grembyte.ui.widgets.object_browser import ObjectBrowserDialog
 from grembyte.ui.widgets.game_export import GameExportDialog, GameImportDialog
+from grembyte.ui.widgets.game_notes import GameNotesDialog
 from grembyte.ui.widgets.hooks import HookDialog, HookPanel
 from grembyte.ui.widgets.scripts import ScriptPanel
 from grembyte.ui.widgets.memory_view import MemoryViewerDialog
@@ -522,6 +524,7 @@ class MainWindow(QMainWindow):
         self._code_explorer = None
         self._sessions_dialog = None
         self._log_dialog = None
+        self._notes_dialog = None
         # The engine adapter of the attached game, once its runtime is found.
         self._engine = None
         # The process whose native-tool risk the user accepted (see _confirm_native_tools)
@@ -710,6 +713,11 @@ class MainWindow(QMainWindow):
             material_icon("star_border"), self.translations["menu.favorites"])
         self.act_favorites.setToolTip(self.translations["favorites.button_tooltip"])
         self.act_favorites.triggered.connect(self._open_favorites)
+
+        self.act_notes = view_menu.addAction(
+            material_icon("sticky_note_2"), self.translations["menu.notes"])
+        self.act_notes.setToolTip(self.translations["notes.menu_tooltip"])
+        self.act_notes.triggered.connect(self._open_notes)
         self._update_catalog_button()
 
         help_menu = menu_bar.addMenu(self.translations["menu.help"])
@@ -733,8 +741,49 @@ class MainWindow(QMainWindow):
         """Show application and third-party component credits."""
         AboutDialog(self.translations, parent=self).exec()
 
+    def _open_notes(self):
+        """Show the notes of the attached game, else of a saved game the user picks."""
+        if self._process_id is not None:
+            process_id, game = self._process_id, self._process_name
+        else:
+            current = None if self._notes_dialog is None else self._notes_dialog.process_id
+            picker = SavedGamesDialog(self.translations, current=current, parent=self)
+            if picker.exec() != QDialog.DialogCode.Accepted or picker.process is None:
+                return
+            process_id, game = picker.process.process_id, picker.process.name
+        dialog = self._notes_dialog
+        if dialog is None:
+            dialog = GameNotesDialog(self.translations, process_id, game, parent=self)
+            dialog.finished.connect(lambda _result: setattr(self, "_notes_dialog", None))
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._notes_dialog = dialog
+            self.dock_manager.add(dialog, "notes", RIGHT)
+            return
+        dialog.set_process(process_id, game)
+        self.dock_manager.show(dialog)
+
+    def _save_notes(self):
+        """Save the open notes, so that the database holds what they show."""
+        if self._notes_dialog is not None:
+            self._notes_dialog.save_pending()
+
+    def _notes_changed(self, process_ids, removed=()):
+        """The notes of ``process_ids`` changed in the database: show them anew.
+
+        Notes of a process in ``removed`` (deleted with it) are closed.
+        """
+        dialog = self._notes_dialog
+        if dialog is None or dialog.process_id not in process_ids:
+            return
+        if dialog.process_id in removed:
+            dialog.dirty = False
+            close_dialog(dialog)
+        else:
+            dialog.reload()
+
     def _open_export(self):
         """Export what is saved for a game as JSON; the attached one comes first."""
+        self._save_notes()
         dialog = GameExportDialog(self.translations, GameExportRepository(),
                                   current=self._process_name, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -743,6 +792,7 @@ class MainWindow(QMainWindow):
 
     def _open_import(self):
         """Import an export file into a saved process; the attached one comes first."""
+        self._save_notes()
         dialog = GameImportDialog(self.translations, GameExportRepository(),
                                   current=self._process_id, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -751,6 +801,7 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(self.translations["import.done"].format(
             skipped=sum(dialog.result.skipped.values()), templates=dialog.result.templates,
             **added))
+        self._notes_changed({dialog.process_id})
         if dialog.process_id == self._process_id:
             self._reload_saved_entries()
 
@@ -773,6 +824,7 @@ class MainWindow(QMainWindow):
 
     def _open_delete_entries(self):
         """Delete chosen entries of saved processes, or the processes themselves."""
+        self._save_notes()
         dialog = DeleteEntriesDialog(self.translations, GameExportRepository(),
                                      current=self._process_id, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -784,6 +836,11 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(self.translations["delete_entries.done"].format(
             entries=sum(count for kind, count in totals.items() if kind != "process"),
             processes=totals.get("process", 0)))
+        self._notes_changed(
+            {process_id for process_id, counts in dialog.deleted.items()
+             if counts.get("notes") or counts.get("process")},
+            removed={process_id for process_id, counts in dialog.deleted.items()
+                     if counts.get("process")})
         if self._process_id in dialog.deleted:
             self._reload_saved_entries()
 
@@ -2594,6 +2651,8 @@ class MainWindow(QMainWindow):
                 self._process_timer.start()
                 self._process_id = process_id
                 self._process_name = dlg.selected_name
+                if self._notes_dialog is not None:
+                    self._notes_dialog.set_process(process_id, dlg.selected_name)
                 self._favorite_store.set_process(process_id)
                 self._assembly_selection.set_process(process_id)
                 self._load_saved_addresses()
@@ -3229,6 +3288,7 @@ class MainWindow(QMainWindow):
         # the target remove their hooks first; that waits for the target,
         # so the waits here are bounded and the rest happens in a dialog.
         self._sessions_timer.stop()
+        self._save_notes()
         self._close_process_tools()
         workers.stop_workers(CLOSING_WORKER_TIMEOUT_MS)
         self._stop_write_monitor()

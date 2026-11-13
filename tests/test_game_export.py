@@ -12,6 +12,7 @@ from grembyte.db.base import Base
 from grembyte.db.models import (
     Address,
     FavoriteRecord,
+    GameNote,
     GameScript,
     Hook,
     HookTemplate,
@@ -101,7 +102,7 @@ def test_games_are_grouped_by_name_and_empty_ones_left_out(repository):
     souls = games["DarkSoulsIII.ex"]
     assert souls.paths == [PROTON_GE, PROTON_EXP] and souls.platform == "Windows"
     assert souls.counts == {"addresses": 1, "hooks": 1, "method_hooks": 0, "favorites": 0,
-                            "scripts": 1, "pointer_scans": 1}
+                            "scripts": 1, "notes": 0, "pointer_scans": 1}
 
 
 def test_export_holds_all_processes_of_the_game_and_their_templates(repository):
@@ -178,7 +179,7 @@ def test_import_mixes_in_what_the_target_does_not_hold(sessions, repository):
 
     result = repository.import_export(export, target_id)
     assert result.added == {"addresses": 1, "hooks": 1, "method_hooks": 0, "favorites": 0,
-                            "scripts": 1, "pointer_scans": 1}
+                            "scripts": 1, "notes": 0, "pointer_scans": 1}
     assert result.templates == 0  # "Begrenzen" exists with the same code
     with sessions() as session:
         [hook] = session.scalars(select(Hook).where(Hook.process_id == target_id))
@@ -195,7 +196,7 @@ def test_import_mixes_in_what_the_target_does_not_hold(sessions, repository):
     again = repository.import_export(export, target_id)
     assert sum(again.added.values()) == 0
     assert again.skipped == {"addresses": 1, "hooks": 1, "method_hooks": 0, "favorites": 0,
-                             "scripts": 1}
+                             "scripts": 1, "notes": 0}
 
     # Exports made before scripts were exported hold none.
     for process in export["processes"]:
@@ -232,6 +233,65 @@ def test_a_changed_template_is_added_under_a_new_name(sessions, repository):
     with sessions() as session:
         [hook] = session.scalars(select(Hook).where(Hook.process_id == target))
         assert session.get(HookTemplate, hook.template_id).name == "Begrenzen (Import)"
+
+
+def _note_bodies(sessions, process_id):
+    with sessions() as session:
+        return [(note.title, note.body) for note in session.scalars(
+            select(GameNote).where(GameNote.process_id == process_id).order_by(GameNote.id))]
+
+
+def test_notes_are_exported_and_a_game_with_only_notes_counts(sessions, repository):
+    empty = _process_id(sessions, "abrt-dbus", "/usr/sbin/abrt-dbus")
+    with sessions() as session:
+        session.add(GameNote(process_id=empty, body="## Gold\n`AddGold(int)`"))
+        session.commit()
+    games = {game.name: game for game in repository.list_games()}
+    assert games["abrt-dbus"].counts["notes"] == 1
+    [process] = repository.export_game("abrt-dbus")["processes"]
+    assert [note["body"] for note in process["notes"]] == ["## Gold\n`AddGold(int)`"]
+    assert repository.delete_entries(empty, ["notes"])["notes"] == 1
+    assert _note_bodies(sessions, empty) == []
+
+
+def test_empty_notes_do_not_count_or_export(sessions, repository):
+    empty = _process_id(sessions, "abrt-dbus", "/usr/sbin/abrt-dbus")
+    with sessions() as session:
+        session.add(GameNote(process_id=empty, body=" \n "))
+        session.commit()
+
+    process = next(row for row in repository.list_processes() if row.process_id == empty)
+    assert process.counts["notes"] == 0
+    assert "abrt-dbus" not in {game.name for game in repository.list_games()}
+    assert repository.export_game("abrt-dbus")["processes"] == []
+
+
+def test_imported_notes_are_merged_and_never_deleted(sessions, repository):
+    souls = _process_id(sessions, "DarkSoulsIII.ex", PROTON_GE)
+    poe = _process_id(sessions, "PillarsOfEternity", "/steam/common/PoE/PillarsOfEternity")
+    with sessions() as session:
+        session.add_all([GameNote(process_id=souls, body="Souls: `PlayerGameData`"),
+                         GameNote(process_id=poe, body="Gold: `AddGold`")])
+        session.commit()
+    export = repository.export_game("DarkSoulsIII.ex")
+    assert export["processes"][0]["notes"][0]["body"] == "Souls: `PlayerGameData`"
+
+    result = repository.import_export(export, poe, replace=True)
+    assert result.added["notes"] == 1
+    assert _note_bodies(sessions, poe) == [
+        ("", "Gold: `AddGold`\n\n---\n\nSouls: `PlayerGameData`")]
+    # Text the note holds already is not appended again
+    result = repository.import_export(export, poe)
+    assert result.added["notes"] == 0 and result.skipped["notes"] == 1
+    assert len(_note_bodies(sessions, poe)) == 1
+
+    # A process without notes takes them as they are; an older export has none
+    empty = _process_id(sessions, "abrt-dbus", "/usr/sbin/abrt-dbus")
+    repository.import_export(export, empty)
+    assert _note_bodies(sessions, empty) == [("", "Souls: `PlayerGameData`")]
+    for process in export["processes"]:
+        del process["notes"]
+    assert repository.import_export(export, empty).added["notes"] == 0
 
 
 def test_only_exports_of_grembyte_are_read(tmp_path, repository):

@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QObject, Qt, Signal  # pylint: disable=import-error,no-name-in-module
 
 from grembyte import __version__
 
@@ -816,16 +816,72 @@ def game_export(studio):
     games = [
         ExportableGame(_AVOWED, [proton], {
             "addresses": 2, "hooks": 0, "method_hooks": 3, "favorites": 7, "scripts": 3,
-            "pointer_scans": 0}),
+            "notes": 1, "pointer_scans": 0}),
         ExportableGame(DEMO_NAME, [f"/opt/games/dummy/{DEMO_NAME}"], {
             "addresses": 4, "hooks": 1, "method_hooks": 0, "favorites": 2, "scripts": 0,
-            "pointer_scans": 1}),
+            "notes": 1, "pointer_scans": 1}),
         ExportableGame("PillarsOfEternity", [
             "/home/user/.steam/steam/steamapps/common/Pillars of Eternity/PillarsOfEternity"], {
             "addresses": 3, "hooks": 0, "method_hooks": 2, "favorites": 5, "scripts": 1,
-            "pointer_scans": 0}),
+            "notes": 0, "pointer_scans": 0}),
     ]
     dialog = GameExportDialog(studio.translations, _ExportRepository(games), current=DEMO_NAME)
     dialog.folder.setText("/home/user/Documents/grembyte")
     dialog.pointer_scans.setChecked(True)
     return studio.keep(dialog)
+
+
+_NOTES = """## Gold
+- Address list: **Gold**, pointer `dummy_game.exe+0x4040 → 0x28 → 0x0`
+- Written by `add_gold(int amount)`: `add [rax], edi`
+
+## Character
+| Value | Offset | Type |
+| --- | ---: | --- |
+| Gold | `0x0` | int32 |
+| HP | `0x4` | int32 |
+| Mana | `0x14` | float |
+| Experience | `0x18` | double |
+
+## To do
+- [x] Gold found
+- [ ] Find what a treasure chest adds
+"""
+
+
+class _NoteRepository:
+    """One note in memory; the picture needs no database."""
+
+    def __init__(self, body):
+        # pylint: disable=import-outside-toplevel
+        from grembyte.db.repository.notes import Note
+
+        self.note = Note(1, "", body)
+
+    def first_note(self, _process_id):
+        return self.note
+
+    def save_first_note(self, _process_id, _body):
+        return self.note
+
+
+@scene("game-notes", size=(1500, 800),
+       description="Notes on the test game, docked beside the main window, in the preview")
+def game_notes(studio):
+    """The notes window docked at the right, showing the rendered Markdown."""
+    # pylint: disable=import-outside-toplevel
+    from scenes_main import _fill
+
+    from grembyte.ui.widgets.docking import RIGHT
+    from grembyte.ui.widgets.game_notes import GameNotesDialog
+
+    window = studio.show_attached()
+    _fill(window)
+    dialog = GameNotesDialog(studio.translations, 1, DEMO_NAME,
+                             repository=_NoteRepository(_NOTES), parent=window)
+    dialog.tabs.setCurrentIndex(1)
+    host = window.dock_manager.host(RIGHT)
+    host.pin(dialog)
+    window.resizeDocks([host], [520], Qt.Orientation.Horizontal)
+    settle()
+    return window

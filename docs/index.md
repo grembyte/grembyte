@@ -79,6 +79,14 @@ markdown="span">
 
     [:octicons-arrow-right-24: Code explorer](guide/code-explorer.md)
 
+-   :material-note-edit-outline:{ .lg .middle } **Keep notes**
+
+    ---
+
+    Note per game in Markdown which classes hold the values and which methods give gold, experience or items, docked beside the main window.
+
+    [:octicons-arrow-right-24: Notes](guide/notes.md)
+
 </div>
 
 ## Where to start

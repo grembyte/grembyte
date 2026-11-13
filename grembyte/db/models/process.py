@@ -26,6 +26,9 @@ class Process(Base):  # pylint: disable=too-few-public-methods
     scripts = relationship(
         "GameScript", back_populates="process", cascade="all, delete-orphan"
     )
+    notes = relationship(
+        "GameNote", back_populates="process", cascade="all, delete-orphan"
+    )
     favorites = relationship(
         "FavoriteRecord", back_populates="process", cascade="all, delete-orphan"
     )
