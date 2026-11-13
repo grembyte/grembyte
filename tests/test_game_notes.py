@@ -57,7 +57,9 @@ def _dialog(translations, sessions, process_id, game="PillarsOfEternity"):
 
 def test_notes_save_after_typing_with_the_button_and_on_closing(qt_app, translations, sessions,
                                                                   repository):
-    # pylint: disable=unused-argument
+    # pylint: disable=unused-argument,import-outside-toplevel
+    from grembyte.ui.widgets.code_editor import code_theme_colors
+
     poe = _process_id(sessions, "PillarsOfEternity", POE)
     dialog = _dialog(translations, sessions, poe)
     try:
@@ -66,6 +68,9 @@ def test_notes_save_after_typing_with_the_button_and_on_closing(qt_app, translat
         dialog.save_button.click()
         assert _note_bodies(sessions, poe) == []
         assert not dialog.dirty
+        # Colouring the Markdown again (a theme change) changes no text
+        dialog.editor.markdown_highlighter.set_colors(code_theme_colors())
+        assert not dialog.dirty and not dialog._autosave.isActive()  # pylint: disable=protected-access
 
         dialog.editor.setPlainText("## Gold\n- `AddGold(int)`")
         assert dialog.dirty and dialog._autosave.isActive()  # pylint: disable=protected-access
@@ -217,3 +222,42 @@ def test_main_window_opens_the_picked_games_notes_and_closes_them_with_the_game(
         assert _note_bodies(sessions, poe) == [("", "Gold")]
     finally:
         window.close()
+
+
+def test_notes_preview_is_formatted_in_the_theme_colors(qt_app, translations, sessions,
+                                                         repository):
+    # pylint: disable=unused-argument,import-outside-toplevel
+    from PySide6.QtGui import QTextCharFormat  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.ui.styles.themes import ThemeManager
+    from grembyte.ui.widgets.code_editor import apply_code_theme
+
+    manager = ThemeManager(user_theme_dir="/tmp/no-grembyte-themes")
+    colors = manager.load_theme("Solarized-Light")["colors"]
+    poe = _process_id(sessions, "PillarsOfEternity", POE)
+    dialog = _dialog(translations, sessions, poe)
+    try:
+        dialog.editor.setPlainText(
+            "## Gold\n- call `AddGold` in [the wiki](https://example.com)\n\n"
+            "```js\nconst gold = 42;\n```\n\n| A | B |\n|---|---|\n| 1 | 2 |\n")
+        dialog.tabs.setCurrentIndex(1)
+        apply_code_theme(colors)
+        document = dialog.preview.document()
+
+        def format_at(token):
+            cursor = document.find(token)
+            cursor.setPosition(cursor.selectionStart() + 1)
+            return QTextCharFormat(cursor.charFormat())
+
+        assert format_at("Gold").foreground().color().name() == colors["code_keyword"]
+        assert format_at("AddGold").foreground().color().name() == colors["code_string"]
+        assert format_at("AddGold").background().color().name() == colors["surface"]
+        assert format_at("the wiki").foreground().color().name() == colors["accent"]
+        assert format_at("const").foreground().color().name() == colors["code_keyword"]
+        assert format_at("42").foreground().color().name() == colors["code_number"]
+        code_frame = document.find("const").currentFrame()
+        assert code_frame.frameFormat().background().color().name() == colors["surface"]
+        assert dialog.preview.toPlainText().count("`") == 0
+    finally:
+        apply_code_theme(manager.load_theme("Github-Dark")["colors"])
+        dialog.close()

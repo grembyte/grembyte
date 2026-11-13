@@ -1,4 +1,5 @@
-"""A text field for JavaScript (scripts, hook code, templates).
+"""A text field for JavaScript (scripts, hook code, templates), and the
+syntax highlighters for JavaScript, pseudocode and Markdown.
 
 Fixed-width font; Tab indents by spaces, as the built-in templates are
 written, rather than inserting a tab character eight characters wide.
@@ -42,6 +43,28 @@ _PSEUDOCODE_KEYWORDS = frozenset({
     "int16_t", "int32_t", "int64_t", "return", "uint8_t", "uint16_t", "uint32_t",
     "uint64_t", "void",
 })
+# Markdown block states: inside a fence, which language, and the
+# JavaScript state (block comment, template string) carried across lines
+_MD_FENCE = 0x100
+_MD_TILDE = 0x80
+_MD_LANGUAGE_MASK = 0x30
+_MD_PLAIN, _MD_JAVASCRIPT, _MD_C = 0x00, 0x10, 0x20
+_MD_INNER_MASK = 0x03
+_MD_LANGUAGES = {
+    **dict.fromkeys(("js", "javascript", "mjs", "ts", "typescript", "json"), _MD_JAVASCRIPT),
+    **dict.fromkeys(("c", "cpp", "c++", "h", "pseudocode"), _MD_C),
+}
+_MD_FENCE_OPEN = re.compile(r" {0,3}(`{3,}|~{3,})\s*([\w+#.-]*)")
+_MD_HEADING = re.compile(r" {0,3}(#{1,6})(?:\s|$)")
+_MD_RULE = re.compile(r" {0,3}([-*_])(?: *\1){2,} *$")
+_MD_QUOTE = re.compile(r"(?: {0,3}> ?)+")
+_MD_LIST = re.compile(r"\s*([-*+]|\d+[.)])(?:\s+\[[ xX]\])?(?=\s|$)")
+_MD_CODE_SPAN = re.compile(r"(`+)(?!`)(.+?)(?<!`)\1(?!`)")
+_MD_LINK = re.compile(r"!?\[([^\]]*)\]\([^)\s]*(?:\s+\"[^\"]*\")?\)")
+_MD_URL = re.compile(r"<?https?://[^\s<>]+>?")
+_MD_BOLD = re.compile(r"(\*\*|__)(?=\S)(.+?)(?<=\S)\1")
+_MD_ITALIC = re.compile(r"(?<![*\w])(\*|_)(?![*_\s])(.+?)(?<![*_\s])\1(?![*\w])")
+_MD_STRIKE = re.compile(r"(~~)(?=\S)(.+?)(?<=\S)~~")
 _CODE_COLORS = {
     "code_text": "#e6edf3",
     "code_keyword": "#ff7b72",
@@ -64,6 +87,146 @@ def _closing_quote(text, start, quote):
     return None
 
 
+def token_formats(colors):
+    """The character formats of code tokens in the theme ``colors``."""
+    formats = {}
+    for token, key in (("text", "code_text"), ("keyword", "code_keyword"),
+                       ("string", "code_string"), ("number", "code_number"),
+                       ("comment", "muted")):
+        text_format = QTextCharFormat()
+        text_format.setForeground(QColor(colors[key]))
+        if token == "keyword":
+            text_format.setFontWeight(QFont.Weight.Bold)
+        formats[token] = text_format
+    return formats
+
+
+def _highlight_javascript(paint, text, previous_state):
+    """Call ``paint(start, length, token)`` for the JavaScript tokens of one
+    line; returns the state the next line starts in."""
+    paint(0, len(text), "text")
+    position = 0
+
+    if previous_state == _BLOCK_COMMENT:
+        end = text.find("*/")
+        if end < 0:
+            paint(0, len(text), "comment")
+            return _BLOCK_COMMENT
+        paint(0, end + 2, "comment")
+        position = end + 2
+    elif previous_state == _TEMPLATE_STRING:
+        end = _closing_quote(text, 0, "`")
+        if end is None:
+            paint(0, len(text), "string")
+            return _TEMPLATE_STRING
+        paint(0, end, "string")
+        position = end
+
+    while position < len(text):
+        if text.startswith("//", position):
+            paint(position, len(text) - position, "comment")
+            break
+        if text.startswith("/*", position):
+            end = text.find("*/", position + 2)
+            if end < 0:
+                paint(position, len(text) - position, "comment")
+                return _BLOCK_COMMENT
+            paint(position, end + 2 - position, "comment")
+            position = end + 2
+            continue
+
+        character = text[position]
+        if character in ("'", '"', "`"):
+            end = _closing_quote(text, position + 1, character)
+            if end is None:
+                paint(position, len(text) - position, "string")
+                return _TEMPLATE_STRING if character == "`" else 0
+            paint(position, end - position, "string")
+            position = end
+            continue
+
+        if character.isdigit() or (character == "." and position + 1 < len(text)
+                                   and text[position + 1].isdigit()):
+            number = _NUMBER.match(text, position)
+            if number is not None:
+                paint(position, number.end() - position, "number")
+                position = number.end()
+                continue
+
+        if character == "$" or character == "_" or character.isalpha():
+            end = position + 1
+            while end < len(text):
+                next_character = text[end]
+                if not (next_character == "$" or next_character == "_"
+                        or next_character.isalnum()):
+                    break
+                end += 1
+            if text[position:end] in _KEYWORDS:
+                paint(position, end - position, "keyword")
+            position = end
+            continue
+
+        position += 1
+    return 0
+
+
+def _highlight_pseudocode(paint, text):
+    """Call ``paint(start, length, token)`` for the C tokens of one line."""
+    paint(0, len(text), "text")
+    position = 0
+    while position < len(text):
+        if text.startswith("//", position):
+            paint(position, len(text) - position, "comment")
+            break
+        if text.startswith("/*", position):
+            end = text.find("*/", position + 2)
+            end = len(text) if end < 0 else end + 2
+            paint(position, end - position, "comment")
+            position = end
+            continue
+
+        character = text[position]
+        if character in ("'", '"'):
+            end = _closing_quote(text, position + 1, character)
+            end = len(text) if end is None else end
+            paint(position, end - position, "string")
+            position = end
+            continue
+
+        if character.isdigit() or (character == "." and position + 1 < len(text)
+                                   and text[position + 1].isdigit()):
+            number = _C_NUMBER.match(text, position)
+            if number is not None:
+                paint(position, number.end() - position, "number")
+                position = number.end()
+                continue
+
+        if character == "_" or character.isalpha():
+            end = position + 1
+            while end < len(text) and (text[end] == "_" or text[end].isalnum()):
+                end += 1
+            if text[position:end] in _PSEUDOCODE_KEYWORDS:
+                paint(position, end - position, "keyword")
+            position = end
+            continue
+
+        position += 1
+
+
+def highlight_code(paint, language, text, state=0):
+    """Call ``paint(start, length, token)`` for one line of code in ``language``
+    (the info string of a Markdown fence: js, c …); returns the state the next
+    line of the same code starts in. Unknown languages are one "string" token."""
+    kind = _MD_LANGUAGES.get(language.lower(), _MD_PLAIN)
+    if kind == _MD_JAVASCRIPT:
+        return _highlight_javascript(paint, text, state)
+    if kind == _MD_C:
+        _highlight_pseudocode(paint, text)
+        return 0
+    paint(0, len(text), "string")
+    return 0
+
+
 class JavaScriptHighlighter(QSyntaxHighlighter):
     """Highlight JavaScript tokens while keeping multiline lexical state."""
 
@@ -73,88 +236,13 @@ class JavaScriptHighlighter(QSyntaxHighlighter):
 
     def set_colors(self, colors):
         """Update token formats when the application's theme changes."""
-        self.formats = {}
-        for token, key in (("text", "code_text"), ("keyword", "code_keyword"),
-                           ("string", "code_string"), ("number", "code_number"),
-                           ("comment", "muted")):
-            text_format = QTextCharFormat()
-            text_format.setForeground(QColor(colors[key]))
-            if token == "keyword":
-                text_format.setFontWeight(QFont.Weight.Bold)
-            self.formats[token] = text_format
+        self.formats = token_formats(colors)
         self.rehighlight()
 
     def highlightBlock(self, text):  # pylint: disable=invalid-name
-        self.setFormat(0, len(text), self.formats["text"])
-        position = 0
-        previous_state = self.previousBlockState()
-        self.setCurrentBlockState(0)
-
-        if previous_state == _BLOCK_COMMENT:
-            end = text.find("*/")
-            if end < 0:
-                self.setFormat(0, len(text), self.formats["comment"])
-                self.setCurrentBlockState(_BLOCK_COMMENT)
-                return
-            self.setFormat(0, end + 2, self.formats["comment"])
-            position = end + 2
-        elif previous_state == _TEMPLATE_STRING:
-            end = _closing_quote(text, 0, "`")
-            if end is None:
-                self.setFormat(0, len(text), self.formats["string"])
-                self.setCurrentBlockState(_TEMPLATE_STRING)
-                return
-            self.setFormat(0, end, self.formats["string"])
-            position = end
-
-        while position < len(text):
-            if text.startswith("//", position):
-                self.setFormat(position, len(text) - position, self.formats["comment"])
-                break
-            if text.startswith("/*", position):
-                end = text.find("*/", position + 2)
-                if end < 0:
-                    self.setFormat(position, len(text) - position, self.formats["comment"])
-                    self.setCurrentBlockState(_BLOCK_COMMENT)
-                    break
-                self.setFormat(position, end + 2 - position, self.formats["comment"])
-                position = end + 2
-                continue
-
-            character = text[position]
-            if character in ("'", '"', "`"):
-                end = _closing_quote(text, position + 1, character)
-                if end is None:
-                    self.setFormat(position, len(text) - position, self.formats["string"])
-                    if character == "`":
-                        self.setCurrentBlockState(_TEMPLATE_STRING)
-                    break
-                self.setFormat(position, end - position, self.formats["string"])
-                position = end
-                continue
-
-            if character.isdigit() or (character == "." and position + 1 < len(text)
-                                       and text[position + 1].isdigit()):
-                number = _NUMBER.match(text, position)
-                if number is not None:
-                    self.setFormat(position, number.end() - position, self.formats["number"])
-                    position = number.end()
-                    continue
-
-            if character == "$" or character == "_" or character.isalpha():
-                end = position + 1
-                while end < len(text):
-                    next_character = text[end]
-                    if not (next_character == "$" or next_character == "_"
-                            or next_character.isalnum()):
-                        break
-                    end += 1
-                if text[position:end] in _KEYWORDS:
-                    self.setFormat(position, end - position, self.formats["keyword"])
-                position = end
-                continue
-
-            position += 1
+        self.setCurrentBlockState(_highlight_javascript(
+            lambda start, length, token: self.setFormat(start, length, self.formats[token]),
+            text, self.previousBlockState()))
 
 
 class PseudocodeHighlighter(QSyntaxHighlighter):
@@ -166,57 +254,151 @@ class PseudocodeHighlighter(QSyntaxHighlighter):
 
     def set_colors(self, colors):
         """Update token formats when the application's theme changes."""
-        self.formats = {}
-        for token, key in (("text", "code_text"), ("keyword", "code_keyword"),
-                           ("string", "code_string"), ("number", "code_number"),
-                           ("comment", "muted")):
-            text_format = QTextCharFormat()
-            text_format.setForeground(QColor(colors[key]))
-            if token == "keyword":
-                text_format.setFontWeight(QFont.Weight.Bold)
-            self.formats[token] = text_format
+        self.formats = token_formats(colors)
         self.rehighlight()
 
     def highlightBlock(self, text):  # pylint: disable=invalid-name
-        self.setFormat(0, len(text), self.formats["text"])
-        position = 0
-        while position < len(text):
-            if text.startswith("//", position):
-                self.setFormat(position, len(text) - position, self.formats["comment"])
-                break
-            if text.startswith("/*", position):
-                end = text.find("*/", position + 2)
-                end = len(text) if end < 0 else end + 2
-                self.setFormat(position, end - position, self.formats["comment"])
-                position = end
-                continue
+        _highlight_pseudocode(
+            lambda start, length, token: self.setFormat(start, length, self.formats[token]),
+            text)
 
-            character = text[position]
-            if character in ("'", '"'):
-                end = _closing_quote(text, position + 1, character)
-                end = len(text) if end is None else end
-                self.setFormat(position, end - position, self.formats["string"])
-                position = end
-                continue
 
-            if character.isdigit() or (character == "." and position + 1 < len(text)
-                                       and text[position + 1].isdigit()):
-                number = _C_NUMBER.match(text, position)
-                if number is not None:
-                    self.setFormat(position, number.end() - position, self.formats["number"])
-                    position = number.end()
+class MarkdownHighlighter(QSyntaxHighlighter):
+    """Colour the Markdown syntax of the notes while they are written.
+
+    Markers (``#``, ``*``, backticks, fences) are muted, headings bold, and
+    fenced code blocks are coloured as JavaScript (``js``, ``ts``, ``json``)
+    or C (``c``, ``cpp``); other code is shown in the string colour.
+    """
+
+    def __init__(self, document, colors):
+        super().__init__(document)
+        self.set_colors(colors)
+
+    def set_colors(self, colors):
+        """Update the formats when the application's theme changes."""
+        self.formats = token_formats(colors)
+        muted = QColor(colors["muted"])
+        heading = QTextCharFormat()
+        heading.setForeground(QColor(colors["code_keyword"]))
+        heading.setFontWeight(QFont.Weight.Bold)
+        marker = QTextCharFormat()
+        marker.setForeground(muted)
+        list_marker = QTextCharFormat()
+        list_marker.setForeground(QColor(colors["code_keyword"]))
+        list_marker.setFontWeight(QFont.Weight.Bold)
+        link = QTextCharFormat()
+        link.setForeground(QColor(colors["code_number"]))
+        link.setFontUnderline(True)
+        quote = QTextCharFormat()
+        quote.setForeground(muted)
+        quote.setFontItalic(True)
+        bold = QTextCharFormat()
+        bold.setFontWeight(QFont.Weight.Bold)
+        italic = QTextCharFormat()
+        italic.setFontItalic(True)
+        strike = QTextCharFormat()
+        strike.setFontStrikeOut(True)
+        self.formats.update({
+            "heading": heading, "marker": marker, "list": list_marker, "link": link,
+            "quote": quote, "bold": bold, "italic": italic, "strike": strike,
+        })
+        self.rehighlight()
+
+    def _paint(self, start, length, name):
+        self.setFormat(start, length, self.formats[name])
+
+    def _merge(self, start, length, name, free):
+        """Add the format ``name`` to the characters ``free`` still allows."""
+        for position in range(start, start + length):
+            if free[position]:
+                text_format = self.format(position)
+                text_format.merge(self.formats[name])
+                self.setFormat(position, 1, text_format)
+
+    def highlightBlock(self, text):  # pylint: disable=invalid-name
+        state = self.previousBlockState()
+        if state >= 0 and state & _MD_FENCE:
+            self._highlight_fenced(text, state)
+            return
+        self.setCurrentBlockState(0)
+
+        fence = _MD_FENCE_OPEN.match(text)
+        if fence is not None:
+            self._paint(0, len(text), "marker")
+            language = _MD_LANGUAGES.get(fence.group(2).lower(), _MD_PLAIN)
+            tilde = _MD_TILDE if fence.group(1)[0] == "~" else 0
+            self.setCurrentBlockState(_MD_FENCE | tilde | language)
+            return
+        heading = _MD_HEADING.match(text)
+        if heading is not None:
+            self._paint(0, len(text), "heading")
+            self._paint(heading.start(1), len(heading.group(1)), "marker")
+            return
+        if _MD_RULE.match(text):
+            self._paint(0, len(text), "marker")
+            return
+
+        start = 0
+        quote = _MD_QUOTE.match(text)
+        if quote is not None:
+            self._paint(0, len(text), "quote")
+            self._paint(0, quote.end(), "list")
+            start = quote.end()
+        item = _MD_LIST.match(text, start)
+        if item is not None:
+            self._paint(item.start(1), item.end(1) - item.start(1), "list")
+            start = item.end()
+        self._highlight_inline(text, start)
+
+    def _highlight_fenced(self, text, state):
+        fence_character = "~" if state & _MD_TILDE else "`"
+        if re.match(r" {0,3}" + re.escape(fence_character) + r"{3,}\s*$", text):
+            self._paint(0, len(text), "marker")
+            self.setCurrentBlockState(0)
+            return
+
+        def paint(start, length, token):
+            self.setFormat(start, length, self.formats[token])
+
+        language = state & _MD_LANGUAGE_MASK
+        inner = 0
+        if language == _MD_JAVASCRIPT:
+            inner = _highlight_javascript(paint, text, state & _MD_INNER_MASK)
+        elif language == _MD_C:
+            _highlight_pseudocode(paint, text)
+        else:
+            paint(0, len(text), "string")
+        self.setCurrentBlockState((state & ~_MD_INNER_MASK) | inner)
+
+    def _highlight_inline(self, text, start):
+        free = [position >= start for position in range(len(text))]
+        for match in _MD_CODE_SPAN.finditer(text, start):
+            ticks = len(match.group(1))
+            self._paint(match.start(), match.end() - match.start(), "marker")
+            self._paint(match.start() + ticks, match.end() - match.start() - 2 * ticks,
+                        "string")
+            free[match.start():match.end()] = [False] * (match.end() - match.start())
+        for match in _MD_LINK.finditer(text, start):
+            if not all(free[match.start():match.end()]):
+                continue
+            self._paint(match.start(), match.end() - match.start(), "marker")
+            self._paint(match.start(1), match.end(1) - match.start(1), "link")
+            free[match.start():match.end()] = [False] * (match.end() - match.start())
+        for match in _MD_URL.finditer(text, start):
+            if all(free[match.start():match.end()]):
+                self._paint(match.start(), match.end() - match.start(), "link")
+                free[match.start():match.end()] = [False] * (match.end() - match.start())
+        for pattern, name in ((_MD_BOLD, "bold"), (_MD_ITALIC, "italic"),
+                              (_MD_STRIKE, "strike")):
+            for match in pattern.finditer(text, start):
+                if not free[match.start()] or not free[match.end() - 1]:
                     continue
-
-            if character == "_" or character.isalpha():
-                end = position + 1
-                while end < len(text) and (text[end] == "_" or text[end].isalnum()):
-                    end += 1
-                if text[position:end] in _PSEUDOCODE_KEYWORDS:
-                    self.setFormat(position, end - position, self.formats["keyword"])
-                position = end
-                continue
-
-            position += 1
+                self._merge(match.start(), match.end() - match.start(), name, free)
+                marker = len(match.group(1))
+                for position in (match.start(), match.end() - marker):
+                    if all(free[position:position + marker]):
+                        self._paint(position, marker, "marker")
 
 
 class CodeEditor(QPlainTextEdit):
@@ -301,6 +483,13 @@ def apply_code_theme(colors):
         highlighter = getattr(widget, "pseudocode_highlighter", None)
         if isinstance(highlighter, PseudocodeHighlighter):
             highlighter.set_colors(_CODE_COLORS)
+        highlighter = getattr(widget, "markdown_highlighter", None)
+        if isinstance(highlighter, MarkdownHighlighter):
+            highlighter.set_colors(_CODE_COLORS)
+        # Widgets outside this module that colour code (markdown_preview)
+        theme_changed = getattr(widget, "code_theme_changed", None)
+        if callable(theme_changed):
+            theme_changed(colors)
 
 
 def code_theme_colors():

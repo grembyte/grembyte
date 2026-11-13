@@ -153,3 +153,62 @@ def test_existing_code_editor_rehighlights_after_theme_change(qt_app):
         apply_code_theme(manager.load_theme("Github-Dark")["colors"])
         editor.close()
         pseudocode.close()
+
+
+def test_markdown_syntax_and_fenced_code_use_theme_colors(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
+        QFont,
+        QTextCharFormat,
+    )
+    from PySide6.QtWidgets import QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.ui.styles.themes import ThemeManager
+    from grembyte.ui.widgets.code_editor import MarkdownHighlighter
+
+    colors = ThemeManager(user_theme_dir="/tmp/no-grembyte-themes").load_theme(
+        "Solarized-Light")["colors"]
+    editor = QPlainTextEdit("\n".join([
+        "## Gold",
+        "- call `AddGold(int)` **twice**, not snake_case_name",
+        "```js",
+        "const gold = 42; /* not",
+        "done */ 'x'",
+        "```",
+        "```",
+        "if (a) return 1;",
+        "```",
+        "after",
+    ]))
+    MarkdownHighlighter(editor.document(), colors)
+    try:
+        def format_at(block_number, token, offset=0):
+            block = editor.document().findBlockByNumber(block_number)
+            position = block.text().index(token) + offset
+            for format_range in block.layout().formats():
+                if format_range.start <= position < format_range.start + format_range.length:
+                    return QTextCharFormat(format_range.format)
+            return None
+
+        def color_at(block_number, token, offset=0):
+            return format_at(block_number, token, offset).foreground().color().name()
+
+        assert color_at(0, "##") == colors["muted"]
+        assert color_at(0, "Gold") == colors["code_keyword"]
+        assert format_at(0, "Gold").fontWeight() == QFont.Weight.Bold
+        assert color_at(1, "-") == colors["code_keyword"]
+        assert color_at(1, "`") == colors["muted"]
+        assert color_at(1, "AddGold") == colors["code_string"]
+        assert color_at(1, "**") == colors["muted"]
+        assert format_at(1, "twice").fontWeight() == QFont.Weight.Bold
+        snake = format_at(1, "snake_case", 5)
+        assert snake is None or not snake.fontItalic()
+        assert color_at(2, "js") == colors["muted"]
+        assert color_at(3, "const") == colors["code_keyword"]
+        assert color_at(3, "42") == colors["code_number"]
+        assert color_at(4, "done") == colors["muted"]  # the comment goes on
+        assert color_at(4, "'x'") == colors["code_string"]
+        assert color_at(7, "if") == colors["code_string"]  # no language: plain code
+        assert format_at(9, "after") is None
+    finally:
+        editor.close()
