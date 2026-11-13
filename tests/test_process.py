@@ -100,16 +100,16 @@ def test_reads_the_bitness_of_the_program(tmp_path):
 
 def test_process_list_names_wine_processes_by_their_windows_program():
     # pylint: disable=import-outside-toplevel
-    from grembyte.ui.widgets.process_list import _resolve_display
+    from grembyte.core.programs import resolve_display
 
     preloader = "/steam/Proton - Experimental/files/lib/wine/i386-unix/wine64-preloader"
     # Unreal renames the main thread, whose name the kernel reports.
     game = r"S:\steamapps\common\Avowed\Alabama\Binaries\Win64\Avowed-Win64-Shipping.exe"
-    assert _resolve_display("GameThread", preloader, [game, "Alabama"], "/") == (
+    assert resolve_display("GameThread", preloader, [game, "Alabama"], "/") == (
         "Avowed-Win64-Shipping.exe", game)
-    assert _resolve_display("Avowed.exe", preloader, [r"S:\Avowed\Avowed.exe  ", ""], "/") == (
+    assert resolve_display("Avowed.exe", preloader, [r"S:\Avowed\Avowed.exe  ", ""], "/") == (
         "Avowed.exe", r"S:\Avowed\Avowed.exe")
     # A Wine helper without a Windows program keeps its name.
-    assert _resolve_display("wineserver", "/usr/bin/wine64", ["/usr/bin/wine64"], "/") == (
+    assert resolve_display("wineserver", "/usr/bin/wine64", ["/usr/bin/wine64"], "/") == (
         "wineserver", "/usr/bin/wine64")
-    assert _resolve_display("bash", "/usr/bin/bash", ["bash"], "/") == ("bash", "/usr/bin/bash")
+    assert resolve_display("bash", "/usr/bin/bash", ["bash"], "/") == ("bash", "/usr/bin/bash")

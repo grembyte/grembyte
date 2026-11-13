@@ -402,3 +402,9 @@ chosen automatically on attach.
   `finished` signal, which Qt emits before the thread has ended; destroying a running QThread
   aborted the process. Workers are now kept until their thread has ended
   (`grembyte/ui/workers.py`).
+
+## grembyte-cli and the window
+
+- **Handing a game over.** Frida sessions belong to the process that opened them, so the window cannot reuse those of `grembyte-cli`. Instead `grembyte-cli` gives the game up (`core/cli_link.py`). The window connects to its Unix socket and sends `claim`. `grembyte-cli` stops its workers, which removes their hooks, and answers only once the game is free. The open connection is the window's claim: when it closes, whether the window detached, was closed or crashed, `grembyte-cli` attaches again. A crash therefore never leaves the game without hooks.
+- **Waiting for Frida's agent.** A host's Frida agent unloads only shortly after its last session detached. `attach_alone` refuses a new agent next to one it does not know (`error.attach.foreign_frida`). So for native games `grembyte-cli` waits until its agent has left the game before it answers `claim`, and waits for the window's agent before it attaches again (up to 10 s each). Under Wine the gadget stays loaded and is shared, so there is nothing to wait for.
+- **Without the coordination**, the window would be refused with `foreign_frida` on a native game. Under Wine it would connect to the same gadget and install every saved hook a second time.
