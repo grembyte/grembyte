@@ -1,7 +1,8 @@
 """The notes the user keeps on a game, as Markdown (View > Notes).
 
 A narrow window that docks to the right of the main window (``pin_button``).
-"Write" edits the text, "Preview" shows it rendered (GitHub's Markdown).
+"Write" edits the text with its Markdown syntax coloured, "Preview" shows
+it rendered (GitHub's Markdown).
 The text is saved shortly after typing stops, when the window closes or
 changes game, and with the save button (Ctrl+S), which always saves.
 
@@ -23,14 +24,15 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QPlainTextEdit,
     QPushButton,
     QTabWidget,
-    QTextBrowser,
     QVBoxLayout,
 )
 from sqlalchemy.exc import SQLAlchemyError
 
 from grembyte.db.repository.notes import NoteRepository
+from grembyte.ui.widgets.code_editor import MarkdownHighlighter, code_theme_colors
 from grembyte.ui.widgets.docking import TAB_TITLE, PinButton
 from grembyte.ui.widgets.icons import set_button_icon
+from grembyte.ui.widgets.markdown_preview import MarkdownPreview
 
 # How long typing has to pause before the text is saved
 AUTOSAVE_MS = 2000
@@ -56,9 +58,11 @@ class GameNotesDialog(QDialog):
         self.editor = QPlainTextEdit()
         self.editor.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.editor.setPlaceholderText(translations["notes.placeholder"])
+        self.editor.markdown_highlighter = MarkdownHighlighter(
+            self.editor.document(), code_theme_colors())
+        self._shown_text = ""
         self.editor.textChanged.connect(self._on_text_changed)
-        self.preview = QTextBrowser()
-        self.preview.setOpenExternalLinks(True)
+        self.preview = MarkdownPreview()
         self.preview.setPlaceholderText(translations["notes.preview_empty"])
         self.tabs.addTab(self.editor, translations["notes.write"])
         self.tabs.addTab(self.preview, translations["notes.preview"])
@@ -118,6 +122,7 @@ class GameNotesDialog(QDialog):
         self.editor.blockSignals(True)
         self.editor.setPlainText("" if note is None else note.body)
         self.editor.blockSignals(False)
+        self._shown_text = self.text()
         self.dirty = False
         self._render_preview()
 
@@ -142,6 +147,11 @@ class GameNotesDialog(QDialog):
             self.save()
 
     def _on_text_changed(self):
+        # Rehighlighting (e.g. a theme change) signals a change without one
+        text = self.text()
+        if text == self._shown_text:
+            return
+        self._shown_text = text
         self.dirty = True
         self.status.setText(self.translations["notes.unsaved"])
         self._autosave.start()
@@ -151,7 +161,7 @@ class GameNotesDialog(QDialog):
             self._render_preview()
 
     def _render_preview(self):
-        self.preview.setMarkdown(self.text())
+        self.preview.set_markdown(self.text())
 
     def closeEvent(self, event):  # pylint: disable=invalid-name
         self.save_pending()

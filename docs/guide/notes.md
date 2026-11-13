@@ -22,7 +22,8 @@ Like a program's other entries, the notes belong to one program path: a game sta
 The window has two tabs:
 
 - **Write** – the text in Markdown, a few characters that format it: `## Gold` is a heading, `- ` starts a list, `` `AddGold(int)` `` marks code. The [Markdown reference](../reference/markdown.md) lists what the preview understands.
-- **Preview** – the text formatted, as on GitHub: headings, lists, tables, code, task lists with check boxes. Links open in your browser.
+  While you type, the Markdown is colored: headings bold, the formatting characters (`#`, `*`, backticks) dimmed, code and links in their own color. Code blocks marked `js`, `ts` or `json` are colored as JavaScript, `c` or `cpp` as C (see [Code](../reference/markdown.md#code)). The colors follow the theme.
+- **Preview** – the text formatted, as on GitHub: headings, lists, tables, code, task lists with check boxes, in the colors of the theme (code blocks colored like in the Write tab, shaded table headers). Links open in your browser.
 
 Grembyte saves the notes
 

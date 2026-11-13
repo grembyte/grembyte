@@ -65,7 +65,7 @@ ctx.log(`gold: ${gold}`);
 ```
 ````
 
-The preview shows code in a fixed-width font, without colors. A paragraph indented by four spaces is code as well.
+The preview shows code in a fixed-width font, code blocks in a shaded box. The language decides the colors, in the preview and in the **Write** tab: `js`, `javascript`, `ts`, `typescript` and `json` are colored as JavaScript, `c`, `cpp` and `h` as C; code of other languages, or with none, is shown in one color. A paragraph indented by four spaces is code as well (in the preview; the Write tab does not color it).
 
 !!! tip "Put names of the game in backticks"
     Names of classes, methods and fields often hold characters Markdown reads as commands: `List<Item>` looks like an HTML tag, `*` in `int*` or `_` at the start of `_gold` like emphasis. In backticks, everything stays as written.
