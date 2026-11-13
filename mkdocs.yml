@@ -87,6 +87,7 @@ nav:
   - Getting started:
       - Installation: getting-started/installation.md
       - Permissions: getting-started/permissions.md
+      - Wine and Proton: wine-proton.md
       - "Tutorial: your first hook": getting-started/first-hook.md
   - User guide:
       - Scanning for values: guide/scanning.md
@@ -100,7 +101,7 @@ nav:
       - Code explorer: guide/code-explorer.md
       - Object browser: guide/object-browser.md
       - Notes: guide/notes.md
-      - Docking, memory, sessions and logs: guide/tools.md
+      - Docking, memory, sessions, logs and help: guide/tools.md
       - Settings and themes: guide/settings.md
       - Saving, export and import: guide/data.md
       - Starting games with grembyte-cli: guide/launch-option.md
@@ -116,7 +117,7 @@ nav:
       - Scripts: examples/hermesquest-scripts.md
       - Code explorer: examples/dummy-game-code-explorer.md
       - Pointer chain from the code: examples/dummy-game-pointer-chain.md
-  - Wine and Proton: wine-proton.md
+      - "Underkeep: a debug menu": examples/underkeep-debug-menu.md
   - Reference:
       - Files and environment: reference/files.md
       - JavaScript in Grembyte: reference/javascript.md

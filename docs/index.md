@@ -2,7 +2,7 @@
 
 Grembyte is a desktop application for inspecting and changing the memory of running games. It finds values such as gold or health, shows which code writes them, and hooks that code so every write is changed the way you want: a multiplier, a fixed value, bounds, or a JavaScript function of your own. Hooks, addresses and scripts are stored per game and come back the next time it starts.
 
-It runs on **Linux**, including Windows games under **Wine and Proton**, and on **Windows**. For Unity (Mono and IL2CPP) and Unreal Engine games it also understands the game's own classes and methods.
+It runs on **Linux**, including Windows games under **[Wine and Proton](wine-proton.md)**, and on **Windows**. For Unity (Mono and IL2CPP) and Unreal Engine games it also understands the game's own classes and methods.
 
 !!! info "Alpha stage"
     Grembyte is still in an early alpha stage. Features, the user interface and the format of saved game data can still change between releases, and some games or setups may not work yet. Bug reports and game reports are welcome on [GitHub](https://github.com/grembyte/grembyte/issues).
@@ -67,9 +67,25 @@ markdown="span">
 
     ---
 
-    JavaScript that runs on the game's main thread on a schedule or by hand, with access to its objects and methods.
+    JavaScript that runs on the game's main thread on a schedule, by hand or by a hotkey, with access to its objects and methods.
 
     [:octicons-arrow-right-24: Scripts](guide/scripts.md)
+
+-   :material-file-tree-outline:{ .lg .middle } **Browse live objects**
+
+    ---
+
+    For Unreal and Unity Mono games: every live object of the game by its class, opened in the object inspector to read fields and call methods.
+
+    [:octicons-arrow-right-24: Object browser](guide/object-browser.md)
+
+-   :material-chart-timeline-variant:{ .lg .middle } **Trace native functions**
+
+    ---
+
+    For games without an engine Grembyte knows: which functions a scenario calls, and what one of them gets, returns and changes.
+
+    [:octicons-arrow-right-24: Native trace and monitor](guide/native-tools.md)
 
 -   :material-file-search-outline:{ .lg .middle } **Explore native code**
 
@@ -87,6 +103,14 @@ markdown="span">
 
     [:octicons-arrow-right-24: Notes](guide/notes.md)
 
+-   :material-rocket-launch-outline:{ .lg .middle } **Play without the window**
+
+    ---
+
+    Put `grembyte-cli` in front of a Steam game's launch command: it starts the game with its saved hooks and scripts, hotkeys included.
+
+    [:octicons-arrow-right-24: grembyte-cli](guide/launch-option.md)
+
 </div>
 
 ## Where to start
@@ -94,7 +118,7 @@ markdown="span">
 1. [Download and install](getting-started/installation.md) Grembyte (no GitHub experience needed) and check the [permissions](getting-started/permissions.md) it needs on Linux.
 2. Follow the [tutorial](getting-started/first-hook.md): with the small test game in the repository you find a value, watch its writes and hook them, in about ten minutes.
 3. Read the [user guide](guide/scanning.md) for the details of each tool, and the [engine pages](engines/index.md) for Unity and Unreal games.
-4. Try everything on [HermesQuest](examples/index.md), a small Unity role-playing game made for it, with worked examples of pointer scans, hooks and scripts – and an introduction to [JavaScript in Grembyte](reference/javascript.md).
+4. Try everything on [HermesQuest](examples/index.md), a small Unity role-playing game made for it, with worked examples of pointer scans, hooks and scripts – and an introduction to [JavaScript in Grembyte](reference/javascript.md). Examples for native games use the test game of the tutorial.
 
 !!! info "Under development"
     Grembyte is under active development. The [roadmap](https://github.com/grembyte/grembyte/blob/main/ROADMAP.md) lists what is planned and what is still open.

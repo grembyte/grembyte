@@ -1,6 +1,6 @@
 # HermesQuest
 
-HermesQuest is a small role-playing game made for trying out Grembyte. It is a Unity game with the Mono backend, so every tool works on it: value scans, pointer scans, the write watch, value hooks, and the [Unity (Mono)](../engines/unity-mono.md) tools – catalog, trace, method monitor, method hooks and scripts. The examples in this section all use it.
+HermesQuest is a small role-playing game made for trying out Grembyte. It is a Unity game with the Mono backend, so every tool works on it: value scans, pointer scans, the write watch, value hooks, and the [Unity (Mono)](../engines/unity-mono.md) tools – catalog, trace, method monitor, method hooks and scripts. The first three examples use it; the [next two](#examples-with-the-test-game) use the small C test game of the tutorial, and [one](#examples-in-other-games) a released game.
 
 It is deliberately built like a real game: the values live in heap objects behind pointers, "New game" moves them to new addresses, player and enemies share one class, and all damage goes through one pipeline that hooks and scripts can change.
 
@@ -121,6 +121,17 @@ Combat.MeleeAttack / Combat.CastFireBolt
 1. [Scans and pointer scan](hermesquest-scans.md): find gold, mana and experience, and a pointer chain that survives a new game.
 2. [Hooks](hermesquest-hooks.md): multiply gold at the instruction that writes it, protect the player but not the enemies, change damage with method hooks.
 3. [Scripts](hermesquest-scripts.md): read and change the character from JavaScript, heal on a timer, scripts with parameters.
+
+## Examples with the test game
+
+The native tools need a game without an engine adapter. These examples use the C test game of the [tutorial](../getting-started/first-hook.md) (`test_app/dummy_game.c`):
+
+1. [Code explorer](dummy-game-code-explorer.md): from a button's text to the function that pays out gold, and a native script that gives 500 gold through it.
+2. [Pointer chain from the code](dummy-game-pointer-chain.md): find the pointer chain to the gold by reading the code that changes it, instead of with a pointer scan.
+
+## Examples in other games
+
+- [Underkeep: a hidden debug menu](underkeep-debug-menu.md): two native scripts open a debug menu in a game with an engine of its own, under Proton.
 
 If JavaScript is new to you, [JavaScript in Grembyte](../reference/javascript.md) in the reference explains the language as far as hooks and scripts need it, along these examples.
 

@@ -14,9 +14,11 @@ gcc -O2 test_app/dummy_game.c -o build/dummy_game.exe $(pkg-config --cflags --li
 ./build/dummy_game.exe
 ```
 
-!!! screenshot "Screenshot to add: Grembyte next to the test game"
-    Where this tutorial leads: the test game on the right, Grembyte on the left with its gold found and tracked through a pointer chain.
-    File: `docs/assets/photos/dummy-game-dark.webp` and `-light.webp`; the versions there still show Hermes Hook and what was done back then.
+<figure markdown="span">
+  ![Grembyte next to the test game](../assets/photos/dummy-game-dark.webp#only-dark)
+  ![Grembyte next to the test game](../assets/photos/dummy-game-light.webp#only-light)
+  <figcaption>Where this tutorial leads: the test game on the right, Grembyte on the left with its gold found and tracked through a pointer chain.</figcaption>
+</figure>
 
 ## 1. Attach to the game
 
@@ -52,7 +54,7 @@ Right-click "Gold" in the tracked addresses and choose **Address watch (writes)*
 
 ## 4. Hook it
 
-Select the row of the increase and click **Create hook**. Choose the template **Multiplier**, factor `10`, and "Increases only".
+Select the row of the increase and click **Create hook …**. Choose the template **Multiplier**, factor `10`, and "Increases only".
 
 <figure markdown="span">
   ![Create hook dialog](../assets/screenshots/hook-dialog-dark.webp#only-dark){ width="640" }

@@ -17,7 +17,7 @@ The examples assume you have tracked Gold, Mana and Health as in [Scans and poin
 
 1. Right-click "Gold" → **Address watch (writes)**.
 2. Kill an enemy in the game. The watch lists one row: the instruction that added the gold. In a Mono game the code was compiled at run time and lies in no module, so Grembyte names it by its C# method: `AddGold` of the class `Character`, plus an offset into it.
-3. Select the row → **Create hook**, template **Multiplier**, factor `10`, **Increases only**.
+3. Select the row → **Create hook …**, template **Multiplier**, factor `10`, **Increases only**.
 
 From now on every kill brings ten times the gold. The column **Last** in the Hooks tab shows each write as *old → written by the game ⇒ stored*, e.g. `12 → 17 ⇒ 62`.
 
@@ -41,7 +41,7 @@ The watch shows more than one row, because three methods write health:
 | `Character:Heal` | resting with R |
 | `Character:LevelUp` | a new level refills health |
 
-Select the `TakeDamage` row → **Create hook**. Instead of a built-in template, use one of your own: in **View → Hook templates …** create a template "Halve damage" with this function:
+Select the `TakeDamage` row → **Create hook …**. Instead of a built-in template, use one of your own: in **View → Hook templates …** create a template "Halve damage" with this function:
 
 ```js
 ctx => ctx.delta < 0 ? ctx.old + ctx.delta / 2 : ctx.new

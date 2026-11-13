@@ -15,9 +15,12 @@ The object a [hook template](../guide/templates.md) and a method hook's script r
 | `ctx.writePc` | Address of the write instruction |
 | `ctx.threadId` | Thread that wrote |
 | `ctx.hookId` | Database id of the hook |
-| `ctx.log(…)` | Output in the hook log and the debug window |
+| `ctx.log(…)`, `console.log(…)` | Output in the hook log and the debug window |
 
 Integer results are truncated and limited to the range of the type. `int64` and `uint64` values are exact only up to 2^53.
+
+!!! note "Hooks of the ptrace backend"
+    With the `ptrace` [backend](../guide/hooks.md) the script runs in Grembyte, not in the game, after the game wrote the value. `ctx.old`, `ctx.new`, `ctx.delta`, `ctx.params`, `ctx.state` and `ctx.valueType` are as above, but `ctx.address` and `ctx.writePc` are `"0x0"`, `ctx.threadId` and `ctx.hookId` are `0`, and what `ctx.log` writes is not shown. Frida's APIs (`ptr()`, `Memory`, …) are not available there.
 
 ## Method hooks
 
@@ -36,7 +39,7 @@ A method hook's script runs before or after the hooked method (**When**). Beside
 | `ctx.static(field)` | Mono and IL2CPP: read a static field |
 | `ctx.find(className[, objectName])`, `ctx.forEach(…)`, `ctx.outerName(…)` | Find live objects, as in [scripts](script-context.md) |
 
-Objects – `ctx.this`, object arguments, results – are the same wrappers as in scripts: `.name`, `.className`, `.field("x")`, `.get("property")`, `.call("Method", …)`, `.component("Type")`, and fields, properties and methods directly (`target.IsPlayer`, `obj.GetComponentByName("Stats")`). Before the call, assigning a field (`obj.Field = …`) or property (which calls its setter) changes what the method works with.
+Objects – `ctx.this`, object arguments, results – are the same [wrappers as in scripts](script-context.md#object-wrappers): fields, properties and methods directly (`target.IsPlayer`, `obj.GetComponentByName("Stats")`). Before the call, assigning a field (`obj.Field = …`) or property (which calls its setter) changes what the method works with.
 
 In Unreal games a hook called from Blueprint bytecode only gets arguments that are simple variables or constants, and only `ref` arguments can be changed. See [Engines](../engines/index.md#method-hooks) for an overview and the [HermesQuest examples](../examples/hermesquest-hooks.md#method-hooks) for method hooks step by step.
 

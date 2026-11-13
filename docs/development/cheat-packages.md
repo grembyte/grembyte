@@ -19,7 +19,7 @@ The [export](../guide/data.md#export-and-import) and the package are separate fo
 | Purpose | Back up or move *your work* | Hand on *selected* cheats |
 | Content | Everything: addresses, pointer scans, favorites, notes, hooks as they are | Only what a player should switch on |
 | Addressing | Also absolute addresses and program paths | Only what survives a restart of the game |
-| Presentation | None | Controls, texts, categories, hotkeys |
+| Presentation | None (only a manual script's hotkey) | Controls, texts, categories, hotkeys |
 | Read by | Grembyte | Grembyte, `grembyte-cli`, other tools |
 
 A package is made in Grembyte's window ("Publish as package …" is the working title): the
@@ -290,8 +290,5 @@ any function of the C library, read files or start programs. The QJSEngine sandb
 
 ## Next steps
 
-1. A JSON Schema of the format.
-2. A converter from the export to a package as a prototype, tried with the saved data of
-   Pillars of Eternity, Baldur's Gate and Avowed.
-3. The runtime (`grembyte.runtime`) taken out of `grembyte/cli.py`, with `grembyte-cli` as
-   its first user.
+The steps towards packages and a runtime other tools can use are planned in the
+[roadmap](https://github.com/grembyte/grembyte/blob/main/ROADMAP.md) ("Use by other tools").

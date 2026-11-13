@@ -104,15 +104,7 @@ Select the first line of `add_gold` and click **Monitor**. The [native function 
 
 ## 4. What add_gold takes
 
-To call a function from a script, `ctx.native.fn` needs its return type and argument types. (Registers, their 32- and 8-bit names and the instructions below are explained in the [assembly quick reference](../reference/assembly.md).) A game without debug information states them nowhere; they are read from the machine code. That works well, because the calling convention fixes where arguments arrive:
-
-| | Linux (System V, x86-64) | Windows and Wine/Proton (x64) |
-| --- | --- | --- |
-| Integers and pointers, arguments 1–4 | `rdi`, `rsi`, `rdx`, `rcx` | `rcx`, `rdx`, `r8`, `r9` |
-| Arguments 5 and 6 | `r8`, `r9`, then the stack | from the 5th on the stack |
-| `float` and `double` | `xmm0`–`xmm7` | `xmm0`–`xmm3`, at the argument's position |
-| Return value | `rax`, or `xmm0` | `rax`, or `xmm0` |
-| C++ methods | `this` is the first argument (`rdi`) | `this` is the first argument (`rcx`) |
+To call a function from a script, `ctx.native.fn` needs its return type and argument types. (Registers, their 32- and 8-bit names and the instructions below are explained in the [assembly quick reference](../reference/assembly.md).) A game without debug information states them nowhere; they are read from the machine code. That works well, because the [calling convention](../reference/assembly.md#calling-conventions) fixes where arguments arrive: on Linux integers and pointers come in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, `float` and `double` in `xmm0`–`xmm7`, and the result goes back in `rax` or `xmm0` (Windows and Wine/Proton use `rcx`, `rdx`, `r8`, `r9` and `xmm0`–`xmm3`). The first argument of a C++ method is `this`.
 
 ### Which argument registers does the function read before writing them?
 

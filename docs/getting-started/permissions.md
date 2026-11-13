@@ -20,13 +20,13 @@ Grembyte uses three ways into a game, and each feature needs only one of them. A
 
 Scans and the address list therefore need `ptrace_scope = 0` as much as the Frida tools do; only the process list and the code explorer work without it. Grembyte starts nothing in the game on its own: Frida and ptrace are only used when you open one of the tools above, and the game is released when you close it or detach.
 
-For **Wine and Proton games** Frida's Linux agent cannot be used. Grembyte loads Frida's Windows gadget into the game instead, through a small Windows helper that runs in the game's Wine prefix and uses the Windows API (`CreateRemoteThread` on `LoadLibraryW`); ptrace serves only as a fallback. The gadget listens on `127.0.0.1` only, so it is not reachable from other computers. It is downloaded once from Frida's GitHub releases, and Grembyte checks its SHA-256 checksum against the one GitHub publishes for that release (Frida releases from before 2025 list none; Grembyte then logs a warning). See [Wine and Proton](../wine-proton.md).
+For **Wine and Proton games** Grembyte loads Frida's Windows gadget into the game instead, through a small Windows helper; ptrace serves only as a fallback. The gadget listens on `127.0.0.1` only and is checked against its published checksum; see [Wine and Proton](../wine-proton.md#the-frida-gadget).
 
 Grembyte makes no other network connections, apart from links you open yourself (documentation, bug reports).
 
 ## Allowing access for a session
 
-Do not run Grembyte as root just in case, and do not loosen `ptrace_scope` permanently system-wide. For a session a temporary change is enough; it lapses at the next reboot. Note down the current value first, so you can restore it later:
+Games started through [grembyte-cli](../guide/launch-option.md#permissions) are its children, so their saved hooks and scripts work with `ptrace_scope = 1` as well. Do not run Grembyte as root just in case, and do not loosen `ptrace_scope` permanently system-wide. For a session a temporary change is enough; it lapses at the next reboot. Note down the current value first, so you can restore it later:
 
 ```bash
 sysctl kernel.yama.ptrace_scope        # show the current value, e.g. 1
@@ -45,6 +45,10 @@ sudo sysctl kernel.yama.ptrace_scope=1
 A reboot also restores the distribution's default, unless the value was set persistently in a file under `/etc/sysctl.d/`. In that case remove or change the entry there and reload it with `sudo sysctl --system`.
 
 The process list only shows processes whose information the current user may access.
+
+## One Grembyte per game
+
+Each Grembyte process brings its own Frida agent into the game, and two agents hook the same functions of the game. Two Grembyte windows attached to the same game, or Grembyte and another Frida tool, can crash it. For native Linux games Grembyte therefore refuses to attach while another program's Frida agent is in the game; close the other Grembyte or Frida tool first. Under Proton it cannot tell, so make sure only one is attached. [grembyte-cli](../guide/launch-option.md#taking-the-game-over-in-the-window) is the exception: the window takes the game over from it.
 
 ## Windows
 
