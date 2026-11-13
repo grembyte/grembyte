@@ -134,6 +134,16 @@ def test_the_first_scan_takes_aligned_from_the_settings(qt_app, monkeypatch):
         _delete_window(window)
 
 
+def test_pointer_scan_alignment_follows_the_pointer_size():
+    assert settings.pointer_alignment("pointer_location_step", 8) == 8
+    assert settings.pointer_alignment("pointer_value_alignment", 4) == 4
+    settings.apply({"pointer_location_step": "4", "pointer_value_alignment": "16"})
+    assert settings.pointer_alignment("pointer_location_step", 8) == 4
+    assert settings.pointer_alignment("pointer_value_alignment", 4) == 16
+    settings.apply({"pointer_value_alignment": "1"})
+    assert settings.pointer_alignment("pointer_value_alignment", 8) == 1
+
+
 def test_trace_agents_get_the_sequence_capacity():
     # pylint: disable=import-outside-toplevel
     from grembyte.features import native_trace, trace

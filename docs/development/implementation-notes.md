@@ -400,6 +400,7 @@ functions called newly or more often when, for example, paying or taking damage.
 ## Pointer scan
 
 - **Thread stacks** (off by default as chain passages): on Linux, Wine included, a thread's stack is the memory around its stack pointer (`thread_stack_pointers`), on Windows the memory above its guard page.
+- **Saved candidates are packed** (`db/models/pointer_scan.py`): as a JSON list of `{module, base_offset, offsets}` objects a scan of up to a million chains took about 50 MB in the database (four scans: 198 MB). The chains are now `[module index, base offset, [offsets]]` with a module table, zlib-compressed in `packed`; 1 million random chains take 11 MB, real ones less. The old `chains` column stays (required in older databases) and is emptied; `init_db` packs older scans once and runs VACUUM. `chain_count` lets the check for obsolete scans (`AddressRepository.obsolete_pointer_scans`) do without unpacking. Exports keep the JSON objects.
 
 ## Activity log
 

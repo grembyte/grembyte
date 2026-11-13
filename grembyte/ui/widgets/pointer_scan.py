@@ -5,7 +5,6 @@ from PySide6.QtCore import Qt, QThread, Signal  # pylint: disable=import-error,n
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
-    QComboBox,
     QDialog,
     QFormLayout,
     QGridLayout,
@@ -22,7 +21,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 from sqlalchemy.exc import SQLAlchemyError
 
-from grembyte.core import chain_score, logs, memory_regions, messages
+from grembyte.core import chain_score, logs, memory_regions, messages, settings
 from grembyte.core.pointer import (
     PointerMap,
     ScanCancelled,
@@ -266,59 +265,37 @@ class PointerScanDialog(QDialog):
         self.btn_from_scan.setVisible(self.address_source is not None)
         address_row.addWidget(self.btn_from_scan)
         form.addRow(self.translations["pointer.address"], address_row)
+        # Depth and offset share a row; how a scan reads memory (alignment,
+        # thread stacks, result limit) is set under Settings > Pointer scan.
+        limits = QHBoxLayout()
         self.depth_input = SpinBox()
         self.depth_input.setRange(1, 7)
         self.depth_input.setValue(self._scan.max_depth if self._scan else 5)
         self.depth_input.setToolTip(self.translations["pointer.depth_tooltip"])
-        form.addRow(self.translations["pointer.depth"], self.depth_input)
+        limits.addWidget(self.depth_input, 1)
+        limits.addSpacing(16)
+        offset_label = QLabel(self.translations["pointer.offset"])
+        offset_label.setToolTip(self.translations["pointer.offset_tooltip"])
+        limits.addWidget(offset_label)
         self.offset_input = QLineEdit(f"0x{self._scan.max_offset if self._scan else 0x1000:X}")
         self.offset_input.setToolTip(self.translations["pointer.offset_tooltip"])
-        form.addRow(self.translations["pointer.offset"], self.offset_input)
-        self.results_input = SpinBox()
-        self.results_input.setRange(100, 1_000_000)
-        self.results_input.setSingleStep(1000)
-        self.results_input.setValue(10000)
-        self.results_input.setToolTip(self.translations["pointer.max_results_tooltip"])
-        form.addRow(self.translations["pointer.max_results"], self.results_input)
-        # Memory regions: where chains may start, and what lies between
+        limits.addWidget(self.offset_input, 1)
+        form.addRow(self.translations["pointer.depth"], limits)
+        # Where chains may start; the heap lies between the steps of every chain.
         chosen = _remembered_categories(bool(self.assemblies))
         self.region_boxes = {}
         starts = [category for category in memory_regions.START_CATEGORIES
                   if category != memory_regions.ASSEMBLIES or self.assemblies is not None]
-        for label, categories in (
-                ("pointer.regions_start", starts),
-                ("pointer.regions_between", memory_regions.DYNAMIC_CATEGORIES)):
-            grid = QGridLayout()
-            grid.setContentsMargins(0, 0, 0, 0)
-            for position, category in enumerate(categories):
-                box = QCheckBox()
-                box.setChecked(category in chosen
-                               or category in memory_regions.REQUIRED_CATEGORIES)
-                box.setEnabled(category not in memory_regions.REQUIRED_CATEGORIES
-                               and (category != memory_regions.ASSEMBLIES
-                                    or bool(self.assemblies)))
-                box.toggled.connect(self._remember_categories)
-                self.region_boxes[category] = box
-                grid.addWidget(box, position // 3, position % 3)
-            form.addRow(self.translations[label], grid)
-        # Where pointers lie and where they point to, in bytes
-        size = self._pointer_size()
-        self.location_step = QComboBox()
-        for step in (8, 4):
-            if step <= size:
-                self.location_step.addItem(
-                    self.translations["pointer.alignment_bytes"].format(bytes=step), step)
-        self.location_step.setCurrentIndex(self.location_step.findData(size))
-        self.location_step.setToolTip(self.translations["pointer.location_step_tooltip"])
-        form.addRow(self.translations["pointer.location_step"], self.location_step)
-        self.value_alignment = QComboBox()
-        for alignment in (16, 8, 4, 1):
-            label = (self.translations["pointer.alignment_any"] if alignment == 1
-                     else self.translations["pointer.alignment_bytes"].format(bytes=alignment))
-            self.value_alignment.addItem(label, alignment)
-        self.value_alignment.setCurrentIndex(self.value_alignment.findData(size))
-        self.value_alignment.setToolTip(self.translations["pointer.value_alignment_tooltip"])
-        form.addRow(self.translations["pointer.value_alignment"], self.value_alignment)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        for position, category in enumerate(starts):
+            box = QCheckBox()
+            box.setChecked(category in chosen)
+            box.setEnabled(category != memory_regions.ASSEMBLIES or bool(self.assemblies))
+            box.toggled.connect(self._remember_categories)
+            self.region_boxes[category] = box
+            grid.addWidget(box, position // 3, position % 3)
+        form.addRow(self.translations["pointer.regions_start"], grid)
         layout.addLayout(form)
 
         actions = QHBoxLayout()
@@ -582,12 +559,18 @@ class PointerScanDialog(QDialog):
         return name, tooltip + "\n\n" + ", ".join(self.assemblies)
 
     def _chosen_categories(self):
-        return {category for category, box in self.region_boxes.items() if box.isChecked()}
+        """The categories to scan: the chosen starts, the heap and, if set, the stacks."""
+        chosen = {category for category, box in self.region_boxes.items() if box.isChecked()}
+        chosen |= memory_regions.REQUIRED_CATEGORIES
+        if settings.get("pointer_stacks"):
+            chosen.add(memory_regions.STACK)
+        return chosen
 
     def _remember_categories(self):
+        starts = {category for category, box in self.region_boxes.items() if box.isChecked()}
         window_state.settings().setValue(
             _ASSEMBLY_CATEGORIES_KEY if self.assemblies else _CATEGORIES_KEY,
-            ",".join(sorted(self._chosen_categories())))
+            ",".join(sorted(starts)))
 
     def _selected_chains(self):
         """The chains of the selected rows, in table order."""
@@ -617,7 +600,7 @@ class PointerScanDialog(QDialog):
 
     def _use_static(self):
         if self._static_chain is not None and self._worker is None and self.pid is not None:
-            self._choose(self._static_chain)
+            self._choose(self._static_chain, static=True)
 
     def take_scan_address(self):
         """Use the address selected in the scanner results."""
@@ -660,20 +643,21 @@ class PointerScanDialog(QDialog):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        settings = {
+        limits = {
             "max_depth": self.depth_input.value(),
             "max_offset": max_offset,
         }
-        max_results = self.results_input.value()
+        max_results = settings.get("pointer_max_results")
+        size = self._pointer_size()
         worker = PointerScanWorker(
             self.pid, target, max_results=max_results,
             categories=self._chosen_categories(), main_module=self._main_module,
-            location_step=self.location_step.currentData(),
-            value_alignment=self.value_alignment.currentData(),
-            assemblies=self.assemblies or (), **settings
+            location_step=settings.pointer_alignment("pointer_location_step", size),
+            value_alignment=settings.pointer_alignment("pointer_value_alignment", size),
+            assemblies=self.assemblies or (), **limits
         )
         self._start(worker, lambda chains: self._scan_done(
-            chains, settings, max_results, worker.complete_depth, worker.static_areas
+            chains, limits, max_results, worker.complete_depth, worker.static_areas
         ))
 
     def start_filter(self):
@@ -717,12 +701,12 @@ class PointerScanDialog(QDialog):
             self.status_label.setText(self.translations[f"pointer.{phase}"])
         self.progress.setValue(value)
 
-    def _scan_done(self, chains, settings, max_results, complete_depth, static_areas=()):
+    def _scan_done(self, chains, limits, max_results, complete_depth, static_areas=()):
         # pylint: disable=too-many-arguments
         if static_areas:
             self._areas = {area.name: area for area in static_areas}
             self._show_regions()
-        self._scan = SavedPointerScan(chains, settings["max_depth"], settings["max_offset"], 0)
+        self._scan = SavedPointerScan(chains, limits["max_depth"], limits["max_offset"], 0)
         self._save()
         message = self.translations["pointer.found"].format(count=len(chains))
         if len(chains) >= max_results:
@@ -832,10 +816,34 @@ class PointerScanDialog(QDialog):
         else:
             self.status_label.setText(self.translations["pointer.adopted"].format(count=count))
 
-    def _choose(self, chain):
+    def _choose(self, chain, static=False):
         self.chain = chain
         self.chain_chosen.emit(chain)
+        self._offer_clear(static)
         self.accept()
+
+    def _offer_clear(self, static):
+        """Offer to delete the candidates once a chain is in use.
+
+        Asked when the chain was filtered after a restart at least once, or
+        when the address is static and needs no chain search at all.
+        """
+        if self._scan is None or not self._scan.chains or not (static or self._scan.rounds):
+            return
+        question = self.translations["pointer.clear_after_choose"].format(
+            count=len(self._scan.chains))
+        if QMessageBox.question(self, self.windowTitle(), question) \
+                != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.repository.delete_pointer_scans([self.entry["id"]])
+        except SQLAlchemyError:
+            return  # kept; File > Delete saved entries removes it later
+        self._scan = None
+        try:
+            self.repository.compact()
+        except SQLAlchemyError:
+            pass  # e.g. another connection writes; File > Compact database does it later
 
     def done(self, result):  # pylint: disable=invalid-name
         """Stop a running scan before closing (it may finish after a timeout)."""

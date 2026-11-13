@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths  # pylint: disable=import-error,no-name-in-module
-from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy import create_engine, event, inspect, select, text, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -149,6 +149,8 @@ def init_db(db_engine=engine):
     set_aside_incompatible_tables(db_engine)
     Base.metadata.create_all(db_engine)
     add_missing_columns(db_engine)
+    if pack_pointer_scans(db_engine):
+        vacuum_db(db_engine)
 
 
 def adopt_legacy_db(path, legacy_path=LEGACY_DB_PATH):
@@ -280,6 +282,36 @@ def add_missing_columns(db_engine=engine):
                 connection.execute(text(
                     f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column_type}{required}'
                 ))
+
+
+def pack_pointer_scans(db_engine=engine):
+    """Pack the pointer scans older versions kept as JSON; returns how many.
+
+    Done once per database (see grembyte.db.models.pointer_scan.pack_chains);
+    one scan at a time, as each can hold a million chains.
+    """
+    # pylint: disable=import-outside-toplevel
+    from grembyte.db.models import PointerScan
+    from grembyte.db.models.pointer_scan import pack_chains
+    packed = 0
+    with Session(db_engine) as session:
+        ids = list(session.scalars(select(PointerScan.id).where(PointerScan.packed.is_(None))))
+        for scan_id in ids:
+            chains = session.scalar(select(PointerScan.chains).where(PointerScan.id == scan_id))
+            try:
+                data = pack_chains(chains or [])
+            except (AttributeError, KeyError, TypeError, ValueError) as error:
+                log.warning("Pointer scan %d cannot be packed: %s", scan_id, error)
+                continue
+            # updated_at stays: it tells when the scan was last filtered.
+            session.execute(update(PointerScan).where(PointerScan.id == scan_id).values(
+                packed=data, chain_count=len(chains or []), chains=[],
+                updated_at=PointerScan.updated_at))
+            session.commit()
+            packed += 1
+    if packed:
+        log.info("Packed %d pointer scans", packed)
+    return packed
 
 
 def database_size(db_engine=engine):

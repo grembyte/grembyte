@@ -570,8 +570,10 @@ def _wait(app, predicate, timeout=10):
 
 
 @requires_target
-def test_pointer_scan_dialog_scans_filters_and_picks(binary, qt_app, sessions):
+def test_pointer_scan_dialog_scans_filters_and_picks(binary, qt_app, sessions, monkeypatch):
     # pylint: disable=import-outside-toplevel,protected-access
+    from PySide6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
+
     from grembyte.db.repository.addresses import AddressRepository
     from grembyte.db.repository.hooks import HookRepository
     from grembyte.ui.localization import load_translations
@@ -617,8 +619,13 @@ def test_pointer_scan_dialog_scans_filters_and_picks(binary, qt_app, sessions):
                    if dialog.table.item(r, 0).data(Qt.ItemDataRole.UserRole) == expected)
         dialog.table.selectRow(row)
         assert dialog.btn_use.isEnabled()
+        # Filtered once: deleting the candidates is offered; kept on "No".
+        questions = []
+        monkeypatch.setattr(QMessageBox, "question", lambda *args: questions.append(args[2])
+                            or QMessageBox.StandardButton.No)
         dialog._accept()
         assert dialog.chain == expected
+        assert len(questions) == 1 and repository.get_pointer_scan(entry_id) is not None
     finally:
         second.close()
 
@@ -1022,7 +1029,10 @@ def test_pointer_dialog_survives_a_restart_of_the_program(binary, qt_app, sessio
         _wait(qt_app, lambda: dialog._worker is None)
         assert _gold_chain(binary) in dialog.candidates()
 
-        # The chain is taken over by the reloaded address-list entry.
+        # The chain is taken over by the reloaded address-list entry; its
+        # candidates are kept (asked since it was filtered after a restart).
+        monkeypatch.setattr(main_window.QMessageBox, "question",
+                            lambda *_args: main_window.QMessageBox.StandardButton.No)
         dialog._choose(_gold_chain(binary))
         qt_app.processEvents()
         assert window._address_meta(0)["pointer"] == _gold_chain(binary)
@@ -1236,7 +1246,7 @@ def test_pointer_dialog_offers_memory_categories_and_remembers_them(qt_app, sess
     # pylint: disable=import-outside-toplevel,protected-access
     import os
 
-    from grembyte.core import memory_regions
+    from grembyte.core import memory_regions, settings
     from grembyte.db.repository.addresses import AddressRepository
     from grembyte.db.repository.hooks import HookRepository
     from grembyte.ui.localization import load_translations
@@ -1252,16 +1262,22 @@ def test_pointer_dialog_offers_memory_categories_and_remembers_them(qt_app, sess
     boxes = dialog.region_boxes
 
     assert dialog._chosen_categories() == memory_regions.DEFAULT_CATEGORIES
-    assert boxes["heap"].isChecked() and not boxes["heap"].isEnabled()
-    assert not boxes["stack"].isChecked() and not boxes["system"].isChecked()
+    # Only where chains start is chosen here; heap and stacks are not offered.
+    assert "heap" not in boxes and "stack" not in boxes
+    assert not boxes["system"].isChecked()
     # sizes and modules are shown: python's libraries are system modules
     assert boxes["system"].text().startswith(translations["pointer.region.system"] + " (")
     assert "MB" in boxes["system"].text() and "libc" in boxes["system"].toolTip()
 
-    boxes["stack"].setChecked(True)
     boxes["engine"].setChecked(False)
     again = PointerScanDialog(translations, repository, os.getpid(), entry)
-    assert again._chosen_categories() == {"main", "game", "heap", "stack"}
+    assert again._chosen_categories() == {"main", "game", "heap"}
+    # The thread stacks are searched as set under Settings > Pointer scan.
+    settings.apply({"pointer_stacks": True})
+    try:
+        assert again._chosen_categories() == {"main", "game", "heap", "stack"}
+    finally:
+        settings.reset()
 
 
 def test_pointer_dialog_shows_the_most_promising_chains_first(qt_app, sessions):
@@ -1453,3 +1469,105 @@ def test_the_main_window_looks_up_static_fields_saved_chains_need(qt_app, monkey
     finally:
         pointer._managed_bases.pop(os.getpid(), None)
         window.close()
+
+
+def _scan_entry(sessions, label, chains, *, pointer=None, rounds=0, days_ago=0):
+    """An address-list entry with a saved scan last filtered ``days_ago``."""
+    # pylint: disable=import-outside-toplevel
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import update
+
+    from grembyte.db.models import PointerScan
+    from grembyte.db.repository.addresses import AddressRepository, SavedPointerScan
+    from grembyte.db.repository.hooks import HookRepository
+
+    repository = AddressRepository(sessions)
+    process_id = HookRepository(sessions).get_or_create_process("game", "/opt/game")
+    entry_id = repository.add_address(process_id, label=label, value_type="int32",
+                                      address=0x20000, pointer=pointer)
+    repository.save_pointer_scan(entry_id, SavedPointerScan(chains, 5, 0x1000, rounds))
+    moment = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    with sessions() as session:
+        session.execute(update(PointerScan).where(PointerScan.address_id == entry_id)
+                        .values(updated_at=moment))
+        session.commit()
+    return repository, entry_id
+
+
+def test_obsolete_pointer_scans_are_found_and_deleted(sessions):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.db.repository.addresses import CHOSEN, EMPTY, STALE
+
+    chain = PointerChain("game", 0x10, (0x8,))
+    _scan_entry(sessions, "fresh", [chain] * 10)
+    _scan_entry(sessions, "in use, recent", [chain], pointer=chain, days_ago=2)
+    _scan_entry(sessions, "in use", [chain] * 100, pointer=chain, days_ago=10)
+    _scan_entry(sessions, "old", [chain] * 10, days_ago=90)
+    repository, _empty = _scan_entry(sessions, "empty", [], rounds=1)
+
+    obsolete = repository.obsolete_pointer_scans()
+    assert {scan.label: scan.reason for scan in obsolete} == {
+        "in use": CHOSEN, "old": STALE, "empty": EMPTY}
+    assert obsolete[0].label == "in use"  # largest first
+    assert obsolete[0].count == 100 and obsolete[0].days == 10 and obsolete[0].size > 0
+
+    assert repository.delete_pointer_scans([scan.address_id for scan in obsolete]) == 3
+    assert repository.obsolete_pointer_scans() == []
+    before, after = repository.compact()
+    assert after <= before
+
+
+def test_the_cleanup_dialog_does_not_offer_kept_scans_again(qt_app, sessions):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.pointer_cleanup import (
+        PointerCleanupDialog,
+        keep_scans,
+        scans_to_offer,
+    )
+
+    chain = PointerChain("game", 0x10, (0x8,))
+    _scan_entry(sessions, "old", [chain], days_ago=90)
+    repository, _entry = _scan_entry(sessions, "empty", [], rounds=1)
+    obsolete = repository.obsolete_pointer_scans()
+    dialog = PointerCleanupDialog(load_translations("de"), scans_to_offer(obsolete))
+    assert dialog.table.rowCount() == 2 and dialog.chosen() == obsolete
+    dialog.table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+    [kept] = [scan for scan in obsolete if scan not in dialog.chosen()]
+
+    keep_scans([kept], obsolete)
+    assert scans_to_offer(obsolete) == [scan for scan in obsolete if scan is not kept]
+    # Filtered again, the scan is a different one: offered once it is obsolete again.
+    _scan_entry(sessions, "later", [chain], days_ago=90)
+    assert len(scans_to_offer(repository.obsolete_pointer_scans())) == 2
+
+
+def test_choosing_a_filtered_chain_offers_to_delete_the_candidates(
+        qt_app, sessions, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from PySide6.QtWidgets import QMessageBox  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets.pointer_scan import PointerScanDialog
+
+    chain = PointerChain("game", 0x10, (0x8,))
+    questions = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: questions.append(args[2])
+                        or QMessageBox.StandardButton.Yes)
+    translations = load_translations("en")
+
+    def choose(rounds):
+        repository, entry_id = _scan_entry(sessions, f"x{rounds}", [chain] * 3, rounds=rounds)
+        dialog = PointerScanDialog(translations, repository, os.getpid(),
+                                   {"id": entry_id, "label": "x", "address": 0x20000,
+                                    "type": "int32"})
+        dialog._choose(chain)
+        return repository.get_pointer_scan(entry_id)
+
+    # Not filtered after a restart yet: the chain may not last, nothing is asked.
+    assert choose(0) is not None and questions == []
+    assert choose(1) is None
+    assert questions == [translations["pointer.clear_after_choose"].format(count=3)]

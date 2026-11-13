@@ -208,6 +208,81 @@ def test_addresses_with_pointer_scan(tmp_path):
     engine.dispose()
 
 
+def test_pointer_scans_are_kept_packed(tmp_path):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.core.pointer import PointerChain
+    from grembyte.db.models import PointerScan
+    from grembyte.db.models.pointer_scan import pack_chains, unpack_chains
+    from grembyte.db.repository.addresses import AddressRepository, SavedPointerScan
+
+    chains = [PointerChain("GameAssembly.dll", 0x3070 + index * 8, (0x18, index, 0x4))
+              for index in range(2000)]
+    chains.append(PointerChain("mono:Assembly-CSharp:GameState", 0x10, ()))
+    as_json = [chain.to_json() for chain in chains]
+    assert unpack_chains(pack_chains(as_json)) == as_json
+    # Each module is named once: far smaller than the JSON objects.
+    assert len(pack_chains(as_json)) * 5 < len(json.dumps(as_json))
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'scans.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+    process_id = HookRepository(sessions).get_or_create_process("game", "/opt/game")
+    repository = AddressRepository(sessions)
+    gold = repository.add_address(process_id, label="Gold", value_type="int32", address=0x5000)
+    repository.save_pointer_scan(gold, SavedPointerScan(chains, 5, 0x1000, 1))
+    with sessions() as session:
+        stored = session.query(PointerScan).one()
+        assert stored.chains == [] and stored.packed is not None
+    assert repository.get_pointer_scan(gold).chains == chains
+    engine.dispose()
+
+
+def test_init_db_packs_the_pointer_scans_of_older_versions(tmp_path):
+    # pylint: disable=import-outside-toplevel
+    import sqlite3
+
+    from grembyte.db.engine import init_db
+
+    path = tmp_path / "old.db"
+    connection = sqlite3.connect(path)
+    connection.executescript("""
+        CREATE TABLE processes (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL);
+        CREATE TABLE addresses (id INTEGER PRIMARY KEY, process_id INTEGER NOT NULL,
+            label VARCHAR NOT NULL, value_type VARCHAR NOT NULL, address INTEGER NOT NULL);
+        CREATE TABLE pointer_scans (id INTEGER PRIMARY KEY,
+            address_id INTEGER NOT NULL UNIQUE REFERENCES addresses(id) ON DELETE CASCADE,
+            max_depth INTEGER NOT NULL, max_offset INTEGER NOT NULL, chains JSON NOT NULL,
+            rounds INTEGER NOT NULL, created_at DATETIME, updated_at DATETIME);
+        INSERT INTO processes (name) VALUES ('game');
+        INSERT INTO addresses (process_id, label, value_type, address)
+            VALUES (1, 'Gold', 'int32', 20480);
+    """)
+    chains = [{"module": "game", "base_offset": index * 8, "offsets": [0x18, 0x40]}
+              for index in range(5000)]
+    connection.execute(
+        "INSERT INTO pointer_scans (address_id, max_depth, max_offset, chains, rounds,"
+        " updated_at) VALUES (1, 5, 4096, ?, 2, '2026-01-02 03:04:05.000000')",
+        (json.dumps(chains),))
+    connection.commit()
+    connection.close()
+    size = path.stat().st_size
+
+    engine = create_engine(f"sqlite:///{path}")
+    init_db(engine)
+    init_db(engine)  # nothing left to pack
+    engine.dispose()
+
+    connection = sqlite3.connect(path)
+    stored, packed, updated = connection.execute(
+        "SELECT chains, packed, updated_at FROM pointer_scans").fetchone()
+    connection.close()
+    assert stored == "[]" and packed is not None
+    assert updated == "2026-01-02 03:04:05.000000"  # when it was last filtered
+    assert path.stat().st_size < size / 2  # the space is given back
+    from grembyte.db.models.pointer_scan import unpack_chains  # pylint: disable=C0415
+    assert unpack_chains(packed) == chains
+
+
 def test_init_db_adds_new_nullable_columns(tmp_path):
     # pylint: disable=import-outside-toplevel
     import sqlite3

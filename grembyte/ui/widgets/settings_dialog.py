@@ -29,6 +29,8 @@ from grembyte.ui.widgets.spin_boxes import SpinBox
 _SETTING_CATEGORIES = (
     ("general", "settings", ("activity_log", "refresh_interval_ms", "language")),
     ("scan", "search", ("scan_aligned",)),
+    ("pointer", "link", ("pointer_max_results", "pointer_stacks", "pointer_location_step",
+                         "pointer_value_alignment")),
     ("trace", "track_changes", ("wine_trace_limit", "large_trace", "trace_sequence")),
     ("hooks", "webhook", ("hook_short_jump", "hook_repatch", "hook_profiling")),
     ("objects", "account_tree", ("object_browser_limit",)),

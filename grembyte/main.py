@@ -98,6 +98,8 @@ def main() -> int:
     recorder = UiRecorder(app)
     window.show()
     recorder.start()
+    # Asked once the window is up, not in its constructor (tests build it too).
+    QTimer.singleShot(0, window.offer_pointer_scan_cleanup)
 
     previous_sigint_handler = signal.getsignal(signal.SIGINT)
     signal.signal(
