@@ -1928,6 +1928,15 @@ class MainWindow(QMainWindow):
         dialog.refresh()
         self.dock_manager.show(dialog)
 
+    def _toggle_log(self):
+        """The log button: close the log when its docked tab is in front, else show it."""
+        dialog = self._log_dialog
+        host = None if dialog is None else self.dock_manager.host_of(dialog)
+        if host is not None and host.isVisible() and host.dialog() is dialog:
+            close_dialog(dialog)
+            return
+        self._open_log()
+
     def _open_sessions(self):
         """Show the workers attached to processes, to end them if need be."""
         dialog = self._sessions_dialog
@@ -2591,7 +2600,7 @@ class MainWindow(QMainWindow):
         self._update_backend_label()
         self.btn_log = QPushButton()
         self.btn_log.setFlat(True)
-        self.btn_log.clicked.connect(self._open_log)
+        self.btn_log.clicked.connect(self._toggle_log)
         sb.addPermanentWidget(self.btn_log)
         self._log_signals = LogSignals(self)
         self._log_signals.error_logged.connect(self._update_log_button)

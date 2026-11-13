@@ -227,3 +227,34 @@ def test_tools_close_with_the_game_but_log_and_pointer_scans_stay(qt_app, transl
         assert manager.host(BOTTOM).dialogs() == [log]
     finally:
         window.close()
+
+
+def test_the_log_button_closes_the_docked_log_in_front(qt_app, translations):
+    # pylint: disable=protected-access,unused-argument
+    from grembyte.ui import main_window
+    from grembyte.ui.widgets.docking import BOTTOM
+
+    window = main_window.MainWindow("en")
+    try:
+        window.show()
+        manager = window.dock_manager
+        window.btn_log.click()
+        log = window._log_dialog
+        assert log is not None
+        manager.host(BOTTOM).pin(log)
+
+        # Another tab in front: the button brings the log forward
+        other = _dialog(translations, "Native monitor", window)
+        manager.add(other, "native_monitor", BOTTOM, dock=True)
+        assert manager.host(BOTTOM).dialog() is other
+        window.btn_log.click()
+        assert window._log_dialog is log and manager.host(BOTTOM).dialog() is log
+
+        # In front: the button closes it
+        window.btn_log.click()
+        qt_app.processEvents()
+        assert window._log_dialog is None
+        assert manager.host(BOTTOM).dialogs() == [other]
+        other.reject()
+    finally:
+        window.close()
