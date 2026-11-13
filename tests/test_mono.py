@@ -649,7 +649,9 @@ void *fake_combat(const char *name) {
    root array its elements. While the world is stopped it marks the objects
    in their vtable's lowest bit, as Unity's does; the browser must mask it.
    Built with FAKE_LIVENESS_BLOCKS: Unity 2021's API (allocate_struct, its
-   blocks from a callback), else Unity 2017-2020's calculation_begin/end. */
+   blocks from a callback), else Unity 2017-2020's calculation_begin/end;
+   with FAKE_LIVENESS_UNITY6 too, Unity 6's world functions and its
+   pointer-sized GC handles. */
 typedef void (*liveness_fn)(void **objects, int count, void *data);
 typedef void (*world_fn)(void);
 typedef void *(*block_fn)(void *block, int size, void *data);
@@ -695,11 +697,29 @@ static void liveness_clear(Liveness *l) {
         l->seen[i]->vtable = (VTable *)((uintptr_t)l->seen[i]->vtable & ~(uintptr_t)1);
 }
 void *mono_get_object_class(void) { return &classes[2]; }
+#ifdef FAKE_LIVENESS_UNITY6
+/* Unity 6: handles are pointers, the old API cuts them to 32 bits */
+#define HANDLE_BASE ((uintptr_t)0x7f0000000000)
+void *mono_gchandle_new_v2(void *object, int pinned) {
+    (void)object; (void)pinned;
+    return (void *)(HANDLE_BASE + (uintptr_t)++gchandles);
+}
+void mono_gchandle_free_v2(void *handle) {
+    if ((uintptr_t)handle != HANDLE_BASE + (uintptr_t)gchandles)
+        liveness_errors++;
+    gchandles--;
+}
+uint32_t mono_gchandle_new(void *object, int pinned) {
+    return (uint32_t)(uintptr_t)mono_gchandle_new_v2(object, pinned);
+}
+void mono_gchandle_free(uint32_t handle) { mono_gchandle_free_v2((void *)(uintptr_t)handle); }
+#else
 uint32_t mono_gchandle_new(void *object, int pinned) {
     (void)object; (void)pinned;
     return (uint32_t)++gchandles;
 }
 void mono_gchandle_free(uint32_t handle) { (void)handle; gchandles--; }
+#endif
 void mono_unity_liveness_calculation_from_statics(Liveness *l) {
     make_statics();
     Object *roots[] = { (Object *)*loop_statics, &inventory };
@@ -723,9 +743,15 @@ Liveness *mono_unity_liveness_allocate_struct(void *filter, uint32_t max, livene
         memset(l->block, 0xab, 8192);
     return l;
 }
+#ifdef FAKE_LIVENESS_UNITY6
+/* Unity 6: the general stop/start_gc_world instead of the liveness ones */
+void mono_unity_stop_gc_world(void) { world_stopped = 1; }
+void mono_unity_start_gc_world(void) { world_stopped = 0; }
+#else
 void mono_unity_liveness_stop_gc_world(void) { world_stopped = 1; }
-void mono_unity_liveness_finalize(Liveness *l) { liveness_clear(l); }
 void mono_unity_liveness_start_gc_world(void) { world_stopped = 0; }
+#endif
+void mono_unity_liveness_finalize(Liveness *l) { liveness_clear(l); }
 void mono_unity_liveness_free_struct(Liveness *l) {
     l->blocks(l->block, 0, l->data);
     free(l);
@@ -2918,13 +2944,14 @@ def test_catalog_shows_nested_classes_as_csharp_writes_them(qt_app, translations
     assert csharp_name("/Script/Engine.Actor", "unreal") == "/Script/Engine.Actor"
 
 
-@pytest.mark.parametrize("generation", ["begin", "blocks"])
+@pytest.mark.parametrize("generation", ["begin", "blocks", "unity6"])
 @requires_target
 def test_object_browser_reads_live_objects_with_the_world_stopped(tmp_path, qt_app, generation):
     # pylint: disable=import-outside-toplevel
     from grembyte.features.scripts import ScriptWorker
 
-    defines = ("FAKE_LIVENESS_BLOCKS",) if generation == "blocks" else ()
+    defines = {"begin": (), "blocks": ("FAKE_LIVENESS_BLOCKS",),
+               "unity6": ("FAKE_LIVENESS_BLOCKS", "FAKE_LIVENESS_UNITY6")}[generation]
     target = _MonoTarget(_build(tmp_path, defines))
     worker = ScriptWorker(target.pid)
     answers, failed = [], []

@@ -1926,16 +1926,20 @@ gpointer run_batch (gpointer data) {
     const m = api.module;
     const has = name => m.findExportByName(name) !== null;
     const fn = (name, ret, args) => new NativeFunction(m.findExportByName(name), ret, args);
+    // Newer Mono's GC handles are pointers (the _v2 API); its old API cuts
+    // them to 32 bits, and freeing such a handle crashes (Unity 6)
+    const handles = has('mono_gchandle_new_v2') && has('mono_gchandle_free_v2')
+      ? { suffix: '_v2', type: 'pointer' } : { suffix: '', type: 'uint32' };
     if (!['mono_unity_liveness_calculation_from_statics', 'mono_get_object_class',
-      'mono_gchandle_new', 'mono_gchandle_free'].every(has))
+      'mono_gchandle_new' + handles.suffix, 'mono_gchandle_free' + handles.suffix].every(has))
       return null;
     const common = {
       objectClass: fn('mono_get_object_class', 'pointer', []),
       fromStatics: fn('mono_unity_liveness_calculation_from_statics', 'void', ['pointer']),
       fromRoot: has('mono_unity_liveness_calculation_from_root')
         ? fn('mono_unity_liveness_calculation_from_root', 'void', ['pointer', 'pointer']) : null,
-      handleNew: fn('mono_gchandle_new', 'uint32', ['pointer', 'int']),
-      handleFree: fn('mono_gchandle_free', 'void', ['uint32'])
+      handleNew: fn('mono_gchandle_new' + handles.suffix, handles.type, ['pointer', 'int']),
+      handleFree: fn('mono_gchandle_free' + handles.suffix, 'void', [handles.type])
     };
     if (has('mono_unity_liveness_calculation_begin')
         && has('mono_unity_liveness_calculation_end')) {
@@ -1943,15 +1947,21 @@ gpointer run_batch (gpointer data) {
         begin: fn('mono_unity_liveness_calculation_begin', 'pointer',
           ['pointer', 'uint32', 'pointer', 'pointer', 'pointer', 'pointer']),
         end: fn('mono_unity_liveness_calculation_end', 'void', ['pointer']) };
-    } else if (['mono_unity_liveness_allocate_struct', 'mono_unity_liveness_stop_gc_world',
-      'mono_unity_liveness_finalize', 'mono_unity_liveness_start_gc_world',
+    } else if (['mono_unity_liveness_allocate_struct', 'mono_unity_liveness_finalize',
       'mono_unity_liveness_free_struct'].every(has)) {
+      // Unity 6 dropped liveness_stop/start_gc_world for the general
+      // mono_unity_stop/start_gc_world, which also take Mono's locks around
+      // the same GC_stop/start_world_external
+      const world = has('mono_unity_liveness_stop_gc_world')
+        && has('mono_unity_liveness_start_gc_world') ? 'mono_unity_liveness_' : 'mono_unity_';
+      if (!has(world + 'stop_gc_world') || !has(world + 'start_gc_world'))
+        return null;
       liveness = { ...common, kind: 'blocks',
         allocate: fn('mono_unity_liveness_allocate_struct', 'pointer',
           ['pointer', 'uint32', 'pointer', 'pointer', 'pointer']),
-        stop: fn('mono_unity_liveness_stop_gc_world', 'void', []),
+        stop: fn(world + 'stop_gc_world', 'void', []),
         finalize: fn('mono_unity_liveness_finalize', 'void', ['pointer']),
-        start: fn('mono_unity_liveness_start_gc_world', 'void', []),
+        start: fn(world + 'start_gc_world', 'void', []),
         free: fn('mono_unity_liveness_free_struct', 'void', ['pointer']) };
     } else {
       return null;
@@ -1998,7 +2008,7 @@ gpointer run_batch (gpointer data) {
     }
     // Held by a GC handle: a collection must not free it before the world stops
     const roots = l.fromRoot === null ? NULL : unityObjectsArray();
-    const handle = roots.isNull() ? 0 : l.handleNew(roots, 0);
+    const handle = roots.isNull() ? null : l.handleNew(roots, 0);
     const filter = l.objectClass();
     let stoppedMs;
     try {
@@ -2022,7 +2032,7 @@ gpointer run_batch (gpointer data) {
       }
       stoppedMs = Date.now() - started;
     } finally {
-      if (handle !== 0)
+      if (handle !== null)
         l.handleFree(handle);
     }
     const count = Number(buffer.readU64());

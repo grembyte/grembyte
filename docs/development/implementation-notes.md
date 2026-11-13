@@ -256,6 +256,18 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   `Memory.patchCode`, which swallowed the error (`Cannot read property 'collect' of
   undefined`). `writeLivenessCode32` is the cdecl version; the buffer keeps its layout, with
   pointers in the low half of 64-bit slots. Checked in Might & Magic X – Legacy.
+- **Object browser in Unity 6 (2026-11-12):** Unity 6's Mono (Vampire Survivors,
+  6000.0.62) no longer exports `mono_unity_liveness_stop/start_gc_world`; the general
+  `mono_unity_stop/start_gc_world` take Mono's locks and then call the same
+  `GC_stop/start_world_external`, so the agent falls back to them. Its GC handles are
+  pointers (`mono_gchandle_new_v2`); the old `mono_gchandle_new` returns them cut to
+  32 bits, and `mono_gchandle_free` of such a handle is an access violation. The agent uses
+  the `_v2` functions where they exist. Vampire Survivors keeps about 2.45 million objects
+  alive (19.7 MB of the 128 MB pool), most of them Newtonsoft JSON, more than the buffer
+  keeps. Running the pass over the Unity objects first does not help: the Unity objects
+  reach the same JSON, and the result had fewer Unity objects and a third of the classes.
+  Either order is safe, though: both passes add to the same list of marked objects
+  (`from_statics` only resets the work list), and `finalize` clears every mark.
 
 ## Write hooks under anti-tamper protection
 
