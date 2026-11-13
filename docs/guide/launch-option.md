@@ -40,7 +40,7 @@ Since the game is a child of `grembyte-cli`, attaching also works with `kernel.y
 
 While `grembyte-cli` runs a game, the window can take the game over, for example to change a hook:
 
-1. Open the process list. A game that runs through `grembyte-cli` is marked with a link icon.
+1. Open the process list. A game that runs through `grembyte-cli` is marked with a link icon. **Only grembyte-cli** next to the filter shows only these games.
 2. Attach to it. Grembyte asks whether to take the game over from `grembyte-cli`.
 3. Confirm. `grembyte-cli` removes its hooks and stops its sessions, then the window attaches and restores the saved hooks and scripts as usual.
 
