@@ -422,7 +422,7 @@ function floatValue(raw, kind) {
 function managedString(pointer) {
   // MonoString: object header, length (int32), UTF-16 characters.
   const length = pointer.add(OBJECT_HEADER).readS32();
-  const text = pointer.add(OBJECT_HEADER + 4).readUtf16String(Math.min(length, MAX_STRING));
+  const text = readUtf16Text(pointer.add(OBJECT_HEADER + 4), Math.min(length, MAX_STRING));
   return JSON.stringify(text) + (length > MAX_STRING ? '…' : '');
 }
 
@@ -446,7 +446,7 @@ function keepText(pointer, length, start) {
   const known = fullTextIds.get(key);
   if (known !== undefined)
     return known;
-  const text = pointer.add(OBJECT_HEADER + 4).readUtf16String(Math.min(length, MAX_FULL_STRING));
+  const text = readUtf16Text(pointer.add(OBJECT_HEADER + 4), Math.min(length, MAX_FULL_STRING));
   const id = nextFullText++;
   fullTexts.set(id, { text, key });
   fullTextIds.set(key, id);
@@ -1533,7 +1533,7 @@ function readJs(type, address) {
 
 function stringJs(pointer) {
   const length = pointer.add(OBJECT_HEADER).readS32();
-  return pointer.add(OBJECT_HEADER + 4).readUtf16String(length);
+  return readUtf16Text(pointer.add(OBJECT_HEADER + 4), length);
 }
 
 function registerJs(type, raw) {

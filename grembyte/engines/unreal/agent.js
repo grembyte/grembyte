@@ -62,7 +62,7 @@ const unreal = (() => {
     // An FNameEntry: a 16-bit header (wide flag, probe hash, length) and the text.
     const header = entry.readU16();
     const length = header >> 6;
-    return (header & 1) ? entry.add(2).readUtf16String(length) : latin1(entry.add(2), length);
+    return (header & 1) ? readUtf16Text(entry.add(2), length) : latin1(entry.add(2), length);
   }
 
   // FNamePool: a lock, CurrentBlock, CurrentByteCursor, Blocks[8192]. The
@@ -990,7 +990,7 @@ const unreal = (() => {
     // A logged string value of ``length`` characters at ``data``
     if (data.isNull() || length === 0)
       return { text: '""', string: true };
-    const text = data.readUtf16String(Math.min(length, MAX_TEXT));
+    const text = readUtf16Text(data, Math.min(length, MAX_TEXT));
     return { text: JSON.stringify(text) + (length > MAX_TEXT ? '…' : ''), string: true };
   }
 
@@ -1149,14 +1149,14 @@ const unreal = (() => {
       case 'string': {
         const data = address.readPointer();
         const length = Math.max(0, address.add(Process.pointerSize).readS32() - 1);
-        return { value: data.isNull() || length === 0 ? '' : data.readUtf16String(length) };
+        return { value: data.isNull() || length === 0 ? '' : readUtf16Text(data, length) };
       }
       case 'text': {
         const string = textString(address);
         if (string === null)
           throw grembyteError('error.unreal.text_unreadable', { type: type.name });
         const [data, length] = string;
-        return { value: data.isNull() || length === 0 ? '' : data.readUtf16String(length) };
+        return { value: data.isNull() || length === 0 ? '' : readUtf16Text(data, length) };
       }
       case 'name':
         return { value: fieldName(address) };

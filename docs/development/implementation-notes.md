@@ -268,6 +268,11 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   reach the same JSON, and the result had fewer Unity objects and a third of the classes.
   Either order is safe, though: both passes add to the same list of marked objects
   (`from_statics` only resets the work list), and `finalize` clears every mark.
+- **Cut UTF-16 strings (2026-11-12):** Frida's `readUtf16String` throws `invalid string`
+  for a surrogate without its partner, for example an emoji cut at a length limit. In
+  Vampire Survivors this broke the object browser's instance list. The agents read game
+  strings through `readUtf16Text` (`grembyte/engines/engine_prelude.js`), which turns such
+  surrogates into U+FFFD.
 
 ## Write hooks under anti-tamper protection
 

@@ -1420,7 +1420,7 @@ gpointer run_batch (gpointer data) {
     if (failed)
       return null;
     const length = result.add(2 * Process.pointerSize).readS32();
-    return result.add(2 * Process.pointerSize + 4).readUtf16String(Math.min(length, 120));
+    return readUtf16Text(result.add(2 * Process.pointerSize + 4), Math.min(length, 120));
   }
 
   // --- Unity's main thread ----------------------------------------------------
@@ -2052,7 +2052,7 @@ gpointer run_batch (gpointer data) {
     const name = layout(klass).name;
     if (name === 'System.String') {
       const length = object.add(2 * Process.pointerSize).readS32();
-      return object.add(2 * Process.pointerSize + 4).readUtf16String(
+      return readUtf16Text(object.add(2 * Process.pointerSize + 4),
         Math.min(length, MAX_STRING_NAME));
     }
     return nameMethod(klass) === null ? null : unityName(object);

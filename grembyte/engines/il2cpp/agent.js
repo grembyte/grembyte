@@ -1234,7 +1234,7 @@ const il2cpp = (() => {
       return null;
     const string = called.result;
     const length = string.add(2 * Process.pointerSize).readS32();
-    return string.add(2 * Process.pointerSize + 4).readUtf16String(Math.min(length, MAX_NAME));
+    return readUtf16Text(string.add(2 * Process.pointerSize + 4), Math.min(length, MAX_NAME));
   }
 
   return {

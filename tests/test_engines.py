@@ -154,3 +154,35 @@ def test_agent_source_registers_adapters_before_the_facade():
     unreal = source.index("registerEngine(unreal);")
     facade = source.index("const engine = (() => {")
     assert source.index("function pauseThreads") < prelude < adapter < unreal < facade
+
+
+def test_utf16_text_survives_a_cut_or_lone_surrogate():
+    # pylint: disable=import-outside-toplevel
+    import frida
+
+    from grembyte.hooks.syntax import checker
+
+    if not checker().available:
+        pytest.skip("needs Frida's system session")
+    session = frida.attach(0)
+    try:
+        # Frida's readUtf16String throws 'invalid string' for these (an emoji
+        # cut by a length limit: Vampire Survivors' object browser)
+        script = session.create_script(base.ENGINE_PRELUDE_SOURCE + """
+            rpc.exports.read = (units, length) => {
+              const memory = Memory.alloc(2 * units.length + 2);
+              units.forEach((unit, i) => memory.add(2 * i).writeU16(unit));
+              return readUtf16Text(memory, length);
+            };
+        """)
+        script.load()
+        read = script.exports_sync.read
+        emoji = [0x41, 0xD83D, 0xDE00, 0x42]
+        assert read(emoji, 4) == "A\U0001F600B"
+        assert read(emoji, 2) == "A�"
+        assert read([0xDE00, 0x41, 0xD83D, 0x42], 4) == "�A�B"
+        assert read([0x41, 0, 0x42], 3) == "A"
+        assert read(emoji, 0) == ""
+        script.unload()
+    finally:
+        session.detach()
