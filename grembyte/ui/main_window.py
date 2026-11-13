@@ -97,6 +97,7 @@ from grembyte.ui.widgets.call_graph import CallGraphDialog
 from grembyte.ui.widgets.known_games import KnownGamesDialog
 from grembyte.ui.widgets.saved_games import SavedGamesDialog
 from grembyte.ui.widgets.database_entries import DeleteEntriesDialog
+from grembyte.ui.widgets.pointer_cleanup import PointerCleanupDialog, keep_scans, scans_to_offer
 from grembyte.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 from grembyte.ui.widgets.gas_attributes import GasAttributesDialog
 from grembyte.ui.widgets.object_browser import ObjectBrowserDialog
@@ -866,6 +867,40 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
         self.lbl_status.setText(self.translations["vacuum.done"].format(
             before=before / 1e6, after=after / 1e6))
+
+    def offer_pointer_scan_cleanup(self):
+        """Offer to delete the pointer scans that are probably no longer needed.
+
+        Called once after the start. Scans the user chose to keep are not
+        offered again until they are filtered or scanned anew.
+        """
+        try:
+            obsolete = self._address_repository.obsolete_pointer_scans()
+        except SQLAlchemyError:
+            return
+        offered = scans_to_offer(obsolete)
+        if not offered:
+            return
+        dialog = PointerCleanupDialog(self.translations, offered, parent=self)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        chosen = dialog.chosen() if accepted else []
+        keep_scans([scan for scan in offered if scan not in chosen], obsolete)
+        if chosen:
+            self._delete_pointer_scans([scan.address_id for scan in chosen])
+
+    def _delete_pointer_scans(self, address_ids):
+        """Delete the pointer scans of the entries and shrink the database."""
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            count = self._address_repository.delete_pointer_scans(address_ids)
+            before, after = self._address_repository.compact()
+        except SQLAlchemyError as error:
+            self.lbl_status.setText(self.translations["hooks.db_failed"].format(message=error))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.lbl_status.setText(self.translations["pointer_cleanup.done"].format(
+            count=count, before=before / 1e6, after=after / 1e6))
 
     def _open_settings(self):
         """Show the general settings; what changes takes effect at once (or after a restart)."""

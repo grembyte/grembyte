@@ -231,8 +231,12 @@ class GameExportRepository:
                     PointerScan.address_id.in_([address["id"] for address in addresses])))}
             for address in addresses:
                 scan = scans.get(address["id"])
-                address["pointer_scan"] = None if scan is None else _row(
-                    scan, skip=("id", "address_id"))
+                if scan is None:
+                    address["pointer_scan"] = None
+                else:
+                    # Exported unpacked, as JSON objects, like older versions did.
+                    address["pointer_scan"] = _row(scan, skip=("id", "address_id", "packed"))
+                    address["pointer_scan"]["chains"] = scan.chain_list()
         return {
             "name": process.name,
             "path": process.path,
@@ -456,8 +460,14 @@ def import_into(session_factory, export, process_id, replace=False):
                     result.added[key] += 1
                     scan = row.get("pointer_scan") if model is Address else None
                     if scan:
+                        stored = _record(PointerScan, scan)
+                        try:
+                            stored.set_chains(scan.get("chains") or [])
+                        except (AttributeError, KeyError, TypeError, ValueError):
+                            continue  # not chains as Grembyte exports them
                         session.flush()
-                        session.add(_record(PointerScan, scan, address_id=record.id))
+                        stored.address_id = record.id
+                        session.add(stored)
                         result.added["pointer_scans"] += 1
         for process in export["processes"]:
             _merge_notes(session, process_id, process.get("notes") or [], result)

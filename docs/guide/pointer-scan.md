@@ -31,9 +31,8 @@ If the address lies in the program's static memory, no pointer scan is needed; t
 |---|---|---|
 | Max. depth | How many pointers a chain follows at most (1 to 7). More depth finds more but takes longer. | 5 |
 | Max. offset | The largest distance between a pointer and the next target, i.e. how far into an object a field may lie | `0x1000` |
-| Max. results | How many chains are kept | 10 000 |
 
-Chains are collected shortest first. When **Max. results** is reached, the dialog says so: chains of the deepest level found may be incomplete, deeper ones are missing. Raise the limit or lower the depth.
+How many chains a scan keeps is set under **Settings → General … → Pointer scan** (**Max. results**, default 10 000), together with the thread stacks and the [alignment](#alignment); see [settings](settings.md#settings). Chains are collected shortest first. When the limit is reached, the dialog says so: chains of the deepest level found may be incomplete, deeper ones are missing. Raise the limit or lower the depth.
 
 ## Memory regions
 
@@ -50,7 +49,7 @@ The dialog sorts the program's writable memory into groups, each with its size; 
 | System modules | The system, Wine and the drivers: libc, ntdll, kernel32, Mesa … | off |
 | Other modules | Everything else, e.g. Steam's overlay | off |
 
-**Chains pass through** the heap, which is always searched, and the thread stacks (off by default). Stack contents change all the time; leaving them out gives fewer chance hits and a faster scan.
+Between their steps chains pass through the heap, which is always searched. The thread stacks are searched only with **Search thread stacks** in the settings (off by default): stack contents change all the time; leaving them out gives fewer chance hits and a faster scan.
 
 Turn on system or other modules only if no chain from the game's own modules survives a restart. The choice is kept for the next scan.
 
@@ -68,10 +67,10 @@ After a restart of the game such an entry on the address list shows as not resol
 
 ## Alignment
 
-Two settings decide what counts as a pointer:
+Two settings under **Settings → General … → Pointer scan** decide what counts as a pointer. Both default to the pointer size of the program (8 bytes in 64-bit, 4 bytes in 32-bit programs):
 
-- **Pointers lie at** multiples of 8 bytes in 64-bit programs, as compilers place them. Multiples of 4 also find pointers in packed structures (`#pragma pack`), but the scan reads twice as many values and finds more chance hits.
-- **Pointers point to** multiples of 8 bytes by default: real pointers to objects almost always are, numbers that merely look like an address usually are not. Multiples of 16 cut chance hits further; **any address** finds chains through a pointer into the middle of a structure (`&object->value`).
+- **Pointers lie at** multiples of the pointer size, as compilers place them. Multiples of 4 also find pointers in packed structures of 64-bit programs (`#pragma pack`), but the scan reads twice as many values and finds more chance hits.
+- **Pointers point to** multiples of the pointer size: real pointers to objects almost always are, numbers that merely look like an address usually are not. Multiples of 16 cut chance hits further; **any address** finds chains through a pointer into the middle of a structure (`&object->value`).
 
 ## Candidates
 
@@ -90,6 +89,8 @@ The score only sorts; whether a chain is stable shows when you filter after a re
 
 - **Add all to address list** adds every candidate as an entry of its own; after a restart the list shows which ones still lead to a sensible value. With several rows selected, the button reads **Add selected to address list** and adds only those.
 - **Remove saved candidates** deletes them once a stable chain is in use. The entry and its pointer stay; a new scan finds candidates again.
+
+A scan can take several megabytes in the database. **Use pointer** therefore offers to delete the candidates once they were filtered after a restart at least once (or right away for a static address). Scans left over are offered for deletion after the start of Grembyte; see [cleaning up](data.md#cleaning-up).
 
 !!! example "The chain from the code instead"
     The code that uses a value often shows its chain, too: the [code explorer](code-explorer.md#pseudocode) writes it next to each line. The [pointer chain example](../examples/dummy-game-pointer-chain.md) reads the chain of the test game's gold from `add_gold` and enters it with **Pointer chain …** on the [address list](addresses.md#adding-addresses) – no scan needed.

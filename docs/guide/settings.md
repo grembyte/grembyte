@@ -2,7 +2,7 @@
 
 ## Settings
 
-**Settings → General …** holds the settings, stored in Grembyte's database. The list on the left chooses a page: General, Scan, Trace, Hooks, Object browser and Wine/Proton.
+**Settings → General …** holds the settings, stored in Grembyte's database. The list on the left chooses a page: General, Scan, Pointer scan, Trace, Hooks, Object browser and Wine/Proton.
 
 <figure markdown="span">
   ![Settings](../assets/screenshots/settings-dark.webp#only-dark){ width="640" }
@@ -15,6 +15,9 @@
 | Refresh remembered addresses every (ms) | How often tracked addresses read their values (default 1000, 100 to 10 000). |
 | Record the activity log | Write the [activity log](tools.md#log-and-activity) (off by default). Takes effect at once. |
 | Aligned addresses only | The first [value scan](scanning.md#data-types) checks only addresses that are a multiple of the type's size (on by default). Faster and uses far less memory. |
+| Pointer scan: Max. results | How many chains a [pointer scan](pointer-scan.md#search-limits) keeps (default 10 000, 100 to 1 million). More results take more memory, also in the database. |
+| Pointer scan: Search thread stacks | Let chains pass through the thread stacks (off by default); see [memory regions](pointer-scan.md#memory-regions). |
+| Pointer scan: Pointers lie at / Pointers point to | What counts as a pointer; both default to the pointer size of the program. See [alignment](pointer-scan.md#alignment). |
 | Trace under Wine/Proton: at most methods | Most methods a trace hooks in a Wine/Proton game (default 5000, or no limit). Traces of tens of thousands of methods froze or crashed games there. |
 | Trace: ask first from methods | From this many methods the trace asks before it starts; Mono has to compile them all (default 5000). |
 | Trace: entries in the sequence | How many calls the trace and the native trace keep in order during the scenario (default 100 000, up to 500 000); raise it when the window reports dropped ones. |

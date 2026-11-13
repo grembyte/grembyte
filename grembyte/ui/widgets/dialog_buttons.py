@@ -10,6 +10,7 @@ _ACCEPT_ICONS = {
     "button.write": "edit",
     "button.add": "add",
     "delete_entries.button": "delete",
+    "pointer_cleanup.delete": "delete_sweep",
     "export.button": "upload",
     "import.button": "download",
     "games.open": "data_object",

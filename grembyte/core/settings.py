@@ -62,6 +62,11 @@ SETTINGS = (
     Setting("wine_gadget_download", BOOL, False),
     Setting("language", CHOICE, "system", choices=("system", "de", "en"), restart=True),
     Setting("scan_aligned", BOOL, True),
+    # Pointer scan: "auto" is the pointer size of the scanned process
+    Setting("pointer_location_step", CHOICE, "auto", choices=("auto", "4")),
+    Setting("pointer_value_alignment", CHOICE, "auto", choices=("auto", "16", "8", "4", "1")),
+    Setting("pointer_stacks", BOOL, False),
+    Setting("pointer_max_results", INT, 10_000, minimum=100, maximum=1_000_000, step=1000),
 )
 BY_KEY = {setting.key: setting for setting in SETTINGS}
 
@@ -126,6 +131,17 @@ def unsubscribe(callback):
     with _lock:
         if callback in _callbacks:
             _callbacks.remove(callback)
+
+
+def pointer_alignment(key, size):
+    """Bytes of the pointer-scan alignment ``key`` for a process with ``size``-byte pointers.
+
+    "auto" is ``size``; a step larger than a pointer would skip pointers, so it
+    is never more than ``size`` for ``pointer_location_step``.
+    """
+    chosen = get(key)
+    value = size if chosen == "auto" else int(chosen)
+    return min(value, size) if key == "pointer_location_step" else value
 
 
 def language():

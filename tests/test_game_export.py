@@ -187,7 +187,10 @@ def test_import_mixes_in_what_the_target_does_not_hold(sessions, repository):
         [address] = session.scalars(select(Address).where(Address.process_id == target_id))
         scan = session.scalars(
             select(PointerScan).where(PointerScan.address_id == address.id)).one()
-        assert scan.chains == [{"module": "DarkSoulsIII.exe", "offsets": [8]}]
+        # Imported scans are kept packed like scanned ones.
+        assert scan.chains == [] and scan.packed is not None
+        assert scan.chain_list() == [
+            {"module": "DarkSoulsIII.exe", "base_offset": 0, "offsets": [8]}]
         assert session.get(Process, target_id).path == "/steam/Proton 12/wine64-preloader"
         [script] = session.scalars(select(GameScript).where(GameScript.process_id == target_id))
         assert (script.label, script.mode, script.seconds, script.enabled) == (
