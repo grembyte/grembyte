@@ -312,6 +312,30 @@ def test_refine_snapshot_compares_with_current_memory(
     assert all(result["value"] in {10, 16, 24} for result in results)
 
 
+def test_a_snapshot_is_read_as_the_type_chosen_for_the_next_scan(monkeypatch):
+    # An unknown-value scan as int32, the next scan as int16
+    previous = struct.pack("<hhhh", 1, 2, 3, 4)
+    current = struct.pack("<hhhh", 1, 7, 3, 4)
+    snapshot = MemorySnapshot("int32", 4, [(0x1000, previous, None)])
+    install_fake_process(monkeypatch, "", 0x1000, current)
+    worker = ScanWorker(123, "int16", "changed", previous_results=snapshot)
+
+    results = list(worker._refine_scan())
+
+    assert [(r["address"], r["type"], r["value"]) for r in results] == [(0x1002, "int16", 7)]
+
+
+def test_a_changed_type_keeps_the_candidates_ruled_out_before():
+    contents = struct.pack("<iiii", 1, 2, 3, 4)
+    mask = np.array([False, True, False, True])
+    snapshot = MemorySnapshot("int32", 4, [(0x1000, contents, mask)])
+
+    narrower = snapshot.as_type("int16")
+    assert [r["address"] for r in narrower] == [0x1004, 0x100c]
+    assert [r["value"] for r in narrower] == [2, 4]
+    assert len(snapshot.as_type("float")) == 2
+
+
 def test_refine_snapshot_keeps_snapshot_for_large_candidate_sets(monkeypatch):
     contents = struct.pack("<iiii", 1, 2, 3, 4)
     snapshot = MemorySnapshot("int32", 4, [(0x1000, contents, None)])

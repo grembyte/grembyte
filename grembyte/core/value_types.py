@@ -11,6 +11,16 @@ import numpy as np
 from grembyte.core.messages import LocalizedValueError
 
 
+def parse_integer(text):
+    """An integer typed in: decimal (also with leading zeros, ``010`` is 10),
+    or with a prefix, ``0x1f``, ``0b101``, ``0o17``. Raises ValueError."""
+    text = text.strip().replace("_", "")
+    try:
+        return int(text, 10)
+    except ValueError:
+        return int(text, 0)
+
+
 @dataclass(frozen=True)
 class ValueType:
     """A numeric value type, e.g. ``int32``."""
@@ -44,7 +54,7 @@ class ValueType:
         Raises ValueError for invalid or out-of-range input.
         """
         try:
-            value = int(text, 0) if self.is_integer else float(text)
+            value = parse_integer(text) if self.is_integer else float(text)
             return self.unpack(self.pack(value))
         except (AttributeError, OverflowError, TypeError, ValueError, struct.error) as error:
             raise LocalizedValueError("error.value_types.invalid_value", type=self.name,

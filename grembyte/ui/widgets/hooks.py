@@ -37,6 +37,7 @@ from grembyte.hooks.transforms import (
     example_templates,
 )
 from grembyte.hooks.saved import method_spec_from_saved, persistable_callers, spec_from_saved
+from grembyte.core.value_types import parse_integer
 from grembyte.hooks.syntax import BODY
 from grembyte.ui.widgets.code_editor import CodeEditor
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
@@ -76,7 +77,7 @@ _STATUS_COLORS = {
 def parse_number(text):
     """Parse an int (also hex, e.g. 0x10) or a float."""
     try:
-        return int(text, 0)
+        return parse_integer(text)
     except ValueError:
         return float(text)
 

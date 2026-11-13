@@ -93,7 +93,13 @@ def float_text(number):
 
 
 def argument_name(index, platform, arch="x64"):
-    """``rdi`` … for the register an argument is passed in, ``arg4`` on the stack."""
+    """``rdi`` … for the register an argument is passed in, ``arg4`` on the stack.
+
+    32-bit Windows code logs ``ecx`` first: ``this`` of MSVC's C++ methods
+    (thiscall); the stack arguments follow as ``arg0`` ….
+    """
+    if arch == "ia32" and platform == "windows":
+        return "ecx" if index == 0 else f"arg{index - 1}"
     registers = _REGISTERS.get(platform, ()) if arch == "x64" else ()
     return registers[index] if index < len(registers) else f"arg{index}"
 

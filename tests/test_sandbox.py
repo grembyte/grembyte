@@ -80,3 +80,20 @@ def test_reports_errors(sandbox, source, message):
 def test_normalizes_like_the_agent(sandbox, value, value_type, expected):
     assert sandbox.run(f"ctx => {value!r}", {}, 0, 0, value_type).value == expected
     assert normalize_value(value, value_type) == expected
+
+
+def test_each_state_key_keeps_its_own_state(sandbox):
+    count = "ctx => { ctx.state.n = (ctx.state.n || 0) + 1; return ctx.state.n; }"
+    sandbox.reset_state()
+    assert sandbox.run(count, {}, 0, 0, state_key=1).value == 1
+    assert sandbox.run(count, {}, 0, 0, state_key=2).value == 1
+    assert sandbox.run(count, {}, 0, 0, state_key=1).value == 2
+    sandbox.reset_state(1)
+    assert sandbox.run(count, {}, 0, 0, state_key=1).value == 1
+    assert sandbox.run(count, {}, 0, 0, state_key=2).value == 2
+
+
+def test_the_ptrace_backend_fills_address_thread_and_hook(sandbox):
+    source = "ctx => { ctx.log(ctx.address, ctx.threadId, ctx.hookId); return undefined; }"
+    result = sandbox.run(source, {}, 1, 2, address=0x1000, thread_id=7, hook_id=3)
+    assert result.kept and result.logs == ["0x1000 7 3"]

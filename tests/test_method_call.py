@@ -70,6 +70,17 @@ def test_arguments_are_read_by_their_type():
         parse_argument(attribute, "Charm")
 
 
+def test_large_64_bit_integers_keep_every_digit():
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.method_call import I8, U8, argument_text
+
+    assert parse_argument(_type(I8), "9007199254740991") == 9007199254740991
+    big = parse_argument(_type(U8), "18446744073709551615")
+    assert big == {"integer": "18446744073709551615", "text": "18446744073709551615"}
+    assert argument_text(big) == "18446744073709551615"
+    assert parse_argument(_type(I8), "-9007199254740993")["integer"] == "-9007199254740993"
+
+
 def test_enums_with_known_names_are_chosen_from_a_list(qt_app, translations):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from grembyte.ui.widgets import method_call

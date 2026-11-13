@@ -12,7 +12,7 @@ from grembyte.core import logs
 from grembyte.core.messages import LocalizedValueError
 from grembyte.core.pointer import chain_bases, resolve_chain
 from grembyte.platform import ProcessMemory, read_mappings
-from grembyte.core.value_types import AUTO_VALUE_TYPES, VALUE_TYPES
+from grembyte.core.value_types import AUTO_VALUE_TYPES, VALUE_TYPES, parse_integer
 from grembyte.core.value_types import value_type as lookup_value_type
 
 # struct format characters without byte order, e.g. "i" for int32.
@@ -56,7 +56,7 @@ class ValueRange:
         tolerance = cls._parse_tolerance(tolerance, kind)
         try:
             center = (
-                (int(text, 0) if delta else kind.parse(text))
+                (parse_integer(text) if delta else kind.parse(text))
                 if kind.is_integer else float(text)
             )
         except (AttributeError, TypeError, ValueError) as error:
@@ -89,7 +89,7 @@ class ValueRange:
         if not text or not text.strip():
             return 0
         try:
-            tolerance = int(text, 0) if kind.is_integer else float(text)
+            tolerance = parse_integer(text) if kind.is_integer else float(text)
         except ValueError as error:
             raise LocalizedValueError("error.scanner.invalid_tolerance", text=repr(text)) from error
         if not tolerance >= 0:
@@ -262,6 +262,29 @@ class MemorySnapshot:
         if not isinstance(item, slice):
             raise TypeError("MemorySnapshot only supports slicing")
         return list(itertools.islice(self, item.start, item.stop, item.step))
+
+    def as_type(self, value_type, aligned=True):
+        """The same memory read as ``value_type``: the bytes stay, the
+        candidates are those starting where a candidate started before (all
+        of them if none was ruled out yet)."""
+        dtype = _NUMPY_DTYPES[value_type]
+        stride = dtype.itemsize if aligned else 1
+        layout = MemorySnapshot(value_type, stride, [])
+        blocks = []
+        for start, data, mask in self.blocks:
+            values, base = layout.values(start, data)
+            new_mask = None
+            if mask is not None:
+                _old_values, old_base = self.values(start, data)
+                offsets = (old_base - base) + np.flatnonzero(mask) * self.stride
+                offsets = offsets[(offsets >= 0) & (offsets % stride == 0)] // stride
+                new_mask = np.zeros(len(values), dtype=bool)
+                new_mask[offsets[offsets < len(values)]] = True
+            if dtype.kind == "f":
+                finite = np.isfinite(values)
+                new_mask = finite if new_mask is None else new_mask & finite
+            blocks.append((start, data, new_mask))
+        return MemorySnapshot(value_type, stride, blocks)
 
     def to_results(self):
         """Return the remaining candidates as ScanResults."""
@@ -473,6 +496,9 @@ class ScanWorker(QThread):
 
     def _refine_snapshot(self, snapshot):
         """Filter a snapshot by comparing it with the current memory."""
+        if self.value_type not in ("auto", snapshot.value_type):
+            # Another type was chosen since: read the same memory as that type
+            snapshot = snapshot.as_type(self.value_type, self.aligned)
         targets = self._scan_targets(snapshot.value_type)
         blocks = []
         total_bytes = sum(len(data) for _start, data, _mask in snapshot.blocks)
@@ -660,7 +686,7 @@ class ScanWorker(QThread):
     def _parse_scan_value(value, value_format):
         try:
             parsed = (
-                int(value, 0)
+                parse_integer(value)
                 if value_format[-1] not in "fd"
                 else float(value)
             )

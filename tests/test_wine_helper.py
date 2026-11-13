@@ -52,6 +52,24 @@ def test_a_missing_helper_is_reported_with_how_to_build_it(tmp_path, monkeypatch
         wine_helper.helper_path(64, build=False)
 
 
+def test_the_build_uses_grembytes_python_and_absolute_paths(tmp_path, monkeypatch):
+    # pylint: disable=import-outside-toplevel
+    import subprocess
+    import sys
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GREMBYTE_INJECT_DIR", "helpers")
+    assert wine_helper.helper_dir() == tmp_path.resolve() / "helpers"
+    calls = []
+    monkeypatch.setattr(wine_helper, "_build_tried", False)
+    monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: calls.append(kwargs)
+                        or subprocess.CompletedProcess(command, 0, "", ""))
+    assert wine_helper.build_helpers("helpers")
+    env = calls[0]["env"]
+    assert env["PYTHON"] == sys.executable
+    assert env["OUT_DIR"] == str(tmp_path.resolve() / "helpers")
+
+
 def test_build_sh_builds_both_helpers(tmp_path):
     # pylint: disable=import-outside-toplevel
     import shutil

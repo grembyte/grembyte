@@ -16,6 +16,9 @@ const REGISTERS = Process.arch === 'x64'
 // The xmm registers floating point arguments arrive in (x86-64: System V
 // passes eight, Windows four); 32-bit code passes them on the stack.
 const VECTORS = Process.arch === 'x64' ? (WINDOWS ? 4 : 8) : 0;
+// 32-bit MSVC passes ``this`` of C++ methods in ecx (thiscall): logged first,
+// before the stack arguments (see argument_name in native_monitor.py).
+const THIS_IN_ECX = Process.arch === 'ia32' && WINDOWS;
 
 const monitors = new Map();   // id -> monitor
 let pending = [];
@@ -198,6 +201,11 @@ function attach(monitor) {
       const now = Date.now();
       const values = [];
       const regions = [];
+      if (THIS_IN_ECX) {
+        const self = ptr(this.context.ecx.toString());
+        values.push(self);
+        regions.push(monitor.dump > 0 && isPointer(self) ? readRegion(self, monitor.dump) : null);
+      }
       for (let i = 0; i < monitor.args; i++) {
         const argument = args[i];
         values.push(argument);

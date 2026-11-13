@@ -33,9 +33,9 @@ Candidates can be marked with ★ as [favorites](../engines/index.md#favorites) 
 | --- | --- | --- | --- |
 | Linux, x86-64 | `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` | `xmm0`–`xmm7` | `rax`, or `xmm0` |
 | Windows and Wine/Proton, x86-64 | `rcx`, `rdx`, `r8`, `r9`, then the stack | `xmm0`–`xmm3` | `rax`, or `xmm0` |
-| 32-bit programs | the stack | the stack | `eax` |
+| 32-bit programs | the stack; on Windows and Wine/Proton also `ecx` | the stack | `eax` |
 
-These are the [calling conventions](../reference/assembly.md#calling-conventions); on x86-64 the first argument of a C++ method is `this`, the object it runs on. The xmm registers appear in a call's details with both readings, as `float` and as `double`: which one is meant, the signature tells (below). Writes to memory that no argument points to are not visible.
+These are the [calling conventions](../reference/assembly.md#calling-conventions); the first argument of a C++ method is `this`, the object it runs on. 32-bit Windows programs pass it in `ecx` (thiscall), so the monitor logs `ecx` first there, with the memory behind it compared like an argument's. The xmm registers appear in a call's details with both readings, as `float` and as `double`: which one is meant, the signature tells (below). Writes to memory that no argument points to are not visible.
 
 For a function in a module whose file Grembyte can read (x86-64), the column **Signature (guessed)** shows which arguments the function's code reads and what callers do with its result, as the [code explorer](code-explorer.md) guesses them: `void (int rdi)` for a function taking one `int` and returning nothing. With **Guessed signature** ticked, the log shows only those arguments, typed (`int rdi=23`, `float xmm0=1.5`), a `float` or `double` result read from `xmm0`, and no result for a `void` function; unticked, it shows the raw argument registers and `rax`. The [example with the test game](../examples/dummy-game-code-explorer.md#4-what-add_gold-takes) explains how the guess is made and how to check it.
 

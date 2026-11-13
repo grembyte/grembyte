@@ -319,8 +319,10 @@ code before the first load, since packages run code in the game's process.
 ## Code health
 
 Left over from the code review of 2026-10-29 (the review itself is in the git history,
-`docs/review-2026-10-29.md`). Checked again on 2026-11-13: the first four points are still
-open; the rest was not checked again.
+`docs/review-2026-10-29.md`). Checked again on 2026-11-13; the scanner's type change after a
+snapshot, leading zeros, large 64-bit call arguments, `this` in `ecx`, the ptrace hooks'
+shared state and swallowed writes, and the zig build are fixed since. The smaller points
+below were not checked again.
 
 - **CModules as C files:** about 1200 lines of C are embedded in JavaScript as Frida CModules
   (`FAST_SOURCE` in `hooks/engine.js`, `BATCH_SOURCE` in `engines/mono/agent.js`, `C_SOURCE`
@@ -331,21 +333,14 @@ open; the rest was not checked again.
   headers, and `inject.c` is package data.
 - **`main_window.py`** has grown to about 3700 lines. Candidates to split out: a scan
   controller, the address list, one attach/switch/detach path, a window registry.
-- **Scanner:** after an "Unknown initial value" scan (a memory snapshot) a newly chosen type
-  is ignored. `value_types.py` reads integers with `int(text, 0)`, which rejects leading
-  zeros (`010`).
 - **Native trace:** modules loaded during a trace are not excluded from Stalker; excluding
   them while threads are followed crashed games under Proton.
 - **Smaller points:** `wine_gadget.py` does not detect forwarded exports; a gadget that loaded
   but never listened is retried with `LoadLibraryW`, which does not run its init again.
   `inject.c` returns the HMODULE through the thread's 32-bit exit code. Modules are keyed by
-  base name (system32/syswow64 collide). `build.sh` runs `python3 -m ziglang` from `PATH`, not
-  the venv. `MEMORY_BASIC_INFORMATION` is wrong under 32-bit Python on Windows. `engine.js`:
-  a pending JavaScript entry can outlive a write whose `after` never ran; the C range list is
-  cut at 4096; C reads `uint64` as signed. `ptrace_hook.py`: one `ctx.state` for all hooks,
-  `OverflowError` for large floats, failed writes are swallowed. `native_monitor.js`: `this`
-  of 32-bit MSVC methods is in `ecx`. `method_call.py` rounds I8/U8 values above 2^53. The
-  translation key `address_table.yes` is unused.
+  base name (system32/syswow64 collide). `MEMORY_BASIC_INFORMATION` is wrong under 32-bit
+  Python on Windows. `engine.js`: a pending JavaScript entry can outlive a write whose `after` never ran; the C range list is
+  cut at 4096; C reads `uint64` as signed.
 
 ## Binary distribution (PyInstaller) and licenses
 
