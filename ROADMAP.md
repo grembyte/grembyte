@@ -321,6 +321,28 @@ the class tree, the dropdown and the filter, and can become two views of one win
 - The ptrace backends (watch, hooks) only report the start and end of the session, no single
   steps.
 
+## Use by other tools: cheat packages and runtime
+
+Other tools, for example a trainer with its own interface, should be able to use what is set
+up in Grembyte without its window. Draft of the format:
+[cheat packages](docs/development/cheat-packages.md). Planned in this order:
+
+1. **Package format:** one JSON file per game with cheats (control, texts, category, hotkey)
+   and their effects (values through pointer chains, write hooks, method hooks, scripts and
+   their functions); engine identities carry an `engine` field. A JSON Schema of it.
+2. **Converter from the export to a package** as a prototype, tried with the saved data of
+   Pillars of Eternity, Baldur's Gate and Avowed; later "Publish as package …" in the window.
+3. **Runtime (`grembyte.runtime`):** loading a package, checking each cheat (`ready`,
+   `unavailable`, `waiting`), switching cheats and setting values, refusing games with
+   anti-cheat. Taken out of `grembyte/cli.py`, with `grembyte-cli` as its first user.
+4. **Background process with a local protocol** (e.g. JSON-RPC over a local socket), so that
+   tools in other languages can use the runtime; `QLocalServer` covers Linux and Windows.
+   The window then uses it for hooks, scripts and freezing, which replaces the hand-over
+   between the window and `grembyte-cli`.
+
+Open: identities of Unreal values and methods, signing packages (Ed25519) and showing their
+code before the first load, since packages run code in the game's process.
+
 ## Binary distribution (PyInstaller) and licenses
 
 Open, nothing is built yet. Grembyte is MIT-licensed; a frozen bundle contains

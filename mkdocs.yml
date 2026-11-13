@@ -129,4 +129,5 @@ nav:
       - development/index.md
       - Architecture: development/architecture.md
       - Implementation notes: development/implementation-notes.md
+      - Cheat packages (draft): development/cheat-packages.md
       - Screenshots: development/screenshots.md
