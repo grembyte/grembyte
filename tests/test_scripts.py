@@ -196,8 +196,9 @@ class _FakeScriptWorker:
     # As ScriptWorker's: unique across workers
     _ids = itertools.count(1)
 
-    def __init__(self, _pid, _parent=None, _language="en"):
+    def __init__(self, pid, _parent=None, _language="en"):
         # pylint: disable=import-outside-toplevel
+        self.pid = pid
         from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
 
         class Signals(QObject):  # pylint: disable=too-few-public-methods

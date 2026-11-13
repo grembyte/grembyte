@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QVBoxLayout,
 )
 
+from grembyte.ui.export_folder import remember, suggested_path
 from grembyte.ui.widgets.icons import set_button_icon
 
 # Characters of a value the tree shows in one line
@@ -192,9 +193,10 @@ class TextViewerDialog(QDialog):
             return
         suffix = "json" if self.data is not None else "txt"
         path, _filter = QFileDialog.getSaveFileName(
-            self, self.translations["text_viewer.save"], f"text.{suffix}")
+            self, self.translations["text_viewer.save"], suggested_path(f"text.{suffix}"))
         if not path:
             return
+        remember(path)
         try:
             with open(path, "w", encoding="utf-8") as file:
                 file.write(self.text)

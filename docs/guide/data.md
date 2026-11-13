@@ -25,6 +25,10 @@ When the attached game exits, Grembyte resets the window within a second: scans,
 
 **File → Import game data …** puts the entries of a file into one saved program, whatever path they were exported from – useful when a game moved, or for another computer. It either replaces what the program holds or mixes the file's entries in, leaving out those it holds already. A template in the file is linked to a local one with the same name and code, otherwise added (under a new name if the name is taken).
 
+## Where exports go
+
+Every export – game data, the [bug report](tools.md#log-and-activity), a text from the text viewer, an object saved from the [object inspector](../engines/index.md#object-inspector) – starts in the folder you saved the last one to. The first time that is your home folder, on Windows your documents folder.
+
 ## Cleaning up
 
 - **File → Delete saved entries …** deletes chosen addresses, pointer scans, hooks, method hooks, favorites or scripts of saved programs, or the programs altogether. Tick the entries per program; the box in front of a row ticks all its entries. For several selected rows (Ctrl or Shift), the space key ticks their entries, a second time their program too, a third time nothing. Deleting an address deletes its pointer scans as well. **Remove process** deletes the program with all its entries and its assembly selection; it is saved anew when you attach to it again.

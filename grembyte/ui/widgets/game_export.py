@@ -38,6 +38,7 @@ from grembyte.db.repository.game_export import (
     export_file_name,
     read_export,
 )
+from grembyte.ui.export_folder import export_folder, remember
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
 from grembyte.ui.widgets.icons import set_button_icon
 from grembyte.ui.widgets.table import resizable_columns, set_row_height
@@ -90,7 +91,7 @@ class GameExportDialog(QDialog):
 
         form = QFormLayout()
         folder_row = QHBoxLayout()
-        self.folder = QLineEdit(str(Path.home()))
+        self.folder = QLineEdit(str(export_folder()))
         folder_row.addWidget(self.folder)
         browse = QPushButton(translations["export.browse"])
         set_button_icon(browse, "folder_open")
@@ -169,7 +170,7 @@ class GameExportDialog(QDialog):
         name = self.file_name.text().strip()
         if not name.lower().endswith(".json"):
             name += ".json"
-        return Path(self.folder.text().strip() or Path.home()).expanduser() / name
+        return Path(self.folder.text().strip() or export_folder()).expanduser() / name
 
     def _export(self):
         game = self.selected_game
@@ -187,6 +188,7 @@ class GameExportDialog(QDialog):
         except (OSError, SQLAlchemyError) as error:
             self.status.setText(self.translations["export.failed"].format(error=error))
             return
+        remember(path)
         self.exported_path = path
         self.accept()
 
@@ -299,7 +301,7 @@ class GameImportDialog(QDialog):
 
     def _browse(self):
         path, _filter = QFileDialog.getOpenFileName(
-            self, self.translations["import.title"], self.path.text() or str(Path.home()),
+            self, self.translations["import.title"], self.path.text() or str(export_folder()),
             self.translations["import.filter"])
         if path:
             self.load_file(path)

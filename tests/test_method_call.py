@@ -184,8 +184,9 @@ def test_arguments_are_logged_as_written_in_code():
 class _FakeWorker:
     """Stands in for MethodMonitorWorker: records the requests; the test answers."""
 
-    def __init__(self, _pid):
+    def __init__(self, pid):
         # pylint: disable=import-outside-toplevel
+        self.pid = pid
         from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
 
         class Signals(QObject):  # pylint: disable=too-few-public-methods

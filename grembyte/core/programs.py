@@ -46,3 +46,14 @@ def resolve_display(name, exe, cmdline, cwd):
         script = arg if os.path.isabs(arg) or not cwd else os.path.join(cwd, arg)
         return os.path.basename(arg), os.path.normpath(script)
     return name, exe
+
+
+def program_of(pid):
+    """``(name, path)`` of the program ``pid`` runs, as the process list names it;
+    None if the process is gone or not readable."""
+    import psutil  # pylint: disable=import-outside-toplevel
+    try:
+        info = psutil.Process(pid).as_dict(["name", "exe", "cmdline", "cwd"])
+    except psutil.Error:
+        return None
+    return resolve_display(info["name"] or "", info["exe"] or "", info["cmdline"], info["cwd"])

@@ -75,6 +75,8 @@ The object inspector shows the fields of an object – for Unity also static fie
 
 Inspectors can be [docked](../guide/tools.md#docking-windows) beside the scanner; an object opened from a docked inspector opens as a tab beside it.
 
+**Save as HTML …** keeps an object for later, also after the game has freed it. It first calls all of the object's getters in the game, then writes a self-contained HTML page with its class, name and address, its fields (name, type, value, offset, address), the getters' values and the instance methods with those of its base classes, plus the program and the time. A getter that throws shows its error. The values are those of that moment; the page is a record, not a way back to the object. For an inspector of a recorded call the fields are those of the call. The file dialog starts in the folder of the last export (see [Saving, export and import](../guide/data.md#where-exports-go)).
+
 <figure markdown="span">
   ![Object inspector](../assets/screenshots/object-inspector-dark.webp#only-dark)
   ![Object inspector](../assets/screenshots/object-inspector-light.webp#only-light)

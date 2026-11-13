@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QAbstractItemView,
     QCheckBox,
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -23,8 +24,14 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QWidget,
 )
 
+from grembyte import __version__
 from grembyte.core import messages
+from grembyte.core import settings as app_settings
+from grembyte.core.programs import program_of
+from grembyte.features import object_export
 from grembyte.ui import window_state
+from grembyte.ui.export_folder import remember, suggested_path
+from grembyte.ui.localization import language_code
 from grembyte.ui.widgets.docking import TAB_TITLE, PinButton
 from grembyte.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 from grembyte.ui.widgets.labels import SelectableText
@@ -181,13 +188,15 @@ class ObjectInspectorDialog(QDialog):
 
     def __init__(self, translations, open_object, target=None, request=None,
                  contents=None, captured=None, evaluate=None, name="", depth=1, parent=None,
-                 show_text=None, list_methods=None, call_method=None, instance_name=None):
+                 show_text=None, list_methods=None, call_method=None, instance_name=None,
+                 pid=None):
         # pylint: disable=too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.translations = translations
         self.target = target
+        self.pid = pid
         self._open_object = open_object
         self._request = request
         self._evaluate = evaluate
@@ -199,11 +208,19 @@ class ObjectInspectorDialog(QDialog):
         self.instance_name = instance_name
         self.depth = depth
         self._pending = False
+        # The last contents shown, for the export
+        self._contents = None
+        # The file an export writes once the getters are evaluated
+        self._export_path = None
+        self._export_note = False
+        self._evaluations_pending = 0
         # property name -> value, once evaluated
         self._property_values = {}
         # the object's instance methods once listed; None: not asked yet
         self._methods = None
         self._methods_pending = False
+        # Why listing the methods failed, for the export
+        self._methods_error = None
         # the property whose setter was called last, to show its new value
         self._setting = None
         self._type_name = "?"
@@ -238,6 +255,12 @@ class ObjectInspectorDialog(QDialog):
         self.add_address_button.setEnabled(False)
         self.add_address_button.clicked.connect(lambda: self.add_address(self.table.currentRow()))
         bar.addWidget(self.add_address_button)
+        self.export_button = QPushButton(self.translations["inspector.export"])
+        set_button_icon(self.export_button, "save")
+        self.export_button.setToolTip(self.translations["inspector.export_tooltip"])
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self.export_html)
+        bar.addWidget(self.export_button)
         if live:
             bar.addWidget(self.live_check)
             bar.addWidget(self.refresh_button)
@@ -505,6 +528,8 @@ class ObjectInspectorDialog(QDialog):
             self.show_error(messages.describe(contents["error"]))
             return
         fields = contents.get("fields", [])
+        self._contents = contents
+        self.export_button.setEnabled(self._export_path is None)
         class_name = contents.get("name", "?")
         address = contents.get("address", "")
         instance_name = contents.get("instanceName") or self.instance_name
@@ -652,19 +677,25 @@ class ObjectInspectorDialog(QDialog):
             return
         names = self._property_names() if names is None else names
         self.status_label.setText(self.translations["inspector.evaluating"])
+        self._evaluations_pending += 1
         self._evaluate(self.target, names, self)
 
     def show_properties(self, results):
+        self._evaluations_pending = max(0, self._evaluations_pending - 1)
         rows = {name: row for row, name in enumerate(self._property_names())}
         for result in results:
             self._property_values[result["name"]] = result["value"]
             if result["name"] in rows:
                 self._show_property(rows[result["name"]], result["value"])
         self._restore_hint()
+        self._finish_export()
 
     def show_property_error(self, message):
+        self._evaluations_pending = max(0, self._evaluations_pending - 1)
         self.status_label.setText(self.translations["inspector.evaluate_failed"].format(
             message=message))
+        # The page shows the getters as not evaluated.
+        self._finish_export(keep_status=True)
 
     def set_property(self, prop):
         """Offer to call the setter of the property ``prop`` (an entry of the contents)."""
@@ -678,9 +709,10 @@ class ObjectInspectorDialog(QDialog):
     def _can_call(self):
         return self._call_method is not None and self.target is not None
 
-    def _load_methods(self):
-        """List the object's methods once their section is open."""
-        if (self._methods is not None or self._methods_pending or not self.methods_section.is_open
+    def _load_methods(self, force=False):
+        """List the object's methods once their section is open (or an export needs them)."""
+        if (self._methods is not None or self._methods_pending
+                or not (force or self.methods_section.is_open)
                 or self._list_methods is None or self.target is None):
             return
         self._methods_pending = True
@@ -703,11 +735,14 @@ class ObjectInspectorDialog(QDialog):
                     self.translations["inspector.call"], lambda row=row: self._call_row(row)))
         self._filter_methods()
         self._restore_hint()
+        self._finish_export()
 
     def show_methods_error(self, message):
         self._methods_pending = False
+        self._methods_error = message
         self.status_label.setText(self.translations["inspector.methods_failed"].format(
             message=message))
+        self._finish_export(keep_status=True)
 
     def _filter_fields(self):
         """Show the fields whose name or type contains every word of the search."""
@@ -740,6 +775,98 @@ class ObjectInspectorDialog(QDialog):
         self.refresh()
         if self._setting is not None:
             self.evaluate_properties([self._setting])
+
+    # --- Export ------------------------------------------------------------------
+    def export_html(self):
+        """Save the object as an HTML page; all getters are evaluated first."""
+        if self._contents is None or self._export_path is not None:
+            return
+        path, _filter = QFileDialog.getSaveFileName(
+            self, self.translations["inspector.export"],
+            suggested_path(object_export.file_name(self.snapshot())),
+            self.translations["inspector.export_filter"])
+        if not path:
+            return
+        if not path.lower().endswith((".html", ".htm")):
+            path += ".html"
+        remember(path)
+        self._export_path = path
+        self._export_note = False
+        self.export_button.setEnabled(False)
+        # The page shows the getters' values and the methods, base classes' included.
+        if self._property_names() and self._can_evaluate():
+            self.evaluate_properties(None)
+        self._load_methods(force=True)
+        self.status_label.setText(self.translations["inspector.exporting"])
+        self._finish_export()
+
+    def _finish_export(self, keep_status=False):
+        """Write a pending export once no getter or method list is outstanding.
+
+        ``keep_status``: an error shows in the status line; it stays above
+        the message that the page was saved.
+        """
+        if self._export_path is None:
+            return
+        self._export_note = self._export_note or keep_status
+        if self._evaluations_pending or self._methods_pending:
+            return
+        path, self._export_path = self._export_path, None
+        self.export_button.setEnabled(self._contents is not None)
+        page = object_export.render_html(self.snapshot(), self.translations,
+                                         language_code(app_settings.language()))
+        try:
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(page)
+        except OSError as error:
+            self.status_label.setText(self.translations["inspector.export_failed"].format(
+                error=error))
+            return
+        done = self.translations["inspector.exported"].format(path=path)
+        self.status_label.setText(
+            f"{self.status_label.text()}\n{done}" if self._export_note else done)
+
+    def snapshot(self):
+        """What the inspector shows now, for ``object_export.render_html``."""
+        contents = self._contents or {}
+        fields = []
+        for row, field in enumerate(contents.get("fields", [])[:self.table.rowCount()]):
+            name, kind, value, offset = (
+                self.table.item(row, column).text() if self.table.item(row, column) else ""
+                for column in (_FIELD, _TYPE, _VALUE, _OFFSET))
+            fields.append({"name": name, "type": kind, "value": value, "offset": offset,
+                           "address": field.get("address") or "",
+                           "static": bool(field.get("static"))})
+        properties = []
+        for row in range(self.properties_table.rowCount()):
+            prop = self.properties_table.item(row, _P_NAME).data(Qt.ItemDataRole.UserRole)
+            value = self._property_values.get(prop["name"])
+            properties.append({
+                "name": prop["name"], "type": self.properties_table.item(row, _P_TYPE).text(),
+                "value": None if value is None else messages.describe(value.get("text", "")),
+                "error": bool(value and value.get("error")),
+                "static": bool(prop.get("static"))})
+        class_name = contents.get("name", "?")
+        program = None if self.pid is None else program_of(self.pid)
+        return {
+            "class_name": class_name,
+            "short_class": short_type_name(class_name),
+            "instance_name": contents.get("instanceName") or self.instance_name,
+            "address": contents.get("address", ""),
+            "length": contents.get("length"),
+            "captured": self._captured,
+            "time": datetime.now(),
+            "version": __version__,
+            "program": None if program is None else {
+                "name": program[0], "path": program[1], "pid": self.pid},
+            "fields": fields,
+            "properties": properties,
+            # None: not listed (an inspector without a worker to ask)
+            "methods": None if self._methods is None else [
+                {key: entry.get(key, "") for key in ("name", "params", "returns", "owner")}
+                for entry in self._methods],
+            "methods_error": self._methods_error,
+        }
 
     def closeEvent(self, event):  # pylint: disable=invalid-name
         self._timer.stop()

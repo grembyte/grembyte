@@ -102,3 +102,17 @@ def test_column_widths_of_another_layout_are_ignored(qt_app):
     assert window_state.load_columns("W/T0", 4) == {}
     window_state.settings().setValue("columns/W/T1", "not json")
     assert window_state.load_columns("W/T1", 3) == {}
+
+
+def test_exports_start_in_the_last_folder_used(qt_app, tmp_path):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from grembyte.ui import export_folder
+
+    assert export_folder.export_folder() == export_folder.default_folder()
+    folder = tmp_path / "exports"
+    folder.mkdir()
+    export_folder.remember(folder / "report.zip")
+    assert export_folder.suggested_path("a.html") == str(folder / "a.html")
+    # A folder that is gone falls back to the default.
+    folder.rmdir()
+    assert export_folder.export_folder() == export_folder.default_folder()

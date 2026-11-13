@@ -1,7 +1,6 @@
 """The application log in a window, and a dialog for unexpected errors."""
 
 import time
-from pathlib import Path
 
 from PySide6.QtCore import QObject, QUrl, Signal  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtGui import QDesktopServices, QFontDatabase, QGuiApplication, QTextCursor  # pylint: disable=import-error,no-name-in-module
@@ -19,6 +18,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 
 from grembyte.core import activity, logs
+from grembyte.ui.export_folder import remember, suggested_path
 from grembyte.ui.widgets.docking import PinButton
 from grembyte.ui.widgets.icons import set_button_icon, theme_color
 
@@ -146,10 +146,11 @@ class LogDialog(QDialog):
     def _export(self):
         name = time.strftime("grembyte-report-%Y%m%d-%H%M%S.zip")
         target, _filter = QFileDialog.getSaveFileName(
-            self, self.translations["log.export"], str(Path.home() / name),
+            self, self.translations["log.export"], suggested_path(name),
             self.translations["log.export_filter"])
         if not target:
             return
+        remember(target)
         try:
             files = activity.export_report(target, self.path.parent)
         except OSError as error:

@@ -1742,6 +1742,98 @@ def test_inspector_shows_recorded_fields_without_reading_again(qt_app, translati
         dialog.close()
 
 
+def test_inspector_saves_the_object_as_html_after_calling_all_getters(
+        qt_app, translations, tmp_path, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    import os
+
+    from grembyte.ui import export_folder
+    from grembyte.ui.widgets import object_inspector
+
+    asked, evaluated, listed = [], [], []
+    target_file = tmp_path / "out" / "player"
+    target_file.parent.mkdir()
+
+    def save_dialog(_parent, _title, suggested, _filter):
+        asked.append(suggested)
+        return str(target_file), ""
+
+    monkeypatch.setattr(object_inspector.QFileDialog, "getSaveFileName", save_dialog)
+    contents = {"name": "Game.Player", "instanceName": "Hero<1>", "address": "0x1000",
+                "fields": [
+        {"name": "Gold", "type": "System.Int32", "offset": 0x10, "static": False,
+         "address": "0x1010", "value": {"text": "250"}},
+        {"name": "Motto", "type": "System.String", "offset": 0x18, "static": False,
+         "value": {"text": '"<script>alert(1)</script>"', "string": True}},
+    ], "properties": [{"name": "Level", "type": "System.Int32", "static": False},
+                      {"name": "Broken", "type": "System.Int32", "static": False}]}
+    dialog = object_inspector.ObjectInspectorDialog(
+        translations, lambda *_: None, target={"address": "0x1000"}, contents=contents,
+        captured="10:00:00.000", evaluate=lambda _target, names, _dialog: evaluated.append(names),
+        list_methods=lambda target, _dialog: listed.append(target), pid=os.getpid())
+    try:
+        dialog.methods_section.set_open(False)
+        dialog.export_button.click()
+        # The getters are called and the methods listed first (also while their
+        # section is folded); the page waits for both.
+        assert evaluated == [["Level", "Broken"]]
+        assert listed == [{"address": "0x1000"}]
+        assert not dialog.export_button.isEnabled()
+        assert not (tmp_path / "out" / "player.html").exists()
+        assert asked[0].startswith(str(export_folder.default_folder()))
+        assert os.path.basename(asked[0]).startswith("Hero_1-0x1000-")
+
+        dialog.show_properties([
+            {"name": "Level", "value": {"text": "7"}},
+            {"name": "Broken", "value": {"text": "NullReferenceException", "error": True}}])
+        assert not (tmp_path / "out" / "player.html").exists()
+        dialog.show_methods([
+            {"name": "AddGold", "params": "System.Int32 amount", "returns": "System.Void",
+             "owner": "Game.Player", "method": "0x1"},
+            {"name": "Destroy", "params": "", "returns": "System.Void",
+             "owner": "UnityEngine.Object", "method": "0x2"}])
+        page = (tmp_path / "out" / "player.html").read_text(encoding="utf-8")
+        assert dialog.export_button.isEnabled()
+        assert str(tmp_path / "out" / "player.html") in dialog.status_label.text()
+        assert "<td>Gold</td>" in page and ">250<" in page and "0x1010" in page
+        assert "&lt;script&gt;" in page and "<script>" not in page
+        assert "Hero&lt;1&gt;" in page
+        assert '<td class="value">7</td>' in page
+        assert '<td class="value error">NullReferenceException</td>' in page
+        assert "10:00:00.000" in page  # recorded at a call
+        # Base classes' methods too
+        assert "<td>AddGold</td>" in page and "System.Int32 amount" in page
+        assert '<td class="owner">UnityEngine.Object</td>' in page
+        # The value gets more room than the type, however long the type names.
+        assert '<col style="width: 16%">' in page and "table-layout: fixed" in page
+        assert f"(PID {os.getpid()})" in page
+        # The next export starts in the folder of this one.
+        assert export_folder.export_folder() == tmp_path / "out"
+    finally:
+        dialog.close()
+
+
+def test_inspector_saves_without_getters_it_cannot_call(qt_app, translations, tmp_path,
+                                                        monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from grembyte.ui.widgets import object_inspector
+
+    target_file = tmp_path / "plain.html"
+    monkeypatch.setattr(object_inspector.QFileDialog, "getSaveFileName",
+                        lambda *_args: (str(target_file), ""))
+    dialog = object_inspector.ObjectInspectorDialog(
+        translations, lambda *_: None, captured="10:00:00.000", contents={
+            "name": "Game.Player", "address": "0x1000", "fields": [],
+            "properties": [{"name": "Level", "type": "System.Int32", "static": False}]})
+    try:
+        dialog.export_button.click()
+        page = target_file.read_text(encoding="utf-8")
+        assert "(nicht ausgewertet)" in page and "Keine Felder." in page
+    finally:
+        dialog.close()
+
+
+
 @requires_target
 def test_properties_are_evaluated_on_the_main_thread(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel,too-many-locals

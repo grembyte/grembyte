@@ -22,6 +22,8 @@ Games keep hundreds of thousands of objects, so a class's objects are only read 
 
 Double-click an object, or select it and click **Open in inspector**, to show its fields in the [object inspector](../engines/index.md#object-inspector). The context menu copies an object's address or name, or a class's name or address.
 
+Objects live only for a while: a level, a fight, a session. To keep an interesting one for later, use **Save as HTML …** in its inspector. The page records its fields and getters as they were then.
+
 ## Narrowing the list
 
 - **Package:** all packages, **Game only** (without the engine's and the framework's), or one package. A package is an assembly in Unity games (`Assembly-CSharp`) and a package as the catalog groups them in Unreal games (`/Script/<Module>`, `/Game/<Folder>`). The dropdown shows how many objects each one has.

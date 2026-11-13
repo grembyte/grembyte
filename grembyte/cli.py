@@ -52,7 +52,7 @@ import sys
 import time
 from pathlib import Path
 
-from grembyte.core import cli_link
+from grembyte.core import cli_link, programs
 from grembyte.core.cli_link import LAUNCHER_ENV
 # Set when grembyte-cli executed itself anew: the pid of the started command
 CHILD_ENV = "GREMBYTE_CLI_CHILD"
@@ -164,18 +164,6 @@ def descendant_pids(pid):
         return [child.pid for child in psutil.Process(pid).children(recursive=True)]
     except psutil.Error:
         return []
-
-
-def program_of(pid):
-    """``(name, path)`` of the program ``pid`` runs, as the process list names it."""
-    # pylint: disable=import-outside-toplevel
-    import psutil
-    from grembyte.core.programs import resolve_display
-    try:
-        info = psutil.Process(pid).as_dict(["name", "exe", "cmdline", "cwd"])
-    except psutil.Error:
-        return None
-    return resolve_display(info["name"] or "", info["exe"] or "", info["cmdline"], info["cwd"])
 
 
 def anti_cheat(pid, proc_root="/proc"):
@@ -409,7 +397,7 @@ class Launch:
     def _find_game(self):
         launcher = os.getpid()
         for pid in dict.fromkeys(launched_pids(launcher) + descendant_pids(launcher)):
-            program = program_of(pid)
+            program = programs.program_of(pid)
             # By program too: a process may execute another one (a script or
             # wine becoming the game) and keep its pid.
             if program is None or (pid, program) in self._seen:
