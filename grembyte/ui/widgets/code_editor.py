@@ -43,8 +43,11 @@ _PSEUDOCODE_KEYWORDS = frozenset({
     "int16_t", "int32_t", "int64_t", "return", "uint8_t", "uint16_t", "uint32_t",
     "uint64_t", "void",
 })
-# Markdown block states: inside a fence, which language, and the
-# JavaScript state (block comment, template string) carried across lines
+# Markdown block states: inside a fence, how long the fence is, which
+# language, and the JavaScript state (block comment, template string)
+# carried across lines
+_MD_FENCE_LENGTH_SHIFT = 9
+_MD_FENCE_LENGTH_MAX = 0xff
 _MD_FENCE = 0x100
 _MD_TILDE = 0x80
 _MD_LANGUAGE_MASK = 0x30
@@ -54,7 +57,9 @@ _MD_LANGUAGES = {
     **dict.fromkeys(("js", "javascript", "mjs", "ts", "typescript", "json"), _MD_JAVASCRIPT),
     **dict.fromkeys(("c", "cpp", "c++", "h", "pseudocode"), _MD_C),
 }
-_MD_FENCE_OPEN = re.compile(r" {0,3}(`{3,}|~{3,})\s*([\w+#.-]*)")
+# A fence and its info string; after backticks the info string has none (CommonMark)
+_MD_FENCE_OPEN = re.compile(r" {0,3}(?:(`{3,})([^`]*)|(~{3,})(.*))$")
+_MD_INFO_LANGUAGE = re.compile(r"[\w+#.-]*")
 _MD_HEADING = re.compile(r" {0,3}(#{1,6})(?:\s|$)")
 _MD_RULE = re.compile(r" {0,3}([-*_])(?: *\1){2,} *$")
 _MD_QUOTE = re.compile(r"(?: {0,3}> ?)+")
@@ -213,11 +218,29 @@ def _highlight_pseudocode(paint, text):
         position += 1
 
 
-def highlight_code(paint, language, text, state=0):
-    """Call ``paint(start, length, token)`` for one line of code in ``language``
-    (the info string of a Markdown fence: js, c …); returns the state the next
-    line of the same code starts in. Unknown languages are one "string" token."""
-    kind = _MD_LANGUAGES.get(language.lower(), _MD_PLAIN)
+def fence_opening(text):
+    """``(fence, language)`` if the line ``text`` opens a fenced code block
+    (fence like ```` ``` ```` or ``~~~``, language the first word of the info
+    string), else None."""
+    match = _MD_FENCE_OPEN.match(text)
+    if match is None:
+        return None
+    fence, info = (match.group(1), match.group(2)) if match.group(1) else (
+        match.group(3), match.group(4))
+    return fence, _MD_INFO_LANGUAGE.match(info.strip()).group()
+
+
+def closes_fence(text, fence):
+    """Whether the line ``text`` closes a code block opened by ``fence``: the
+    same character, at least as many times, nothing else."""
+    stripped = text.rstrip(" \t")
+    indent = len(stripped) - len(stripped.lstrip(" "))
+    marks = stripped[indent:]
+    return (indent <= 3 and len(marks) >= len(fence)
+            and marks == fence[0] * len(marks))
+
+
+def _highlight_kind(paint, kind, text, state):
     if kind == _MD_JAVASCRIPT:
         return _highlight_javascript(paint, text, state)
     if kind == _MD_C:
@@ -225,6 +248,13 @@ def highlight_code(paint, language, text, state=0):
         return 0
     paint(0, len(text), "string")
     return 0
+
+
+def highlight_code(paint, language, text, state=0):
+    """Call ``paint(start, length, token)`` for one line of code in ``language``
+    (the info string of a Markdown fence: js, c …); returns the state the next
+    line of the same code starts in. Unknown languages are one "string" token."""
+    return _highlight_kind(paint, _MD_LANGUAGES.get(language.lower(), _MD_PLAIN), text, state)
 
 
 class JavaScriptHighlighter(QSyntaxHighlighter):
@@ -309,12 +339,19 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         self.setFormat(start, length, self.formats[name])
 
     def _merge(self, start, length, name, free):
-        """Add the format ``name`` to the characters ``free`` still allows."""
-        for position in range(start, start + length):
-            if free[position]:
-                text_format = self.format(position)
-                text_format.merge(self.formats[name])
-                self.setFormat(position, 1, text_format)
+        """Add the format ``name`` to the characters ``free`` still allows,
+        one setFormat per run of characters formatted alike."""
+        run_start, run_format = None, None
+        for position in range(start, start + length + 1):
+            text_format = (self.format(position)
+                           if position < start + length and free[position] else None)
+            if run_format is not None and text_format != run_format:
+                merged = QTextCharFormat(run_format)
+                merged.merge(self.formats[name])
+                self.setFormat(run_start, position - run_start, merged)
+                run_format = None
+            if text_format is not None and run_format is None:
+                run_start, run_format = position, text_format
 
     def highlightBlock(self, text):  # pylint: disable=invalid-name
         state = self.previousBlockState()
@@ -323,12 +360,14 @@ class MarkdownHighlighter(QSyntaxHighlighter):
             return
         self.setCurrentBlockState(0)
 
-        fence = _MD_FENCE_OPEN.match(text)
-        if fence is not None:
+        opening = fence_opening(text)
+        if opening is not None:
+            fence, language = opening
             self._paint(0, len(text), "marker")
-            language = _MD_LANGUAGES.get(fence.group(2).lower(), _MD_PLAIN)
-            tilde = _MD_TILDE if fence.group(1)[0] == "~" else 0
-            self.setCurrentBlockState(_MD_FENCE | tilde | language)
+            tilde = _MD_TILDE if fence[0] == "~" else 0
+            length = min(len(fence), _MD_FENCE_LENGTH_MAX) << _MD_FENCE_LENGTH_SHIFT
+            self.setCurrentBlockState(_MD_FENCE | length | tilde
+                                      | _MD_LANGUAGES.get(language.lower(), _MD_PLAIN))
             return
         heading = _MD_HEADING.match(text)
         if heading is not None:
@@ -352,23 +391,14 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         self._highlight_inline(text, start)
 
     def _highlight_fenced(self, text, state):
-        fence_character = "~" if state & _MD_TILDE else "`"
-        if re.match(r" {0,3}" + re.escape(fence_character) + r"{3,}\s*$", text):
+        fence = ("~" if state & _MD_TILDE else "`") * (
+            (state >> _MD_FENCE_LENGTH_SHIFT) & _MD_FENCE_LENGTH_MAX)
+        if closes_fence(text, fence):
             self._paint(0, len(text), "marker")
             self.setCurrentBlockState(0)
             return
-
-        def paint(start, length, token):
-            self.setFormat(start, length, self.formats[token])
-
-        language = state & _MD_LANGUAGE_MASK
-        inner = 0
-        if language == _MD_JAVASCRIPT:
-            inner = _highlight_javascript(paint, text, state & _MD_INNER_MASK)
-        elif language == _MD_C:
-            _highlight_pseudocode(paint, text)
-        else:
-            paint(0, len(text), "string")
+        inner = _highlight_kind(self._paint, state & _MD_LANGUAGE_MASK, text,
+                                state & _MD_INNER_MASK)
         self.setCurrentBlockState((state & ~_MD_INNER_MASK) | inner)
 
     def _highlight_inline(self, text, start):

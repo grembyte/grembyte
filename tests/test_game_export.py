@@ -266,6 +266,17 @@ def test_empty_notes_do_not_count_or_export(sessions, repository):
     assert repository.export_game("abrt-dbus")["processes"] == []
 
 
+def test_notes_count_and_export_alike_when_only_other_space_is_in_them(sessions, repository):
+    # SQL's trim() and the export agree on what an empty note is
+    empty = _process_id(sessions, "abrt-dbus", "/usr/sbin/abrt-dbus")
+    with sessions() as session:
+        session.add(GameNote(process_id=empty, body="\u00a0\f"))
+        session.commit()
+    process = next(row for row in repository.list_processes() if row.process_id == empty)
+    [exported] = repository.export_game("abrt-dbus")["processes"]
+    assert process.counts["notes"] == len(exported["notes"]) == 1
+
+
 def test_imported_notes_are_merged_and_never_deleted(sessions, repository):
     souls = _process_id(sessions, "DarkSoulsIII.ex", PROTON_GE)
     poe = _process_id(sessions, "PillarsOfEternity", "/steam/common/PoE/PillarsOfEternity")

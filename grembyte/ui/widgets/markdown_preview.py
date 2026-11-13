@@ -5,6 +5,8 @@ formatted afterwards: headings, inline code, code blocks (coloured like the
 code editor), quotes, links, rules and tables.
 """
 
+import re
+
 from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
     QBrush,
     QFont,
@@ -19,7 +21,7 @@ from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
 )
 from PySide6.QtWidgets import QTextBrowser  # pylint: disable=import-error,no-name-in-module
 
-from grembyte.ui.widgets.code_editor import highlight_code
+from grembyte.ui.widgets.code_editor import closes_fence, fence_opening, highlight_code
 from grembyte.ui.widgets.icons import parse_color, theme_color
 
 _COLOR_KEYS = ("muted", "accent", "border", "border_subtle", "surface", "alternate",
@@ -28,6 +30,35 @@ _TOKEN_COLORS = {"text": "code_text", "keyword": "code_keyword", "string": "code
                  "number": "code_number", "comment": "muted"}
 _HEADING_SPACE = {1: 14, 2: 12, 3: 10}
 _Property = QTextFormat.Property
+# What stands before a fence in a quote or a list item
+_CONTAINER_PREFIX = re.compile(r"(?:[ \t]*>|[ \t]*(?:[-*+]|\d{1,9}[.)])(?=[ \t]))*[ \t]*")
+
+
+def fenced_code_lines(markdown):
+    """The number of lines of each fenced code block of ``markdown``, in order.
+
+    QTextDocument.setMarkdown marks code lines only with their language, so
+    two blocks of one language in a row look like one; these lengths part
+    them. Blocks without a line are left out, as setMarkdown leaves them out.
+    """
+    lengths = []
+    fence, lines = None, 0
+    for line in markdown.splitlines():
+        prefix = _CONTAINER_PREFIX.match(line)
+        content = line[prefix.end():] if prefix else line
+        if fence is None:
+            opening = fence_opening(content)
+            if opening is not None:
+                fence, lines = opening[0], 0
+        elif closes_fence(content, fence):
+            if lines:
+                lengths.append(lines)
+            fence = None
+        else:
+            lines += 1
+    if fence is not None and lines:
+        lengths.append(lines)
+    return lengths
 
 
 def _char_format(color=None, background=None, bold=False, italic=False, underline=False):
@@ -133,23 +164,33 @@ def _frame_code(document, start, end, indent, colors):
             _merge_block(block, flat)
 
 
-def style_markdown(document, colors):
+def style_markdown(document, colors, code_lines=None):
     """Format the ``document`` QTextDocument.setMarkdown built in the theme ``colors``
-    (a theme's colour keys to ``#rrggbb``)."""
+    (a theme's colour keys to ``#rrggbb``).
+
+    ``code_lines`` are the lengths of its fenced code blocks (fenced_code_lines),
+    to part blocks of the same language that follow each other.
+    """
+    code_lines = iter(code_lines or ())
     colors = {key: parse_color(colors[key]) for key in _COLOR_KEYS}
     fixed = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
     cursor = QTextCursor(document)
     cursor.beginEditBlock()
     code_language = None
     code_state = 0
+    code_fence = None
+    code_left = None
     code_runs = []
     block = document.begin()
     while block.isValid():
         block_format = block.blockFormat()
         if block_format.hasProperty(_Property.BlockCodeLanguage):
             language = block_format.stringProperty(_Property.BlockCodeLanguage)
-            if language != code_language:
+            fence = block_format.stringProperty(_Property.BlockCodeFence)
+            if language != code_language or fence != code_fence or code_left == 0:
                 code_state = 0
+                # Indented code (no fence) is not counted
+                code_left = next(code_lines, None) if fence else None
                 # The box takes the indent of code in a list or quote
                 indent = (block_format.leftMargin()
                           + block_format.indent() * document.indentWidth())
@@ -165,10 +206,12 @@ def style_markdown(document, colors):
             line.setFontFamilies([fixed.family()])
             _merge(document, block.position(), block.length() - 1, line)
             code_state = _style_code_line(document, block, language, code_state, colors)
-            code_language = language
+            code_language, code_fence = language, fence
+            if code_left is not None:
+                code_left -= 1
             block = block.next()
             continue
-        code_language = None
+        code_language = code_fence = None
         level = block_format.headingLevel()
         if level:
             heading = QTextBlockFormat()
@@ -214,7 +257,7 @@ class MarkdownPreview(QTextBrowser):
         self._markdown = text
         scroll = self.verticalScrollBar().value()
         self.setMarkdown(text)
-        style_markdown(self.document(), self._colors)
+        style_markdown(self.document(), self._colors, fenced_code_lines(text))
         self.verticalScrollBar().setValue(scroll)
 
     def code_theme_changed(self, colors):

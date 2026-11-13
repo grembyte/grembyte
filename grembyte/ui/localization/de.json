@@ -1253,6 +1253,8 @@
   "notes.unsaved": "Ungespeicherte Änderungen",
   "notes.save_failed": "Speichern fehlgeschlagen: {error}",
   "notes.load_failed": "Die Notizen können nicht gelesen werden: {error}",
+  "notes.discard_title": "Notizen nicht gespeichert",
+  "notes.discard_question": "Die Notizen können nicht gespeichert werden: {error}\n\nÄnderungen verwerfen oder abbrechen und sie offen lassen?",
   "saved_games.title": "Notizen: Spiel auswählen",
   "saved_games.hint": "Spiele, für die Grembyte Einträge gespeichert hat. Ein Spiel wird gespeichert, sobald Grembyte sich damit verbindet.",
   "saved_games.none": "Noch kein Spiel gespeichert. Sobald Grembyte sich einmal mit einem Spiel verbunden hat, erscheint es hier.",

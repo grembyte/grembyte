@@ -212,3 +212,95 @@ def test_markdown_syntax_and_fenced_code_use_theme_colors(qt_app):
         assert format_at(9, "after") is None
     finally:
         editor.close()
+
+
+def _markdown_formats(qt_app, lines):
+    """The highlighted editor and ``format_at(line, token)`` for ``lines`` of Markdown."""
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PySide6.QtGui import QTextCharFormat  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.ui.styles.themes import ThemeManager
+    from grembyte.ui.widgets.code_editor import MarkdownHighlighter
+
+    colors = ThemeManager(user_theme_dir="/tmp/no-grembyte-themes").load_theme(
+        "Solarized-Light")["colors"]
+    editor = QPlainTextEdit("\n".join(lines))
+    editor.markdown_highlighter = MarkdownHighlighter(editor.document(), colors)
+
+    def color_at(block_number, token):
+        block = editor.document().findBlockByNumber(block_number)
+        position = block.text().index(token)
+        for format_range in block.layout().formats():
+            if format_range.start <= position < format_range.start + format_range.length:
+                return QTextCharFormat(format_range.format).foreground().color().name()
+        return None
+
+    return editor, colors, color_at
+
+
+def test_markdown_fences_open_and_close_as_in_commonmark(qt_app):
+    editor, colors, color_at = _markdown_formats(qt_app, [
+        "```foo``` is a code span, not a fence",
+        "plain",
+        "````md",
+        "```js",
+        "inside",
+        "```",
+        "still inside",
+        "````",
+        "after",
+        "~~~",
+        "``` no end for tildes",
+        "~~~~",
+        "end",
+    ])
+    try:
+        assert color_at(1, "plain") is None
+        assert color_at(4, "inside") == colors["code_string"]
+        assert color_at(6, "still") == colors["code_string"]
+        assert color_at(8, "after") is None
+        assert color_at(10, "no end") == colors["code_string"]
+        assert color_at(12, "end") is None
+    finally:
+        editor.close()
+
+
+def test_markdown_emphasis_keeps_the_formats_below_it(qt_app):
+    # pylint: disable=import-outside-toplevel
+    from PySide6.QtGui import QFont  # pylint: disable=import-error,no-name-in-module
+
+    editor, colors, color_at = _markdown_formats(qt_app, ["> **bold *both* bold**"])
+    try:
+        # pylint: disable=import-outside-toplevel
+        from PySide6.QtGui import QTextCharFormat  # pylint: disable=import-error,no-name-in-module
+
+        block = editor.document().firstBlock()
+        ranges = block.layout().formats()
+
+        def format_at(token):
+            position = block.text().index(token)
+            return next(QTextCharFormat(r.format) for r in ranges
+                        if r.start <= position < r.start + r.length)
+
+        for token in ("bold", "both"):
+            assert format_at(token).fontWeight() == QFont.Weight.Bold
+            assert format_at(token).fontItalic()  # the quote's italics stay
+        assert color_at(0, "both") == colors["muted"]
+    finally:
+        editor.close()
+
+
+def test_highlight_code_and_the_editor_colour_fenced_code_alike(qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.ui.widgets.code_editor import highlight_code
+
+    tokens = []
+    highlight_code(lambda start, length, token: tokens.append((start, token)),
+                   "JS", "const x")
+    assert (0, "keyword") in tokens
+    editor, colors, color_at = _markdown_formats(qt_app, ["```JS", "const x", "```"])
+    try:
+        assert color_at(1, "const") == colors["code_keyword"]
+    finally:
+        editor.close()

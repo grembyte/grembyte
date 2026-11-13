@@ -42,7 +42,7 @@ from grembyte.db.models import (
     PointerScan,
     Process,
 )
-from grembyte.db.repository.notes import merged_text
+from grembyte.db.repository.notes import BLANK, merged_text
 
 EXPORT_FORMAT = "grembyte-export"
 # What exports said before the project was renamed from Hermes Hook; still read.
@@ -162,7 +162,7 @@ class GameExportRepository:
             for key, model in _COUNTED:
                 query = select(model.process_id, func.count())
                 if model is GameNote:
-                    query = query.where(func.trim(GameNote.body, " \t\n\r") != "")
+                    query = query.where(func.trim(GameNote.body, BLANK) != "")
                 counts[key] = dict(session.execute(
                     query.group_by(model.process_id)).all())
             counts["pointer_scans"] = dict(session.execute(
@@ -241,7 +241,7 @@ class GameExportRepository:
             "method_hooks": rows(MethodHook),
             "favorites": rows(FavoriteRecord),
             "scripts": rows(GameScript),
-            "notes": [note for note in rows(GameNote) if (note["body"] or "").strip()],
+            "notes": [note for note in rows(GameNote) if (note["body"] or "").strip(BLANK)],
         }
 
     def delete_entries(self, process_id, kinds, remove_process=False):
@@ -483,7 +483,7 @@ def _merge_notes(session, process_id, rows, result):
         title = row.get("title") or ""
         target = by_title.get(title)
         if target is None:
-            if not (row.get("body") or "").strip():
+            if not (row.get("body") or "").strip(BLANK):
                 result.skipped["notes"] += 1
                 continue
             record = _record(GameNote, row, process_id=process_id, title=title)
