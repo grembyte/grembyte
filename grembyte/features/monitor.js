@@ -1592,13 +1592,21 @@ function writeJs(type, address, value) {
     case T.U2: address.writeU16(Math.trunc(value)); return;
     case T.I4: address.writeS32(Math.trunc(value)); return;
     case T.U4: address.writeU32(Math.trunc(value)); return;
-    case T.I8: address.writeS64(int64(String(Math.trunc(value)))); return;
-    case T.U8: address.writeU64(uint64(String(Math.trunc(value)))); return;
+    case T.I8: address.writeS64(int64(integerText(value))); return;
+    case T.U8: address.writeU64(uint64(integerText(value))); return;
     case T.R4: address.writeFloat(value); return;
     case T.R8: address.writeDouble(value); return;
     case T.VALUETYPE: throw grembyteError('error.monitor.struct_replace', { type: type.name });
     default: address.writePointer(pointerOf(type, value));
   }
+}
+
+function integerText(value) {
+  // A 64-bit integer as text: integers beyond 2**53 come as { integer: text }
+  // (see grembyte/features/method_call.py), others as numbers.
+  if (value !== null && typeof value === 'object' && value.integer !== undefined)
+    return value.integer;
+  return String(Math.trunc(value));
 }
 
 function pointerOf(type, value) {

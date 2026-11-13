@@ -75,6 +75,8 @@ _ENGINE_TYPES = frozenset({ENGINE_STRING, ENGINE_NAME, ENGINE_BOOL})
 # How the fields of a struct of numbers are stored (little-endian)
 _FIELD_FORMATS = {I1: "<b", U1: "<B", I2: "<h", U2: "<H", I4: "<i", U4: "<I",
                   I8: "<q", U8: "<Q", R4: "<f", R8: "<d"}
+# The largest integer a JavaScript number holds exactly
+_EXACT_IN_JS = 2 ** 53 - 1
 # The values of a struct: separated by spaces or semicolons, "Name=value" or in order
 _STRUCT_SEPARATORS = re.compile(r"[\s;]+")
 
@@ -171,7 +173,11 @@ def parse_argument(param_type, text):
             raise ArgumentError("call.error_char", text=text)
         return text
     if kind in (R4, R8) or kind in INTEGER_RANGES:
-        return _number(param_type, text)
+        value = _number(param_type, text)
+        # A JavaScript number is exact only up to 2**53: larger integers go as text
+        if isinstance(value, int) and abs(value) > _EXACT_IN_JS:
+            return {"integer": str(value), "text": str(value)}
+        return value
     raise ArgumentError("call.error_struct", type=param_type["name"])
 
 

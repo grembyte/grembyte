@@ -190,3 +190,19 @@ def test_hooks_rewrite_small_values(tmp_path, qt_app):
         worker.requestInterruption()
         worker.wait(5000)
         target.close()
+
+
+def test_integers_with_leading_zeros_are_decimal():
+    # pylint: disable=import-outside-toplevel
+    from grembyte.core.scanner import ValueRange
+    from grembyte.core.value_types import parse_integer
+
+    assert parse_integer("010") == 10
+    assert parse_integer(" 0x1f ") == 31
+    assert parse_integer("0b101") == 5
+    assert parse_integer("-007") == -7
+    assert parse_integer("1_000") == 1000
+    with pytest.raises(ValueError):
+        parse_integer("0x")
+    assert VALUE_TYPES["int32"].parse("0100") == 100
+    assert ValueRange.parse("010", VALUE_TYPES["int32"]).low == 10

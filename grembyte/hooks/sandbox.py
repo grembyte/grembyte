@@ -99,20 +99,33 @@ def normalize_value(value, value_type):
 
 
 class TransformSandbox:
-    """Call transform functions with a persistent ``ctx.state``."""
+    """Call transform functions with a persistent ``ctx.state``.
+
+    ``ctx.state`` is kept per ``state_key`` (one per hook of the ptrace
+    backend); calls without a key share one.
+    """
 
     def __init__(self):
         self._engine = QJSEngine()
         self._runner = self._engine.evaluate(_RUNNER)
-        self._state = self._engine.newObject()
+        self._states = {}
 
-    def reset_state(self):
-        """Start again with an empty ``ctx.state``."""
-        self._state = self._engine.newObject()
+    def reset_state(self, state_key=None):
+        """Start again with an empty ``ctx.state`` (of every key if None)."""
+        if state_key is None:
+            self._states.clear()
+        else:
+            self._states.pop(state_key, None)
 
-    def _call(self, fn, data):
+    def _state(self, state_key):
+        state = self._states.get(state_key)
+        if state is None:
+            state = self._states[state_key] = self._engine.newObject()
+        return state
+
+    def _call(self, fn, data, state_key=None):
         """Run ``fn`` with ``data`` as ctx through the runner."""
-        return self._runner.call([fn, self._engine.toScriptValue(data), self._state,
+        return self._runner.call([fn, self._engine.toScriptValue(data), self._state(state_key),
                                   messages.text("error.hooks.sandbox_call")])
 
     def run_method(self, source, params, result):
@@ -145,9 +158,14 @@ class TransformSandbox:
             sandbox_result.value = outcome.get("text") if value is None else value
         return sandbox_result
 
-    def run(self, source, params, old, new, value_type="int32"):
+    def run(self, source, params, old, new, value_type="int32", *, state_key=None,
+            address=None, thread_id=0, hook_id=0):
         # pylint: disable=too-many-arguments
-        """Call ``source`` like the hook agent would after a write ``old`` -> ``new``."""
+        """Call ``source`` like the hook agent would after a write ``old`` -> ``new``.
+
+        ``address``, ``thread_id`` and ``hook_id`` fill ``ctx.address``,
+        ``ctx.threadId`` and ``ctx.hookId`` (the ptrace backend knows them).
+        """
         fn = self._engine.evaluate(f"({source}\n)")
         if fn.isError():
             return SandboxResult(error=fn.toString())
@@ -159,12 +177,12 @@ class TransformSandbox:
             "delta": new - old,
             "params": dict(params),
             "valueType": value_type,
-            "address": "0x0",
+            "address": "0x0" if address is None else hex(address),
             "writePc": "0x0",
-            "threadId": 0,
-            "hookId": 0,
+            "threadId": thread_id,
+            "hookId": hook_id,
         }
-        outcome = self._call(fn, data)
+        outcome = self._call(fn, data, state_key)
         if outcome.isError():
             return SandboxResult(error=outcome.toString())
         outcome = outcome.toVariant()

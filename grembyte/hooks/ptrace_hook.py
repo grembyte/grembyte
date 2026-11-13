@@ -28,6 +28,7 @@ Only x86-64 targets are supported.
 """
 
 import queue
+import struct
 import threading
 import time
 
@@ -218,6 +219,8 @@ class PtraceHookWorker(PtraceWatchpointEngine):
         hook = self._hooks.pop(hook_id, None)
         if hook is None:
             return
+        if self._sandbox is not None:
+            self._sandbox.reset_state(hook_id)
         self._release_address(hook["address"])
         self._dirty = True
         self.hook_removed.emit(hook_id)
@@ -305,19 +308,30 @@ class PtraceHookWorker(PtraceWatchpointEngine):
             return
         old_value = info["last"]
         value = new_value
+        writer = None
+        lines = []
         for hook_id, hook in list(self._hooks.items()):
             if hook["address"] != address or not hook["enabled"]:
                 continue
             result = self._sandbox.run(
-                hook["source"], hook["params"], old_value, value, value_type
-            )
+                hook["source"], hook["params"], old_value, value, value_type,
+                state_key=hook_id, address=address, thread_id=tid, hook_id=hook_id)
+            now = time.time() * 1000
+            lines.extend({"hookId": hook_id, "time": now, "text": text}
+                         for text in result.logs)
             if result.error:
                 self.transform_error.emit(hook_id, result.error)
                 continue
             if not result.kept and result.value is not None:
                 value = result.value
+                writer = hook_id
+        if lines:
+            self.hook_logs.emit(lines, {})
         if value != new_value:
-            self._write_value(address, value, value_type)
+            error = self._write_value(address, value, value_type)
+            if error is not None:
+                self.transform_error.emit(writer, error)
+                value = new_value
         info["last"] = value
 
     # -- value I/O ----------------------------------------------------------
@@ -329,10 +343,16 @@ class PtraceHookWorker(PtraceWatchpointEngine):
         return VALUE_TYPES[value_type].unpack(bytes(data))
 
     def _write_value(self, address, value, value_type):
+        """Write ``value``; the reason it could not be written, else None."""
         try:
-            write_process_bytes(self.pid, address, VALUE_TYPES[value_type].pack(value))
-        except OSError:
-            pass
+            data = VALUE_TYPES[value_type].pack(value)
+        except (OverflowError, struct.error):
+            return messages.text("error.hooks.value_out_of_range", value=value, type=value_type)
+        try:
+            write_process_bytes(self.pid, address, data)
+        except OSError as error:
+            return messages.text("error.hooks.write_failed", address=hex(address), error=error)
+        return None
 
     def _resolve_address(self, spec):
         if spec.address is not None:

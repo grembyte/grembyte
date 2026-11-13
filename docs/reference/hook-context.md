@@ -20,7 +20,7 @@ The object a [hook template](../guide/templates.md) and a method hook's script r
 Integer results are truncated and limited to the range of the type. `int64` and `uint64` values are exact only up to 2^53.
 
 !!! note "Hooks of the ptrace backend"
-    With the `ptrace` [backend](../guide/hooks.md) the script runs in Grembyte, not in the game, after the game wrote the value. `ctx.old`, `ctx.new`, `ctx.delta`, `ctx.params`, `ctx.state` and `ctx.valueType` are as above, but `ctx.address` and `ctx.writePc` are `"0x0"`, `ctx.threadId` and `ctx.hookId` are `0`, and what `ctx.log` writes is not shown. Frida's APIs (`ptr()`, `Memory`, …) are not available there.
+    With the `ptrace` [backend](../guide/hooks.md) the script runs in Grembyte, not in the game, after the game wrote the value. The fields are as above, each hook with its own `ctx.state`, and `ctx.log` writes to the hook log; only `ctx.writePc` is `"0x0"`, since the watchpoint reports the instruction after the write. Frida's APIs (`ptr()`, `Memory`, …) are not available there.
 
 ## Method hooks
 

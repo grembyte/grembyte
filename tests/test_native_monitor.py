@@ -94,7 +94,9 @@ def test_locations_are_addresses_module_offsets_or_names():
 def test_arguments_values_and_changes_read_as_numbers():
     assert [argument_name(i, "linux") for i in (0, 5, 6)] == ["rdi", "r9", "arg6"]
     assert [argument_name(i, "windows") for i in (0, 3, 4)] == ["rcx", "r9", "arg4"]
-    assert [argument_name(i, "windows", "ia32") for i in (0, 1)] == ["arg0", "arg1"]
+    # 32-bit Windows: ecx first (this of MSVC's C++ methods), then the stack
+    assert [argument_name(i, "windows", "ia32") for i in (0, 1, 2)] == ["ecx", "arg0", "arg1"]
+    assert [argument_name(i, "linux", "ia32") for i in (0, 1)] == ["arg0", "arg1"]
     assert signed("0xffffffffffffffff") == -1
     assert signed("0x11") == 17
     assert change_numbers("0e", "11") == (14, 17)
@@ -421,3 +423,4 @@ def test_window_offers_the_function_around_an_instruction(tmp_path, qt_app, tran
     finally:
         dialog.close()
         target.close()
+

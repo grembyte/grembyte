@@ -17,6 +17,7 @@ import logging
 import ntpath
 import os
 import subprocess
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,7 +61,8 @@ class WineProcess:
 def helper_dir():
     """Where the helper executables are: ``$GREMBYTE_INJECT_DIR`` or BUILD_DIR."""
     override = os.environ.get("GREMBYTE_INJECT_DIR")
-    return Path(override).expanduser() if override else BUILD_DIR
+    # Absolute, so that build.sh (which changes its directory) agrees
+    return Path(override).expanduser().resolve() if override else BUILD_DIR
 
 
 def helper_path(bits, build=True):
@@ -89,7 +91,9 @@ def build_helpers(out_dir):
         log.info("building the Windows helper into %s", out_dir)
         try:
             result = subprocess.run(
-                ["sh", str(HELPER_DIR / "build.sh")], env={**os.environ, "OUT_DIR": str(out_dir)},
+                ["sh", str(HELPER_DIR / "build.sh")],
+                env={**os.environ, "OUT_DIR": str(Path(out_dir).resolve()),
+                     "PYTHON": sys.executable},
                 capture_output=True, text=True, timeout=BUILD_TIMEOUT, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             log.warning("building the Windows helper failed: %s", error)

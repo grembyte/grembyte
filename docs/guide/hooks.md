@@ -39,7 +39,7 @@ Several hooks can be selected at once (Ctrl/Shift-click): **Pause**, **Debug** a
 - **Applied**: how often the hook ran. With **Hooks: measure their cost** in the [settings](settings.md), its tooltip adds calls per second, skipped writes and the time they cost.
 - **Last (old → game ⇒ new)**: the last call as old value → value written by the game ⇒ value stored.
 
-Below the table a log shows what hook scripts write with `ctx.log` or `console.log`, and the errors of hooks, also without debug mode; at most 100 lines per 0.1 s, more are counted as dropped. With the `ptrace` backend it shows only the errors (see the [hook context](../reference/hook-context.md)).
+Below the table a log shows what hook scripts write with `ctx.log` or `console.log`, and the errors of hooks, also without debug mode; at most 100 lines per 0.1 s, more are counted as dropped.
 
 For Frida hooks, when a hook is removed, when you select another process and when Grembyte exits, the original code bytes are restored. `ptrace` hooks do not patch game code.
 

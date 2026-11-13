@@ -158,7 +158,7 @@ Grembyte builds a small Windows helper the first time a Wine/Proton game needs i
 | Arch, Manjaro | `mingw-w64-gcc` |
 | openSUSE | `mingw64-cross-gcc mingw32-cross-gcc` |
 
-Without MinGW it uses zig instead, if `python3 -m ziglang` works (`pip install ziglang`).
+Without MinGW it uses zig instead: `./.venv/bin/pip install ziglang` installs it into Grembyte's virtual environment, where the build finds it.
 
 On Windows nothing besides Python is needed: install it from <https://www.python.org/downloads/windows/> (tick *Add python.exe to PATH*) or with `winget install --id Python.Python.3.13 -e`.
 

@@ -170,6 +170,76 @@ def test_ptrace_hook_freezes_multiplies_and_removes(tmp_path, qt_app):
         target.wait()
 
 
+def test_a_value_that_cannot_be_written_is_reported(qt_app):
+    # pylint: disable=import-outside-toplevel,protected-access,unused-argument
+    from grembyte.hooks.ptrace_hook import PtraceHookWorker
+
+    worker = PtraceHookWorker(os.getpid())
+    # A float beyond float32 does not fit; nothing is written.
+    assert "1e+300" in worker._write_value(0x1000, 1e300, "float")
+    # A write the kernel refuses (a process that is gone) is reported too.
+    worker.pid = 2**22 + 12345
+    assert "0x1000" in worker._write_value(0x1000, 5, "int32")
+
+
+@requires_ptrace_target
+def test_ptrace_hooks_keep_their_own_state_and_log(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.hooks.engine import HookSpec
+    from grembyte.hooks.ptrace_hook import PtraceHookWorker
+    from grembyte.hooks.transforms import ScriptTransform
+
+    source = tmp_path / "htarget.c"
+    source.write_text(_TARGET_SOURCE)
+    binary = tmp_path / "htarget"
+    subprocess.run(["gcc", "-O2", str(source), "-o", str(binary)], check=True)
+    target = subprocess.Popen(
+        [str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    try:
+        pid, address = target.stdout.readline().split()
+        pid, address = int(pid), int(address, 16)
+        installed, lines, ready = {}, [], []
+        worker = PtraceHookWorker(pid)
+        worker.hook_installed.connect(lambda i, info: installed.update({i: info}))
+        worker.hook_logs.connect(lambda logged, _dropped: lines.extend(logged))
+        worker.session_ready.connect(ready.append)
+        worker.start()
+
+        def pump(seconds):
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline:
+                qt_app.processEvents()
+                time.sleep(0.01)
+
+        def send(delta):
+            target.stdin.write(f"{delta}\n")
+            target.stdin.flush()
+            return int(target.stdout.readline())
+
+        pump(0.8)
+        assert ready == ["x86-64"], ready
+        count = ("ctx => { ctx.state.n = (ctx.state.n || 0) + 1; "
+                 "ctx.log(ctx.state.n, ctx.address, ctx.hookId); return undefined; }")
+        first = worker.add_hook(HookSpec(address, "int32", ScriptTransform(count),
+                                         trap_pc=address))
+        second = worker.add_hook(HookSpec(address, "int32", ScriptTransform(count),
+                                          trap_pc=address))
+        pump(0.5)
+        assert first in installed and second in installed
+        send(1)
+        send(1)
+        pump(0.3)
+        texts = {(line["hookId"], line["text"]) for line in lines}
+        for hook_id in (first, second):
+            assert (hook_id, f"2 {hex(address)} {hook_id}") in texts
+        worker.requestInterruption()
+        assert worker.wait(3000)
+    finally:
+        target.kill()
+        target.wait()
+
+
 @requires_ptrace_target
 def test_ptrace_hooks_changing_keep_signals_and_new_threads(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
