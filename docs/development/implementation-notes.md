@@ -268,6 +268,24 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   reach the same JSON, and the result had fewer Unity objects and a third of the classes.
   Either order is safe, though: both passes add to the same list of marked objects
   (`from_statics` only resets the work list), and `finalize` clears every mark.
+- **Two Grembyte processes on one game (2026-11-13):** Vampire Survivors crashed three
+  times (a jump to `0x100000000`, `mono_runtime_invoke` back to its original bytes) while a
+  second Grembyte process browsed objects. Each host process injects its own Frida agent,
+  and the agents do not know each other's hooks. `onMainThread` attaches to
+  `mono_runtime_invoke` and detaches when its work is done. When agent A hooks on top of B
+  and B detaches first, B writes back the original bytes and frees its trampoline, while A's
+  trampoline still jumps there. A minimal C program with four threads calling a hooked
+  function dies the same way (SIGSEGV in the first round). Sessions of one host process
+  share one agent and its Interceptor and survive the same sequence, so one Grembyte with
+  several features is safe; two Grembyte processes (or Grembyte and another Frida tool) on
+  the same game are not. `attach_alone` (`grembyte/attach/frida_attach.py`) therefore
+  refuses to attach next to another host's runtime (`error.attach.foreign_frida`). Every
+  host's agent is its own memfd, so `/proc/<pid>/maps` shows one `frida-agent` inode per
+  host. An inode Grembyte did not note after its own attach counts as foreign if
+  attaching adds a new agent. If no new one appears, the agent belongs to Grembyte's own
+  process (e.g. a session opened with `frida.attach` directly). Native Linux games only:
+  under Wine all connections share Grembyte's gadget, and on Windows the check is not
+  implemented.
 - **Cut UTF-16 strings (2026-11-12):** Frida's `readUtf16String` throws `invalid string`
   for a surrogate without its partner, for example an emoji cut at a length limit. In
   Vampire Survivors this broke the object browser's instance list. The agents read game

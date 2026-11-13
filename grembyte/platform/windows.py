@@ -492,3 +492,8 @@ def thread_name(tid):
                 _LocalFree(text)
     except OSError:
         return None
+
+
+def frida_agents(pid, proc_root=None):  # pylint: disable=unused-argument
+    """None: not told on Windows (Frida's agent is a DLL there, not checked yet)."""
+    return None

@@ -1671,6 +1671,7 @@
   "error.game_export.no_processes": "der Export enthält keine Prozesse",
   "error.trace_filters.duplicate": "Ein Filter namens {name} existiert bereits",
   "error.agent.detached": "Verbindung zum Zielprozess getrennt: {reason}",
+  "error.attach.foreign_frida": "Im Prozess {pid} steckt schon ein anderer Frida-Agent: Eine andere Grembyte-Instanz oder ein anderes Frida-Werkzeug ist verbunden. Erst dieses schließen; zwei Agenten, die dieselben Funktionen hooken, können das Spiel abstürzen lassen.",
   "error.hooks.load_timeout": "Zeitüberschreitung beim Laden des Hook-Agenten",
   "error.hooks.agent_failed": "Frida-Hook-Agent fehlgeschlagen",
   "error.hooks.no_thread": "Kein Thread konnte zum Hooken angehängt werden.",

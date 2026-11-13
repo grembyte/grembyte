@@ -344,3 +344,31 @@ def is_wine_process(pid, proc_root="/proc"):
         return False
     return name in {"wine", "wine64"} or (
         name.startswith("wine") and name.endswith("-preloader"))
+
+
+# Names of Frida's in-process runtimes: the agent frida.attach injects
+# (frida-agent-64.so, as a memfd) and the gadget a game may load itself.
+_FRIDA_RUNTIMES = ("frida-agent", "frida-gadget")
+
+
+def frida_agents(pid, proc_root="/proc"):
+    """The Frida runtimes ``pid`` has loaded, as a set of (device, inode), or
+    None if its maps cannot be read.
+
+    Each host process that attaches injects an agent of its own (its own
+    memfd, so its own inode); the sessions of one host share it. It is
+    unloaded shortly after the host's last session detached.
+    """
+    try:
+        with open(Path(proc_root) / str(pid) / "maps", encoding="utf-8",
+                  errors="replace") as maps_file:
+            lines = maps_file.readlines()
+    except OSError:
+        return None
+    runtimes = set()
+    for line in lines:
+        fields = line.split(None, 5)
+        if len(fields) == 6 and any(name in Path(fields[5].strip()).name
+                                    for name in _FRIDA_RUNTIMES):
+            runtimes.add((fields[3], fields[4]))  # device, inode
+    return runtimes

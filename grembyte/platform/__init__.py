@@ -19,6 +19,10 @@ regions and asks about processes through these names only:
     has exited.
 ``is_wine_process(pid)``
     Whether the program runs under Wine or Proton.
+``frida_agents(pid)``
+    The Frida runtimes (injected agents, gadget) the program has loaded, as a
+    set of (device, inode): one per host process attached. None where it
+    cannot be told (Windows).
 ``thread_stack_pointers(pid)``
     Stack pointers of the program's threads, or None where the system marks
     stacks otherwise (Windows: guard pages).
@@ -36,6 +40,7 @@ from grembyte.platform.mapping import Mapping
 if sys.platform.startswith("linux"):
     from grembyte.platform.linux import (
         ProcessMemory,
+        frida_agents,
         is_wine_process,
         main_module,
         process_start_time,
@@ -46,6 +51,7 @@ if sys.platform.startswith("linux"):
 elif sys.platform == "win32":
     from grembyte.platform.windows import (
         ProcessMemory,
+        frida_agents,
         is_wine_process,
         main_module,
         process_start_time,
@@ -59,6 +65,7 @@ else:
 __all__ = [
     "Mapping",
     "ProcessMemory",
+    "frida_agents",
     "is_wine_process",
     "main_module",
     "process_start_time",

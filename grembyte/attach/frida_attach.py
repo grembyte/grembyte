@@ -15,6 +15,14 @@ The gadget under Wine closes the connection on any message from grembyte
 larger than 128 KiB (Frida 17.24.3, Proton Experimental; agent to grembyte is
 not limited). Larger agents go there through a small loader that receives
 the source in parts and evaluates it.
+
+Only one Frida host per game: each host process injects an agent of its
+own, and two agents hooking the same function (Mono's runtime_invoke, which
+every Unity feature uses to reach the main thread) crash the game when they
+unhook in the wrong order. The sessions of one grembyte share one agent. So
+``attach_alone`` refuses to attach while the game holds a Frida runtime of
+another host (``error.attach.foreign_frida``).
+Under Wine every grembyte connects to the same gadget and shares it.
 """
 
 import threading
@@ -24,7 +32,7 @@ import frida
 
 from grembyte.attach import wine_gadget
 from grembyte.core import activity, messages
-from grembyte.platform import is_wine_process
+from grembyte.platform import frida_agents, is_wine_process
 
 # What Frida raises when attaching, loading or talking to an agent fails.
 FRIDA_ERRORS = (
@@ -75,6 +83,38 @@ recv('{LOADER_MESSAGE}', onPart);
 """
 
 
+_own_lock = threading.Lock()
+# pid -> the Frida runtimes found right after this process attached: its agent
+_own_agents = {}
+
+
+def attach_alone(pid):
+    """``frida.attach(pid)``, refused if the game holds a Frida runtime of
+    another host: another grembyte or Frida tool, or a game with the gadget.
+
+    A runtime this process noted after an earlier attach is its own, also
+    while it unloads. One it did not note (a session opened past
+    attach_session) is its own if attaching added no new agent: the sessions
+    of one host share theirs. A new agent next to an unknown one means that
+    one belongs to someone else; the new session is closed before any script
+    runs in it."""
+    before = frida_agents(pid)
+    with _own_lock:
+        unknown = (before or set()) - _own_agents.get(pid, set())
+    session = frida.attach(pid)
+    after = frida_agents(pid)
+    if unknown and after is not None and after - before:
+        try:
+            session.detach()
+        except CLEANUP_ERRORS:
+            pass
+        raise messages.LocalizedRuntimeError("error.attach.foreign_frida", pid=pid)
+    if after:
+        with _own_lock:
+            _own_agents[pid] = after
+    return session
+
+
 def attach_session(pid):
     """Return a Frida session on ``pid``; raises on failure.
 
@@ -86,7 +126,7 @@ def attach_session(pid):
     session_number, kind = activity.current_session()
     began = time.monotonic()
     try:
-        session = wine_gadget.connect(pid) if wine else frida.attach(pid)
+        session = wine_gadget.connect(pid) if wine else attach_alone(pid)
     except Exception as error:
         activity.record("attach_failed", pid=pid, session=session_number, kind=kind,
                         via="gadget" if wine else "frida.attach",

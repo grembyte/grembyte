@@ -1671,6 +1671,7 @@
   "error.game_export.no_processes": "the export holds no processes",
   "error.trace_filters.duplicate": "A filter named {name} already exists",
   "error.agent.detached": "Target process detached: {reason}",
+  "error.attach.foreign_frida": "Another Frida agent is already in process {pid}: another Grembyte or another Frida tool is attached. Close it first; two agents hooking the same functions can crash the game.",
   "error.hooks.load_timeout": "Timed out while loading the hook agent",
   "error.hooks.agent_failed": "Frida hook agent failed",
   "error.hooks.no_thread": "No thread could be attached for hooking.",
