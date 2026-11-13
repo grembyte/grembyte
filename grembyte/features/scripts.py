@@ -8,7 +8,8 @@ runs is its ``mode``:
 
 ``"once"``    some ``seconds`` after it is started (each time grembyte attaches)
 ``"repeat"``  every ``seconds``; the next run is timed when one has ended
-``"manual"``  only when asked (``run_now``)
+``"manual"``  only when asked (``run_now``): by the user, or by its ``hotkey``
+              while the game has the focus (see grembyte.core.hotkeys)
 
 A game without an engine adapter (a native game with an engine of its own)
 has no such entry: there the agent runs scripts when a function the game
@@ -101,7 +102,7 @@ from dataclasses import dataclass, field
 import frida
 from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
-from grembyte.core import logs, messages, settings
+from grembyte.core import hotkeys, logs, messages, settings
 from grembyte.core import sessions
 from grembyte.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
 from grembyte.features.monitor import build_agent_source
@@ -201,7 +202,11 @@ def choice_matches(value, text):
 
 @dataclass
 class ScriptSpec:
-    """The code of a script and when it runs (see the module's docstring)."""
+    """The code of a script and when it runs (see the module's docstring).
+
+    ``hotkey`` runs a manual script with its parameters' defaults
+    (``Ctrl+Shift+G``, see grembyte.core.hotkeys; "" for none).
+    """
 
     source: str
     mode: str = "manual"
@@ -209,6 +214,7 @@ class ScriptSpec:
     enabled: bool = True
     label: str = ""
     params: tuple = field(default_factory=tuple)
+    hotkey: str = ""
 
     def __post_init__(self):
         if self.mode not in MODES:
@@ -219,6 +225,7 @@ class ScriptSpec:
             raise messages.LocalizedValueError("error.scripts.repeat_minimum",
                                               seconds=MIN_REPEAT_SECONDS)
         self.params = tuple(self.params)
+        self.hotkey = hotkeys.normalized(self.hotkey) if self.mode == "manual" else ""
         names = [param.name for param in self.params]
         for name in names:
             if names.count(name) > 1:
@@ -239,6 +246,13 @@ class ScriptSpec:
             "options": {param.name: param.options for param in self.params
                         if param.kind == "choice"},
         }
+
+
+def spec_from_saved(saved):
+    """The ScriptSpec of a saved script (a GameScript row); raises ValueError,
+    KeyError or TypeError for one that is broken."""
+    return ScriptSpec(saved.source, saved.mode, saved.seconds, saved.enabled, saved.label,
+                      params_from_json(saved.params), saved.hotkey or "")
 
 
 def _browse_options(filter_text, internal):
