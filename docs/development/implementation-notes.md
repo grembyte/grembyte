@@ -374,6 +374,11 @@ addresses only" in the main window's value search). The window shows one page pe
 (`_SETTING_CATEGORIES`), chosen in a list on the left; a page scrolls when it gets long, so new
 settings do not make the window taller. The watch backend stays in the menu and in `QSettings`,
 since it is chosen automatically on attach.
+- Learned (2026-11-13): give widgets their parent when they go into a layout that is not yet
+  attached to a widget (`QHBoxLayout()` added to the dialog's layout afterwards). Qt reparents
+  them later, but PySide still counts them as Python's own and deletes them a second time when
+  the application is torn down: the settings window, left as a child of the main window, crashed
+  Grembyte at exit (segfault in `QWidgetPrivate::invalidateBackingStore`, `crash.log`).
 
 ## Wine and Proton
 

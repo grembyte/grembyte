@@ -99,6 +99,22 @@ def test_the_window_saves_applies_and_resets(repository, qt_app, translations):
     assert dialog.chosen() == {setting.key: setting.default for setting in settings.SETTINGS}
 
 
+def test_the_window_leaves_its_widgets_to_qt(qt_app, translations, repository):
+    # pylint: disable=unused-argument,import-outside-toplevel
+    import shiboken6  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QWidget  # pylint: disable=import-error,no-name-in-module
+    from grembyte.ui.widgets.settings_dialog import SettingsDialog
+
+    # Widgets PySide thinks Python owns, under a parent, crashed Grembyte at exit.
+    parent = QWidget()
+    try:
+        dialog = SettingsDialog(translations, repository, parent=parent)
+        assert not shiboken6.ownedByPython(dialog.categories)
+        assert not shiboken6.ownedByPython(dialog.pages)
+    finally:
+        shiboken6.delete(parent)
+
+
 def test_the_first_scan_takes_aligned_from_the_settings(qt_app, monkeypatch):
     # pylint: disable=unused-argument,import-outside-toplevel,protected-access
     from grembyte.ui import main_window

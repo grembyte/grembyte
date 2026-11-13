@@ -55,10 +55,12 @@ class SettingsDialog(QDialog):
         self.setMinimumSize(680, 380)
         layout = QVBoxLayout(self)
         pages = QHBoxLayout()
-        self.categories = QListWidget()
+        # Parented here: added to the still unattached ``pages`` layout, PySide kept them as
+        # Python's own and deleted them a second time at exit, which crashed.
+        self.categories = QListWidget(self)
         self.categories.setObjectName("settings_categories")
         self.categories.setIconSize(QSize(18, 18))
-        self.pages = QStackedWidget()
+        self.pages = QStackedWidget(self)
         for category, icon, keys in _SETTING_CATEGORIES:
             item = QListWidgetItem(material_icon(icon, 18),
                                    translations[f"settings.category.{category}"])
