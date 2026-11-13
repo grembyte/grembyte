@@ -57,6 +57,8 @@ SETTINGS = (
     Setting("hook_repatch", BOOL, False),
     Setting("hook_profiling", BOOL, False),
     Setting("trace_sequence", INT, 100_000, minimum=1000, maximum=500_000, step=10_000),
+    Setting("object_browser_limit", INT, 2_000_000, minimum=100_000, maximum=10_000_000,
+            step=500_000),
     Setting("wine_gadget_download", BOOL, False),
     Setting("language", CHOICE, "system", choices=("system", "de", "en"), restart=True),
 )

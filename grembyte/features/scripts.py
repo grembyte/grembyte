@@ -101,7 +101,7 @@ from dataclasses import dataclass, field
 import frida
 from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
-from grembyte.core import logs, messages
+from grembyte.core import logs, messages, settings
 from grembyte.core import sessions
 from grembyte.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
 from grembyte.features.monitor import build_agent_source
@@ -241,6 +241,13 @@ class ScriptSpec:
         }
 
 
+def _browse_options(filter_text, internal):
+    """The object browser's options for the agent; ``maxObjects`` is how many
+    objects Mono's liveness calculation keeps (the setting object_browser_limit)."""
+    return {"filter": filter_text, "internal": bool(internal),
+            "maxObjects": settings.get("object_browser_limit")}
+
+
 class ScriptWorker(QThread):
     """Keep a Frida session open and run the scripts of one process.
 
@@ -378,8 +385,7 @@ class ScriptWorker(QThread):
         counts class default objects, templates and reflection objects.
         """
         request_id = next(self._requests)
-        self._commands.put(("browse_classes", request_id,
-                            {"filter": filter_text, "internal": bool(internal)}))
+        self._commands.put(("browse_classes", request_id, _browse_options(filter_text, internal)))
         return request_id
 
     def browse_instances(self, klass, filter_text="", internal=False):
@@ -391,7 +397,7 @@ class ScriptWorker(QThread):
         """
         request_id = next(self._requests)
         self._commands.put(("browse_instances", request_id,
-                            (klass, {"filter": filter_text, "internal": bool(internal)})))
+                            (klass, _browse_options(filter_text, internal))))
         return request_id
 
     def full_text(self, text_id):

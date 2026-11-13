@@ -1771,8 +1771,11 @@ gpointer run_batch (gpointer data) {
   // out blocks from a pool allocated beforehand, ``nothing`` is the world
   // callback.
 
-  // Objects recorded per read; the rest are counted, not kept
-  const LIVENESS_CAPACITY = 2 * 1024 * 1024;
+  // Objects recorded per read unless the request says (the setting
+  // object_browser_limit); the rest are counted, not kept
+  const LIVENESS_CAPACITY = 2 * 1000 * 1000;
+  // Pairs taken from the buffer at a time
+  const LIVENESS_CHUNK = 1000 * 1000;
   // The newer API's array blocks: enough for about 16 million objects
   const LIVENESS_POOL = 128 * 1024 * 1024;
   // The buffer's header: count, capacity, pool next, pool end; then the pairs
@@ -1967,7 +1970,8 @@ gpointer run_batch (gpointer data) {
       return null;
     }
     liveness.code = livenessCode();
-    liveness.buffer = Memory.alloc(LIVENESS_HEADER + 16 * LIVENESS_CAPACITY);
+    liveness.buffer = null;  // allocated for the capacity asked for
+    liveness.capacity = 0;
     liveness.pool = liveness.kind === 'blocks' ? Memory.alloc(LIVENESS_POOL) : null;
     return liveness;
   }
@@ -1991,17 +1995,34 @@ gpointer run_batch (gpointer data) {
     return exception.isNull() ? result : NULL;
   }
 
-  function readLiveObjects() {
-    // { pairs: [[object, class], ...] as numbers, count, stoppedMs } of the
-    // objects reachable from the statics and the Unity objects. On Unity's
-    // main thread: the calculation needs a thread Mono knows, and
-    // FindObjectsOfType runs there.
+  function livenessBuffer(l, capacity) {
+    // The buffer for ``capacity`` objects, allocated anew when it changed
+    if (l.buffer === null || l.capacity !== capacity) {
+      l.buffer = null;  // the old one is freed with its last reference
+      l.capacity = 0;
+      try {
+        l.buffer = Memory.alloc(LIVENESS_HEADER + 16 * capacity);
+      } catch (_error) {
+        throw grembyteError('error.mono.liveness_buffer', { objects: capacity });
+      }
+      l.capacity = capacity;
+    }
+    return l.buffer;
+  }
+
+  function readLiveObjects(maxObjects) {
+    // { byClass: Map(class -> [object, ...]) as numbers, objects, count,
+    // stoppedMs } of the objects reachable from the statics and the Unity
+    // objects: ``objects`` of them kept (at most ``maxObjects``), ``count``
+    // found. On Unity's main thread: the calculation needs a thread Mono
+    // knows, and FindObjectsOfType runs there.
     const l = livenessApi();
     if (l === null)
       throw grembyteError('error.mono.no_liveness');
-    const buffer = l.buffer;
+    const capacity = maxObjects > 0 ? Math.floor(maxObjects) : LIVENESS_CAPACITY;
+    const buffer = livenessBuffer(l, capacity);
     buffer.writeU64(0);
-    buffer.add(8).writeU64(LIVENESS_CAPACITY);
+    buffer.add(8).writeU64(capacity);
     if (l.pool !== null) {
       buffer.add(16).writePointer(l.pool);
       buffer.add(24).writePointer(l.pool.add(LIVENESS_POOL));
@@ -2036,15 +2057,28 @@ gpointer run_batch (gpointer data) {
         l.handleFree(handle);
     }
     const count = Number(buffer.readU64());
-    const kept = Math.min(count, LIVENESS_CAPACITY);
-    const view = new DataView(buffer.add(LIVENESS_HEADER).readByteArray(16 * kept));
-    const pairs = [];
-    for (let i = 0; i < kept; i++) {
-      pairs.push([view.getUint32(16 * i, true) + view.getUint32(16 * i + 4, true) * 0x100000000,
-                  view.getUint32(16 * i + 8, true)
-                    + view.getUint32(16 * i + 12, true) * 0x100000000]);
+    const kept = Math.min(count, capacity);
+    // Straight into the map, in chunks: millions of [object, class] arrays
+    // would take more memory than the buffer
+    const byClass = new Map();
+    for (let start = 0; start < kept; start += LIVENESS_CHUNK) {
+      const length = Math.min(LIVENESS_CHUNK, kept - start);
+      const view = new DataView(
+        buffer.add(LIVENESS_HEADER + 16 * start).readByteArray(16 * length));
+      for (let i = 0; i < length; i++) {
+        const object = view.getUint32(16 * i, true)
+          + view.getUint32(16 * i + 4, true) * 0x100000000;
+        const klass = view.getUint32(16 * i + 8, true)
+          + view.getUint32(16 * i + 12, true) * 0x100000000;
+        let list = byClass.get(klass);
+        if (list === undefined) {
+          list = [];
+          byClass.set(klass, list);
+        }
+        list.push(object);
+      }
     }
-    return { pairs, count, stoppedMs };
+    return { byClass, objects: kept, count, stoppedMs };
   }
 
   function objectName(object, klass) {
@@ -2099,16 +2133,7 @@ gpointer run_batch (gpointer data) {
     const words = filterWords(options.filter);
     return onMainThread(() => {
       const started = Date.now();
-      const { pairs, count, stoppedMs } = readLiveObjects();
-      const byClass = new Map();
-      for (const [object, klass] of pairs) {
-        let list = byClass.get(klass);
-        if (list === undefined) {
-          list = [];
-          byClass.set(klass, list);
-        }
-        list.push(object);
-      }
+      const { byClass, objects: kept, count, stoppedMs } = readLiveObjects(options.maxObjects);
       browsed = { read: Date.now(), byClass };
       const classes = [];
       for (const [number, objects] of byClass) {
@@ -2138,7 +2163,7 @@ gpointer run_batch (gpointer data) {
                        count: objects.length, role, matched });
       }
       classes.sort((a, b) => a.name.localeCompare(b.name));
-      return { classes, objects: pairs.length, truncated: count > pairs.length,
+      return { classes, objects: kept, truncated: count > kept,
                stats: { stoppedMs, totalMs: Date.now() - started } };
     });
   }
@@ -2151,13 +2176,7 @@ gpointer run_batch (gpointer data) {
     const limit = options.limit > 0 ? options.limit : MAX_INSTANCES;
     return onMainThread(() => {
       if (browsed === null || Date.now() - browsed.read > BROWSE_AGE) {
-        const { pairs } = readLiveObjects();
-        const byClass = new Map();
-        for (const [object, owner] of pairs) {
-          if (!byClass.has(owner))
-            byClass.set(owner, []);
-          byClass.get(owner).push(object);
-        }
+        const { byClass } = readLiveObjects(options.maxObjects);
         browsed = { read: Date.now(), byClass };
       }
       const wanted = ptr(klass);

@@ -3004,3 +3004,45 @@ def test_object_browser_reads_live_objects_with_the_world_stopped(tmp_path, qt_a
         worker.requestInterruption()
         worker.wait(5000)
         target.close()
+
+
+@requires_target
+def test_object_browser_keeps_as_many_objects_as_the_setting_says(tmp_path, qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.core import settings
+    from grembyte.features.scripts import ScriptWorker
+
+    get = settings.get
+    limit = {"value": 3}
+    monkeypatch.setattr(settings, "get", lambda key: limit["value"]
+                        if key == "object_browser_limit" else get(key))
+    target = _MonoTarget(_build(tmp_path, ("FAKE_LIVENESS_BLOCKS", "FAKE_LIVENESS_UNITY6")))
+    worker = ScriptWorker(target.pid)
+    answers, failed = [], []
+    worker.classes_browsed.connect(lambda _request, answer: answers.append(answer))
+    worker.browse_failed.connect(lambda _request, message: failed.append(message))
+
+    def browse():
+        answers.clear()
+        worker.browse_classes()
+        _wait_for(qt_app, lambda: target.send("tick", 0) and (answers or failed))
+        assert not failed, failed
+        return answers[0]
+
+    try:
+        target.send("spawn", 0)
+        worker.start()
+        # 3 of the 5 objects kept, the buffer allocated for 3
+        listed = browse()
+        assert listed["objects"] == 3 and listed["truncated"]
+        assert sum(entry["count"] for entry in listed["classes"]) == 3
+        # A larger limit takes effect with the next read
+        limit["value"] = 100_000
+        listed = browse()
+        assert listed["objects"] == 5 and not listed["truncated"]
+        # Every mark cleared either way
+        assert target.send("liveness", 0)[0] == 0
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()

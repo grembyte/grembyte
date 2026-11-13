@@ -23,6 +23,7 @@ _SETTING_CATEGORIES = (
     ("general", ("activity_log", "refresh_interval_ms", "language")),
     ("trace", ("wine_trace_limit", "large_trace", "trace_sequence")),
     ("hooks", ("hook_short_jump", "hook_repatch", "hook_profiling")),
+    ("objects", ("object_browser_limit",)),
     ("wine", ("wine_gadget_download",)),
 )
 

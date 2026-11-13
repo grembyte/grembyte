@@ -48,10 +48,12 @@ Unity's Mono has no way to walk its heap: `mono_gc_walk_heap` belongs to Mono's 
 - **Objects only a thread's stack holds** are not found, e.g. a local variable of a method that is running right now.
 - **Singletons** are found through static fields that hold a class's only object, also through generic bases such as `Singleton<T>`.
 - Unity objects show with their name, which Grembyte asks Unity for on the game's main thread.
+- **At most 2 million objects** are kept per read; the status line says when there were more. Some games keep far more alive (Vampire Survivors about 2.5 million, mostly JSON data), and the classes found last are then missing. [Settings](settings.md) → *Object browser: objects read* raises the limit to up to 10 million (16 bytes per object in the game).
+- **Only one Grembyte per game:** each Grembyte process brings its own Frida agent into the game, and both hook the same Mono function to reach the main thread. Two Grembyte processes attached to the same game, or Grembyte and another Frida tool, can crash it.
 
-Both generations of the API work: `calculation_begin`/`end` (Unity 4 to 2020) and `allocate_struct` (Unity 2021 and later), in 64-bit and [32-bit games](../engines/unity-mono.md#32-bit-games). The calculation runs on the game's main thread, also in games that [sleep out of focus](../engines/unity-mono.md#games-that-sleep-out-of-focus).
+Both generations of the API work: `calculation_begin`/`end` (Unity 4 to 2020) and `allocate_struct` (Unity 2021 and later, including Unity 6), in 64-bit and [32-bit games](../engines/unity-mono.md#32-bit-games). The calculation runs on the game's main thread, also in games that [sleep out of focus](../engines/unity-mono.md#games-that-sleep-out-of-focus).
 
-Tested in Pillars of Eternity (64-bit) and Might & Magic X – Legacy (Unity 4.2, 32-bit, Proton); the newer API so far against a stand-in runtime only.
+Tested in Pillars of Eternity (64-bit), Might & Magic X – Legacy (Unity 4.2, 32-bit, Proton) and Vampire Survivors (Unity 6, native Linux), where the newer API runs.
 
 ## Not yet available
 
