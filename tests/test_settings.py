@@ -77,7 +77,12 @@ def test_the_window_saves_applies_and_resets(repository, qt_app, translations):
     assert dialog.editors["refresh_interval_ms"].value() == 2500
     assert not dialog.editors["activity_log"].isChecked()
     assert dialog.editors["wine_trace_limit"].specialValueText() == "kein Limit"
-    assert {key for _, keys in _SETTING_CATEGORIES for key in keys} == set(settings.BY_KEY)
+    assert {key for _, _, keys in _SETTING_CATEGORIES for key in keys} == set(settings.BY_KEY)
+    # A page per category, chosen in the list on the left
+    assert dialog.categories.count() == dialog.pages.count() == len(_SETTING_CATEGORIES)
+    dialog.categories.setCurrentRow(1)
+    assert dialog.pages.currentWidget().objectName() == "settings_category_scan"
+    assert dialog.editors["scan_aligned"].isChecked()
     assert "‼" in translations["settings.hook_repatch_warning"]
     dialog.editors["activity_log"].setChecked(True)
     language = dialog.editors["language"]
@@ -92,6 +97,25 @@ def test_the_window_saves_applies_and_resets(repository, qt_app, translations):
     dialog = SettingsDialog(translations, repository)
     dialog.show_defaults()
     assert dialog.chosen() == {setting.key: setting.default for setting in settings.SETTINGS}
+
+
+def test_the_first_scan_takes_aligned_from_the_settings(qt_app, monkeypatch):
+    # pylint: disable=unused-argument,import-outside-toplevel,protected-access
+    from grembyte.ui import main_window
+    from tests.test_pointer import _delete_window
+
+    window = main_window.MainWindow("de")
+    requests = []
+    monkeypatch.setattr(window, "_start_scan_worker", requests.append)
+    try:
+        window._current_pid = 123
+        window.input_value.setText("7")
+        window._first_scan()
+        settings.apply({"scan_aligned": False})
+        window._first_scan()
+        assert [request.aligned for request in requests] == [True, False]
+    finally:
+        _delete_window(window)
 
 
 def test_trace_agents_get_the_sequence_capacity():

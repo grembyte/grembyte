@@ -368,9 +368,12 @@ under Settings → General …: activity log, the trace's method limit under Win
 (`wine_trace_limit`, formerly the constant `WINE_TRACE_LIMIT`), from how many methods the trace
 asks first (`large_trace`), entries in the traces' call sequence (`trace_sequence`), the refresh
 interval of tracked addresses, automatic Wine/Proton gadget downloads (off by default), the
-language, and since 2026-10-26/27 the hook options `hook_short_jump`, `hook_repatch` and
-`hook_profiling` (see above). The watch backend stays in the menu and in `QSettings`, since it is
-chosen automatically on attach.
+language, the hook options `hook_short_jump`, `hook_repatch` and `hook_profiling` (since
+2026-10-26/27, see above) and `scan_aligned` (since 2026-11-13; formerly the checkbox "Aligned
+addresses only" in the main window's value search). The window shows one page per category
+(`_SETTING_CATEGORIES`), chosen in a list on the left; a page scrolls when it gets long, so new
+settings do not make the window taller. The watch backend stays in the menu and in `QSettings`,
+since it is chosen automatically on attach.
 
 ## Wine and Proton
 

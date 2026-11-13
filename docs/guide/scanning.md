@@ -20,7 +20,7 @@ The value search on the right of the main window finds the addresses where the g
 
 **Guess automatically** tries `int32`, `int64`, `float` and `double` at once. The smaller types match almost everywhere and have to be chosen explicitly.
 
-**Aligned addresses only** skips addresses that are not a multiple of the type's size. Games almost always align their values, so the scan is faster and has fewer chance hits.
+By default the first scan skips addresses that are not a multiple of the type's size. Games almost always align their values, so the scan is faster and has fewer chance hits. To scan every address, turn off **Aligned addresses only** under [Settings → General … → Scan](settings.md#settings); it applies from the next first scan.
 
 ## Scan types
 

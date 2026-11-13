@@ -13,7 +13,7 @@ The gadget has to match the installed Frida version and the game's architecture:
 - Approving downloads it and turns automatic downloads on for future missing gadgets.
 - Declining leaves them off.
 
-You can also enable automatic downloads in advance under **Settings → General → Automatically download the Wine/Proton Frida gadget**.
+You can also enable automatic downloads in advance under **Settings → General … → Wine/Proton → Automatically download the Wine/Proton Frida gadget**.
 
 **File → Check Frida Gadget Version …** checks locally for the gadget matching the installed Frida version – for the selected game's architecture, or for both x86 and x86_64 when none is selected – and offers a one-time download. It does not query GitHub for a newer Frida release. While Frida uses a Wine gadget, the status bar adds **(Update available)** when the matching gadget file is missing.
 

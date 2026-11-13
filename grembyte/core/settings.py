@@ -61,6 +61,7 @@ SETTINGS = (
             step=500_000),
     Setting("wine_gadget_download", BOOL, False),
     Setting("language", CHOICE, "system", choices=("system", "de", "en"), restart=True),
+    Setting("scan_aligned", BOOL, True),
 )
 BY_KEY = {setting.key: setting for setting in SETTINGS}
 

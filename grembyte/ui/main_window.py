@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QPushButton, QLineEdit, QComboBox, QGroupBox, QToolButton,
     QHeaderView, QStatusBar, QToolBar, QDialog,
     QAbstractItemView, QFormLayout,
-    QMessageBox, QFrame, QProgressBar, QMenu, QCheckBox, QTabWidget, QSizePolicy,
+    QMessageBox, QFrame, QProgressBar, QMenu, QTabWidget, QSizePolicy,
     QInputDialog, QApplication, QProgressDialog, QScrollArea,
 )
 from PySide6.QtCore import (  # pylint: disable=import-error,no-name-in-module
@@ -555,7 +555,6 @@ class MainWindow(QMainWindow):
         self.result_table = None
         self.combo_type = None
         self.combo_scan_type = None
-        self.chk_aligned = None
         self.input_value = None
         self.lbl_value2 = None
         self.input_value2 = None
@@ -1200,12 +1199,6 @@ class MainWindow(QMainWindow):
         for text_key, mode in scan_modes:
             self.combo_scan_type.addItem(self.translations[text_key], mode)
         options_layout.addWidget(self.combo_scan_type)
-
-        # Only addresses that are a multiple of the value size (first scan)
-        self.chk_aligned = QCheckBox(self.translations["search.aligned"])
-        self.chk_aligned.setToolTip(self.translations["search.aligned_tooltip"])
-        self.chk_aligned.setChecked(True)
-        options_layout.addWidget(self.chk_aligned)
 
         # Value input
         options_layout.addWidget(QLabel(self.translations["search.value"]))
@@ -2927,7 +2920,7 @@ class MainWindow(QMainWindow):
                 scan_mode=scan_mode,
                 value=value,
                 value2=value2,
-                aligned=self.chk_aligned is None or self.chk_aligned.isChecked(),
+                aligned=app_settings.get("scan_aligned"),
                 **self._fuzzy_options(),
             )
         )
@@ -2977,8 +2970,6 @@ class MainWindow(QMainWindow):
         self.btn_first_scan.setEnabled(False)
         self.btn_next_scan.setEnabled(False)
         self.btn_reset.setEnabled(False)
-        if self.chk_aligned is not None:
-            self.chk_aligned.setEnabled(False)
         self.progress_scan.setValue(0)
         self.progress_scan.setVisible(True)
         self._scan_worker = ScanWorker(
@@ -3051,8 +3042,6 @@ class MainWindow(QMainWindow):
             self.btn_next_scan.setEnabled(has_results)
         if self.btn_reset is not None:
             self.btn_reset.setEnabled(has_results)
-        if self.chk_aligned is not None:
-            self.chk_aligned.setEnabled(not has_results)
         if self.progress_scan is not None:
             self.progress_scan.setVisible(False)
         if not self._scan_failed:
@@ -3283,8 +3272,6 @@ class MainWindow(QMainWindow):
             self.btn_next_scan.setEnabled(False)
         if self.btn_reset is not None:
             self.btn_reset.setEnabled(False)
-        if self.chk_aligned is not None:
-            self.chk_aligned.setEnabled(True)
 
         has_results = False
         self._set_primary(self.btn_next_scan, has_results)

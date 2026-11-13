@@ -2,7 +2,7 @@
 
 ## Settings
 
-**Settings → General …** holds the settings, stored in Grembyte's database.
+**Settings → General …** holds the settings, stored in Grembyte's database. The list on the left chooses a page: General, Scan, Trace, Hooks, Object browser and Wine/Proton.
 
 <figure markdown="span">
   ![Settings](../assets/screenshots/settings-dark.webp#only-dark){ width="640" }
@@ -14,6 +14,7 @@
 | Language | Deutsch, English, or as the system. Takes effect at the next start. |
 | Refresh remembered addresses every (ms) | How often tracked addresses read their values. |
 | Record the activity log | Write the [activity log](tools.md#log-and-activity). Takes effect at once. |
+| Aligned addresses only | The first [value scan](scanning.md#data-types) checks only addresses that are a multiple of the type's size (on by default). Faster and uses far less memory. |
 | Trace under Wine/Proton: at most methods | Most methods a trace hooks in a Wine/Proton game (default 5000, or no limit). Traces of tens of thousands of methods froze or crashed games there. |
 | Trace: ask first from methods | From this many methods the trace asks before it starts; Mono has to compile them all. |
 | Trace: entries in the sequence | How many calls the trace and the native trace keep in order during the scenario; raise it when the window reports dropped ones. |
@@ -23,7 +24,7 @@
 | Hooks: measure their cost | Measures every write at a hooked site: calls per second, skipped writes, waiting time and run time. Shown in the tooltip of the "Applied" column and in `grembyte.log`. |
 | Object browser: objects read (Unity Mono) | How many live objects the [object browser](object-browser.md#unity-mono) keeps per read (default 2 million, up to 10 million). Each takes 16 bytes in the game while Grembyte is attached. Raise it when the browser reports that not all objects could be kept. Takes effect at the next refresh. |
 
-**Defaults** fills in the default values; **Save** stores them.
+**Defaults** fills in the default values on every page; **Save** stores them.
 
 **Settings → Backend (watch & hooks)** chooses between Frida and ptrace; see [backends](write-watch.md#backends-frida-or-ptrace).
 

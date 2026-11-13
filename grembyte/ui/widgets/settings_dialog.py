@@ -1,30 +1,38 @@
 """The window of the general settings (grembyte.core.settings), under Settings in the menu."""
 
+from PySide6.QtCore import QSize, Qt  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QCheckBox,
     QComboBox,
     QDialog,
     QFormLayout,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
+    QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 from grembyte.core import settings
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
-from grembyte.ui.widgets.icons import set_button_icon, theme_color
+from grembyte.ui.widgets.icons import material_icon, set_button_icon, theme_color
 from grembyte.ui.widgets.labels import WrappedLabel
 from grembyte.ui.widgets.spin_boxes import SpinBox
 
 
+# (category, icon, keys): a page each, listed on the left in this order
 _SETTING_CATEGORIES = (
-    ("general", ("activity_log", "refresh_interval_ms", "language")),
-    ("trace", ("wine_trace_limit", "large_trace", "trace_sequence")),
-    ("hooks", ("hook_short_jump", "hook_repatch", "hook_profiling")),
-    ("objects", ("object_browser_limit",)),
-    ("wine", ("wine_gadget_download",)),
+    ("general", "settings", ("activity_log", "refresh_interval_ms", "language")),
+    ("scan", "search", ("scan_aligned",)),
+    ("trace", "track_changes", ("wine_trace_limit", "large_trace", "trace_sequence")),
+    ("hooks", "webhook", ("hook_short_jump", "hook_repatch", "hook_profiling")),
+    ("objects", "account_tree", ("object_browser_limit",)),
+    ("wine", "wine_bar", ("wine_gadget_download",)),
 )
 
 
@@ -44,28 +52,25 @@ class SettingsDialog(QDialog):
         self.changed = {}
         self.editors = {}
         self.setWindowTitle(translations["settings.title"])
-        self.setMinimumWidth(520)
+        self.setMinimumSize(680, 380)
         layout = QVBoxLayout(self)
-        for category, keys in _SETTING_CATEGORIES:
-            group = QGroupBox(translations[f"settings.category.{category}"])
-            group.setObjectName(f"settings_category_{category}")
-            form = QFormLayout(group)
-            for key in keys:
-                setting = settings.BY_KEY[key]
-                if key == "hook_repatch":
-                    # Reserves the height of its lines: a QLabel was cut off here.
-                    warning = WrappedLabel(translations["settings.hook_repatch_warning"])
-                    warning.setObjectName("settings_hook_repatch_warning")
-                    warning.setStyleSheet(f"color: {theme_color('warning')}; font-weight: bold;")
-                    form.addRow(warning)
-                editor = self._editor(setting)
-                self.editors[setting.key] = editor
-                label = QLabel(translations[f"settings.{setting.key}"])
-                tooltip = translations[f"settings.{setting.key}_tooltip"]
-                label.setToolTip(tooltip)
-                editor.setToolTip(tooltip)
-                form.addRow(label, editor)
-            layout.addWidget(group)
+        pages = QHBoxLayout()
+        self.categories = QListWidget()
+        self.categories.setObjectName("settings_categories")
+        self.categories.setIconSize(QSize(18, 18))
+        self.pages = QStackedWidget()
+        for category, icon, keys in _SETTING_CATEGORIES:
+            item = QListWidgetItem(material_icon(icon, 18),
+                                   translations[f"settings.category.{category}"])
+            item.setData(Qt.ItemDataRole.UserRole, category)
+            self.categories.addItem(item)
+            self.pages.addWidget(self._page(category, keys))
+        self.categories.setFixedWidth(self.categories.sizeHintForColumn(0) + 24)
+        self.categories.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.categories.setCurrentRow(0)
+        pages.addWidget(self.categories)
+        pages.addWidget(self.pages, 1)
+        layout.addLayout(pages, 1)
         self.restart_label = QLabel(translations["settings.restart"])
         self.restart_label.setStyleSheet(f"color: {theme_color('warning')};")
         self.restart_label.setVisible(False)
@@ -80,6 +85,32 @@ class SettingsDialog(QDialog):
         layout.addLayout(defaults)
         layout.addLayout(dialog_button_row(translations, "button.save", self._save, self.reject))
         self.show_values(settings.values())
+
+    def _page(self, category, keys):
+        """The page of ``category``: a form of its settings, scrolled when it gets long."""
+        form_widget = QWidget()
+        form = QFormLayout(form_widget)
+        for key in keys:
+            setting = settings.BY_KEY[key]
+            if key == "hook_repatch":
+                # Reserves the height of its lines: a QLabel was cut off here.
+                warning = WrappedLabel(self.translations["settings.hook_repatch_warning"])
+                warning.setObjectName("settings_hook_repatch_warning")
+                warning.setStyleSheet(f"color: {theme_color('warning')}; font-weight: bold;")
+                form.addRow(warning)
+            editor = self._editor(setting)
+            self.editors[setting.key] = editor
+            label = QLabel(self.translations[f"settings.{setting.key}"])
+            tooltip = self.translations[f"settings.{setting.key}_tooltip"]
+            label.setToolTip(tooltip)
+            editor.setToolTip(tooltip)
+            form.addRow(label, editor)
+        page = QScrollArea()
+        page.setObjectName(f"settings_category_{category}")
+        page.setWidgetResizable(True)
+        page.setFrameShape(QFrame.Shape.NoFrame)
+        page.setWidget(form_widget)
+        return page
 
     def _editor(self, setting):
         if setting.kind == settings.BOOL:
