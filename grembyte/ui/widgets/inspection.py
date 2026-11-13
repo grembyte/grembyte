@@ -7,6 +7,7 @@ from PySide6.QtCore import QObject, QPoint, Signal  # pylint: disable=import-err
 
 from grembyte.ui.widgets.docking import RIGHT, find_dock_manager
 from grembyte.ui.widgets.object_inspector import ObjectInspectorDialog
+from grembyte.ui.widgets.reference_graph import find_reference_opener
 from grembyte.ui.widgets.text_viewer import TextViewerDialog
 
 # The kind of dialog docked (see DockManager)
@@ -59,7 +60,8 @@ class Inspections(QObject):
             depth=1 if origin is None else origin.depth + 1, parent=self._window,
             show_text=self.show_text, list_methods=self._request_methods,
             call_method=self.call_method, instance_name=instance_name,
-            pid=self._worker.pid), origin)
+            pid=self._worker.pid, show_references=find_reference_opener(self._window)),
+            origin)
 
     def inspect_snapshot(self, target, snapshot, captured, name=""):
         """Show the fields of ``target`` as recorded at a call (``snapshot``)."""

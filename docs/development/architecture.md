@@ -56,6 +56,6 @@ The example templates (Multiplier, Fixed value, Clamp and the method templates) 
 
 1. Add a subpackage under `grembyte/engines/` with an `EngineAdapter` subclass in `adapter.py` (see `engines/base.py`), an `agent.js` that registers itself with `registerEngine(...)`, and an `agent.py` that loads it as the adapter's agent source.
 2. List the adapter in `ENGINES` in `engines/registry.py`; the order is the order in which the agent looks for runtimes.
-3. Declare its `capabilities` (constants in `engines/base.py`, e.g. `CATALOG`, `TRACE`, `MONITOR`, `METHOD_HOOKS`, `CALL`, `OBJECT_BROWSER`); the UI enables the tools the adapter supports, and the agent needs only the members its capabilities promise (the module docstring of `base.py` lists them).
+3. Declare its `capabilities` (constants in `engines/base.py`, e.g. `CATALOG`, `TRACE`, `MONITOR`, `METHOD_HOOKS`, `CALL`, `OBJECT_BROWSER`, `OBJECT_REFERENCES`); the UI enables the tools the adapter supports, and the agent needs only the members its capabilities promise (the module docstring of `base.py` lists them).
 
 The [roadmap](https://github.com/grembyte/grembyte/blob/main/ROADMAP.md) discusses candidates such as Godot, Lua engines, RPG Maker and Ren'Py.

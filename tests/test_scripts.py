@@ -293,6 +293,8 @@ class _FakeScriptWorker:
             browse_failed = Signal(int, str)
             instances_browsed = Signal(int, object)
             instances_failed = Signal(int, str)
+            references_resolved = Signal(int, object)
+            references_failed = Signal(int, str)
             finished = Signal()
 
         self.signals = Signals()
@@ -320,6 +322,8 @@ class _FakeScriptWorker:
         self.browse_failed = self.signals.browse_failed
         self.instances_browsed = self.signals.instances_browsed
         self.instances_failed = self.signals.instances_failed
+        self.references_resolved = self.signals.references_resolved
+        self.references_failed = self.signals.references_failed
         self.finished = self.signals.finished
         self.requests = []
 
@@ -376,6 +380,10 @@ class _FakeScriptWorker:
 
     def browse_instances(self, klass, filter_text="", internal=False):
         self.requests.append(("browse_instances", klass, filter_text, internal))
+        return len(self.requests)
+
+    def resolve_references(self, locations, framework=()):
+        self.requests.append(("resolve_references", list(locations), tuple(framework)))
         return len(self.requests)
 
 

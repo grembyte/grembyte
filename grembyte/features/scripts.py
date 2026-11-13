@@ -262,6 +262,13 @@ def _browse_options(filter_text, internal):
             "maxObjects": settings.get("object_browser_limit")}
 
 
+def _reference_options(framework):
+    """The reference graph's options for the agent (Mono reads the objects
+    as the object browser does)."""
+    return {"maxObjects": settings.get("object_browser_limit"),
+            "framework": list(framework)}
+
+
 class ScriptWorker(QThread):
     """Keep a Frida session open and run the scripts of one process.
 
@@ -300,6 +307,9 @@ class ScriptWorker(QThread):
     # request id, the objects of one class (see browse_instances)
     instances_browsed = Signal(int, object)
     instances_failed = Signal(int, str)
+    # request id, what holds each location (see resolve_references)
+    references_resolved = Signal(int, object)
+    references_failed = Signal(int, str)
     # request id, a choice parameter's options [{label, value}] (see script_options)
     options_listed = Signal(int, object)
     options_failed = Signal(int, str)
@@ -414,6 +424,23 @@ class ScriptWorker(QThread):
                             (klass, _browse_options(filter_text, internal))))
         return request_id
 
+    def resolve_references(self, locations, framework=()):
+        """Name what holds each of ``locations`` (addresses holding a pointer
+        to an object, see grembyte.features.object_references); expect
+        references_resolved or references_failed.
+
+        The answer has one entry per location, in their order: ``{location,
+        kind, object, klass, className, name, field}`` (see the engine
+        adapters' ``locateReferences``). ``framework`` are the prefixes of the
+        assemblies that are not the game's (the adapter's framework_prefixes):
+        Mono looks for static fields in the classes of the others.
+        """
+        request_id = next(self._requests)
+        self._commands.put(("resolve_references", request_id,
+                            ([hex(location) for location in locations],
+                             _reference_options(framework))))
+        return request_id
+
     def full_text(self, text_id):
         """Fetch the whole text of a long string value (its ``fullText``)."""
         request_id = next(self._requests)
@@ -497,6 +524,8 @@ class ScriptWorker(QThread):
         "options": ("script_options", "options_listed", "options_failed"),
         "browse_classes": ("browse_classes", "classes_browsed", "browse_failed"),
         "browse_instances": ("browse_instances", "instances_browsed", "instances_failed"),
+        "resolve_references": ("resolve_references", "references_resolved",
+                               "references_failed"),
     }
 
     def _answer(self, api, action, request_id, argument):

@@ -189,7 +189,7 @@ class ObjectInspectorDialog(QDialog):
     def __init__(self, translations, open_object, target=None, request=None,
                  contents=None, captured=None, evaluate=None, name="", depth=1, parent=None,
                  show_text=None, list_methods=None, call_method=None, instance_name=None,
-                 pid=None):
+                 pid=None, show_references=None):
         # pylint: disable=too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
@@ -203,6 +203,7 @@ class ObjectInspectorDialog(QDialog):
         self._show_text = show_text
         self._list_methods = list_methods
         self._call_method = call_method
+        self._show_references = show_references
         self._captured = captured
         self.name = name
         self.instance_name = instance_name
@@ -255,6 +256,14 @@ class ObjectInspectorDialog(QDialog):
         self.add_address_button.setEnabled(False)
         self.add_address_button.clicked.connect(lambda: self.add_address(self.table.currentRow()))
         bar.addWidget(self.add_address_button)
+        self.references_button = QPushButton(self.translations["inspector.references"])
+        set_button_icon(self.references_button, "account_tree")
+        self.references_button.setToolTip(self.translations["inspector.references_tooltip"])
+        self.references_button.setEnabled(False)
+        self.references_button.clicked.connect(self.show_references)
+        # Only for a live object, in a game whose engine can name the holders
+        self.references_button.setVisible(live and self._show_references is not None)
+        bar.addWidget(self.references_button)
         self.export_button = QPushButton(self.translations["inspector.export"])
         set_button_icon(self.export_button, "save")
         self.export_button.setToolTip(self.translations["inspector.export_tooltip"])
@@ -530,6 +539,7 @@ class ObjectInspectorDialog(QDialog):
         fields = contents.get("fields", [])
         self._contents = contents
         self.export_button.setEnabled(self._export_path is None)
+        self.references_button.setEnabled(bool(contents.get("address")))
         class_name = contents.get("name", "?")
         address = contents.get("address", "")
         instance_name = contents.get("instanceName") or self.instance_name
@@ -594,6 +604,14 @@ class ObjectInspectorDialog(QDialog):
         self._show_property_names(contents.get("properties", []))
         if not known:
             self._filter_methods()  # the own class is known now
+
+    def show_references(self):
+        """Open the reference graph of the object shown (see reference_graph)."""
+        contents = self._contents
+        if self._show_references is None or not contents or not contents.get("address"):
+            return
+        self._show_references(int(contents["address"], 16), contents.get("name", ""),
+                              contents.get("instanceName") or self.instance_name)
 
     def show_error(self, message):
         self._pending = False

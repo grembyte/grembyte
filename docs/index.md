@@ -75,7 +75,7 @@ markdown="span">
 
     ---
 
-    For Unreal and Unity Mono games: every live object of the game by its class, opened in the object inspector to read fields and call methods.
+    For Unreal and Unity Mono games: every live object of the game by its class, opened in the object inspector to read fields and call methods, and a graph of which objects hold one.
 
     [:octicons-arrow-right-24: Object browser](guide/object-browser.md)
 

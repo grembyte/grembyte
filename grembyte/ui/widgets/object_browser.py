@@ -38,6 +38,7 @@ from grembyte.ui.widgets.code_explorer import BoundedComboBox
 from grembyte.ui.widgets.docking import PinButton
 from grembyte.ui.widgets.icons import set_button_icon, theme_qcolor
 from grembyte.ui.widgets.labels import DocsHint
+from grembyte.ui.widgets.reference_graph import find_reference_opener
 
 _NAME, _COUNT, _PACKAGE, _SINGLETON = range(4)
 _COLUMNS = ("objects.column_name", "objects.column_count", "objects.column_package",
@@ -468,6 +469,13 @@ class ObjectBrowserDialog(QDialog):
         clipboard = QGuiApplication.clipboard()
         if entry is not None:
             menu.addAction(t["objects.inspect"], lambda: self._inspect_item(item))
+            opener = find_reference_opener(self)
+            parent = item.parent()
+            owner = None if parent is None else parent.data(0, _CLASS)
+            if opener is not None:
+                menu.addAction(t["objects.references"], lambda: opener(
+                    int(entry["address"], 16), owner["name"] if owner else "",
+                    entry["name"] or None))
             menu.addAction(t["objects.copy_address"],
                            lambda: clipboard.setText(entry["address"]))
             menu.addAction(t["objects.copy_name"], lambda: clipboard.setText(entry["name"]))

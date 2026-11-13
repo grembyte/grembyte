@@ -137,6 +137,8 @@ const mono = (() => {
       constant: optional(() => exported('mono_field_get_data', 'pointer', ['pointer'])),
       // The size of a class's static data, for the pointer scan's chain bases.
       staticSize: optional(() => exported('mono_class_data_size', 'int', ['pointer'])),
+      // The size of a class's objects, header included (the reference graph).
+      instanceSize: optional(() => exported('mono_class_instance_size', 'int', ['pointer'])),
       // Only for passing strings to game code.
       stringNew: optional(() => blocking('mono_string_new', 'pointer', ['pointer', 'pointer'])),
       // Storing a reference in an object tells the garbage collector.
@@ -2078,7 +2080,26 @@ gpointer run_batch (gpointer data) {
         list.push(object);
       }
     }
+    // The buffer and the pool hold a pointer to every object: left as they
+    // are, the reference graph would find Grembyte holding each of them
+    clearMemory(buffer.add(LIVENESS_HEADER), 16 * kept);
+    if (l.pool !== null)
+      clearMemory(l.pool, Number(buffer.add(16).readPointer().sub(l.pool).toString()));
     return { byClass, objects: kept, count, stoppedMs };
+  }
+
+  // Zeros written at a time by clearMemory
+  const CLEAR_CHUNK = 1024 * 1024;
+  let zeros = null;
+
+  function clearMemory(address, size) {
+    // Overwrite ``size`` bytes at ``address`` (memory of the agent's own) with zeros
+    if (zeros === null)
+      zeros = new Uint8Array(CLEAR_CHUNK).buffer;
+    for (let done = 0; done < size; done += CLEAR_CHUNK) {
+      const length = Math.min(CLEAR_CHUNK, size - done);
+      address.add(done).writeByteArray(length === CLEAR_CHUNK ? zeros : zeros.slice(0, length));
+    }
   }
 
   function objectName(object, klass) {
@@ -2200,6 +2221,252 @@ gpointer run_batch (gpointer data) {
       instances.sort((a, b) => (a.name || '').localeCompare(b.name || '')
         || (ptr(a.address).compare(ptr(b.address))));
       return { instances, count, truncated: count > instances.length };
+    });
+  }
+
+  // --- References: what holds an object (the reference graph) ----------------
+  // The reference graph (grembyte/features/object_references.py) finds the
+  // locations in the game's memory that hold an object's address; this names
+  // them: the object containing the location and its field, or the static
+  // field of a class. The objects are the browser's (the liveness
+  // calculation), sorted by address; a location belongs to the object below
+  // it if it lies within that object's size. Static data is that of the
+  // classes with live objects, their base classes (Singleton<T>) and the
+  // classes of the game's own assemblies.
+
+  // How deep struct fields are named (a.b.c)
+  const MAX_FIELD_DEPTH = 4;
+  // { read, starts: Float64Array } for the objects browseClasses read
+  let referenceObjects = null;
+  // { read, areas: [[start, end, klass, [[field, offset], ...]]] sorted by start }
+  let referenceStatics = null;
+
+  function liveObjects(maxObjects) {
+    // The objects of the last read, read anew when it is old (main thread)
+    if (browsed === null || Date.now() - browsed.read > BROWSE_AGE) {
+      const { byClass } = readLiveObjects(maxObjects);
+      browsed = { read: Date.now(), byClass };
+    }
+    return browsed;
+  }
+
+  function objectStarts(live) {
+    if (referenceObjects !== null && referenceObjects.read === live.read)
+      return referenceObjects.starts;
+    let total = 0;
+    for (const list of live.byClass.values())
+      total += list.length;
+    const starts = new Float64Array(total);
+    let i = 0;
+    for (const list of live.byClass.values()) {
+      for (const object of list)
+        starts[i++] = object;
+    }
+    starts.sort();
+    referenceObjects = { read: live.read, starts };
+    return starts;
+  }
+
+  function referenceClasses(live, framework) {
+    // The classes whose static data may hold objects: those with live
+    // objects, their bases, and every class of the game's own assemblies
+    // (not those starting with a ``framework`` prefix), which also finds a
+    // static class without objects (Game.Loop.Current)
+    const t = typesApi();
+    const seen = new Set();
+    const result = [];
+    const add = klass => {
+      for (let current = klass; !current.isNull(); current = t.classParent(current)) {
+        const key = current.toString();
+        if (seen.has(key))
+          return;  // its bases were added with it
+        seen.add(key);
+        result.push(current);
+      }
+    };
+    for (const number of live.byClass.keys())
+      add(ptr(number));
+    if (api.catalog === null)
+      return result;
+    const c = api.catalog;
+    for (const image of loadedImages(c)) {
+      const name = api.imageName(image).readUtf8String() || '';  // Mono's own: not freed
+      if (framework.some(prefix => name.startsWith(prefix)))
+        continue;
+      const rows = c.tableRows(image, TYPEDEF_TABLE);
+      for (let row = 2; row <= rows; row++) {
+        const klass = c.classGet(image, TYPEDEF_TOKEN | row);
+        // A generic definition has no static data of its own
+        if (!klass.isNull() && !(cString(c.typeName(c.classType(klass))) || '>').endsWith('>'))
+          add(klass);
+      }
+    }
+    return result;
+  }
+
+  function staticAreasOf(live, framework) {
+    // The static data of the referenceClasses (see referenceStatics). Reading
+    // a class's static data creates its vtable, never runs its static
+    // constructor (as the pointer scan's chain bases do).
+    if (referenceStatics !== null && referenceStatics.read === live.read)
+      return referenceStatics.areas;
+    const t = typesApi();
+    const areas = [];
+    for (const klass of referenceClasses(live, framework)) {
+      try {
+        const fields = ownStaticFields(t, klass);
+        if (fields.length === 0)
+          continue;
+        const data = staticData(klass);
+        if (data === null)
+          continue;
+        const known = api.staticSize === null ? 0 : api.staticSize(klass);
+        const size = known > 0 ? known
+          : Math.max(...fields.map(([, offset]) => offset)) + Process.pointerSize;
+        const start = Number(data.toString());
+        areas.push([start, start + size, klass, fields]);
+      } catch (_error) {
+        // a class whose statics cannot be read
+      }
+    }
+    areas.sort((a, b) => a[0] - b[0]);
+    referenceStatics = { read: live.read, areas };
+    return areas;
+  }
+
+  function below(sorted, value, at = x => x) {
+    // Index of the last entry of ``sorted`` not above ``value``, or -1
+    let low = 0, high = sorted.length - 1, found = -1;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      if (at(sorted[middle]) <= value) {
+        found = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return found;
+  }
+
+  function objectSize(object, info, klass) {
+    // Bytes of the object at ``object`` (layout ``info``), header included
+    const size = Process.pointerSize;
+    if (info.rank > 0) {
+      const length = object.add(3 * size).readPointer();
+      return 4 * size + Number(length.toString()) * info.elementSize;
+    }
+    if (info.name === 'System.String')
+      return 2 * size + 4 + 2 * (object.add(2 * size).readS32() + 1);
+    if (api.instanceSize !== null)
+      return api.instanceSize(klass);
+    let end = 2 * size;
+    for (const field of info.fields) {
+      if (!field.static)
+        end = Math.max(end, field.offset + (field.type.structSize || size));
+    }
+    return end;
+  }
+
+  function fieldAt(klass, offset, depth = 0) {
+    // The instance field of ``klass`` at ``offset`` (from the object's
+    // start), a struct's members as ``field.member``, or null
+    let best = null;
+    for (const field of layout(klass).fields) {
+      if (!field.static && field.offset <= offset && (best === null || field.offset > best.offset))
+        best = field;
+    }
+    if (best === null)
+      return null;
+    const rest = offset - best.offset;
+    if (rest === 0)
+      return best.name;
+    if (best.type.kind === TYPE.VALUETYPE && best.type.klass && depth < MAX_FIELD_DEPTH) {
+      // A struct's field offsets count from an object header it does not have
+      const inner = fieldAt(best.type.klass, rest + 2 * Process.pointerSize, depth + 1);
+      if (inner !== null)
+        return `${best.name}.${inner}`;
+    }
+    return `${best.name}+0x${rest.toString(16)}`;
+  }
+
+  function elementAt(info, offset) {
+    // ``[i]`` (with a struct's member) of an array's element at ``offset``
+    const data = 4 * Process.pointerSize;
+    if (offset < data || info.elementSize <= 0)
+      return null;
+    const index = Math.floor((offset - data) / info.elementSize);
+    const rest = offset - data - index * info.elementSize;
+    if (rest > 0 && info.element.klass) {
+      const inner = fieldAt(info.element.klass, rest + 2 * Process.pointerSize);
+      if (inner !== null)
+        return `[${index}].${inner}`;
+    }
+    return rest === 0 ? `[${index}]` : `[${index}]+0x${rest.toString(16)}`;
+  }
+
+  function objectReference(starts, location) {
+    // { kind: 'field', object, klass, className, name, field } of the live
+    // object holding ``location``, or null
+    const index = below(starts, location);
+    if (index < 0)
+      return null;
+    const object = ptr(starts[index]);
+    const klass = classOf(object);
+    if (klass === null)
+      return null;
+    const info = layout(klass);
+    const offset = location - starts[index];
+    if (offset >= objectSize(object, info, klass))
+      return null;
+    const field = info.rank > 0 ? elementAt(info, offset) : fieldAt(klass, offset);
+    let name = null;
+    try {
+      name = objectName(object, klass);
+    } catch (_error) {
+      // a destroyed Unity object
+    }
+    return { kind: info.rank > 0 ? 'element' : 'field', object: object.toString(),
+             klass: klass.toString(), className: info.name, name, field };
+  }
+
+  function staticReference(areas, location) {
+    // { kind: 'static', klass, className, field } of the static data holding
+    // ``location``, or null
+    const index = below(areas, location, area => area[0]);
+    if (index < 0 || location >= areas[index][1])
+      return null;
+    const [start, , klass, fields] = areas[index];
+    const offset = location - start;
+    const field = fields.find(([, at]) => at === offset);
+    return { kind: 'static', object: null, klass: klass.toString(),
+             className: layout(klass).name,
+             field: field === undefined ? `+0x${offset.toString(16)}` : field[0] };
+  }
+
+  function locateReferences(locations, options = {}) {
+    // For the reference graph: what holds each of ``locations`` (addresses
+    // that hold a pointer to an object), in their order: { kind: 'field' or
+    // 'element' (of an array), object, klass, className, name, field } for a
+    // live object's field, { kind: 'static', klass, className, field } for a
+    // static field, { kind: 'unknown' } for anything else. ``framework``:
+    // the prefixes of the assemblies that are not the game's (the adapter's
+    // framework_prefixes).
+    typesApi();
+    return onMainThread(() => {
+      const live = liveObjects(options.maxObjects);
+      const starts = objectStarts(live);
+      const areas = staticAreasOf(live, options.framework || []);
+      return locations.map(text => {
+        const location = Number(ptr(text).toString());
+        let found = null;
+        try {
+          found = objectReference(starts, location) || staticReference(areas, location);
+        } catch (_error) {
+          // memory that went away since
+        }
+        return { location: ptr(location).toString(), ...(found || { kind: 'unknown' }) };
+      });
     });
   }
 
@@ -2454,7 +2721,7 @@ gpointer run_batch (gpointer data) {
     objectClassName, classOf, layout, staticData, staticAreas: classStaticAreas, staticBase,
     onRuntimeThread: onMonoThread, unityName,
     onMainThread, drainMain, properties, getProperty, methods, signatureOf, findClass,
-    findMethod, findObject, findObjects, browseClasses, browseInstances, newString, invoke, classChain, writeReference, resolve: resolveMethod,
+    findMethod, findObject, findObjects, browseClasses, browseInstances, locateReferences, newString, invoke, classChain, writeReference, resolve: resolveMethod,
     virtualMethod: (object, method) => api.invoke.virtualMethod(object, method)
   };
 })();

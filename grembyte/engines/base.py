@@ -83,6 +83,11 @@ object of a class, with ``name`` (or null) the one of that name (``ctx.find``),
 The object browser (``OBJECT_BROWSER``) lists the classes with live objects,
 ``browseClasses({filter, internal})``, and the objects of one class,
 ``browseInstances(klass, {filter, internal, limit})`` (see the Unreal adapter).
+The reference graph (``OBJECT_REFERENCES``) names the locations that hold a
+pointer to an object: ``locateReferences(locations, {maxObjects})`` answers
+for each ``{location, kind, object, klass, className, name, field}``, ``kind``
+'field', 'element' (of an array), 'static' (a class's static field, no
+``object``) or 'unknown' (see the Mono adapter).
 The object inspector lists what it can call with ``methods(klass)``: ``[{name,
 method, static, owner}]``, the class's own methods first; a ``properties``
 entry's ``setter`` (Mono) is the property's set_ method or null.
@@ -125,6 +130,8 @@ GAS = "gas"
 # The object browser: every live object by its class (``browseClasses``,
 # ``browseInstances``): Unreal's object table, Mono's liveness calculation
 OBJECT_BROWSER = "object_browser"
+# The reference graph: which objects hold an object (``locateReferences``)
+OBJECT_REFERENCES = "object_references"
 
 
 class EngineAdapter:

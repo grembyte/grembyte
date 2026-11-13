@@ -15,7 +15,7 @@ Many methods share one piece of code: the linker folds identical functions, and 
 
 - The **Call method** dialog. Running methods on the game's main thread is not built for IL2CPP yet.
 - The **call graph**: it reads a method's IL code, which IL2CPP does not keep.
-- The **[object browser](../guide/object-browser.md#not-yet-available)**.
+- The **[object browser](../guide/object-browser.md#not-yet-available)** and, depending on it, the **[reference graph](../guide/reference-graph.md#not-yet-available)**.
 - Games built on Unity's ECS run much of their logic as Burst code, which method hooks do not see. In V Rising most gameplay systems are Burst-compiled; their data lies in ECS chunks rather than objects.
 
 ## Tested games

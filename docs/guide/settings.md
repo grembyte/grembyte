@@ -25,7 +25,8 @@
 | Hooks: short jump in tight spots (experimental) | Off by default; see the [hook limitations](hooks.md#limitations). |
 | Hooks: patch hooks the game removed again | Off by default. For games that check and restore their code, e.g. Dark Souls III. Grembyte checks every second and patches again. Can be detected by anti-tamper systems. |
 | Hooks: measure their cost | Off by default. Measures every write at a hooked site: calls per second, skipped writes, waiting time and run time. Shown in the tooltip of the "Applied" column and in `grembyte.log`. |
-| Object browser: objects read (Unity Mono) | How many live objects the [object browser](object-browser.md#unity-mono) keeps per read (default 2 million, up to 10 million). Each takes 16 bytes in the game while Grembyte is attached. Raise it when the browser reports that not all objects could be kept. Takes effect at the next refresh. |
+| Object browser: objects read (Unity Mono) | How many live objects the [object browser](object-browser.md#unity-mono) and the [reference graph](reference-graph.md#unity-mono) keep per read (default 2 million, up to 10 million). Each takes 16 bytes in the game while Grembyte is attached. Raise it when the browser reports that not all objects could be kept. Takes effect at the next refresh. |
+| Reference graph: show other memory | Off by default: locations in memory no object of the engine covers only count in a node's **+n** in the [reference graph](reference-graph.md#reading-the-graph). On: they show as a node of their own. Takes effect at once, also in open graphs. |
 
 **Defaults** fills in the default values on every page; **Save** stores them.
 

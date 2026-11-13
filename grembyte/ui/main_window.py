@@ -101,6 +101,7 @@ from grembyte.ui.widgets.pointer_cleanup import PointerCleanupDialog, keep_scans
 from grembyte.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 from grembyte.ui.widgets.gas_attributes import GasAttributesDialog
 from grembyte.ui.widgets.object_browser import ObjectBrowserDialog
+from grembyte.ui.widgets.reference_graph import ReferenceGraphDialog
 from grembyte.ui.widgets.game_export import GameExportDialog, GameImportDialog
 from grembyte.ui.widgets.game_notes import GameNotesDialog
 from grembyte.ui.widgets.hooks import HookDialog, HookPanel
@@ -2058,6 +2059,20 @@ class MainWindow(QMainWindow):
             self.dock_manager.add(dialog, "object_browser", RIGHT)
             return
         self.dock_manager.show(dialog)
+
+    def can_open_reference_graph(self):
+        """Whether the attached game's engine can name what holds an object."""
+        return (self._current_pid is not None and self._engine is not None
+                and self._engine.supports(engine_base.OBJECT_REFERENCES))
+
+    def open_reference_graph(self, address, class_name="", name=None):
+        """Show which objects hold the object at ``address`` (see reference_graph)."""
+        if not self.can_open_reference_graph() or self.script_panel is None:
+            return
+        dialog = ReferenceGraphDialog(self.translations, self.script_panel, self._current_pid,
+                                      address, class_name, name,
+                                      framework=self._engine.framework_prefixes, parent=self)
+        self.dock_manager.add(dialog, "references", RIGHT)
 
     def _open_gas_attributes(self):
         """Show the player's GAS attributes (Unreal games); one window at a time."""

@@ -18,6 +18,8 @@ Everything in the [engine overview](index.md) is available:
 
 **View → Object browser …** lists the game's live objects by class and opens them in the object inspector. Unity's Mono has no heap walk, so Grembyte uses Unity's own liveness calculation: it finds the objects reachable from static fields and from Unity's objects, and the game stands still for a moment while it runs. The [object browser guide](../guide/object-browser.md#unity-mono) explains it.
 
+From an object, the [reference graph](../guide/reference-graph.md#unity-mono) shows which objects and static fields hold it.
+
 ## 32-bit games
 
 32-bit Unity games under Wine/Proton work with all Mono tools: catalog, trace, method monitor, object inspector, **Call method** and the object browser. Mono features always go through the Frida gadget; value hooks and the write watch use ptrace in 32-bit games (see [backends](../guide/write-watch.md#backends-frida-or-ptrace)).

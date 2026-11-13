@@ -104,6 +104,7 @@ The object inspector shows the fields of an object – for Unity also static fie
 - **Getter methods – called in the game**: the object's properties (C# properties such as `IsPartyMember`) and, for GameObjects, its components. Their value is not necessarily stored in a field, so they are called in the game: **evaluate** one, or **Evaluate all**. A property with a setter can be changed with **set …**, which runs the setter on the game's main thread.
 - **Methods – called in the game**: the object's instance methods (Unreal: its UFunctions). **call …** asks for the arguments and runs the method on this object. **Base classes** adds the inherited methods, often hundreds for Unity components. In Unity Mono this is how instance methods are called; [Call method](#call-method) runs static ones.
 - The arrow in a section's header folds it; inspectors remember which sections are folded.
+- **References** (Unity Mono and Unreal) opens the object's [reference graph](../guide/reference-graph.md): which objects hold it, and which hold those, back to a static field or a module's global data.
 
 Inspectors can be [docked](../guide/tools.md#docking-windows) beside the scanner; an object opened from a docked inspector opens as a tab beside it.
 
