@@ -173,6 +173,24 @@ object browser, write watch, memory viewer, GAS attributes, the traces, the moni
 log can be docked. Open: the catalog and the code explorer (large windows with their own
 navigation; maybe at the bottom), several memory viewers side by side.
 
+### 10. Notes per game: follow-ups
+
+Done (see [notes](docs/guide/notes.md)): one Markdown note per saved process with preview,
+dockable at the right, saved automatically and by button, part of export, import (merged,
+never deleted) and the delete dialog. Open:
+
+- **Copy a reference to the notes:** a context menu entry in the catalog, the object
+  inspector and browser, the code explorer, the address list and the hooks that inserts the
+  name (class, method with signature, field, `module+offset`, pointer chain) as `code` at the
+  cursor of the open notes, opening them if needed.
+- **Several notes per game:** a list or tabs of notes with titles in the notes window, to
+  create, rename and delete them. The table `game_notes` already holds several notes with a
+  `title`, the export writes all of them and the import merges by title, so mainly the
+  window is missing (it shows the oldest note today).
+- **Notes per game name:** notes belong to one program path like all entries, so a game
+  started under two Proton versions has two sets. Showing the notes of all processes of the
+  same name (as the export groups them) would avoid that.
+
 ### Recommendation
 
 The **code explorer and pseudocode** list above comes next, starting with names without PDB.

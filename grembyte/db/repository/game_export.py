@@ -2,16 +2,19 @@
 
 A game is all processes of one name: the same game is saved once per path,
 e.g. under two Proton versions. The export holds per process its address
-list, hooks, method hooks, favorites and scripts, and the templates its
-hooks were created from. Exports without scripts (made before they were
-exported) are read as having none. The candidate chains of pointer scans are only exported when
+list, hooks, method hooks, favorites, scripts and notes, and the templates
+its hooks were created from. Exports without scripts or notes (made before
+they were exported) are read as having none. The candidate chains of pointer scans are only exported when
 asked for: they can be large.
 
 An import puts all entries of a file into one saved process, whatever path
 they were exported from. It either replaces what the process holds or mixes
 the file's entries in, leaving out those it holds already (``merge``). A
 template of the file is linked to a local one of the same name and code,
-else added (under a new name if the name is taken).
+else added (under a new name if the name is taken). Notes are never
+deleted, not even when replacing: a note of the file is merged into the
+process's note of the same title (its text appended unless already there),
+else added.
 
 ``delete_entries`` removes chosen kinds of entries of a saved process, or
 the process itself with everything saved for it.
@@ -31,6 +34,7 @@ from grembyte.db.models import (
     Address,
     AssemblySelectionRecord,
     FavoriteRecord,
+    GameNote,
     GameScript,
     Hook,
     HookTemplate,
@@ -38,6 +42,7 @@ from grembyte.db.models import (
     PointerScan,
     Process,
 )
+from grembyte.db.repository.notes import merged_text
 
 EXPORT_FORMAT = "grembyte-export"
 # What exports said before the project was renamed from Hermes Hook; still read.
@@ -54,9 +59,11 @@ _COUNTED = (
     ("method_hooks", MethodHook),
     ("favorites", FavoriteRecord),
     ("scripts", GameScript),
+    ("notes", GameNote),
 )
 # Kinds of entries ``delete_entries`` can delete
-DELETABLE = ("addresses", "pointer_scans", "hooks", "method_hooks", "favorites", "scripts")
+DELETABLE = ("addresses", "pointer_scans", "hooks", "method_hooks", "favorites", "scripts",
+             "notes")
 
 
 @dataclass
@@ -153,8 +160,11 @@ class GameExportRepository:
             processes = list(session.scalars(select(Process).order_by(Process.id)))
             counts = {}
             for key, model in _COUNTED:
+                query = select(model.process_id, func.count())
+                if model is GameNote:
+                    query = query.where(func.trim(GameNote.body, " \t\n\r") != "")
                 counts[key] = dict(session.execute(
-                    select(model.process_id, func.count()).group_by(model.process_id)).all())
+                    query.group_by(model.process_id)).all())
             counts["pointer_scans"] = dict(session.execute(
                 select(Address.process_id, func.count())
                 .join(PointerScan, PointerScan.address_id == Address.id)
@@ -231,6 +241,7 @@ class GameExportRepository:
             "method_hooks": rows(MethodHook),
             "favorites": rows(FavoriteRecord),
             "scripts": rows(GameScript),
+            "notes": [note for note in rows(GameNote) if (note["body"] or "").strip()],
         }
 
     def delete_entries(self, process_id, kinds, remove_process=False):
@@ -409,11 +420,12 @@ def import_into(session_factory, export, process_id, replace=False):
 
     ``replace`` deletes its address list (with pointer scans), hooks, method
     hooks, favorites and scripts first; else entries it holds already are left out.
-    Returns an ImportResult.
+    Notes are merged either way (see _merge_notes). Returns an ImportResult.
     """
     result = ImportResult({key: 0 for key, *_rest in _IMPORTED},
                           {key: 0 for key, *_rest in _IMPORTED})
     result.added["pointer_scans"] = 0
+    result.added["notes"] = result.skipped["notes"] = 0
     with session_factory() as session:
         if session.get(Process, process_id) is None:
             raise ValueError(f"no saved process with id {process_id}")
@@ -447,6 +459,41 @@ def import_into(session_factory, export, process_id, replace=False):
                         session.flush()
                         session.add(_record(PointerScan, scan, address_id=record.id))
                         result.added["pointer_scans"] += 1
+        for process in export["processes"]:
+            _merge_notes(session, process_id, process.get("notes") or [], result)
         result.templates = templates.added
         session.commit()
     return result
+
+
+def _merge_notes(session, process_id, rows, result):
+    """Merge the exported notes ``rows`` into the notes of the process ``process_id``.
+
+    A note goes into the process's oldest note of the same title: its text is
+    appended (see merged_text) unless the note holds it already. A note of a
+    title the process has none of is added. Nothing is deleted.
+    """
+    by_title = {}
+    for record in session.scalars(
+            select(GameNote).where(GameNote.process_id == process_id).order_by(GameNote.id)):
+        by_title.setdefault(record.title or "", record)
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        title = row.get("title") or ""
+        target = by_title.get(title)
+        if target is None:
+            if not (row.get("body") or "").strip():
+                result.skipped["notes"] += 1
+                continue
+            record = _record(GameNote, row, process_id=process_id, title=title)
+            session.add(record)
+            by_title[title] = record
+            result.added["notes"] += 1
+            continue
+        text = merged_text(target.body, row.get("body"))
+        if text is None:
+            result.skipped["notes"] += 1
+        else:
+            target.body = text
+            result.added["notes"] += 1

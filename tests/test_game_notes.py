@@ -1,0 +1,219 @@
+"""The notes window per saved game, its choice of a game, and their storage."""
+
+from grembyte.db.models import GameNote
+from grembyte.db.repository.game_export import GameExportRepository
+from grembyte.db.repository.notes import NoteRepository, merged_text
+
+from tests.test_game_export import (  # pylint: disable=unused-import
+    PROTON_GE,
+    _note_bodies,
+    _process_id,
+    fixture_qt_app,
+    fixture_repository,
+    fixture_sessions,
+    fixture_translations,
+)
+
+POE = "/steam/common/PoE/PillarsOfEternity"
+
+
+def test_merged_text_appends_only_what_is_new():
+    assert merged_text("", "Gold") == "Gold"
+    assert merged_text("Gold\n", "XP") == "Gold\n\n---\n\nXP"
+    assert merged_text("Gold\n\n---\n\nXP", "XP") is None
+    assert merged_text("Gold and XP", "XP") == "Gold and XP\n\n---\n\nXP"
+    assert merged_text("Gold", "  \n") is None
+
+
+def test_the_first_note_is_saved_and_kept(sessions, repository):
+    # pylint: disable=unused-argument
+    notes = NoteRepository(sessions)
+    poe = _process_id(sessions, "PillarsOfEternity", POE)
+    assert notes.first_note(poe) is None
+    notes.save_first_note(poe, "Gold")
+    notes.save_first_note(poe, "Gold: `AddGold`")
+    assert _note_bodies(sessions, poe) == [("", "Gold: `AddGold`")]
+
+
+def test_empty_notes_are_not_created_and_clearing_removes_the_note(sessions, repository):
+    # pylint: disable=unused-argument
+    notes = NoteRepository(sessions)
+    poe = _process_id(sessions, "PillarsOfEternity", POE)
+    assert notes.save_first_note(poe, "") is None
+    assert notes.save_first_note(poe, " \n ") is None
+    assert _note_bodies(sessions, poe) == []
+
+    notes.save_first_note(poe, "Gold")
+    assert notes.save_first_note(poe, " \n ") is None
+    assert _note_bodies(sessions, poe) == []
+
+
+def _dialog(translations, sessions, process_id, game="PillarsOfEternity"):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.ui.widgets.game_notes import GameNotesDialog
+
+    return GameNotesDialog(translations, process_id, game, repository=NoteRepository(sessions))
+
+
+def test_notes_save_after_typing_with_the_button_and_on_closing(qt_app, translations, sessions,
+                                                                  repository):
+    # pylint: disable=unused-argument
+    poe = _process_id(sessions, "PillarsOfEternity", POE)
+    dialog = _dialog(translations, sessions, poe)
+    try:
+        assert dialog.windowTitle() == translations["notes.title"].format(game="PillarsOfEternity")
+        # The button saves even when nothing changed, without creating an empty entry.
+        dialog.save_button.click()
+        assert _note_bodies(sessions, poe) == []
+        assert not dialog.dirty
+
+        dialog.editor.setPlainText("## Gold\n- `AddGold(int)`")
+        assert dialog.dirty and dialog._autosave.isActive()  # pylint: disable=protected-access
+        dialog._autosave.timeout.emit()  # pylint: disable=protected-access
+        assert _note_bodies(sessions, poe) == [("", "## Gold\n- `AddGold(int)`")]
+
+        dialog.tabs.setCurrentIndex(1)
+        preview = dialog.preview.toPlainText()
+        assert "Gold" in preview and "#" not in preview and "`" not in preview
+
+        dialog.editor.setPlainText("Escape keeps this")
+        dialog.reject()
+        assert _note_bodies(sessions, poe) == [("", "Escape keeps this")]
+    finally:
+        dialog.close()
+
+
+def test_open_notes_follow_the_attached_game(qt_app, translations, sessions, repository,
+                                             monkeypatch):
+    # pylint: disable=unused-argument,import-outside-toplevel,protected-access
+    from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.ui import main_window
+    from grembyte.ui.widgets.game_notes import GameNotesDialog
+
+    poe = _process_id(sessions, "PillarsOfEternity", POE)
+    souls = _process_id(sessions, "DarkSoulsIII.ex", PROTON_GE)
+    with sessions() as session:
+        session.add(GameNote(process_id=poe, body="Gold"))
+        session.commit()
+
+    class ProcessPicker:  # pylint: disable=too-few-public-methods
+        selected_pid = 12345
+        selected_name = "DarkSoulsIII.ex"
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        @staticmethod
+        def exec():
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(main_window, "ProcessSelectDialog", ProcessPicker)
+    monkeypatch.setattr(main_window.activity, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_window.activity, "describe_process", lambda *_args: {})
+    monkeypatch.setattr(main_window, "is_wine_process", lambda _pid: False)
+    monkeypatch.setattr(main_window, "process_start_time", lambda _pid: 0)
+    monkeypatch.setattr(main_window.MainWindow, "_take_over_from_cli",
+                        lambda *_args: (True, None))
+    monkeypatch.setattr(main_window.MainWindow, "_prepare_wine_gadget",
+                        lambda *_args: (True, False))
+    monkeypatch.setattr(main_window.MainWindow, "_known_process_id", lambda _self, _dlg: souls)
+    for method in ("_stop_scan_and_refresh", "_stop_write_monitor", "_stop_freeze_worker",
+                   "_close_process_tools", "_switch_pointer_dialogs", "_auto_select_backend",
+                   "_load_saved_addresses", "_update_catalog_button"):
+        monkeypatch.setattr(main_window.MainWindow, method, lambda *_args: None)
+    monkeypatch.setattr(main_window, "GameNotesDialog", lambda *args, **kwargs: GameNotesDialog(
+        *args, repository=NoteRepository(sessions), **kwargs))
+
+    window = main_window.MainWindow("en")
+    try:
+        window._process_id = poe
+        window._process_name = "PillarsOfEternity"
+        dialog = GameNotesDialog(translations, poe, "PillarsOfEternity",
+                                 repository=NoteRepository(sessions), parent=window)
+        window._notes_dialog = dialog
+        window._open_process_dialog()
+        assert dialog.process_id == souls
+        assert dialog.game == "DarkSoulsIII.ex"
+        assert dialog.text() == ""
+        assert _note_bodies(sessions, poe) == [("", "Gold")]
+    finally:
+        window.close()
+
+
+def test_notes_change_game_and_save_the_previous_one(qt_app, translations, sessions, repository):
+    # pylint: disable=unused-argument
+    poe = _process_id(sessions, "PillarsOfEternity", POE)
+    souls = _process_id(sessions, "DarkSoulsIII.ex", PROTON_GE)
+    with sessions() as session:
+        session.add(GameNote(process_id=souls, body="Souls"))
+        session.commit()
+    dialog = _dialog(translations, sessions, poe)
+    try:
+        dialog.editor.setPlainText("Gold")
+        dialog.set_process(souls, "DarkSoulsIII.ex")
+        assert _note_bodies(sessions, poe) == [("", "Gold")]
+        assert dialog.text() == "Souls" and not dialog.dirty
+    finally:
+        dialog.close()
+
+
+def test_saved_games_dialog_lists_every_saved_process(qt_app, translations, sessions, repository):
+    # pylint: disable=unused-argument,import-outside-toplevel
+    from grembyte.ui.widgets.saved_games import SavedGamesDialog
+
+    poe = _process_id(sessions, "PillarsOfEternity", POE)
+    NoteRepository(sessions).save_first_note(poe, "Gold")
+    dialog = SavedGamesDialog(translations, GameExportRepository(sessions), current=poe)
+    try:
+        names = [dialog.table.item(row, 0).text() for row in range(dialog.table.rowCount())]
+        assert names == ["abrt-dbus", "DarkSoulsIII.ex", "DarkSoulsIII.ex", "PillarsOfEternity"]
+        row = names.index("PillarsOfEternity")
+        assert dialog.table.currentRow() == row
+        assert dialog.table.item(row, 2).text() == "1"
+        dialog.table.cellDoubleClicked.emit(row, 0)
+        assert dialog.process.process_id == poe
+    finally:
+        dialog.close()
+
+
+def test_main_window_opens_the_picked_games_notes_and_closes_them_with_the_game(
+        qt_app, translations, sessions, repository, monkeypatch):
+    # pylint: disable=unused-argument,import-outside-toplevel,protected-access
+    from PySide6.QtWidgets import QDialog  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.ui import main_window
+    from grembyte.ui.widgets.game_notes import GameNotesDialog
+
+    poe = _process_id(sessions, "PillarsOfEternity", POE)
+    picked = GameExportRepository(sessions).list_processes()[-1]
+
+    class Picker:  # pylint: disable=too-few-public-methods
+        process = picked
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        @staticmethod
+        def exec():
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(main_window, "SavedGamesDialog", Picker)
+    monkeypatch.setattr(main_window, "GameNotesDialog", lambda *args, **kwargs: GameNotesDialog(
+        *args, repository=NoteRepository(sessions), **kwargs))
+    window = main_window.MainWindow("en")
+    try:
+        window._open_notes()  # nothing attached: the picker's game
+        dialog = window._notes_dialog
+        assert dialog.process_id == poe and dialog.game == "PillarsOfEternity"
+        dialog.editor.setPlainText("Gold")
+        window._save_notes()
+        assert _note_bodies(sessions, poe) == [("", "Gold")]
+
+        dialog.editor.setPlainText("not saved: the process is gone")
+        window._notes_changed({poe}, removed={poe})
+        qt_app.processEvents()
+        assert window._notes_dialog is None
+        assert _note_bodies(sessions, poe) == [("", "Gold")]
+    finally:
+        window.close()

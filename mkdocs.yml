@@ -99,6 +99,7 @@ nav:
       - Native trace and monitor: guide/native-tools.md
       - Code explorer: guide/code-explorer.md
       - Object browser: guide/object-browser.md
+      - Notes: guide/notes.md
       - Docking, memory, sessions and logs: guide/tools.md
       - Settings and themes: guide/settings.md
       - Saving, export and import: guide/data.md
@@ -123,6 +124,7 @@ nav:
       - Script context (ctx): reference/script-context.md
       - Assembly (x86-64): reference/assembly.md
       - Regular expressions: reference/regex.md
+      - Markdown: reference/markdown.md
   - Development:
       - development/index.md
       - Architecture: development/architecture.md

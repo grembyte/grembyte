@@ -13,6 +13,7 @@ _ACCEPT_ICONS = {
     "export.button": "upload",
     "import.button": "download",
     "games.open": "data_object",
+    "saved_games.open": "sticky_note_2",
     "hooks.create": "webhook",
     "process.attach": "link",
     "scripts.create": "add",

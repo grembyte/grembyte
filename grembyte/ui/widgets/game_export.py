@@ -45,7 +45,8 @@ from grembyte.ui.widgets.table import resizable_columns, set_row_height
 
 # Columns after the game's name and platform: the counts of its entries
 # Pointer scans last: the import's table leaves them out
-_COUNT_COLUMNS = ("addresses", "hooks", "method_hooks", "favorites", "scripts", "pointer_scans")
+_COUNT_COLUMNS = ("addresses", "hooks", "method_hooks", "favorites", "scripts", "notes",
+                  "pointer_scans")
 
 
 class GameExportDialog(QDialog):

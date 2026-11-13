@@ -26,6 +26,7 @@ Use of the feature for restoring memory modifications may be detected by anti-ta
 - **Scripts** that call game code on a schedule or by hand
 - **grembyte-cli** as a Steam launch option: plays a game with its saved hooks and scripts, without the window
 - **Native trace and function monitor** for any engine
+- **Notes per game** in Markdown with preview, dockable beside the main window
 - **Unity (Mono and IL2CPP) and Unreal Engine**: catalog of classes and methods, trace, method monitor, object inspector, object browser (Mono and Unreal), method hooks and calls; GAS attributes for Unreal
 - **Wine and Proton** support through Frida's Windows gadget
 - Memory viewer, sessions, activity log, export and import per game, color themes, German and English
