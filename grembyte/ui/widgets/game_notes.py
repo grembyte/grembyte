@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QDialog,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QTabWidget,
@@ -99,15 +100,20 @@ class GameNotesDialog(QDialog):
         return self.editor.toPlainText()
 
     def set_process(self, process_id, game):
-        """Show the note of another saved process (the text shown is saved first)."""
+        """Show the note of another saved process (the text shown is saved first).
+
+        Returns False when the text cannot be saved and the user keeps it.
+        """
         if process_id == self.process_id:
-            return
-        self.save_pending()
+            return True
+        if not self.save_or_discard():
+            return False
         self.process_id = process_id
         self.game = game
         self.setWindowTitle(self.translations["notes.title"].format(game=game))
         self.setProperty(TAB_TITLE, self.translations["notes.tab_title"].format(game=game))
         self.reload()
+        return True
 
     def reload(self):
         """Show the note as saved, dropping changes not saved yet."""
@@ -128,23 +134,51 @@ class GameNotesDialog(QDialog):
 
     def save(self):
         """Save the text now, changed or not; returns whether it was saved."""
+        return self._save() is None
+
+    def _save(self):
+        """Save the text now; returns the error if it failed, else None."""
         self._autosave.stop()
         if self.process_id is None:
-            return False
+            return None
         try:
             self.repository.save_first_note(self.process_id, self.text())
         except SQLAlchemyError as error:
             self.status.setText(self.translations["notes.save_failed"].format(error=error))
-            return False
+            return error
         self.dirty = False
         self.status.setText(self.translations["notes.saved"].format(
             time=datetime.now().strftime("%H:%M:%S")))
-        return True
+        return None
 
     def save_pending(self):
         """Save the text if it changed since it was last saved."""
         if self.dirty:
             self.save()
+
+    def save_or_discard(self):
+        """Save changed text before it goes away; returns whether it may go.
+
+        If saving fails the user is asked whether to drop the text.
+        """
+        if not self.dirty:
+            return True
+        error = self._save()
+        if error is None:
+            return True
+        if not self.confirm_discard(error):
+            return False
+        self.dirty = False
+        return True
+
+    def confirm_discard(self, error):
+        """Ask whether to drop the text that cannot be saved because of ``error``."""
+        answer = QMessageBox.warning(
+            self, self.translations["notes.discard_title"],
+            self.translations["notes.discard_question"].format(error=error),
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel)
+        return answer == QMessageBox.StandardButton.Discard
 
     def _on_text_changed(self):
         # Rehighlighting (e.g. a theme change) signals a change without one
@@ -164,10 +198,13 @@ class GameNotesDialog(QDialog):
         self.preview.set_markdown(self.text())
 
     def closeEvent(self, event):  # pylint: disable=invalid-name
-        self.save_pending()
+        if not self.save_or_discard():
+            event.ignore()
+            return
         super().closeEvent(event)
 
     def done(self, result):  # pylint: disable=invalid-name
         # Escape rejects the dialog without a closeEvent
-        self.save_pending()
+        if not self.save_or_discard():
+            return
         super().done(result)

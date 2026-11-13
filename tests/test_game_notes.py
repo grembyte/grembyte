@@ -25,6 +25,33 @@ def test_merged_text_appends_only_what_is_new():
     assert merged_text("Gold", "  \n") is None
 
 
+def test_merged_text_keeps_rules_and_adds_only_new_sections():
+    # A rule the user wrote looks like the separator: re-importing adds nothing
+    note = "Gold\n\n---\n\nXP"
+    assert merged_text(note, note) is None
+    assert merged_text(note, "XP\n\n---\n\nGold\n") is None
+    # A note merged on another computer brings back only what is new there
+    assert merged_text("Gold", "Gold\n\n---\n\nXP") == "Gold\n\n---\n\nXP"
+    assert merged_text("Gold\n\n---\n\nXP", "Gold\n\n---\n\nXP\n\n---\n\nItems") == (
+        "Gold\n\n---\n\nXP\n\n---\n\nItems")
+    assert merged_text("Gold", "XP\n\n---\n\nXP") == "Gold\n\n---\n\nXP"
+
+
+def test_notes_synced_back_and_forth_do_not_grow(sessions, repository):
+    souls = _process_id(sessions, "DarkSoulsIII.ex", PROTON_GE)
+    other = _process_id(sessions, "abrt-dbus", "/usr/sbin/abrt-dbus")
+    notes = NoteRepository(sessions)
+    notes.save_first_note(souls, "Gold\n\n---\n\nXP")
+    repository.import_export(repository.export_game("DarkSoulsIII.ex"), other)
+    notes.save_first_note(other, notes.first_note(other).body + "\n\n---\n\nItems")
+    for _round in range(2):
+        repository.import_export(repository.export_game("abrt-dbus"), souls)
+        repository.import_export(repository.export_game("DarkSoulsIII.ex"), other)
+    expected = "Gold\n\n---\n\nXP\n\n---\n\nItems"
+    assert _note_bodies(sessions, souls) == [("", expected)]
+    assert _note_bodies(sessions, other) == [("", expected)]
+
+
 def test_the_first_note_is_saved_and_kept(sessions, repository):
     # pylint: disable=unused-argument
     notes = NoteRepository(sessions)
@@ -46,6 +73,22 @@ def test_empty_notes_are_not_created_and_clearing_removes_the_note(sessions, rep
     notes.save_first_note(poe, "Gold")
     assert notes.save_first_note(poe, " \n ") is None
     assert _note_bodies(sessions, poe) == []
+
+
+def test_clearing_the_note_keeps_it_when_the_process_has_more(sessions, repository):
+    # pylint: disable=unused-argument
+    notes = NoteRepository(sessions)
+    poe = _process_id(sessions, "PillarsOfEternity", POE)
+    notes.save_first_note(poe, "Gold")
+    with sessions() as session:
+        session.add(GameNote(process_id=poe, title="Imported", body="Souls"))
+        session.commit()
+    assert notes.save_first_note(poe, "") is None
+    # The window keeps showing its (now empty) note, not the imported one
+    assert _note_bodies(sessions, poe) == [("", ""), ("Imported", "Souls")]
+    assert notes.first_note(poe).body == ""
+    counted = next(row for row in repository.list_processes() if row.process_id == poe)
+    assert counted.counts["notes"] == 1
 
 
 def _dialog(translations, sessions, process_id, game="PillarsOfEternity"):
@@ -144,6 +187,57 @@ def test_open_notes_follow_the_attached_game(qt_app, translations, sessions, rep
         assert _note_bodies(sessions, poe) == [("", "Gold")]
     finally:
         window.close()
+
+
+class _FailingRepository(NoteRepository):
+    """Notes that can be read but not saved (a locked database)."""
+
+    def save_first_note(self, process_id, body):
+        # pylint: disable=import-outside-toplevel
+        from sqlalchemy.exc import OperationalError
+
+        raise OperationalError("UPDATE", {}, Exception("database is locked"))
+
+
+def test_notes_that_cannot_be_saved_are_not_dropped_without_asking(
+        qt_app, translations, sessions, repository, monkeypatch):
+    # pylint: disable=unused-argument,import-outside-toplevel
+    from grembyte.ui.widgets.game_notes import GameNotesDialog
+
+    poe = _process_id(sessions, "PillarsOfEternity", POE)
+    souls = _process_id(sessions, "DarkSoulsIII.ex", PROTON_GE)
+    dialog = GameNotesDialog(translations, poe, "PillarsOfEternity",
+                             repository=_FailingRepository(sessions))
+    asked = []
+    answer = [False]
+
+    def confirm_discard(error):
+        asked.append(str(error))
+        return answer[0]
+
+    monkeypatch.setattr(dialog, "confirm_discard", confirm_discard)
+    try:
+        dialog.show()
+        dialog.editor.setPlainText("Gold")
+        # Cancel: the dialog stays with its text, on its game
+        assert not dialog.close()
+        assert dialog.isVisible() and dialog.text() == "Gold" and dialog.dirty
+        dialog.reject()
+        assert dialog.isVisible()
+        assert not dialog.set_process(souls, "DarkSoulsIII.ex")
+        assert dialog.process_id == poe and dialog.text() == "Gold"
+        assert len(asked) == 3 and "locked" in asked[0]
+        assert "locked" in dialog.status.text()
+        # Discard: it goes
+        answer[0] = True
+        assert dialog.set_process(souls, "DarkSoulsIII.ex")
+        assert dialog.process_id == souls and dialog.text() == ""
+        dialog.editor.setPlainText("Souls")
+        assert dialog.close()
+        assert len(asked) == 5
+    finally:
+        answer[0] = True
+        dialog.close()
 
 
 def test_notes_change_game_and_save_the_previous_one(qt_app, translations, sessions, repository):
@@ -260,4 +354,35 @@ def test_notes_preview_is_formatted_in_the_theme_colors(qt_app, translations, se
         assert dialog.preview.toPlainText().count("`") == 0
     finally:
         apply_code_theme(manager.load_theme("Github-Dark")["colors"])
+        dialog.close()
+
+
+def test_fenced_code_lines_count_each_block():
+    # pylint: disable=import-outside-toplevel
+    from grembyte.ui.widgets.markdown_preview import fenced_code_lines
+
+    assert fenced_code_lines("```js\na\n```\n\n```js\nb\nc\n```\n") == [1, 2]
+    assert fenced_code_lines("```\n```\n> ```c\n> int x;\n> ```\n- item\n\n  ~~~\n  a\n\n  ~~~\n") == [
+        1, 2]
+    assert fenced_code_lines("````\n```\n````\n```js\nopen") == [1, 1]
+
+
+def test_preview_frames_each_code_block_of_one_language(qt_app, translations, sessions,
+                                                         repository):
+    # pylint: disable=unused-argument
+    poe = _process_id(sessions, "PillarsOfEternity", POE)
+    dialog = _dialog(translations, sessions, poe)
+    try:
+        dialog.editor.setPlainText("```js\nconst a = `open\n```\n\n```js\nconst b = 1;\n```\n")
+        dialog.tabs.setCurrentIndex(1)
+        document = dialog.preview.document()
+        first = document.find("const a").currentFrame()
+        second = document.find("const b").currentFrame()
+        assert first is not second
+        assert len(document.rootFrame().childFrames()) == 2
+        # The string left open in the first block does not colour the second
+        cursor = document.find("const b")
+        cursor.setPosition(cursor.selectionStart() + 1)
+        assert cursor.charFormat().fontWeight() > 400
+    finally:
         dialog.close()

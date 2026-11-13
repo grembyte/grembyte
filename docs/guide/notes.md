@@ -12,7 +12,7 @@ While you work on a game you learn where things are: which class holds the gold,
 
 - With a game attached, **View → Notes …** opens its notes.
 - Without one, Grembyte first asks for the game: the list holds every game it has saved (a game is saved once Grembyte attaches to it), with the number of its notes. Double-click a game or choose **Open notes**. This way you can read and add to your notes while the game is not running.
-- If another game is attached while the notes are open, they switch to it automatically; what you wrote for the previous one is saved first.
+- If another game is attached while the notes are open, they switch to it automatically; what you wrote for the previous one is saved first. If that fails, Grembyte asks whether to discard the changes; otherwise the notes stay with the previous game.
 - With the notes open, **View → Notes …** again switches them to the attached (or chosen) game.
 
 Like a program's other entries, the notes belong to one program path: a game started under two Proton versions has two sets of notes (see [What Grembyte keeps per game](data.md#what-grembyte-keeps-per-game)).
@@ -31,7 +31,7 @@ Grembyte saves the notes
 - when you click **Save** or press ++ctrl+s++ (this always saves, even when nothing changed),
 - when the window closes (also with ++esc++), when it switches to another game, and when Grembyte quits.
 
-The text beside the buttons says whether there are unsaved changes or when the notes were saved last.
+The text beside the buttons says whether there are unsaved changes or when the notes were saved last. If the notes cannot be saved (for example because the database is locked), closing the window asks whether to discard the changes; **Cancel** keeps it open with your text.
 
 ## Docking
 
@@ -60,4 +60,4 @@ Names of classes, methods and fields can be copied from the [catalog](../engines
 
 ## Export, import and deleting
 
-The notes are part of a game's [export](data.md#export-and-import). An import never deletes notes, not even with **Replace**: the text of the file is appended to the program's note below a line (`---`), unless the note holds it already. **File → Delete saved entries …** has a column for the notes (see [Cleaning up](data.md#cleaning-up)).
+The notes are part of a game's [export](data.md#export-and-import). An import never deletes notes, not even with **Replace**: the file's text is merged into the program's note. Its parts between lines (`---`) that the note does not hold yet are appended, each below such a line. So notes passed back and forth between two computers do not grow, and a line you wrote yourself is no problem. **File → Delete saved entries …** has a column for the notes (see [Cleaning up](data.md#cleaning-up)).

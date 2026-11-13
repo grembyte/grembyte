@@ -26,7 +26,7 @@ When the attached game exits, Grembyte resets the window within a second: scans,
 
 **File → Import game data …** puts the entries of a file into one saved program, whatever path they were exported from – useful when a game moved, or for another computer. It either replaces what the program holds or mixes the file's entries in, leaving out those it holds already. A template in the file is linked to a local one with the same name and code, otherwise added (under a new name if the name is taken).
 
-Notes are never deleted by an import, not even by **Replace**: a note of the file is merged into the program's note, its text appended below a line (`---`) unless the note holds it already. A program without notes takes them as they are.
+Notes are never deleted by an import, not even by **Replace**: a note of the file is merged into the program's note: the parts of its text between lines (`---`) that the note does not hold yet are appended below such a line. A program without notes takes them as they are.
 
 ## Where exports go
 

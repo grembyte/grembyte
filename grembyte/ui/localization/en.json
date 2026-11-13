@@ -1253,6 +1253,8 @@
   "notes.unsaved": "Unsaved changes",
   "notes.save_failed": "Saving failed: {error}",
   "notes.load_failed": "The notes cannot be read: {error}",
+  "notes.discard_title": "Notes not saved",
+  "notes.discard_question": "The notes cannot be saved: {error}\n\nDiscard the changes, or cancel to keep them open?",
   "saved_games.title": "Notes: choose a game",
   "saved_games.hint": "Games Grembyte has saved entries for. A game is saved once Grembyte attaches to it.",
   "saved_games.none": "No game saved yet. Once Grembyte has attached to a game, it appears here.",
