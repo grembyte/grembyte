@@ -25,7 +25,7 @@ Hooks and [scripts](scripts.md) keep working while a watch is set: a game method
 
 ## Backends: Frida or ptrace
 
-The watch (and hooks) run through Frida by default. **Settings → Backend (watch & hooks)** switches to ptrace, which needs no injection into the game:
+The watch (and hooks) run through **Frida (injection)** by default. **Settings → Backend (watch & hooks)** switches to **ptrace (debugger)**, which needs no injection into the game:
 
 | | Frida | ptrace (Linux only) |
 | --- | --- | --- |

@@ -10,7 +10,7 @@ When a game offers no engine metadata – or the logic you look for is plain C++
 2. **Start following**: Stalker recompiles the code of these threads and counts every function call. System libraries run unchanged; only calls into them are counted.
 3. Record a **baseline** while the game idles.
 4. Record a **scenario** while doing the thing you are interested in, e.g. paying gold.
-5. The functions that are new in the scenario, or called more often there, are the candidates. **Notable functions only** shows just these, **Game code only** hides calls into system libraries. Below, the first calls per thread are listed in their exact order, without the functions of the baseline.
+5. The functions that are new in the scenario, or called more often there, are the candidates. **Notable functions only** shows just these, **Game code only** hides calls into system libraries; the filters above the table narrow by name and [number of calls](../engines/index.md#trace) (`%3`). Below, the first calls per thread are listed in their exact order, without the functions of the baseline.
 
 The game runs noticeably slower while it is followed. The native trace can be [docked](tools.md#docking-windows) at the bottom of the main window.
 

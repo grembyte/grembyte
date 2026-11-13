@@ -12,7 +12,10 @@ A value hook changes writes to a target address: with the Frida backend it inter
 
 1. Find the instruction that writes the value with the [write watch](write-watch.md).
 2. Select its row and click **Create hook …**.
-3. Choose a [template](templates.md) and fill in its parameters. The built-in ones are **Multiplier**, **Fixed value** and **Clamp**.
+3. Give it a **Description**, e.g. *Gold*: it names the hook in the table and in the messages of [grembyte-cli](launch-option.md).
+4. Choose a [template](templates.md) and fill in its parameters. The built-in ones are **Multiplier**, **Fixed value** and **Clamp**.
+
+The top of the dialog names the target: its address and type, and the write site, the code location as `module+offset`. A hook created from a tracked address with a [pointer chain](pointer-scan.md) follows the chain.
 
 <figure markdown="span">
   ![Create hook](../assets/screenshots/hook-dialog-dark.webp#only-dark){ width="640" }
@@ -31,6 +34,7 @@ Further options in the dialog:
 
 Several hooks can be selected at once (Ctrl/Shift-click): **Pause**, **Debug** and **Remove** act on all of them, **Edit** on one. The columns:
 
+- **Address**: the target – an address, the pointer chain it follows (`↳ …`), *dynamic · N callers* for a hook that changes only the writes of its learned callers, or *dynamic (all writes)* for one that changes every write of its code location. Method hooks show *C# method*.
 - **Status**: *Active*, *Paused*, *Training* (waiting for a write, see [after a restart](#after-a-restart)), *Failed* (could not be installed), *Script error* (its script threw), *Removed by game* (the game restored or replaced the code at the write site, see [limitations](#limitations)) or *Disconnected* (its session ended).
 - **Applied**: how often the hook ran. With **Hooks: measure their cost** in the [settings](settings.md), its tooltip adds calls per second, skipped writes and the time they cost.
 - **Last (old → game ⇒ new)**: the last call as old value → value written by the game ⇒ value stored.
@@ -62,7 +66,7 @@ If the write instruction lies in no module – e.g. in Mono/Unity JIT code, whic
 The original target address is no longer valid after a restart. How the hook recognises the right writes depends on how it was created:
 
 - **With a pointer chain**: the hook resolves the chain at every write and only acts on the address it leads to at that moment. This is the most reliable variant.
-- **Without a pointer chain on a module-based write site**: while running, the hook learns the callers, i.e. the return addresses on the stack, that write the target address. After a restart it only acts on writes from these callers. More caller levels help when the player and other objects are changed through the same helper function. If a learned caller also writes other addresses, Grembyte points it out.
+- **Without a pointer chain on a module-based write site**: while running, the hook learns the callers (with **Caller levels** `off` it learns none: "Callers are not learned"), i.e. the return addresses on the stack, that write the target address. After a restart it only acts on writes from these callers. More caller levels help when the player and other objects are changed through the same helper function. If a learned caller also writes other addresses, Grembyte points it out.
 
 ## How a hook works
 

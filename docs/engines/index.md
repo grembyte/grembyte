@@ -47,7 +47,24 @@ A catalog read once is cached; **View → Catalog (offline) …** opens it witho
 
 ## Trace
 
-**View → Trace …** finds the methods that a scenario in the game calls – *which method runs when I buy something?* It hooks the methods of the chosen assemblies and works like the [native trace](../guide/native-tools.md): a **baseline** while the game idles, then the **scenario**; the methods that are new or called more often in the scenario are the candidates. Preselection filters keep large games manageable. The trace can be [docked](../guide/tools.md#docking-windows) at the bottom of the main window.
+**View → Trace …** finds the methods that a scenario in the game calls – *which method runs when I buy something?* It hooks the methods of the chosen assemblies and works like the [native trace](../guide/native-tools.md): a **baseline** while the game idles, then the **scenario**; the methods that are new or called more often in the scenario are the candidates. The trace can be [docked](../guide/tools.md#docking-windows) at the bottom of the main window.
+
+1. Choose the methods. The search text keeps those whose class, method or assembly contains every word typed, e.g. `inventory gold`; empty means all methods of the game's assemblies (without `mscorlib`, `System`, `UnityEngine` and the like). The **preselection** narrows this further: filters such as *Money*, *Inventory*, *Character stats*, *Combat* or *Name sounds like a change* pick the methods whose names sound like game values. Ticked filters combine – a method has to match one of them. The window shows how many methods are chosen.
+2. **Set hooks**. Mono compiles every chosen method first; from a configurable number Grembyte asks before it starts (see [settings](../guide/settings.md)). Under Wine/Proton a trace is limited, by default to 5000 methods.
+3. **Record baseline** for a few seconds while nothing special happens in the game, then **Stop baseline**.
+4. **Record scenario** while you trigger the action, e.g. spend gold, then **Stop scenario**.
+5. The table lists the methods with their calls, calls per second, the rate in the baseline and a verdict: *new*, *2.5× as often* or *like baseline*. **Notable methods only** keeps those that did not run in the baseline or ran clearly more often. Below, the call sequence shows the scenario's calls in order, with thread and caller, without the methods of the baseline.
+6. **Monitor** (or a double click) hands the selected method to the [method monitor](#method-monitor). **Remove hooks** ends the trace.
+
+The filters above the table narrow the results: by name, and by number of calls – `3` exactly three, `2-10` a range, `>5`, `%3` multiples of three, several separated by commas. Trigger the action three times in the scenario, and `%3` finds the methods that ran once for each.
+
+**Preselection filters** are kept in Grembyte and can be changed: **New …**, **Edit …** (or a double click) and **Delete**, **Tick all** and **Untick all**. A filter has
+
+- **Words**: a method matches when one of them matches a part of its class or method name. Names are split at capitals, `_`, `.` and digits (`AddGold` is *add* + *gold*); a short word also matches its plural (`item`: `Items`), a longer one also the start of a part (`inventory`: `InventorySlot`), so `gold` finds `AddGold` but not `Marigold`.
+- **Except**: words that must not match.
+- **Number as parameter or result**, and **Name sounds like a change** (property setters `set_…` and names starting with *Add*, *Set*, *Remove*, *Spend*, *Gain*, *Take* …).
+
+The dialog previews the methods a filter matches. **Include generated code** adds the methods the compiler made (lambdas, closures, iterators), which are rarely wanted but many.
 
 What the trace cannot see:
 
@@ -114,7 +131,11 @@ Method hook scripts can reach other game code: `ctx.call` calls a static method,
 
 ## Call graph
 
-For Mono games the call graph shows which methods a method calls and which call it, read from the IL code.
+For Mono games the call graph shows which methods a method calls and which call it, read from the IL code. Open it with **Calls …** on a method of the catalog.
+
+- **Calls (in the order of the code)** lists the calls in the method's IL code. For a virtual method or an interface it names the method the code was compiled against, not the override that runs; async methods and iterators are followed into the code the compiler made for them.
+- **Called by** lists the methods of the game's assemblies (or the [assembly selection](#assemblies)) that call it. **Search callers** reads the assemblies' code the first time, later from the cache. A method without callers there may still be called through delegates, reflection, virtually or by the engine.
+- A double click goes to a method; **Back** and **Forward** move through the methods visited.
 
 <figure markdown="span">
   ![Call graph](../assets/screenshots/call-graph-dark.webp#only-dark)

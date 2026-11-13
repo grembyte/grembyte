@@ -9,7 +9,7 @@ Grembyte identifies a game by its program and keeps for it:
 - scripts,
 - [notes](notes.md) in Markdown,
 - favorites and the chosen assemblies,
-- catalogs read from Unity and Unreal games (in a cache beside the database), so the catalog also opens offline.
+- catalogs read from Unity and Unreal games (in a cache in Grembyte's data folder, see [files](../reference/files.md)), so the catalog also opens offline.
 
 Hook templates and settings are shared by all games. Everything lives in one SQLite database; [Files and environment](../reference/files.md) says where.
 

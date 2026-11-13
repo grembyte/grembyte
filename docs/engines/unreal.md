@@ -51,7 +51,9 @@ Games built on Unreal's Gameplay Ability System keep values such as health, stre
 
 GAS computes the current value anew from the base value and the active effects, so writing it into memory does not last. A base value set in the window goes through the game's own setter instead (found by its parameters; in Avowed `AlabamaAbilitySystemBlueprintLibrary:SetFloatAttributeBaseFromAbilitySystemComponent`), and the active effects keep counting: in Avowed `DamageOutgoingMult` 3 with a +40 % bonus deals 4.2 times the damage.
 
-**Hold** keeps a value against the game resetting it (loading, levelling up) with a script in the [Scripts](../guide/scripts.md) tab. Scripts can do the same with `ctx.gas.get("Might")` and `ctx.gas.setBase("AttributeSetCore.Might", 14)`.
+The search finds sets and attributes by name. **Only changed** shows only attributes whose current value differs from the base (effects act on them) or that are held; the current value is orange where effects change it. **Live** reads the values every second, **Refresh** once.
+
+**Hold** keeps the selected attributes at their base value against the game resetting it (loading, levelling up) with a script in the [Scripts](../guide/scripts.md) tab, also the next time Grembyte attaches; the column **Held** marks them. **Release** deletes those scripts; the values stay until the game changes them. Scripts can do the same with `ctx.gas.get("Might")` and `ctx.gas.setBase("AttributeSetCore.Might", 14)`.
 
 Some games give a set's object a new number on every load, as Gothic 1 Remake does with `AttributeSet_Health_2147445233`. Scripts may leave the number out (`ctx.gas.get("AttributeSet_Health.Health")`), and hold scripts from the window do so themselves. `ctx.gas.findSet(/^AttributeSet_Health/)` gives the set's current full name.
 
