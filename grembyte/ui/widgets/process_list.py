@@ -3,7 +3,7 @@
 import psutil
 
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
-    QDialog, QVBoxLayout,
+    QDialog, QVBoxLayout, QHBoxLayout, QCheckBox,
     QTableWidget, QTableWidgetItem, QLineEdit,
     QHeaderView, QAbstractItemView, QMessageBox,
 )
@@ -39,10 +39,16 @@ class ProcessSelectDialog(QDialog):
         layout.setSpacing(10)
 
         # Search bar
+        search_bar = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(self.translations["process.search_placeholder"])
         self.search_input.textChanged.connect(self._filter)
-        layout.addWidget(self.search_input)
+        search_bar.addWidget(self.search_input, 1)
+        self.cli_only = QCheckBox(self.translations["process.cli_only"])
+        self.cli_only.setToolTip(self.translations["process.cli_only_tooltip"])
+        self.cli_only.toggled.connect(lambda _checked: self._filter())
+        search_bar.addWidget(self.cli_only)
+        layout.addLayout(search_bar)
 
         # Process list
         self.list = QTableWidget(0, 3)
@@ -115,11 +121,14 @@ class ProcessSelectDialog(QDialog):
             path_item.setForeground(theme_qcolor("muted"))
             self.list.setItem(row, 2, path_item)
 
-    def _filter(self, text):
-        text = text.lower()
+    def _filter(self, _text=None):
+        """Show the processes matching the search text (and run by grembyte-cli)."""
+        text = self.search_input.text().lower()
+        cli_only = self.cli_only.isChecked()
         filtered = [
             p for p in self._all_procs
-            if text in p[1].lower() or text in p[2].lower()
+            if (text in p[1].lower() or text in p[2].lower())
+            and (not cli_only or int(p[0]) in self._cli_games)
         ]
         self._populate(filtered)
 

@@ -227,6 +227,8 @@
   "process.column_name": "Name",
   "process.column_path": "Path",
   "process.cli_tooltip": "Runs through grembyte-cli (pid {cli_pid}); attaching takes the game over.",
+  "process.cli_only": "Only grembyte-cli",
+  "process.cli_only_tooltip": "Show only the games grembyte-cli runs (marked with a link icon).",
   "process.attach": "Attach",
   "process.psutil_missing_title": "psutil missing",
   "process.psutil_missing_message": "pip install psutil",

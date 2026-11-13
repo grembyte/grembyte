@@ -227,6 +227,8 @@
   "process.column_name": "Name",
   "process.column_path": "Pfad",
   "process.cli_tooltip": "Läuft über grembyte-cli (PID {cli_pid}); Anhängen übernimmt das Spiel.",
+  "process.cli_only": "Nur grembyte-cli",
+  "process.cli_only_tooltip": "Nur die Spiele zeigen, die grembyte-cli ausführt (mit einem Link-Symbol markiert).",
   "process.attach": "Anhängen",
   "process.psutil_missing_title": "psutil fehlt",
   "process.psutil_missing_message": "pip install psutil",

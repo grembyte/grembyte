@@ -113,3 +113,31 @@ def test_process_list_names_wine_processes_by_their_windows_program():
     assert resolve_display("wineserver", "/usr/bin/wine64", ["/usr/bin/wine64"], "/") == (
         "wineserver", "/usr/bin/wine64")
     assert resolve_display("bash", "/usr/bin/bash", ["bash"], "/") == ("bash", "/usr/bin/bash")
+
+
+def test_the_process_list_can_show_only_games_run_by_grembyte_cli(monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.core import cli_link
+    from grembyte.ui.localization import load_translations
+    from grembyte.ui.widgets import process_list
+
+    _app = QApplication.instance() or QApplication([])
+    own = os.getpid()
+    monkeypatch.setattr(cli_link, "cli_games", lambda: {own: {"pid": 1}})
+    dialog = process_list.ProcessSelectDialog(translations=load_translations("en"))
+    try:
+        assert dialog.list.rowCount() > 1
+        dialog.cli_only.setChecked(True)
+        assert [dialog.list.item(row, 0).text() for row in range(dialog.list.rowCount())] == [
+            str(own)]
+        # Together with the search text
+        dialog.search_input.setText("no process is named so")
+        assert dialog.list.rowCount() == 0
+        dialog.search_input.clear()
+        dialog.cli_only.setChecked(False)
+        assert dialog.list.rowCount() > 1
+    finally:
+        dialog.close()
