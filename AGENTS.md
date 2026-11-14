@@ -42,16 +42,19 @@ Guidance for AI coding agents working in this repository. Human contributors: se
 
 ## Code and tests
 
-- Run the tests with `./.venv/bin/python -m pytest` before you report a change as done.
-  Add or update tests for changed behaviour. Many tests attach Frida to small C programs and
-  stand-in engines (Mono, IL2CPP, Unreal); they need `gcc` and `ptrace_scope=0`.
-- The full suite takes a few minutes. For a small change confined to one place, run only
-  the tests that cover it (`pytest tests/test_<area>.py`), for example a change to a single
-  test, a translation text (`tests/test_localization.py`) or a local fix in one module
-  whose callers do not change. Say in your report which tests you ran. Run the full suite
-  when a change touches shared code (attach, hooks, trace, engine adapters, the JavaScript
-  agents), changes an interface other modules use, or when you are not sure what it affects.
-  Changes to documentation only need `mkdocs build --strict`, not `pytest`.
+- Before you report a change as done, run the tests relevant to it with
+  `./.venv/bin/python -m pytest tests/test_<area>.py` (several files or `-k` as needed): the
+  tests of the modules you changed and of the callers that use them, plus
+  `tests/test_localization.py` when translation texts changed. Add or update tests for
+  changed behaviour. Many tests attach Frida to small C programs and stand-in engines (Mono,
+  IL2CPP, Unreal); they need `gcc` and `ptrace_scope=0`.
+- Do not run the full suite on your own; it takes a few minutes. When a change touches shared
+  code (attach, hooks, trace, engine adapters, the JavaScript agents, application start and
+  exit), changes an interface other modules use, or you are not sure what it affects,
+  recommend running the full suite in your report and say why. Run it only when the user
+  asks for it.
+- Say in your report which tests you ran. Changes to documentation only need
+  `mkdocs build --strict`, not `pytest`.
 - The engine facade (`grembyte/engines/engine_facade.js`) throws for members an adapter does
   not define, so do not probe for optional members with `if (engine.foo)`. Check
   `engine.id` instead, or add the member to every adapter.
