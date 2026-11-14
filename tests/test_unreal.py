@@ -285,6 +285,11 @@ static void add_function(Object *klass, Object *function) {
 
 #define EX_LOCAL_VARIABLE 0x00
 #define EX_END_FUNCTION_PARMS 0x16
+#define EX_VIRTUAL_FUNCTION 0x1B
+#define EX_FINAL_FUNCTION 0x1C
+#define EX_INT_CONST 0x1D
+#define EX_LOCAL_VIRTUAL_FUNCTION 0x45
+#define EX_CALL_MATH 0x68
 
 static Object *g_add_gold, *g_tick, *g_loot, *g_rename, *g_move_by;
 static volatile int32_t g_moved, g_moves;
@@ -632,13 +637,41 @@ int main(void) {
                       2, 12, 0xffff);
     property(g_loot, object_property, "Target", 8, 0, CPF_PARM, hero);
     Field *amount = property(g_loot, int_property, "Amount", 4, 8, CPF_PARM, NULL);
-    /* AddGold(Amount): the argument, then the end of the arguments */
-    static uint8_t script[1 + sizeof(Field *) + 1];
-    script[0] = EX_LOCAL_VARIABLE;
-    memcpy(script + 1, &amount, sizeof(amount));
-    script[1 + sizeof(Field *)] = EX_END_FUNCTION_PARMS;
+    /* AddGold(Amount): the argument, then the end of the arguments (where
+       the interpreter's frame points when it calls AddGold). Then the calls
+       the call graph finds: AddGold through EX_CallMath, Tick virtually on
+       self, Rename through EX_FinalFunction; between them an int constant
+       holding EX_FinalFunction's token, and a virtual call of a name no
+       function has (Amount). */
+    static uint8_t script[256];
+    size_t at = 0;
+    script[at++] = EX_LOCAL_VARIABLE;
+    memcpy(script + at, &amount, sizeof(amount));
+    at += sizeof(amount);
+    script[at++] = EX_END_FUNCTION_PARMS;
+    script[at++] = EX_CALL_MATH;
+    memcpy(script + at, &g_add_gold, sizeof(g_add_gold));
+    at += sizeof(g_add_gold);
+    script[at++] = EX_END_FUNCTION_PARMS;
+    uint32_t tick_name[3] = {g_tick->name, g_tick->name, 0};
+    script[at++] = EX_LOCAL_VIRTUAL_FUNCTION;
+    memcpy(script + at, tick_name, sizeof(tick_name));
+    at += sizeof(tick_name);
+    script[at++] = EX_END_FUNCTION_PARMS;
+    static const uint8_t noise[] = {EX_INT_CONST, EX_FINAL_FUNCTION, 1, 2, 3};
+    memcpy(script + at, noise, sizeof(noise));
+    at += sizeof(noise);
+    script[at++] = EX_FINAL_FUNCTION;
+    memcpy(script + at, &g_rename, sizeof(g_rename));
+    at += sizeof(g_rename);
+    script[at++] = EX_END_FUNCTION_PARMS;
+    uint32_t amount_name[3] = {amount->name, amount->name, 0};
+    script[at++] = EX_VIRTUAL_FUNCTION;
+    memcpy(script + at, amount_name, sizeof(amount_name));
+    at += sizeof(amount_name);
+    script[at++] = EX_END_FUNCTION_PARMS;
     g_loot->script = script;
-    g_loot->script_num = g_loot->script_max = sizeof(script);
+    g_loot->script_num = g_loot->script_max = (int32_t)at;
 
     Object *level = object(package_class, "/Game/Maps/Start", NULL);
     Object *player = object(bp_hero, "BP_Hero_C_0", level);
@@ -895,6 +928,62 @@ def test_catalog_lists_packages_classes_and_ufunctions(tmp_path, qt_app):
         # Tokens hash the names: the same in every run of the game.
         assert len({m.token for m in hero.values()} | {loot.token}) == 6
     finally:
+        target.close()
+
+
+@requires_target
+def test_call_graph_finds_the_calls_in_blueprint_bytecode(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.call_graph import CallGraphWorker
+    from grembyte.features.catalog import CatalogWorker
+
+    target = _Target(_build(tmp_path))
+    worker = None
+    try:
+        catalog = CatalogWorker(target.pid)
+        loaded = {}
+        catalog.assembly_loaded.connect(loaded.__setitem__)
+        _run(qt_app, catalog, catalog.assemblies_found)
+        [loot] = loaded["/Game/Blueprints"]
+        hero = {method.name: method for method in loaded["/Script/FakeGame"]}
+
+        worker = CallGraphWorker(target.pid)
+        callees, callers, failed = [], [], []
+        worker.callees_found.connect(
+            lambda _id, _method, calls, body: callees.append((calls, body)))
+        worker.callers_found.connect(lambda _id, _method, calls, _missing: callers.append(calls))
+        worker.request_failed.connect(lambda _id, message: failed.append(message))
+        worker.worker_failed.connect(failed.append)
+        worker.start()
+        # In the order of the bytecode: AddGold (EX_CallMath), Tick virtually on
+        # self (Hero's, BP_Hero_C's base), Rename (EX_FinalFunction); not the
+        # int constant holding a call token, nor the virtual call of Amount
+        worker.callees(loot)
+        _wait_for(qt_app, lambda: callees or failed)
+        assert not failed, failed
+        calls, body = callees[0]
+        assert [(call.opcode, call.method.signature) for call in calls] == [
+            ("call", "Hero:AddGold (int32)"), ("virtual", "Hero:Tick (float)"),
+            ("call", "Hero:Rename (FString,bool)")]
+        # The same function as the catalog's (named by its signature until
+        # its package is read)
+        assert body == [] and (calls[0].method.assembly, calls[0].method.token) == (
+            hero["AddGold"].assembly, hero["AddGold"].token)
+        # A native function has no bytecode: it calls nothing seen
+        callees.clear()
+        worker.callees(hero["AddGold"])
+        _wait_for(qt_app, lambda: callees or failed)
+        assert callees[0] == ([], [])
+        # Who calls AddGold: the Blueprint, found in the other package group
+        worker.callers(hero["AddGold"])
+        _wait_for(qt_app, lambda: callers or failed)
+        assert not failed, failed
+        assert [call.method for call in callers[0]] == [loot]
+        assert list((tmp_path / "catalog-cache" / "unreal").rglob("*.calls.json.gz"))
+    finally:
+        if worker is not None:
+            worker.requestInterruption()
+            worker.wait(5000)
         target.close()
 
 

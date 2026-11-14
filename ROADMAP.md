@@ -220,8 +220,7 @@ through `grembyte-cli`. Open:
 
 The **code explorer and pseudocode** list above comes next, starting with names without PDB.
 After that, **2 (accesses of an instruction)** is the next larger step independent of any
-engine and uses much of what exists. Among the adapters, the call graph from Blueprint bytecode is left for
-**Unreal**, and the call dialog for **IL2CPP**.
+engine and uses much of what exists. Among the adapters, the call dialog is left for **IL2CPP**.
 
 ## Engines
 
@@ -274,7 +273,8 @@ Pillars of Eternity, Might & Magic X – Legacy (Unity 4.2, 32-bit) and Vampire 
 
 ### Unreal: open
 
-- Call graph from Blueprint bytecode (`UStruct::Script`).
+- Call graph: the events of an event graph share `ExecuteUbergraph_<Blueprint>`; following
+  the entry offset each event passes would give each event its own calls.
 - Monitor gaps: `EX_LocalOutVariable` (needs `FFrame::OutParms`) and nested expressions show
   as `?`; FText, TMap, TSet and delegates show their type only.
 - The trace's callers could use the FFrame stack scan of the monitor.

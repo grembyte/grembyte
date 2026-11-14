@@ -18,5 +18,9 @@ rpc.exports = {
   },
   resolveTokens(assembly, tokens) {
     return engine.resolveTokens(assembly, tokens);
+  },
+  functionCalls(assembly, tokens) {
+    // The calls in Blueprint bytecode (Unreal), see the adapter's functionCalls
+    return engine.functionCalls(assembly, tokens);
   }
 };

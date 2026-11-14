@@ -718,6 +718,174 @@ const unreal = (() => {
     return result;
   }
 
+  // --- Calls in Blueprint bytecode (the call graph) --------------------------------
+  // A Blueprint function's Script holds the calls it makes. In memory a direct
+  // call names its UFunction by pointer: EX_FinalFunction (on another object),
+  // EX_LocalFinalFunction (on self) and EX_CallMath (static, native). Virtual
+  // calls name it by FScriptName (ComparisonIndex, DisplayIndex, Number):
+  // EX_VirtualFunction (on the object of an EX_Context before it) and
+  // EX_LocalVirtualFunction (on self). Walking the bytecode token by token
+  // needs every one of its ~100 expressions in each engine version; instead it
+  // is searched for these tokens, and a hit counts only if its pointer is a
+  // known UFunction, or its name one of a function of the classes it can be on.
+  // Native functions have no bytecode: what they call stays unseen.
+
+  const CALL_TOKENS = { 0x1c: 'call', 0x46: 'call', 0x68: 'call' };
+  const VIRTUAL_TOKENS = { 0x1b: false, 0x45: true };  // whether on self
+  const SCRIPT_NAME_SIZE = 12;
+  // Bytecode longer than this is not a function's (a pointer gone wrong)
+  const MAX_SCRIPT = 0x1000000;
+  let functionIndex = null;
+
+  function functionsByAddress() {
+    // { byAddress: Map(address -> {group, klass, fn}), byName: Map(name -> [same]) }
+    // of every UFunction of the loaded classes, made again with the packages.
+    const index = packageIndex();
+    if (functionIndex !== null && functionIndex.packages === index)
+      return functionIndex;
+    const byAddress = new Map();
+    const byName = new Map();
+    for (const [group, entry] of index) {
+      for (const klass of entry.classes) {
+        try {
+          for (const fn of functionsOf(klass.address)) {
+            const found = { group, klass, fn };
+            byAddress.set(Number(fn.address.toString()), found);
+            const named = byName.get(fn.name);
+            if (named === undefined)
+              byName.set(fn.name, [found]);
+            else
+              named.push(found);
+          }
+        } catch (_error) {
+          // freed meanwhile (a Blueprint unloaded)
+        }
+      }
+    }
+    functionIndex = { packages: index, byAddress, byName };
+    return functionIndex;
+  }
+
+  function scriptBytes(fn) {
+    // The function's Blueprint bytecode (TArray<uint8> Script), or null
+    const L = ue.layout;
+    const size = fn.add(L.script + Process.pointerSize).readS32();
+    const data = fn.add(L.script).readPointer();
+    if (size <= 0 || size > MAX_SCRIPT || data.isNull())
+      return null;
+    return new Uint8Array(data.readByteArray(size));
+  }
+
+  function classesUp(klass) {
+    // The addresses of ``klass`` and its super classes
+    const result = new Set();
+    for (let current = Number(klass.toString()); current !== 0; current = superOf(current))
+      result.add(current);
+    return result;
+  }
+
+  function virtualTarget(found, own, name) {
+    // The function ``name`` a virtual call reaches: on self (``own`` the
+    // calling class's chain), the one of the nearest class declaring it;
+    // on another object, the only function of that name, else none.
+    const candidates = found.byName.get(name);
+    if (candidates === undefined)
+      return null;
+    if (own === null)
+      return candidates.length === 1 ? candidates[0] : null;
+    const declared = candidates.filter(entry => own.has(Number(entry.klass.address.toString())));
+    if (declared.length === 0)
+      return null;
+    // The nearest: the one whose class has the most classes above it in the chain
+    let best = declared[0];
+    let bestDepth = -1;
+    for (const entry of declared) {
+      const depth = classesUp(entry.klass.address).size;
+      if (depth > bestDepth) {
+        best = entry;
+        bestDepth = depth;
+      }
+    }
+    return best;
+  }
+
+  function callsIn(bytes, klass, found) {
+    // [[opcode, target entry], ...] of the calls in ``bytes``, in code order
+    const calls = [];
+    const view = new DataView(bytes.buffer);
+    const size = Process.pointerSize;
+    let own = null;
+    for (let at = 0; at < bytes.length; at++) {
+      const token = bytes[at];
+      if (CALL_TOKENS[token] !== undefined && at + 1 + size <= bytes.length) {
+        const low = view.getUint32(at + 1, true);
+        const high = size === 8 ? view.getUint32(at + 5, true) : 0;
+        const target = found.byAddress.get(high * 0x100000000 + low);
+        if (target !== undefined) {
+          calls.push([CALL_TOKENS[token], target]);
+          at += size;
+        }
+        continue;
+      }
+      const onSelf = VIRTUAL_TOKENS[token];
+      if (onSelf !== undefined && at + 1 + SCRIPT_NAME_SIZE <= bytes.length) {
+        let name;
+        try {
+          name = nameText(view.getUint32(at + 1, true), view.getUint32(at + 9, true));
+        } catch (_error) {
+          continue;  // not a name: data that only looks like the token
+        }
+        if (onSelf && own === null)
+          own = classesUp(klass);
+        const target = virtualTarget(found, onSelf ? own : null, name);
+        if (target !== null) {
+          calls.push(['virtual', target]);
+          at += SCRIPT_NAME_SIZE;
+        }
+      }
+    }
+    return calls;
+  }
+
+  const targetSignatures = new Map();
+
+  function targetOf(entry) {
+    // [assembly, token, signature] of a function found in the bytecode
+    const key = entry.fn.address.toString();
+    let result = targetSignatures.get(key);
+    if (result === undefined) {
+      const method = methodEntry(entry.klass, entry.fn);
+      result = [entry.group, method[4], method[5]];
+      targetSignatures.set(key, result);
+    }
+    return result;
+  }
+
+  function functionCalls(assembly, tokens) {
+    // [[token, [[opcode, assembly, token, signature], ...]], ...] of the
+    // functions ``tokens`` of package group ``assembly``: the calls their
+    // Blueprint bytecode makes, in code order (none for native functions).
+    reflection();
+    const wanted = new Set(tokens);
+    const found = functionsByAddress();
+    const result = [];
+    for (const klass of groupNamed(assembly).classes) {
+      try {
+        for (const fn of functionsOf(klass.address)) {
+          const own = token(klass, fn);
+          if (!wanted.has(own))
+            continue;
+          const bytes = scriptBytes(fn.address);
+          const calls = bytes === null ? [] : callsIn(bytes, klass.address, found);
+          result.push([own, calls.map(([opcode, target]) => [opcode, ...targetOf(target)])]);
+        }
+      } catch (_error) {
+        // freed meanwhile (a Blueprint unloaded)
+      }
+    }
+    return result;
+  }
+
   // --- Code of functions -----------------------------------------------------------
   // A native UFunction's Func is its exec thunk (execName), called when a
   // Blueprint or ProcessEvent calls the function. Every Blueprint function
@@ -2867,6 +3035,7 @@ const unreal = (() => {
     classes,
     methodsByToken,
     nativeSymbols,
+    functionCalls,
     checkAll: methods => methods.map(() => false),
     compileAll,
     describeAll: addresses => addresses.map(() => null),
