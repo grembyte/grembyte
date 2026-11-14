@@ -229,7 +229,7 @@ PC; Game Mode runs each game under the compositor gamescope with its own XWaylan
   buttons (the back buttons L4, L5, R4, R5 suit hotkeys), sent through a virtual keyboard. The
   hotkey reader (`grembyte/platform/keyboard.py`) needs `XQueryKeymap` to see them and the
   window with the input focus to carry the game's `_NET_WM_PID` under gamescope. Whether
-  Steam Input can send a combination (++ctrl+g++) or only single keys (++f8++) decides which
+  Steam Input can send a combination (`Ctrl+G`) or only single keys (`F8`) decides which
   hotkeys to recommend.
 - **The sounds** (`pw-play`) in Game Mode.
 - **Installing:** SteamOS's root is read-only: Grembyte in a virtual environment in the home
