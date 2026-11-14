@@ -907,3 +907,114 @@ def object_browser(studio):
     dialog.tree.setFocus()
     settle()
     return dialog
+
+
+# --- Reference graph --------------------------------------------------------------------------
+
+class _ReferencePanel:
+    """Stands in for the scripts tab: a worker that is never asked here."""
+
+    inspections = None
+
+    def worker(self):
+        return None
+
+
+def _holder(graph, held, address, class_name, field, name=_EDER, kind="field"):
+    """The node of an object holding ``held`` in ``field`` (as the agent names it)."""
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    entry = {"kind": kind, "object": hex(address), "klass": hex(address >> 4),
+             "className": class_name, "name": name, "field": field}
+    return graph.node_for(held, address + 0x18, entry=entry), field
+
+
+def _show_graph(dialog, size):
+    """At its size, the graph at its natural scale in the middle (the studio
+    sizes the window only after the scene, too late for the view)."""
+    dialog.resize(*size)
+    dialog.show()
+    settle()
+    dialog.view.resetTransform()
+    dialog.view.centerOn(dialog.scene.itemsBoundingRect().center())
+
+
+def _reference_dialog(studio, address, class_name):
+    # pylint: disable=import-outside-toplevel,protected-access
+    from grembyte.ui.widgets import reference_graph
+
+    studio.show_attached(_POE_NAME, _POE_PID, _POE_DETAILS)
+    with _idle_workers((reference_graph, "ReferenceIndexWorker")):
+        dialog = studio.keep(reference_graph.ReferenceGraphDialog(
+            studio.translations, _ReferencePanel(), _POE_PID, address, class_name, _EDER,
+            parent=studio.window))
+    dialog.progress.hide()
+    dialog.index = object()  # read: the way to a root can be looked for
+    return dialog
+
+
+@scene("reference-graph", size=(1580, 600),
+       description="Reference graph: what holds an object, back to a root")
+def reference_graph_holders(studio):
+    """What holds Eder's Health: the way from a static field in orange, the
+    way from the party bar highlighted."""
+    dialog = _reference_dialog(studio, _HEALTH, "Health")
+    graph = dialog.graph
+    target = graph.target
+    stats, stats_field = _holder(graph, target, 0x2A41C80A0E0, "CharacterStats", "m_health")
+    party, party_field = _holder(graph, target, 0x2A41C809F00, "PartyMemberAI", "m_health")
+    portrait, portrait_field = _holder(graph, target, 0x2A43B2D1440, "UIPartyPortrait",
+                                       "m_Health", name="PartyPortrait(Clone)_1")
+    graph.add_holders(target, [(stats, stats_field), (party, party_field),
+                               (portrait, portrait_field)], 5)
+    owner, owner_field = _holder(graph, stats.key, 0x2A41C809F00, "PartyMemberAI", "m_stats")
+    graph.add_holders(stats.key, [(owner, owner_field)], 1)
+    members, members_field = _holder(graph, party.key, 0x2A44D0E2A80, "PartyMemberAI[]", "[1]",
+                                     name=None, kind="element")
+    graph.add_holders(party.key, [(members, members_field)], 2)
+    root = graph.node_for(members.key, 0x2A40F3C8F10, entry={
+        "kind": "static", "klass": "0x2a40f3c8e00", "className": "PartyMemberAI",
+        "field": "PartyMembers"})
+    graph.add_holders(members.key, [(root, "PartyMembers")], 1)
+    portraits, portraits_field = _holder(graph, portrait.key, 0x2A44D0E3B40,
+                                         "System.Collections.Generic.List`1<UIPartyPortrait>",
+                                         "_items[1]", name=None, kind="element")
+    graph.add_holders(portrait.key, [(portraits, portraits_field)], 1)
+    bar, bar_field = _holder(graph, portraits.key, 0x2A43B2D0F80, "UIPartyPortraitBar",
+                             "m_Portraits", name="PartyBar")
+    graph.add_holders(portraits.key, [(bar, bar_field)], 1)
+    dialog._path = graph.path_to_root()
+    dialog.highlight(bar.key)
+    dialog.status_label.setText(studio.translations["references.root_found"].format(
+        steps=len(dialog._path) - 1))
+    _show_graph(dialog, (1580, 600))
+    return dialog
+
+
+@scene("reference-graph-targets", size=(1240, 640),
+       description="Reference graph the other way: what an object points to")
+def reference_graph_targets(studio):
+    """What Eder's PartyMemberAI points to, its CharacterStats unfolded."""
+    # pylint: disable=protected-access
+    from grembyte.features.object_references import TARGETS  # pylint: disable=import-outside-toplevel
+
+    party = 0x2A41C809F00
+    dialog = _reference_dialog(studio, party, "PartyMemberAI")
+    dialog.set_direction(TARGETS)
+    graph = dialog.graph
+    target = graph.target
+    pointed = [(0x2A41C80A0E0, "CharacterStats", "m_stats"), (_HEALTH, "Health", "m_health"),
+               (0x2A41C80A3C0, "Mover", "m_mover"), (0x2A41C80A4A0, "AIController", "m_ai"),
+               (0x2A41C80A580, "Faction", "m_faction"),
+               (0x2A41C809E20, "UnityEngine.GameObject", "m_gameObject")]
+    graph.add_holders(target, [_holder(graph, target, address, class_name, field)
+                               for address, class_name, field in pointed], 41)
+    stats = f"object:{0x2A41C80A0E0:x}"
+    unfolded = [(0x2A41C80B200, "Equipment", "m_equipment"),
+                (0x2A41C80B320, "AbilityProgressionTable", "m_progression")]
+    graph.add_holders(stats, [_holder(graph, stats, address, class_name, field)
+                              for address, class_name, field in unfolded], 18)
+    dialog.highlight(f"object:{0x2A41C80B200:x}")
+    dialog.status_label.setText(studio.translations["references.found_targets"].format(
+        shown=6, total=41))
+    _show_graph(dialog, (1240, 640))
+    return dialog

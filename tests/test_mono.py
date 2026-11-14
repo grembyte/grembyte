@@ -1589,15 +1589,13 @@ def test_inspector_puts_number_fields_on_the_address_list(qt_app, translations):
     requested = []
     dialog.address_requested.connect(requested.append)
     try:
-        assert not dialog.add_address_button.isEnabled()
-        dialog.table.selectRow(0)
-        assert dialog.add_address_button.isEnabled()
-        dialog.add_address_button.click()
+        # Through the field's context menu, the only way since the button is gone
+        assert not hasattr(dialog, "add_address_button")
+        dialog.add_address(0)
         assert requested == [{"address": 0x7F55E9339244, "value_type": "int32",
                               "label": "CharacterStats.BaseMight"}]
         assert "CharacterStats.BaseMight" in dialog.status_label.text()
-        dialog.table.selectRow(1)  # a reference, no number
-        assert not dialog.add_address_button.isEnabled()
+        assert dialog.address_entry(1) is None  # a reference, no number
         assert dialog.address_entry(2) is None  # static
 
         array = ObjectInspectorDialog(translations, lambda *_: None, captured="16:58:56.791",
@@ -3154,6 +3152,9 @@ def test_reference_graph_names_what_holds_an_object(tmp_path, qt_app):
         # holds none of them (the stand-in's array of Unity objects does)
         assert sum(entry["kind"] == "unknown" for entry in resolved) == 1
         assert ("field", "UnityEngine.GameObject", "m_CachedPtr+0x10", "Young Wolf") in named
+        # The other way: the object's own address names it with its size
+        own = ask("resolve_references", [address], ("mscorlib", "UnityEngine"))[0]
+        assert int(own["object"], 16) == address and own["size"] >= 16
     finally:
         worker.requestInterruption()
         worker.wait(5000)

@@ -94,9 +94,11 @@ usually lie next to it.
   the differences highlighted
 - **Reverse search:** who points to this object? Done for objects of Unity Mono and Unreal
   games as the [reference graph](docs/guide/reference-graph.md) (tested in Vampire
-  Survivors). Open: the element blocks of Unreal's `TArray`/`TMap`/`TSet` (a location
-  there is not yet traced to the container's field), IL2CPP (needs its object browser),
-  and native memory without an engine's reflection.
+  Survivors and Fatekeeper), switchable to what an object points to, with hiding by object
+  or class, only singletons, a highlighted way and an HTML export. Open: the element
+  blocks of Unreal's `TArray`/`TMap`/`TSet` (a location there is not yet traced to the
+  container's field, and the other way does not follow them), IL2CPP (needs its object
+  browser), and native memory without an engine's reflection.
 
 ### 4. Entry points through strings, RTTI and symbols
 

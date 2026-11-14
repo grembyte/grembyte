@@ -2071,7 +2071,8 @@ class MainWindow(QMainWindow):
             return
         dialog = ReferenceGraphDialog(self.translations, self.script_panel, self._current_pid,
                                       address, class_name, name,
-                                      framework=self._engine.framework_prefixes, parent=self)
+                                      framework=self._engine.framework_prefixes, parent=self,
+                                      is_framework=self._engine.is_framework_assembly)
         self.dock_manager.add(dialog, "references", RIGHT)
 
     def _open_gas_attributes(self):

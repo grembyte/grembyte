@@ -2406,8 +2406,8 @@ gpointer run_batch (gpointer data) {
   }
 
   function objectReference(starts, location) {
-    // { kind: 'field', object, klass, className, name, field } of the live
-    // object holding ``location``, or null
+    // { kind: 'field', object, klass, className, name, field, size } of the
+    // live object holding ``location``, or null
     const index = below(starts, location);
     if (index < 0)
       return null;
@@ -2417,7 +2417,8 @@ gpointer run_batch (gpointer data) {
       return null;
     const info = layout(klass);
     const offset = location - starts[index];
-    if (offset >= objectSize(object, info, klass))
+    const size = objectSize(object, info, klass);
+    if (offset >= size)
       return null;
     const field = info.rank > 0 ? elementAt(info, offset) : fieldAt(klass, offset);
     let name = null;
@@ -2427,7 +2428,7 @@ gpointer run_batch (gpointer data) {
       // a destroyed Unity object
     }
     return { kind: info.rank > 0 ? 'element' : 'field', object: object.toString(),
-             klass: klass.toString(), className: info.name, name, field };
+             klass: klass.toString(), className: info.name, name, field, size };
   }
 
   function staticReference(areas, location) {
@@ -2447,7 +2448,8 @@ gpointer run_batch (gpointer data) {
   function locateReferences(locations, options = {}) {
     // For the reference graph: what holds each of ``locations`` (addresses
     // that hold a pointer to an object), in their order: { kind: 'field' or
-    // 'element' (of an array), object, klass, className, name, field } for a
+    // 'element' (of an array), object, klass, className, name, field, size
+    // (the object's, in bytes) } for a
     // live object's field, { kind: 'static', klass, className, field } for a
     // static field, { kind: 'unknown' } for anything else. ``framework``:
     // the prefixes of the assemblies that are not the game's (the adapter's

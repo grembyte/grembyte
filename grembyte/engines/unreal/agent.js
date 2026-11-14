@@ -2519,8 +2519,8 @@ const unreal = (() => {
 
   function locateReferences(locations) {
     // For the reference graph: what holds each of ``locations``, in their
-    // order: { kind: 'field', object, klass, className, name, field } or
-    // { kind: 'unknown' } (see the Mono adapter's). Memory reads only.
+    // order: { kind: 'field', object, klass, className, name, field, size }
+    // or { kind: 'unknown' } (see the Mono adapter's). Memory reads only.
     reflection();
     const L = ue.layout;
     const s = objects();
@@ -2545,11 +2545,12 @@ const unreal = (() => {
       try {
         const klass = ptr(s.klass[i]);
         // Every object has UObjectBase's header, whatever its class says
-        if (offset >= Math.max(klass.add(L.propertiesSize).readS32(), OBJECT_OUTER + 8))
+        const size = Math.max(klass.add(L.propertiesSize).readS32(), OBJECT_OUTER + 8);
+        if (offset >= size)
           return unknown;
         return { location: unknown.location, kind: 'field', object: ptr(s.address[i]).toString(),
                  klass: klass.toString(), className: cppName(s.klass[i]),
-                 name: objectName(s, i),
+                 name: objectName(s, i), size,
                  field: HEADER_FIELDS.get(offset) || propertyAt(klass, offset)
                    || `+0x${offset.toString(16)}` };
       } catch (_error) {

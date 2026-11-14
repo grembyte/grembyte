@@ -430,7 +430,7 @@ class ScriptWorker(QThread):
         references_resolved or references_failed.
 
         The answer has one entry per location, in their order: ``{location,
-        kind, object, klass, className, name, field}`` (see the engine
+        kind, object, klass, className, name, field, size}`` (see the engine
         adapters' ``locateReferences``). ``framework`` are the prefixes of the
         assemblies that are not the game's (the adapter's framework_prefixes):
         Mono looks for static fields in the classes of the others.

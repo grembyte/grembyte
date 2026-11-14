@@ -1532,6 +1532,13 @@ def test_reference_graph_names_the_objects_holding_one(tmp_path, qt_app):
         assert ("field", "APlayerController", "Pawn", "PlayerController_0") in named
         assert ("field", "UWidgetTree", "OuterPrivate", "WidgetTree_7") in named
         assert ("unknown", None, None, None) in named
+        # The other way: the object's own address names it with its size, and
+        # the pointers inside lead to its class (ClassPrivate)
+        address = int(player["address"], 16)
+        own = ask("resolve_references", [address])[0]
+        assert int(own["object"], 16) == address and own["size"] >= 0x28
+        pairs, _total = index.pointers_in(address, address + own["size"])
+        assert int(classes["BP_Hero_C"]["klass"], 16) in {value for _location, value in pairs}
     finally:
         worker.requestInterruption()
         worker.wait(5000)

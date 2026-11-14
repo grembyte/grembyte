@@ -1,6 +1,7 @@
 """Window of the reference graph: which objects hold an object, up to the roots."""
 
 from dataclasses import dataclass
+from datetime import datetime
 
 import shiboken6  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtCore import (  # pylint: disable=import-error,no-name-in-module
@@ -19,7 +20,10 @@ from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
     QPolygonF,
 )
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+    QButtonGroup,
+    QCheckBox,
     QDialog,
+    QFileDialog,
     QGraphicsItem,
     QGraphicsPathItem,
     QGraphicsPolygonItem,
@@ -35,21 +39,30 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QVBoxLayout,
 )
 
+from grembyte import __version__
 from grembyte.core import settings
+from grembyte.core.programs import program_of
 from grembyte.features.object_references import (
+    BY_USER,
+    FILTERED,
+    HOLDERS,
     MAX_PATH_STEPS,
     MODULE,
     OBJECT,
     STACK,
     STATIC,
+    TARGETS,
     UNKNOWN,
     ReferenceGraph,
     ReferenceIndexWorker,
 )
+from grembyte.ui.export_folder import remember, suggested_path
+from grembyte.ui.localization import language_code
+from grembyte.ui.widgets import graph_export
 from grembyte.ui.widgets.docking import PinButton
-from grembyte.ui.widgets.icons import set_button_icon, theme_qcolor
+from grembyte.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 from grembyte.ui.widgets.labels import DocsHint
-from grembyte.ui.workers import keep_until_finished
+from grembyte.ui.workers import connect_while_alive, keep_until_finished
 
 # Layout of the graph, in scene pixels
 NODE_WIDTH = 230
@@ -62,6 +75,14 @@ ZOOM_STEP = 1.15
 RESOLVE_BATCH = 2000
 # Text of a node line at most, in characters
 MAX_LINE = 34
+# How a node or edge is marked: on the way to a root found by the search, or
+# on the way from a node to the object the user asked to highlight; the
+# theme colour of each
+ROOT_PATH, MARKED_PATH = "root", "marked"
+_MARK_COLORS = {ROOT_PATH: "orange", MARKED_PATH: "highlight"}
+# The icons of the two ways: the holders stand left of the object, what it
+# points to right of it
+_DIRECTION_ICONS = {HOLDERS: "arrow_back", TARGETS: "arrow_forward"}
 
 
 def find_reference_opener(widget):
@@ -105,10 +126,23 @@ def node_lines(node, translations):
     return t["references.unknown"], count
 
 
-def node_tooltip(node, translations, hidden=0):
+# Texts of a node's tooltip per way of the graph: what a double click does,
+# that it leads nowhere, how many of the locations are shown
+_TOOLTIP_KEYS = {
+    HOLDERS: ("references.expand_hint", "references.no_holders", "references.holders_count"),
+    TARGETS: ("references.targets_hint", "references.no_targets", "references.targets_count"),
+}
+
+
+def node_tooltip(node, translations, hidden=0, hidden_user=0, hidden_filter=0,
+                 direction=HOLDERS):
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
     """The tooltip of a node: its details and what a double click does;
-    ``hidden`` of its holders' locations are not shown (other memory)."""
+    ``hidden`` of the locations it leads to are not shown (other memory),
+    ``hidden_user`` because the user hid them, ``hidden_filter`` because
+    only singletons are shown. ``direction`` the way the graph grows."""
     t = translations
+    expand_hint, none_found, count = _TOOLTIP_KEYS[direction]
     lines = []
     if node.kind == OBJECT:
         lines.append(node.class_name or "?")
@@ -116,14 +150,18 @@ def node_tooltip(node, translations, hidden=0):
             lines.append(f'"{node.name}"')
         lines.append(f"0x{node.address:x}")
         if not node.expanded:
-            lines.append(t["references.expand_hint"])
+            lines.append(t[expand_hint])
         elif node.total == 0:
-            lines.append(t["references.no_holders"])
+            lines.append(t[none_found])
         else:
-            lines.append(t["references.holders_count"].format(shown=node.shown - hidden,
-                                                               total=node.total))
+            lines.append(t[count].format(
+                shown=node.shown - hidden - hidden_user - hidden_filter, total=node.total))
             if hidden:
                 lines.append(t["references.hidden_other"].format(count=hidden))
+            if hidden_user:
+                lines.append(t["references.hidden_user"].format(count=hidden_user))
+            if hidden_filter:
+                lines.append(t["references.hidden_filter"].format(count=hidden_filter))
     else:
         lines.append(t[f"references.{node.kind}_tooltip"])
         lines.extend(f"0x{location:x}" for location in node.locations[:5])
@@ -136,10 +174,12 @@ def node_tooltip(node, translations, hidden=0):
 
 def layout_positions(graph, hidden=()):
     """``{key: QPointF}`` of the nodes' top left corners: the target on the
-    right, each step to its holders a column further left; in a column the
-    nodes follow the order of what they hold, which keeps edges from crossing.
-    Holders of the node kinds ``hidden`` are left out."""
+    right, each step to its holders a column further left (the other way,
+    TARGETS: on the left, what it points to further right); in a column the
+    nodes follow the order of the nodes they lead from, which keeps edges
+    from crossing. Nodes of the kinds ``hidden`` are left out."""
     depth = graph.depths(hidden)
+    side = -1 if graph.direction == HOLDERS else 1
     columns = {}
     for key, steps in depth.items():
         columns.setdefault(steps, []).append(key)
@@ -149,14 +189,14 @@ def layout_positions(graph, hidden=()):
         keys = columns[steps]
         if steps > 0:
             def place(key, steps=steps):
-                held = [row_of[edge.held] for edge in graph.edges
-                        if edge.holder == key and depth.get(edge.held) == steps - 1]
-                return (min(held) if held else 0.0, key)
+                rows = [row_of[other] for other in graph.leading(key)
+                        if depth.get(other) == steps - 1]
+                return (min(rows) if rows else 0.0, key)
             keys.sort(key=place)
         middle = (len(keys) - 1) / 2
         for row, key in enumerate(keys):
             row_of[key] = row
-            positions[key] = QPointF(-steps * (NODE_WIDTH + COLUMN_GAP),
+            positions[key] = QPointF(side * steps * (NODE_WIDTH + COLUMN_GAP),
                                      (row - middle) * (NODE_HEIGHT + ROW_GAP))
     return positions
 
@@ -238,16 +278,22 @@ def right_mid(corner):
 class NodeItem(QGraphicsRectItem):
     """One node of the graph: a box with two lines of text."""
 
-    def __init__(self, node, translations, target=False, hidden=0):
-        """``hidden`` of the locations holding it are not shown (other memory)."""
+    def __init__(self, node, translations, target=False, hidden=0, hidden_user=0,
+                 hidden_filter=0, direction=HOLDERS):
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
+        """``hidden`` of the locations holding it are not shown (other
+        memory), ``hidden_user`` because the user hid them, ``hidden_filter``
+        because only singletons are shown."""
         super().__init__(0, 0, NODE_WIDTH, NODE_HEIGHT)
         self.node = node
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setAcceptHoverEvents(True)
-        self.setToolTip(node_tooltip(node, translations, hidden))
+        self.setToolTip(node_tooltip(node, translations, hidden, hidden_user, hidden_filter,
+                                     direction))
         self.setBrush(QBrush(theme_qcolor("surface")))
         self._target = target
-        self.set_highlight(False)
+        self.set_highlight(None)
+        hidden += hidden_user + hidden_filter
         first, second = node_lines(node, translations)
         title = QGraphicsSimpleTextItem(_clip(first), self)
         font = QFont(title.font())
@@ -271,11 +317,12 @@ class NodeItem(QGraphicsRectItem):
             more.setBrush(QBrush(theme_qcolor("muted")))
             more.setPos(NODE_WIDTH - 8 - more.boundingRect().width(), 25)
 
-    def set_highlight(self, on):
-        """Draw the node as part of the way to a root (``on``) or as usual."""
+    def set_highlight(self, mark):
+        """Draw the node as part of a marked way (``mark``: ROOT_PATH or
+        MARKED_PATH) or, with None, as usual."""
         node = self.node
-        if on:
-            color, width = theme_qcolor("orange"), 2.5
+        if mark is not None:
+            color, width = theme_qcolor(_MARK_COLORS[mark]), 2.5
         elif self._target:
             color, width = theme_qcolor("accent"), 2.5
         elif node.is_root:
@@ -338,10 +385,12 @@ class ReferenceGraphDialog(QDialog):
     # pylint: disable=too-many-instance-attributes
 
     def __init__(self, translations, panel, pid, target, class_name="", name=None,
-                 framework=(), parent=None):
+                 framework=(), parent=None, is_framework=lambda _name: False):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         """``target`` the object's address (int); ``framework`` the engine
-        adapter's framework_prefixes (see ScriptWorker.resolve_references)."""
+        adapter's framework_prefixes (see ScriptWorker.resolve_references);
+        ``is_framework(package)`` whether a package belongs to the engine
+        (for "only singletons", as in the object browser)."""
         super().__init__(parent)
         self.setModal(False)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -349,19 +398,29 @@ class ReferenceGraphDialog(QDialog):
         self.panel = panel
         self.pid = pid
         self.framework = tuple(framework)
-        self.graph = ReferenceGraph.for_object(target, class_name, name)
+        self.is_framework = is_framework
+        # The ``klass`` of the singleton classes, once listed; the request asking
+        self._singletons = None
+        self._classes_request = None
+        # One graph per way, what the user hid shared (see _new_graphs)
+        self._graphs = {}
+        self.graph = None
+        self._new_graphs(target, class_name, name)
         self.index = None
         self._index_worker = None
         self._worker = None
-        # request id -> (node key, the heap locations asked about)
+        self._relays = []  # the connections to the worker's answers
+        # request id -> (way, node key, the locations asked about)
         self._pending = {}
-        # node key -> {holders: [(Node, label)] so far, total, waiting: batches due}
+        # (way, node key) -> {entries: {location: answer}, waiting: batches due, done}
         self._expansions = {}
         self._items = {}
         # Unfolding nodes one after another until a root is reached
         self._searching = False
         self._search_steps = 0
         self._path = None
+        # Per way, the node whose way to the object is highlighted (MARKED_PATH)
+        self._marks = {}
         self.setWindowTitle(translations["references.title"].format(
             name=f"{short_class(class_name)} 0x{target:x}" if class_name else f"0x{target:x}"))
         self.resize(1100, 700)
@@ -370,6 +429,28 @@ class ReferenceGraphDialog(QDialog):
         settings.subscribe(self._settings_changed)
         self.destroyed.connect(self._forget_settings)
         self.read_memory()
+
+    def _new_graphs(self, address, class_name="", name=None, klass=None):
+        """The graphs of both ways, from the object alone; what the user hid
+        (and the classes shown) stays, for both ways alike."""
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
+        previous = self.graph
+        self._graphs = {direction: ReferenceGraph.for_object(address, class_name, name, klass,
+                                                             direction)
+                        for direction in (HOLDERS, TARGETS)}
+        holders, targets = self._graphs[HOLDERS], self._graphs[TARGETS]
+        if previous is not None:
+            holders.hidden_keys = previous.hidden_keys
+            holders.hidden_classes = previous.hidden_classes
+            holders.only_classes = previous.only_classes
+        targets.hidden_keys = holders.hidden_keys
+        targets.hidden_classes = holders.hidden_classes
+        targets.only_classes = holders.only_classes
+        self.graph = self._graphs[self.graph.direction if self.graph is not None else HOLDERS]
+
+    @property
+    def _marked(self):
+        return self._marks.get(self.graph.direction)
 
     def _settings_changed(self, changed):
         if "reference_other_memory" in changed:
@@ -383,26 +464,38 @@ class ReferenceGraphDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(DocsHint(t, t["references.hint"], "guide/reference-graph/"))
         bar = QHBoxLayout()
+        self.export_button = QPushButton(t["references.export"])
+        set_button_icon(self.export_button, "download")
+        self.export_button.setToolTip(t["references.export_tooltip"])
+        self.export_button.clicked.connect(self.export_html)
+        bar.addWidget(self.export_button)
+        # The way the graph grows: to what holds the object, or to what it points to
+        self.direction_group = QButtonGroup(self)
+        self.direction_buttons = {}
+        for direction in (HOLDERS, TARGETS):
+            button = QPushButton(t[f"references.direction_{direction}"])
+            button.setToolTip(t[f"references.direction_{direction}_tooltip"])
+            button.setCheckable(True)
+            button.setChecked(direction == self.graph.direction)
+            button.clicked.connect(lambda _checked, way=direction: self.set_direction(way))
+            self.direction_group.addButton(button)
+            self.direction_buttons[direction] = button
+            bar.addWidget(button)
+        self._show_direction()
         self.path_button = QPushButton(t["references.find_root"])
         set_button_icon(self.path_button, "account_tree")
         self.path_button.setToolTip(t["references.find_root_tooltip"])
         self.path_button.clicked.connect(self.find_root)
         bar.addWidget(self.path_button)
-        self.inspect_button = QPushButton(t["references.inspect"])
-        set_button_icon(self.inspect_button, "manage_search")
-        self.inspect_button.setToolTip(t["references.inspect_tooltip"])
-        self.inspect_button.clicked.connect(lambda: self.inspect(self._selected()))
-        bar.addWidget(self.inspect_button)
-        self.fit_button = QPushButton(t["references.fit"])
-        set_button_icon(self.fit_button, "compress")
-        self.fit_button.setToolTip(t["references.fit_tooltip"])
-        self.fit_button.clicked.connect(self.fit)
-        bar.addWidget(self.fit_button)
         bar.addStretch()
+        self.singletons_check = QCheckBox(t["references.only_singletons"])
+        self.singletons_check.setToolTip(t["references.only_singletons_tooltip"])
+        self.singletons_check.toggled.connect(self._only_singletons)
         self.refresh_button = QPushButton(t["references.refresh"])
         set_button_icon(self.refresh_button, "refresh")
         self.refresh_button.setToolTip(t["references.refresh_tooltip"])
         self.refresh_button.clicked.connect(self.read_memory)
+        bar.addWidget(self.singletons_check)
         bar.addWidget(self.refresh_button)
         self.pin_button = PinButton(t)
         bar.addWidget(self.pin_button)
@@ -433,8 +526,12 @@ class ReferenceGraphDialog(QDialog):
         if self._index_worker is not None:
             return
         target = self.graph.nodes[self.graph.target]
-        self.graph = ReferenceGraph.for_object(target.address, target.class_name, target.name,
-                                               target.klass)
+        # What the user hid stays hidden; the highlight is drawn again once
+        # its node is unfolded again
+        self._new_graphs(target.address, target.class_name, target.name, target.klass)
+        # The singletons listed anew with the memory (see _on_index)
+        self._singletons = None
+        self._classes_request = None
         self._pending.clear()
         self._expansions.clear()
         self._stop_search()
@@ -463,6 +560,10 @@ class ReferenceGraphDialog(QDialog):
         self.progress.hide()
         self.status_label.setText(self.translations["references.ready"].format(
             pointers=len(index.pointer_map)))
+        if self.singletons_check.isChecked():
+            # The target is unfolded once the singletons are known
+            self._list_classes()
+            return
         self.expand(self.graph.target)
 
     def _on_index_failed(self, message):
@@ -476,19 +577,37 @@ class ReferenceGraphDialog(QDialog):
         worker = self.panel.worker()
         if worker is not None and worker is not self._worker:
             self._worker = worker
-            worker.references_resolved.connect(lambda request, answer: self._on_resolved(
-                worker, request, answer))
-            worker.references_failed.connect(lambda request, message: self._on_failed(
-                worker, request, message))
+            for relay in self._relays:
+                relay.deleteLater()
+            # The worker outlives this window: connected so that its answers
+            # stop reaching it once it is deleted
+            self._relays = [
+                connect_while_alive(signal, self, lambda request, answer, handler=handler:
+                                    handler(worker, request, answer))
+                for signal, handler in ((worker.references_resolved, self._on_resolved),
+                                        (worker.references_failed, self._on_failed),
+                                        (worker.classes_browsed, self._on_classes),
+                                        (worker.browse_failed, self._on_classes_failed))]
+            self._classes_request = None
             self._pending.clear()
             self._expansions.clear()
         return worker
 
     def expand(self, key):
-        """Look up what holds node ``key`` (an object not unfolded yet)."""
-        node = self.graph.nodes.get(key)
-        if node is None or not node.can_expand or self.index is None or key in self._expansions:
+        """Look up what node ``key`` (an object not unfolded yet) leads to:
+        what holds it, or (TARGETS) what it points to."""
+        graph = self.graph
+        node = graph.nodes.get(key)
+        if (node is None or not node.can_expand or self.index is None
+                or (graph.direction, key) in self._expansions):
             return
+        if graph.direction == HOLDERS:
+            self._expand_holders(graph, node)
+        else:
+            self._expand_targets(graph, node)
+
+    def _expand_holders(self, graph, node):
+        key = node.key
         locations, total = self.index.referrers(node.address)
         roots, heap = [], []
         for location in locations:
@@ -496,60 +615,197 @@ class ReferenceGraphDialog(QDialog):
             if place[0] is None:
                 heap.append(location)
             else:
-                roots.append((self.graph.node_for(key, location, place=place), ""))
+                roots.append((graph.node_for(key, location, place=place), ""))
         if not heap:
-            self._finish(key, roots, total)
+            self._finish(graph, key, roots, total)
             return
+
+        def named(entries):
+            holders = [(graph.node_for(key, location, entry=entries[location]),
+                        entries[location].get("field") or "") for location in heap]
+            self._finish(graph, key, roots + holders, total)
+        self._resolve(graph, key, heap, named)
+
+    def _expand_targets(self, graph, node):
+        """The objects ``node`` points to: the pointers lying in its memory
+        (its size from the agent) to the start of an object, labelled with
+        the field holding them."""
+        key, start = node.key, node.address
+        if node.size is None:
+            def sized(entries):
+                entry = entries.get(start) or {}
+                if entry.get("object") and int(entry["object"], 16) == start and entry.get("size"):
+                    node.size = int(entry["size"])
+                    self._expand_targets(graph, node)
+                else:
+                    self.status_label.setText(self.translations["references.not_an_object"])
+                    self._finish(graph, key, [], 0, quiet=True)
+            self._resolve(graph, key, [start], sized)
+            return
+        pairs, total = self.index.pointers_in(start, start + node.size)
+        values = list(dict.fromkeys(value for _location, value in pairs
+                                    if value and value != start))
+        if not values:
+            self._finish(graph, key, [], total)
+            return
+
+        def named(entries):
+            targets = []
+            for location, value in pairs:
+                entry = entries.get(value) or {}
+                if not entry.get("object") or int(entry["object"], 16) != value:
+                    continue  # not the start of an object
+                place = entries.get(location) or {}
+                label = (place.get("field") if place.get("object")
+                         and int(place["object"], 16) == start
+                         else None) or f"+0x{location - start:x}"
+                targets.append((graph.node_for(key, value, entry=entry), label))
+            self._finish(graph, key, targets, total)
+        self._resolve(graph, key,
+                      list(dict.fromkeys([location for location, _value in pairs] + values)),
+                      named)
+
+    def _resolve(self, graph, key, locations, done):
+        """Have the agent name ``locations`` (in batches); ``done({location:
+        answer})`` once all are back."""
         worker = self._current_worker()
         if worker is None:
             self.status_label.setText(self.translations["references.detached"])
             self._stop_search()
             return
-        batches = [heap[start:start + RESOLVE_BATCH] for start in range(0, len(heap), RESOLVE_BATCH)]
-        self._expansions[key] = {"holders": roots, "total": total, "waiting": len(batches)}
+        batches = [locations[at:at + RESOLVE_BATCH] for at in range(0, len(locations),
+                                                                  RESOLVE_BATCH)]
+        self._expansions[(graph.direction, key)] = {"entries": {}, "waiting": len(batches),
+                                                    "done": done}
         for batch in batches:
-            self._pending[worker.resolve_references(batch, self.framework)] = (key, batch)
+            request = worker.resolve_references(batch, self.framework)
+            self._pending[request] = (graph.direction, key, batch)
         self.status_label.setText(self.translations["references.resolving"].format(
-            count=len(heap)))
+            count=len(locations)))
         self._update_buttons()
 
     def _on_resolved(self, worker, request, answer):
         if worker is not self._worker or request not in self._pending:
             return
-        key, batch = self._pending.pop(request)
-        expansion = self._expansions.get(key)
+        direction, key, batch = self._pending.pop(request)
+        expansion = self._expansions.get((direction, key))
         if expansion is None:
             return  # another batch of it failed
         for location, entry in zip(batch, answer):
-            holder = self.graph.node_for(key, location, entry=entry)
-            expansion["holders"].append((holder, entry.get("field") or ""))
+            expansion["entries"][location] = entry
         expansion["waiting"] -= 1
         if expansion["waiting"] == 0:
-            del self._expansions[key]
-            self._finish(key, expansion["holders"], expansion["total"])
+            del self._expansions[(direction, key)]
+            expansion["done"](expansion["entries"])
 
     def _on_failed(self, worker, request, message):
         if worker is not self._worker or request not in self._pending:
             return
-        key, _batch = self._pending.pop(request)
-        if self._expansions.pop(key, None) is None:
+        direction, key, _batch = self._pending.pop(request)
+        if self._expansions.pop((direction, key), None) is None:
             return
         self.status_label.setText(message)
         self._stop_search()
         self._update_buttons()
 
-    def _finish(self, key, holders, total):
-        self.graph.add_holders(key, holders, total)
-        node = self.graph.nodes[key]
+    def _finish(self, graph, key, linked, total, quiet=False):
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
+        graph.add_holders(key, linked, total)
+        node = graph.nodes[key]
         t = self.translations
-        if total == 0:
-            self.status_label.setText(t["references.none_found"])
+        holders = graph.direction == HOLDERS
+        if quiet:
+            pass
+        elif total == 0:
+            self.status_label.setText(t["references.none_found" if holders
+                                        else "references.none_found_targets"])
         else:
-            self.status_label.setText(t["references.found"].format(
+            self.status_label.setText(t["references.found" if holders
+                                        else "references.found_targets"].format(
                 shown=node.shown, total=total))
+        if graph is not self.graph:
+            return
         if self._searching:
             self._continue_search()
         self._redraw()
+
+    # --- The two ways ----------------------------------------------------------------
+    def set_direction(self, direction):
+        """Show the graph growing to what holds the object (HOLDERS) or to
+        what it points to (TARGETS); a double click unfolds either way."""
+        self.direction_buttons[direction].setChecked(True)
+        if direction == self.graph.direction:
+            return
+        self._stop_search()
+        self.graph = self._graphs[direction]
+        self._show_direction()
+        self._items = {}  # centred on the object again
+        target = self.graph.nodes[self.graph.target]
+        waiting = self.singletons_check.isChecked() and self._singletons is None
+        if target.can_expand and self.index is not None and not waiting:
+            self.expand(target.key)
+        self._redraw()
+
+    def _show_direction(self):
+        """The way shown as the primary button, the other as a plain one."""
+        for direction, button in self.direction_buttons.items():
+            button.setObjectName("btn_primary" if direction == self.graph.direction else "")
+            set_button_icon(button, _DIRECTION_ICONS[direction])
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    # --- Only singletons -----------------------------------------------------------
+    def _only_singletons(self, on):
+        if not on:
+            self._show_classes(None)
+            self._redraw()
+        elif self._singletons is not None:
+            self._show_classes(self._singletons)
+            self._redraw()
+        else:
+            self._list_classes()
+
+    def _show_classes(self, classes):
+        for graph in self._graphs.values():
+            graph.only_classes = classes
+
+    def _list_classes(self):
+        """Ask for the classes with live objects to know the singletons."""
+        if self._classes_request is not None:
+            return
+        worker = self._current_worker()
+        if worker is None:
+            self.status_label.setText(self.translations["references.detached"])
+            return
+        self._classes_request = worker.browse_classes("", False)
+        self.status_label.setText(self.translations["references.reading_classes"])
+
+    def _on_classes(self, worker, request, answer):
+        if worker is not self._worker or request != self._classes_request:
+            return
+        self._classes_request = None
+        # Not at the top: the object browser imports this module
+        from grembyte.ui.widgets.object_browser import is_singleton  # pylint: disable=import-outside-toplevel
+        self._singletons = {entry["klass"] for entry in answer.get("classes", [])
+                            if is_singleton(entry, self.is_framework)}
+        self.status_label.setText(self.translations["references.singletons"].format(
+            count=len(self._singletons)))
+        if self.singletons_check.isChecked():
+            self._show_classes(self._singletons)
+        target = self.graph.nodes[self.graph.target]
+        if target.can_expand and self.index is not None:
+            self.expand(target.key)
+        self._redraw()
+
+    def _on_classes_failed(self, worker, request, message):
+        if worker is not self._worker or request != self._classes_request:
+            return
+        self._classes_request = None
+        self.status_label.setText(self.translations["references.classes_failed"].format(
+            message=message.splitlines()[0] if message else message))
+        target = self.graph.nodes[self.graph.target]
+        if target.can_expand and self.index is not None:
+            self.expand(target.key)
 
     # --- The way to a root -------------------------------------------------------
     def find_root(self):
@@ -594,13 +850,23 @@ class ReferenceGraphDialog(QDialog):
         # Other memory only if the settings say so
         hidden = () if settings.get("reference_other_memory") else (UNKNOWN,)
         positions = layout_positions(self.graph, hidden)
-        on_path = set(self._path or ())
+        # The ways drawn anew: around what the user hid since
+        if self._path is not None:
+            self._path = self.graph.path_to_root()
+        marked = (None if self._marked is None or self._marked not in self.graph.nodes
+                  else self.graph.path_from(self._marked))
+        direction = self.graph.direction
+        marks = {key: ROOT_PATH for key in self._path or ()}
+        marks.update((key, MARKED_PATH) for key in marked or ())
         for key, position in positions.items():
             item = NodeItem(self.graph.nodes[key], self.translations,
                             target=key == self.graph.target,
-                            hidden=self.graph.hidden_locations(key, hidden))
+                            hidden=self.graph.hidden_locations(key, hidden),
+                            hidden_user=self.graph.hidden_locations(key, hidden, BY_USER),
+                            hidden_filter=self.graph.hidden_locations(key, hidden, FILTERED),
+                            direction=direction)
             item.setPos(position)
-            item.set_highlight(key in on_path)
+            item.set_highlight(marks.get(key))
             self.scene.addItem(item)
             self._items[key] = item
             if key == selected_key:
@@ -609,28 +875,32 @@ class ReferenceGraphDialog(QDialog):
         for edge in self.graph.edges:
             if edge.holder in positions and edge.held in positions:
                 labels.setdefault((edge.holder, edge.held), []).append(edge.label)
-        path_edges = set(zip(self._path or (), (self._path or ())[1:]))
-        # The labels placed so far; the edges of the way to a root first
+        edge_marks = {pair: ROOT_PATH for pair in self.graph.path_edges(self._path)}
+        edge_marks.update((pair, MARKED_PATH) for pair in self.graph.path_edges(marked))
+        # The labels placed so far; the edges of the marked ways first
         taken = []
-        order = sorted(labels.items(), key=lambda pair: pair[0] not in path_edges)
+        order = sorted(labels.items(), key=lambda pair: pair[0] not in edge_marks)
         for (holder, held), names in order:
             self._draw_edge(positions[holder], positions[held],
                             ", ".join(name for name in names if name),
-                            (holder, held) in path_edges, taken)
+                            edge_marks.get((holder, held)), taken)
         self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-80, -80, 80, 80))
         if first:
             self.view.centerOn(self._items[self.graph.target])
         self._update_buttons()
 
-    def _draw_edge(self, start, end, label, highlight, taken):
+    def _draw_edge(self, start, end, label, mark, taken):
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
         """An arrow from the holder (top left corner ``start``) to the held
         node (``end``), its label where ``edge_route`` puts it, or moved up
-        or down off the labels already ``taken`` (their QRectFs)."""
+        or down off the labels already ``taken`` (their QRectFs); ``mark``
+        as in NodeItem.set_highlight."""
         route = edge_route(start, end)
-        color = theme_qcolor("orange" if highlight else "muted")
+        color = theme_qcolor("muted" if mark is None else _MARK_COLORS[mark])
         line = QGraphicsPathItem(route.path)
-        line.setPen(QPen(color, 2 if highlight else 1.2))
-        line.setZValue(-1)
+        line.setPen(QPen(color, 1.2 if mark is None else 2))
+        # Marked ways above the others where lines cross
+        line.setZValue(-2 if mark is None else -1)
         self.scene.addItem(line)
         tip, back = route.tip, -9 * route.direction
         arrow = QGraphicsPolygonItem(QPolygonF([
@@ -690,30 +960,133 @@ class ReferenceGraphDialog(QDialog):
 
     def _menu(self, position):
         item = self.view.node_at(position)
-        if item is None:
-            return
-        node = item.node
-        t = self.translations
         menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        self.fill_menu(menu, None if item is None else item.node)
+        menu.exec(self.view.viewport().mapToGlobal(position))
+
+    def fill_menu(self, menu, node):
+        """The context menu: the actions on ``node`` (None: the background),
+        then those on the graph."""
+        t = self.translations
+        if node is not None:
+            self._node_actions(menu, node)
+            menu.addSeparator()
+        menu.addAction(t["references.fit"], self.fit).setToolTip(t["references.fit_tooltip"])
+        if self._marked is not None:
+            menu.addAction(t["references.highlight_clear"], lambda: self.highlight(None))
+        hidden = self.graph.hidden_by_user()
+        if hidden:
+            menu.addAction(t["references.show_hidden"].format(count=hidden),
+                           self.show_hidden).setToolTip(t["references.show_hidden_tooltip"])
+        menu.addAction(t["references.export"], self.export_html).setToolTip(
+            t["references.export_tooltip"])
+
+    def _node_actions(self, menu, node):
+        t = self.translations
         clipboard = QGuiApplication.clipboard()
         if node.can_expand:
-            menu.addAction(t["references.expand"], lambda: self.expand(node.key))
+            expand = ("references.expand" if self.graph.direction == HOLDERS
+                      else "references.expand_targets")
+            menu.addAction(t[expand], lambda: self.expand(node.key))
         if node.target() is not None:
-            menu.addAction(t["references.inspect"], lambda: self.inspect(node))
+            menu.addAction(t["references.inspect"], lambda: self.inspect(node)).setToolTip(
+                t["references.inspect_tooltip"])
         menu.addAction(t["references.copy_address"],
                        lambda: clipboard.setText(f"0x{node.address:x}"))
         if node.kind in (STATIC, MODULE):
             text = node.name if node.kind == MODULE else f"{node.class_name}.{node.name}"
             menu.addAction(t["references.copy_name"], lambda: clipboard.setText(text))
-        menu.exec(self.view.viewport().mapToGlobal(position))
+        if node.key == self.graph.target:
+            return
+        menu.addSeparator()
+        highlight = ("references.highlight_path" if self.graph.direction == HOLDERS
+                     else "references.highlight_path_targets")
+        menu.addAction(t[highlight], lambda: self.highlight(node.key))
+        menu.addAction(t["references.hide_node"], lambda: self.hide_node(node.key))
+        if node.kind == OBJECT and node.class_name:
+            menu.addAction(t["references.hide_class"].format(cls=short_class(node.class_name)),
+                           lambda: self.hide_class(node.class_name))
+
+    # --- Hiding and highlighting ----------------------------------------------------
+    def highlight(self, key):
+        """Highlight the way from node ``key`` to the object (MARKED_PATH);
+        None clears it."""
+        self._marks[self.graph.direction] = key
+        if key is not None and self.graph.path_from(key) is None:
+            self.status_label.setText(self.translations["references.no_path"])
+        self._redraw()
+
+    def hide_node(self, key):
+        """Leave node ``key`` out of the graph, and the way to a root out of it."""
+        self.graph.hidden_keys.add(key)
+        self._hidden_changed()
+
+    def hide_class(self, class_name):
+        """Leave every object of class ``class_name`` out of the graph."""
+        self.graph.hidden_classes.add(class_name)
+        self._hidden_changed()
+
+    def show_hidden(self):
+        """Show what the user hid again."""
+        self.graph.hidden_keys.clear()
+        self.graph.hidden_classes.clear()
+        self._hidden_changed()
+
+    def _hidden_changed(self):
+        # A highlight through what is hidden now shows again with it
+        self._redraw()
+
+    # --- Export --------------------------------------------------------------------
+    def export_html(self):
+        """Save the graph as it is drawn now as an HTML page."""
+        t = self.translations
+        target = self.graph.nodes[self.graph.target]
+        name = target.name or short_class(target.class_name) or "object"
+        stamp = datetime.now()
+        file_name = "-".join(
+            "".join(char if char.isalnum() or char in "._-" else "_" for char in part).strip("_")
+            for part in ("references", name, f"{target.address:x}",
+                         stamp.strftime("%Y%m%d-%H%M%S"))) + ".html"
+        path, _filter = QFileDialog.getSaveFileName(
+            self, t["references.export"], suggested_path(file_name), t["inspector.export_filter"])
+        if not path:
+            return
+        if not path.lower().endswith((".html", ".htm")):
+            path += ".html"
+        remember(path)
+        try:
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(self.render_html(stamp))
+        except OSError as error:
+            self.status_label.setText(t["references.export_failed"].format(error=error))
+            return
+        self.status_label.setText(t["inspector.exported"].format(path=path))
+
+    def render_html(self, stamp=None):
+        """The HTML page of the graph as it is drawn now (see graph_export)."""
+        t = self.translations
+        target = self.graph.nodes[self.graph.target]
+        facts = [(t["inspector.export_address"], f"0x{target.address:x}")]
+        program = program_of(self.pid) if self.pid is not None else None
+        if program is not None:
+            facts.append((t["inspector.export_program"],
+                          t["app.process_display"].format(name=program[0], pid=self.pid)))
+        facts.append((t["inspector.export_time"],
+                      (stamp or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")))
+        colors = {key: theme_color(key) for key in ("background", "text", "muted")}
+        return graph_export.render_html(
+            self.scene, self.windowTitle(), facts, colors,
+            t["inspector.export_footer"].format(version=__version__),
+            language_code(settings.language()))
 
     def _update_buttons(self):
         if not hasattr(self, "path_button"):
             return
-        selected = self._selected()
         ready = self.index is not None
+        # The way to a root only where the graph grows to the holders
+        self.path_button.setVisible(self.graph.direction == HOLDERS)
         self.path_button.setEnabled(ready and not self._searching)
-        self.inspect_button.setEnabled(selected is not None and selected.target() is not None)
         self.refresh_button.setEnabled(self._index_worker is None)
 
     def closeEvent(self, event):  # pylint: disable=invalid-name

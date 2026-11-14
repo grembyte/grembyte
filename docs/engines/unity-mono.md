@@ -18,7 +18,7 @@ Everything in the [engine overview](index.md) is available:
 
 **View → Object browser …** lists the game's live objects by class and opens them in the object inspector. Unity's Mono has no heap walk, so Grembyte uses Unity's own liveness calculation: it finds the objects reachable from static fields and from Unity's objects, and the game stands still for a moment while it runs. The [object browser guide](../guide/object-browser.md#unity-mono) explains it.
 
-From an object, the [reference graph](../guide/reference-graph.md#unity-mono) shows which objects and static fields hold it.
+From an object, the [reference graph](../guide/reference-graph.md#unity-mono) shows which objects and static fields hold it, or which objects it points to.
 
 ## 32-bit games
 
