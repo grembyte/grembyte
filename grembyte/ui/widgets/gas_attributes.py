@@ -38,6 +38,7 @@ from grembyte.ui.widgets.docking import PinButton
 from grembyte.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 from grembyte.ui.widgets.table import copy_menu, resizable_columns, set_row_height
 from grembyte.ui.widgets.labels import DocsHint
+from grembyte.ui.workers import connect_while_alive
 
 _SET, _ATTRIBUTE, _BASE, _CURRENT, _HELD = range(5)
 _COLUMNS = ("gas.column_set", "gas.column_attribute", "gas.column_base",
@@ -124,6 +125,7 @@ class GasAttributesDialog(QDialog):
         self.translations = translations
         self.panel = panel
         self._worker = None
+        self._relays = []  # the connections to the worker's answers
         self._pending = None  # request id of the list asked for
         self._setting = {}  # request id -> attribute name
         self._state = None
@@ -227,14 +229,17 @@ class GasAttributesDialog(QDialog):
         worker = self.panel.worker()
         if worker is not None and worker is not self._worker:
             self._worker = worker
-            worker.gas_listed.connect(lambda request, state: self._on_listed(
-                worker, request, state))
-            worker.gas_failed.connect(lambda request, message: self._on_failed(
-                worker, request, message))
-            worker.gas_set.connect(lambda request, values: self._on_set(
-                worker, request, values))
-            worker.gas_set_failed.connect(lambda request, message: self._on_set_failed(
-                worker, request, message))
+            for relay in self._relays:
+                relay.deleteLater()
+            # The worker outlives this window: connected so that its answers
+            # stop reaching it once it is deleted
+            self._relays = [
+                connect_while_alive(signal, self, lambda request, answer, handler=handler:
+                                    handler(worker, request, answer))
+                for signal, handler in ((worker.gas_listed, self._on_listed),
+                                        (worker.gas_failed, self._on_failed),
+                                        (worker.gas_set, self._on_set),
+                                        (worker.gas_set_failed, self._on_set_failed))]
             self._pending = None
             self._setting.clear()
         return worker

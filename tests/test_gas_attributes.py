@@ -148,3 +148,44 @@ def test_window_lists_sets_and_holds_values_by_scripts(qt_app, monkeypatch):
         dialog.close()
         panel.shutdown()
         panel.deleteLater()
+
+
+def test_answers_after_the_window_closed_reach_it_no_more(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import sys
+
+    import shiboken6  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QCoreApplication, QEvent, Qt  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.ui.widgets import scripts
+    from grembyte.ui.widgets.gas_attributes import GasAttributesDialog
+    from grembyte.ui.widgets.object_browser import ObjectBrowserDialog
+
+    # The worker of the scripts tab outlives the windows; a request may still
+    # be answered after one closed (Fatekeeper: "GUObjectArray not found"
+    # once a second, with "Live" on). An exception in a slot only reaches
+    # the excepthook.
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda *error: errors.append(error))
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    translations = load_translations("de")
+    panel = scripts.ScriptPanel(translations)
+    panel.set_process(4242)
+    try:
+        gas = GasAttributesDialog(translations, panel)
+        browser = ObjectBrowserDialog(translations, panel, is_framework=lambda _name: False)
+        worker = panel._worker
+        for dialog in (gas, browser):
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            dialog.close()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert not shiboken6.isValid(gas) and not shiboken6.isValid(browser)
+        for request in range(1, len(worker.requests) + 1):
+            worker.gas_failed.emit(request, "the object table (GUObjectArray) was not found")
+            worker.gas_listed.emit(request, _STATE)
+            worker.browse_failed.emit(request, "the object table (GUObjectArray) was not found")
+        qt_app.processEvents()
+        assert not errors, errors
+    finally:
+        panel.shutdown()
+        panel.deleteLater()
