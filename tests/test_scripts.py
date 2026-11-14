@@ -62,13 +62,15 @@ def test_the_dialog_builds_a_script_and_rejects_busy_loops(qt_app, language):
     assert dialog.spec == ScriptSpec("return 1;", "manual", 0.0, False, "Later")
 
 
-def test_only_manual_scripts_keep_a_hotkey(qt_app):
+def test_manual_and_repeating_scripts_keep_a_hotkey(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
     from PySide6.QtGui import QKeySequence  # pylint: disable=import-error,no-name-in-module
 
     from grembyte.ui.widgets.scripts import ScriptDialog, timing_text
 
-    assert ScriptSpec("return 1;", "repeat", 5, hotkey="F9").hotkey == ""
+    # A repeating script's hotkey pauses and resumes it; one that runs once has none
+    assert ScriptSpec("return 1;", "repeat", 5, hotkey="F9").hotkey == "F9"
+    assert ScriptSpec("return 1;", "once", 5, hotkey="F9").hotkey == ""
     assert ScriptSpec("return 1;", hotkey="shift+ctrl+g").hotkey == "Ctrl+Shift+G"
     translations = load_translations("en")
     dialog = ScriptDialog(translations)
@@ -85,8 +87,15 @@ def test_only_manual_scripts_keep_a_hotkey(qt_app):
     dialog.hotkey_edit.setKeySequence(QKeySequence("Ctrl+Tab"))
     dialog._accept()
     assert dialog.spec is None and "Tab" in dialog.error_label.text()
+    dialog.hotkey_edit.setKeySequence(QKeySequence("F9"))
     dialog.mode_combo.setCurrentIndex(dialog.mode_combo.findData("repeat"))
     dialog.seconds_spin.setValue(30)
+    assert dialog.hotkey_edit.isEnabled()
+    dialog._accept()
+    assert dialog.spec.hotkey == "F9"
+    assert timing_text(translations, dialog.spec) == "Every 30 s, F9"
+    dialog = ScriptDialog(translations, spec=dialog.spec)
+    dialog.mode_combo.setCurrentIndex(dialog.mode_combo.findData("once"))
     assert not dialog.hotkey_edit.isEnabled()
     dialog._accept()
     assert dialog.spec.hotkey == ""
@@ -94,10 +103,13 @@ def test_only_manual_scripts_keep_a_hotkey(qt_app):
 
 def test_the_panel_runs_manual_scripts_by_their_hotkeys(qt_app, monkeypatch):
     # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from grembyte.core import sounds
     from grembyte.ui.widgets import scripts
     from tests.test_hotkeys import FakeKeyboard
 
     keyboard = FakeKeyboard(focused=4242)
+    played = []
+    monkeypatch.setattr(sounds, "play", played.append)
     monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
     monkeypatch.setattr(scripts, "open_reader", lambda: keyboard)
     panel = scripts.ScriptPanel(load_translations("en"))
@@ -119,9 +131,41 @@ def test_the_panel_runs_manual_scripts_by_their_hotkeys(qt_app, monkeypatch):
             ("run", gold, None)]
         assert "Ctrl+G" in panel.log_view.toPlainText()
 
+        # Once the run is in: its sound (a script returning true switched
+        # something on); a run the hotkey did not start makes none
+        worker.script_ran.emit(gold, {"result": "true", "error": None})
+        assert played == [sounds.ON]
+        worker.script_ran.emit(gold, {"result": "1", "error": None})
+        assert played == [sounds.ON]
+        keyboard.down = set()
+        panel._hotkeys.poll()
+        keyboard.down = {"ctrl", "G"}
+        panel._hotkeys.poll()
+        worker.script_failed.emit(gold, "ReferenceError: x")
+        assert played == [sounds.ON, sounds.ERROR]
+
+        # A repeating script's hotkey pauses it and resumes it, with the
+        # sounds of switching off and on; listened for while it is paused
+        heal = panel.add_script(ScriptSpec("return 3;", "repeat", 10, label="Heal",
+                                           hotkey="F8"))
+        worker.script_added.emit(heal)
+        for down, enabled, sound in ((True, False, sounds.OFF), (False, True, sounds.ON)):
+            keyboard.down = set()
+            panel._hotkeys.poll()
+            keyboard.down = {"F8"}
+            panel._hotkeys.poll()
+            assert panel._scripts[heal]["spec"].enabled == enabled
+            assert worker.requests[-1] == ("update", heal, panel._scripts[heal]["spec"])
+            assert played[-1] == sound
+        assert "F8: \"Heal\" paused" in panel.log_view.toPlainText()
+        assert "F8: \"Heal\" resumed" in panel.log_view.toPlainText()
+        # Never run by it
+        assert ("run", heal, None) not in worker.requests
+
         # Without a script with a hotkey it stops listening
         panel.remove_script(gold)
         panel.remove_script(paused)
+        panel.remove_script(heal)
         assert not panel._hotkeys._timer.isActive()
     finally:
         panel.shutdown()
@@ -166,8 +210,8 @@ def test_the_address_search_folds_away_and_stays_so(qt_app, tmp_path, monkeypatc
         window = open_window()
         file_menu = window.menuBar().actions()[0].menu()
         file_actions = file_menu.actions()
-        assert file_actions[-2].isSeparator()
-        assert file_actions[-1] == window.act_check_gadget
+        assert file_actions[-3].isSeparator()
+        assert file_actions[-2:] == [window.act_check_gadget, window.act_launch_option]
         assert window.act_check_gadget.isEnabled() == (main_window.sys.platform != "win32")
         assert not window.act_check_gadget.icon().isNull()
         assert not window._scan_area.isHidden() and window.act_scan_area.isChecked()

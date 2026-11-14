@@ -7,7 +7,8 @@ ProcessEvent, Mono: mono_runtime_invoke on Unity's main thread). When it
 runs is its ``mode``:
 
 ``"once"``    some ``seconds`` after it is started (each time grembyte attaches)
-``"repeat"``  every ``seconds``; the next run is timed when one has ended
+``"repeat"``  every ``seconds``; the next run is timed when one has ended;
+              its ``hotkey`` pauses and resumes it
 ``"manual"``  only when asked (``run_now``): by the user, or by its ``hotkey``
               while the game has the focus (see grembyte.core.hotkeys)
 
@@ -109,6 +110,8 @@ from grembyte.features.monitor import build_agent_source
 
 
 MODES = ("once", "repeat", "manual")
+# The modes a hotkey works for: it runs a manual script, pauses and resumes a repeating one
+HOTKEY_MODES = ("manual", "repeat")
 # A repeating script runs at most this often
 MIN_REPEAT_SECONDS = 0.1
 # What a parameter's value is
@@ -204,8 +207,9 @@ def choice_matches(value, text):
 class ScriptSpec:
     """The code of a script and when it runs (see the module's docstring).
 
-    ``hotkey`` runs a manual script with its parameters' defaults
-    (``Ctrl+Shift+G``, see grembyte.core.hotkeys; "" for none).
+    ``hotkey`` runs a manual script with its parameters' defaults, or pauses
+    and resumes a repeating one (``Ctrl+Shift+G``, see grembyte.core.hotkeys;
+    "" for none; a script that runs once has none).
     """
 
     source: str
@@ -225,7 +229,7 @@ class ScriptSpec:
             raise messages.LocalizedValueError("error.scripts.repeat_minimum",
                                               seconds=MIN_REPEAT_SECONDS)
         self.params = tuple(self.params)
-        self.hotkey = hotkeys.normalized(self.hotkey) if self.mode == "manual" else ""
+        self.hotkey = (hotkeys.normalized(self.hotkey) if self.mode in HOTKEY_MODES else "")
         names = [param.name for param in self.params]
         for name in names:
             if names.count(name) > 1:

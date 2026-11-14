@@ -9,7 +9,8 @@ starts and installs the hooks, method hooks and scripts the window saved for
 that program (see ``grembyte.db.models.Process``). It needs no window: the
 game is set up once in Grembyte, then played through the launch option.
 Manual scripts with a hotkey run when it is pressed while the game has the
-focus (grembyte.core.hotkeys); other manual scripts are left out.
+focus (grembyte.core.hotkeys), repeating ones pause or resume; other manual
+scripts are left out.
 
 Finding the game
     Every process of the launch carries ``GREMBYTE_LAUNCHER=<pid>`` in its
@@ -94,6 +95,7 @@ def build_parser(translations):
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--delay", type=float, default=DEFAULT_DELAY_S, metavar="SECONDS",
                         help=help_text("cli.option_delay"))
+    parser.add_argument("--no-sound", action="store_true", help=help_text("cli.option_no_sound"))
     parser.add_argument("command", nargs=argparse.REMAINDER,
                         help=help_text("cli.option_command"))
     return parser
@@ -225,14 +227,17 @@ def _setup():
             logs.log.error("cannot write the activity log: %s", error)
 
 
-def run(child_pid, delay):
-    """Watch the launch of ``child_pid`` until it ends; returns its exit code."""
+def run(child_pid, delay, sound=True):
+    """Watch the launch of ``child_pid`` until it ends; returns its exit code.
+    Without ``sound`` hotkeys play no sound, whatever the settings say."""
     # pylint: disable=import-outside-toplevel
     from PySide6.QtCore import QCoreApplication, QTimer  # pylint: disable=no-name-in-module
-    from grembyte.core import logs
+    from grembyte.core import logs, settings
 
     try:
         _setup()
+        if not sound:
+            settings.apply({"hotkey_sounds": False})  # for this run only, not stored
     except Exception as error:  # pylint: disable=broad-exception-caught
         # The game runs on without Grembyte.
         print(f"grembyte-cli: {error}", file=sys.stderr, flush=True)
@@ -545,9 +550,13 @@ class AttachedGame:
         # hook id -> saved row, per kind
         self.saved = {"hooks": {}, "method_hooks": {}, "scripts": {}}
         self.backend = None
-        # script id -> hotkey of the manual scripts the scripts worker runs
+        # script id -> hotkey of the manual and repeating scripts the scripts
+        # worker runs; script id -> its ScriptSpec
         self.hotkeyed = {}
+        self.specs = {}
         self.hotkeys = None
+        # The scripts a hotkey started whose run is due: they sound once it is in
+        self.hotkey_runs = set()
 
     def start(self):
         # pylint: disable=import-outside-toplevel
@@ -597,6 +606,7 @@ class AttachedGame:
         self.saved[kind] = {}
         if kind == "scripts":
             self.hotkeyed = {}
+            self.specs = {}
         if kind == "hooks":
             worker = create_hook_worker(self.backend, self.pid)
             rows = self.hook_repository.list_hooks(self.process_id)
@@ -621,13 +631,17 @@ class AttachedGame:
                 continue
             item_id = worker.add_script(spec) if kind == "scripts" else worker.add_hook(spec)
             self.saved[kind][item_id] = saved
-            if kind == "scripts" and spec.hotkey and spec.enabled:
-                self.hotkeyed[item_id] = spec.hotkey
+            if kind == "scripts":
+                self.specs[item_id] = spec
+                # A repeating script's hotkey also resumes it while paused
+                if spec.hotkey and (spec.enabled or spec.mode == "repeat"):
+                    self.hotkeyed[item_id] = spec.hotkey
         if kind == "scripts":
             self._listen_for_hotkeys()
 
     def _listen_for_hotkeys(self):
-        """Run the manual scripts by their hotkeys (see grembyte.core.hotkeys)."""
+        """Run the manual scripts by their hotkeys, pause and resume the
+        repeating ones (see grembyte.core.hotkeys)."""
         # pylint: disable=import-outside-toplevel
         from grembyte.core.hotkeys import HotkeyListener
         from grembyte.platform.keyboard import open_reader
@@ -648,9 +662,32 @@ class AttachedGame:
         if worker is None:
             return
         for item_id, wanted in self.hotkeyed.items():
-            if wanted == hotkey:
-                say("cli.hotkey_pressed", hotkey=hotkey, label=self._label("scripts", item_id))
-                worker.run_now(item_id)
+            if wanted != hotkey:
+                continue
+            spec = self.specs.get(item_id)
+            if spec is not None and spec.mode == "repeat":
+                self._toggle(worker, item_id, spec, hotkey)
+                continue
+            say("cli.hotkey_pressed", hotkey=hotkey, label=self._label("scripts", item_id))
+            self.hotkey_runs.add(item_id)
+            worker.run_now(item_id)
+
+    def _toggle(self, worker, item_id, spec, hotkey):
+        """A repeating script's hotkey: pause or resume it, saved as the
+        window's pause button saves it, with the sound of switching off or on."""
+        # pylint: disable=import-outside-toplevel
+        import dataclasses
+        from grembyte.core import settings, sounds
+        spec = dataclasses.replace(spec, enabled=not spec.enabled)
+        self.specs[item_id] = spec
+        worker.update_script(item_id, spec)
+        saved = self.saved["scripts"].get(item_id)
+        if saved is not None:
+            self.script_repository.update_script(saved.id, enabled=spec.enabled)
+        say("cli.hotkey_resumed" if spec.enabled else "cli.hotkey_paused", hotkey=hotkey,
+            label=self._label("scripts", item_id))
+        if settings.get("hotkey_sounds"):
+            sounds.play(sounds.ON if spec.enabled else sounds.OFF)
 
     def _label(self, kind, item_id):
         saved = self.saved[kind].get(item_id)
@@ -670,8 +707,7 @@ class AttachedGame:
         worker.worker_failed.connect(mine(lambda message: self._on_worker_failed(kind, message)))
         if kind == "scripts":
             worker.script_added.connect(mine(self._on_script_added))
-            worker.script_failed.connect(mine(lambda item_id, message: say(
-                "cli.script_failed", label=self._label(kind, item_id), message=message)))
+            worker.script_failed.connect(mine(self._on_script_failed))
             worker.script_ran.connect(mine(self._on_script_ran))
             return
         worker.hook_installed.connect(mine(lambda item_id, _info: say(
@@ -722,7 +758,22 @@ class AttachedGame:
         else:
             say(f"cli.script_{saved.mode}", label=label, seconds=f"{saved.seconds:g}")
 
+    def _on_script_failed(self, item_id, message):
+        say("cli.script_failed", label=self._label("scripts", item_id), message=message)
+        self._sound(item_id, error=message or True)
+
+    def _sound(self, item_id, result=None, error=None):
+        """The sound of a run a hotkey started (see grembyte.core.sounds)."""
+        # pylint: disable=import-outside-toplevel
+        from grembyte.core import settings, sounds
+        if item_id not in self.hotkey_runs:
+            return
+        self.hotkey_runs.discard(item_id)
+        if settings.get("hotkey_sounds"):
+            sounds.play(sounds.feedback(result, error))
+
     def _on_script_ran(self, item_id, result):
+        self._sound(item_id, result.get("result"), result.get("error"))
         if result.get("error"):
             say("cli.script_failed", label=self._label("scripts", item_id),
                 message=result["error"])
@@ -767,13 +818,14 @@ class AttachedGame:
 # Entry point
 # ----------------------------------------------------------------------
 def split_arguments(argv):
-    """``(delay, wants_help, command)`` of grembyte-cli's arguments.
+    """``(delay, wants_help, command, sound)`` of grembyte-cli's arguments
+    (``sound``: False with ``--no-sound``).
 
     Its options come first; the command starts at the first other word (or
     after ``--``). Nothing here may fail: the game must start whatever was
     typed in front of it. A delay that is no number keeps the default.
     """
-    delay, wants_help = DEFAULT_DELAY_S, False
+    delay, wants_help, sound = DEFAULT_DELAY_S, False, True
     words = list(argv)
     while words:
         word = words[0]
@@ -783,6 +835,9 @@ def split_arguments(argv):
         if word in ("-h", "--help"):
             wants_help = True
             words.pop(0)
+        elif word == "--no-sound":
+            sound = False
+            words.pop(0)
         elif word == "--delay" and len(words) >= 2:
             delay = _seconds(words[1], delay)
             del words[:2]
@@ -791,7 +846,7 @@ def split_arguments(argv):
             words.pop(0)
         else:
             break
-    return delay, wants_help, words
+    return delay, wants_help, words, sound
 
 
 def _seconds(text, default):
@@ -803,11 +858,11 @@ def _seconds(text, default):
 
 
 def main(argv=None):
-    delay, wants_help, command = split_arguments(sys.argv[1:] if argv is None else argv)
+    delay, wants_help, command, sound = split_arguments(sys.argv[1:] if argv is None else argv)
     child = os.environ.get(CHILD_ENV)
     if child is not None:
         # Executed anew, the game runs already.
-        return run(int(child), delay)
+        return run(int(child), delay, sound)
     if command:
         # The game first: whatever goes wrong in Grembyte later, it runs.
         try:
@@ -827,12 +882,13 @@ def main(argv=None):
         if not command:
             return 0 if wants_help else 2
     if needs_clean_environment(os.environ):
-        own = [sys.executable, "-m", "grembyte.cli", "--delay", str(delay)]
+        own = [sys.executable, "-m", "grembyte.cli", "--delay", str(delay),
+               *(() if sound else ("--no-sound",))]
         try:
             os.execve(sys.executable, own, clean_environment(os.environ, child_pid))
         except OSError as error:
             print(f"grembyte-cli: {error}", file=sys.stderr)
-    return run(child_pid, delay)
+    return run(child_pid, delay, sound)
 
 
 if __name__ == "__main__":

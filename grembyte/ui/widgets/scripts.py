@@ -35,9 +35,10 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 from sqlalchemy.exc import SQLAlchemyError
 
-from grembyte.core import hotkeys, messages
+from grembyte.core import hotkeys, messages, settings, sounds
 from grembyte.features.scripts import (
-    MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker, params_to_json, spec_from_saved)
+    HOTKEY_MODES, MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker, params_to_json,
+    spec_from_saved)
 from grembyte.platform.keyboard import open_reader
 from grembyte.hooks.syntax import BODY
 from grembyte.ui.widgets.code_editor import CodeEditor
@@ -85,7 +86,8 @@ def timing_text(translations, spec):
             return translations["scripts.timing_hotkey"].format(hotkey=spec.hotkey)
         return translations["scripts.timing_manual"]
     seconds = f"{spec.seconds:g}"
-    return translations[f"scripts.timing_{spec.mode}"].format(seconds=seconds)
+    text = translations[f"scripts.timing_{spec.mode}"].format(seconds=seconds)
+    return f"{text}, {spec.hotkey}" if spec.hotkey else text
 
 
 class ScriptDialog(QDialog):
@@ -153,9 +155,9 @@ class ScriptDialog(QDialog):
         self._enabled = spec.enabled if spec else True
 
     def _update_seconds(self):
-        manual = self.mode_combo.currentData() == "manual"
-        self.seconds_spin.setEnabled(not manual)
-        self.hotkey_edit.setEnabled(manual)
+        mode = self.mode_combo.currentData()
+        self.seconds_spin.setEnabled(mode != "manual")
+        self.hotkey_edit.setEnabled(mode in HOTKEY_MODES)
 
     def hotkey(self):
         """The hotkey typed in, as Qt writes it ("" for none)."""
@@ -185,7 +187,7 @@ class ScriptDialog(QDialog):
                 self.translations["scripts.error_interval"].format(seconds=MIN_REPEAT_SECONDS))
             return
         try:
-            hotkey = hotkeys.normalized(self.hotkey()) if mode == "manual" else ""
+            hotkey = hotkeys.normalized(self.hotkey()) if mode in HOTKEY_MODES else ""
         except ValueError as error:
             self.error_label.setText(messages.describe(error))
             return
@@ -230,6 +232,8 @@ class ScriptPanel(QGroupBox):
         self._worker = None
         # runs manual scripts by their hotkeys while the game has the focus
         self._hotkeys = None
+        # The scripts a hotkey started whose run is due: they sound once it is in
+        self._hotkey_runs = set()
         # the inspectors of objects scripts returned (with the worker's agent)
         self.inspections = None
         # objects scripts returned, by their number in the log's links
@@ -447,6 +451,7 @@ class ScriptPanel(QGroupBox):
         inspectors opened from its results close: their objects are gone."""
         worker = self._worker
         self._worker = None
+        self._hotkey_runs.clear()
         if self._hotkeys is not None:
             self._hotkeys.close()
             self._hotkeys = None
@@ -626,9 +631,11 @@ class ScriptPanel(QGroupBox):
     # Hotkeys
     # ------------------------------------------------------------------
     def _hotkey_scripts(self, hotkey=None):
-        """The ids of the active manual scripts with a hotkey (``hotkey`` only)."""
+        """The ids of the scripts with a hotkey (``hotkey`` only): the active
+        manual ones, and the repeating ones, paused or not (it resumes them)."""
         return [script_id for script_id, state in self._scripts.items()
-                if state["spec"].hotkey and state["spec"].enabled
+                if state["spec"].hotkey
+                and (state["spec"].enabled or state["spec"].mode == "repeat")
                 and state["status"] not in _STOPPED
                 and (hotkey is None or state["spec"].hotkey == hotkey)]
 
@@ -655,10 +662,15 @@ class ScriptPanel(QGroupBox):
         for script_id in self._hotkey_scripts(hotkey):
             if self._scripts[script_id]["status"] == "starting":
                 continue
-            label = self._scripts[script_id]["spec"].label or f"#{script_id}"
+            spec = self._scripts[script_id]["spec"]
+            label = spec.label or f"#{script_id}"
+            if spec.mode == "repeat":
+                self._toggle_by_hotkey(script_id, spec, hotkey, label)
+                continue
             self._log(f"{datetime.now().strftime('%H:%M:%S')} " + self.translations[
                 "scripts.hotkey_pressed"].format(hotkey=hotkey, label=label))
             self._set_status(script_id, "running")
+            self._hotkey_runs.add(script_id)
             self._worker.run_now(script_id)
 
     # ------------------------------------------------------------------
@@ -721,6 +733,7 @@ class ScriptPanel(QGroupBox):
         if worker is not self._worker or script_id not in self._scripts:
             return
         message = message.splitlines()[0] if message else message
+        self._sound_hotkey_run(script_id, error=message or True)
         self._set_status(script_id, "failed", message)
         self.status_label.setText(self.translations["scripts.failed"].format(message=message))
 
@@ -750,9 +763,29 @@ class ScriptPanel(QGroupBox):
             state["last"] = run.get("result") or "—"
             if run.get("result"):
                 self._log(f"{time} {label}: = {run['result']}", run.get("target"), label)
+        self._sound_hotkey_run(script_id, run.get("result"), error)
         self._show(script_id)
         if state["status"] == "running":
             self._set_status(script_id, "active" if state["spec"].enabled else "paused")
+
+    def _toggle_by_hotkey(self, script_id, spec, hotkey, label):
+        """A repeating script's hotkey: pause it, or resume it (as the pause
+        button does, saved), with the sound of switching off or on."""
+        enabled = not spec.enabled
+        self._replace_spec(script_id, dataclasses.replace(spec, enabled=enabled))
+        key = "scripts.hotkey_resumed" if enabled else "scripts.hotkey_paused"
+        self._log(f"{datetime.now().strftime('%H:%M:%S')} "
+                  + self.translations[key].format(hotkey=hotkey, label=label))
+        if settings.get("hotkey_sounds"):
+            sounds.play(sounds.ON if enabled else sounds.OFF)
+
+    def _sound_hotkey_run(self, script_id, result=None, error=None):
+        """The sound of a run a hotkey started (see grembyte.core.sounds)."""
+        if script_id not in self._hotkey_runs:
+            return
+        self._hotkey_runs.discard(script_id)
+        if settings.get("hotkey_sounds"):
+            sounds.play(sounds.feedback(result, error))
 
     def _on_worker_failed(self, worker, message):
         if worker is not self._worker:
