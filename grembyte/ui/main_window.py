@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 from PySide6.QtCore import (  # pylint: disable=import-error,no-name-in-module
     Qt, QSize, QTimer, QSettings, QUrl, Slot,
 )
-from PySide6.QtGui import QActionGroup, QDesktopServices  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QActionGroup, QDesktopServices, QGuiApplication  # pylint: disable=import-error,no-name-in-module
 
 from grembyte import __version__
 from grembyte.ui.links import BUG_REPORT_URL, docs_url
@@ -109,7 +109,7 @@ from grembyte.ui.widgets.scripts import ScriptPanel
 from grembyte.ui.widgets.memory_view import MemoryViewerDialog
 from grembyte.ui.widgets.settings_dialog import SettingsDialog
 from grembyte.ui.widgets.theme_dialog import ThemeDialog
-from grembyte.core import activity, cli_link, logs, messages, sessions
+from grembyte.core import activity, cli_link, launch_option, logs, messages, sessions
 from grembyte.core import settings as app_settings
 from grembyte.ui import workers
 from grembyte.ui.widgets.log_view import ErrorReporter, LogDialog, LogSignals
@@ -617,6 +617,12 @@ class MainWindow(QMainWindow):
             material_icon("refresh"), self.translations["menu.check_gadget"])
         self.act_check_gadget.setEnabled(sys.platform != "win32")
         self.act_check_gadget.triggered.connect(self._check_wine_gadgets)
+        # grembyte-cli runs on Linux only (it finds the game through /proc)
+        self.act_launch_option = file_menu.addAction(
+            material_icon("content_copy"), self.translations["menu.launch_option"])
+        self.act_launch_option.setToolTip(self.translations["menu.launch_option_tooltip"])
+        self.act_launch_option.setVisible(sys.platform.startswith("linux"))
+        self.act_launch_option.triggered.connect(self._copy_launch_option)
 
         settings_menu = menu_bar.addMenu(self.translations["menu.settings"])
         settings_menu.setToolTipsVisible(True)
@@ -2828,6 +2834,15 @@ class MainWindow(QMainWindow):
             if panel is not None:
                 panel.set_process(None)
                 panel.set_process(self._current_pid, self._process_id)
+
+    def _copy_launch_option(self):
+        """Put the Steam launch option for grembyte-cli on the clipboard."""
+        option = launch_option.launch_option()
+        if option is None:
+            self.lbl_status.setText(self.translations["launch_option.no_cli"])
+            return
+        QGuiApplication.clipboard().setText(option)
+        self.lbl_status.setText(self.translations["launch_option.copied"].format(option=option))
 
     def _check_wine_gadgets(self):
         """Check cached gadgets for this Frida version and offer missing ones."""
