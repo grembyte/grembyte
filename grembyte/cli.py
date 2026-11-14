@@ -494,6 +494,8 @@ class WindowLink:
         from grembyte.core import logs
         self.launch = launch
         self.claims = []
+        # Every open connection, claimed or not, so close() can cut them loose
+        self.connections = []
         self.path = cli_link.socket_path(os.getpid())
         self.server = QLocalServer(parent)
         QLocalServer.removeServer(self.path)
@@ -505,6 +507,7 @@ class WindowLink:
     def _on_connection(self):
         while self.server.hasPendingConnections():
             connection = self.server.nextPendingConnection()
+            self.connections.append(connection)
             connection.readyRead.connect(lambda c=connection: self._on_read(c))
             connection.disconnected.connect(lambda c=connection: self._on_disconnected(c))
 
@@ -521,6 +524,8 @@ class WindowLink:
             connection.flush()
 
     def _on_disconnected(self, connection):
+        if connection in self.connections:
+            self.connections.remove(connection)
         if connection in self.claims:
             self.claims.remove(connection)
             if not self.claims:
@@ -528,6 +533,17 @@ class WindowLink:
         connection.deleteLater()
 
     def close(self):
+        # The sockets are children of the server. Left open (the window still
+        # holds the game when it ends), Qt destroys them at exit, and their
+        # destructor emits disconnected into _on_disconnected with a wrapper
+        # PySide already invalidated. Cut them loose while they are alive.
+        for connection in self.connections:
+            connection.readyRead.disconnect()
+            connection.disconnected.disconnect()
+            connection.abort()
+            connection.deleteLater()
+        self.connections.clear()
+        self.claims.clear()
         self.server.close()
         cli_link.remove_files(os.getpid())
 

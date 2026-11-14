@@ -401,3 +401,42 @@ def test_grembyte_cli_runs_manual_scripts_by_their_hotkeys(monkeypatch, capsys):
     assert 'Script "Gold" runs on Ctrl+G.' in output
     assert 'F8: script "Regenerate" resumed.' in output
     assert 'F8: script "Regenerate" paused.' in output
+
+
+def test_the_window_link_closes_while_the_window_still_holds_the_game(tmp_path, monkeypatch):
+    # The game ended while the window held it: closing must not run the
+    # disconnect handler on sockets Qt is already destroying.
+    # pylint: disable=import-outside-toplevel,import-error,no-name-in-module
+    import shiboken6
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import QObject
+    from PySide6.QtWidgets import QApplication
+
+    from grembyte.core import cli_link
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    app = QApplication.instance() or QApplication([])
+    calls = []
+    launch = SimpleNamespace(target=(11, "game"), release=lambda: calls.append("release") or True,
+                             resume=lambda: calls.append("resume"))
+    parent = QObject()
+    link = cli.WindowLink(launch, parent)
+    result = {}
+    thread = threading.Thread(target=lambda: result.update(
+        claim=cli_link.claim({"pid": os.getpid()}, 11, timeout=10)))
+    thread.start()
+    deadline = time.monotonic() + 10
+    while thread.is_alive() and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    thread.join()
+    assert calls == ["release"] and len(link.connections) == 1
+
+    link.close()
+    shiboken6.delete(parent)  # what happens to the server at exit
+    app.processEvents()
+    # Closing is not the window letting go: nothing is resumed.
+    assert calls == ["release"]
+    assert not link.connections
+    result["claim"].release()
