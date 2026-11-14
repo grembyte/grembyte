@@ -232,6 +232,16 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
 - Learned: Avowed's `FUObjectItem` is 0x14 bytes (packed), not 0x18; FField's owner is a
   tagged 8-byte pointer (Next at 0x18, name at 0x20), older UE5 has 16 bytes there. Hence
   item size and offsets are measured, not assumed.
+- Learned (2026-11-14): **Fatekeeper** (a newer UE5, Proton) changed three layouts the
+  agent had assumed. `FChunkedFixedUObjectArray` has no `PreAllocatedObjects` and the counts
+  come first: Objects, NumElements, MaxElements, NumChunks, MaxChunks. `FUObjectItem`
+  (0x18) starts with the 64-bit `FlagsAndRefCount`, so the object pointer is at +8, not +0;
+  SerialNumber stays at 0x10. `FFieldClass` has a vtable, so its name is at +8. The agent
+  now tries both object table layouts and both places of the object pointer, and measures
+  the name offset of `FFieldClass` on `Vector.X`. Without that, Grembyte could not find
+  `GUObjectArray`, and then the inspector and the GAS window failed with "access violation
+  accessing 0x6aa0" (the vtable read as a name index). The stand-in game in
+  `tests/test_unreal.py` builds this layout with `FATEKEEPER_LAYOUT`.
 - Learned: on Linux most of `.bss` is an anonymous mapping right after the module, which
   Frida's `Module.enumerateRanges` leaves out; the agent adds the ranges that follow the
   module's own.

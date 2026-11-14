@@ -3,7 +3,7 @@
 import time
 
 import shiboken6  # pylint: disable=import-error,no-name-in-module
-from PySide6.QtCore import QThread  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QObject, QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from grembyte.ui import workers
 
@@ -39,3 +39,37 @@ def test_a_worker_deleted_before_it_started_is_dropped():
     shiboken6.delete(worker)
     assert workers.stop_workers(0)
     assert not workers.running_workers()
+
+
+class _Emitter(QThread):
+    """Emits ``answer`` from its own thread, as a worker does."""
+
+    answer = Signal(int, str)
+
+    def run(self):
+        self.answer.emit(7, "seven")
+
+
+def test_connections_end_with_their_receiver(qt_app):
+    receiver = QObject()
+    emitter = _Emitter()
+    got = []
+    relay = workers.connect_while_alive(emitter.answer, receiver,
+                                        lambda number, text: got.append((number, text)))
+    try:
+        emitter.start()
+        emitter.wait(5000)
+        _wait_for(qt_app, lambda: got)
+        assert got == [(7, "seven")]
+
+        # The receiver deleted (a window closed): its relay goes with it
+        shiboken6.delete(receiver)
+        assert not shiboken6.isValid(relay)
+        got.clear()
+        emitter.start()
+        emitter.wait(5000)
+        qt_app.processEvents()
+        emitter.answer.emit(8, "eight")
+        assert not got
+    finally:
+        emitter.wait(5000)

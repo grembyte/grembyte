@@ -4,10 +4,14 @@ A QThread destroyed while its thread still runs aborts the application. Its
 ``finished`` signal is emitted from the thread just before the thread ends, so
 a slot of ``finished`` that drops the last reference may destroy it too early.
 Workers of windows that close are kept here until then.
+
+A window that closes while a worker lives on (one of the scripts tab, say)
+connects its signals with ``connect_while_alive``: a lambda connected to it
+would outlive the window and touch its deleted widgets.
 """
 
 import shiboken6  # pylint: disable=import-error,no-name-in-module
-from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QObject, QThread, Signal  # pylint: disable=import-error,no-name-in-module
 
 from grembyte.attach.wine_gadget import ensure_gadget
 
@@ -32,6 +36,28 @@ class GadgetDownloadWorker(QThread):
         except Exception as error:  # pylint: disable=broad-exception-caught
             self.error = str(error)
         self.completed.emit()
+
+
+class _Relay(QObject):  # pylint: disable=too-few-public-methods
+    """Passes a signal on to ``slot``; a child of the receiver, so Qt drops the
+    connection when the receiver is deleted."""
+
+    def __init__(self, slot, parent):
+        super().__init__(parent)
+        self._slot = slot
+
+    def relay(self, *args):
+        """The connected slot."""
+        self._slot(*args)
+
+
+def connect_while_alive(signal, receiver, slot):
+    """Connect ``signal`` to ``slot`` (any callable) for as long as QObject
+    ``receiver`` lives; returns the relay, whose ``deleteLater`` disconnects
+    it earlier."""
+    relay = _Relay(slot, receiver)
+    signal.connect(relay.relay)
+    return relay
 
 
 def keep_until_finished(worker):

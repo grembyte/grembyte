@@ -38,6 +38,7 @@ from grembyte.ui.widgets.code_explorer import BoundedComboBox
 from grembyte.ui.widgets.docking import PinButton
 from grembyte.ui.widgets.icons import set_button_icon, theme_qcolor
 from grembyte.ui.widgets.labels import DocsHint
+from grembyte.ui.workers import connect_while_alive
 
 _NAME, _COUNT, _PACKAGE, _SINGLETON = range(4)
 _COLUMNS = ("objects.column_name", "objects.column_count", "objects.column_package",
@@ -108,6 +109,7 @@ class ObjectBrowserDialog(QDialog):
         self.is_framework = is_framework
         self.engine = engine
         self._worker = None
+        self._relays = []  # the connections to the worker's answers
         self._pending = None  # request id of the classes asked for
         self._loading = {}  # request id -> klass whose objects were asked for
         self._classes = []
@@ -209,14 +211,17 @@ class ObjectBrowserDialog(QDialog):
         worker = self.panel.worker()
         if worker is not None and worker is not self._worker:
             self._worker = worker
-            worker.classes_browsed.connect(lambda request, answer: self._on_classes(
-                worker, request, answer))
-            worker.browse_failed.connect(lambda request, message: self._on_classes_failed(
-                worker, request, message))
-            worker.instances_browsed.connect(lambda request, answer: self._on_instances(
-                worker, request, answer))
-            worker.instances_failed.connect(lambda request, message: self._on_instances_failed(
-                worker, request, message))
+            for relay in self._relays:
+                relay.deleteLater()
+            # The worker outlives this window: connected so that its answers
+            # stop reaching it once it is deleted
+            self._relays = [
+                connect_while_alive(signal, self, lambda request, answer, handler=handler:
+                                    handler(worker, request, answer))
+                for signal, handler in ((worker.classes_browsed, self._on_classes),
+                                        (worker.browse_failed, self._on_classes_failed),
+                                        (worker.instances_browsed, self._on_instances),
+                                        (worker.instances_failed, self._on_instances_failed))]
             self._pending = None
             self._loading.clear()
         return worker

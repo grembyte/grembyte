@@ -259,6 +259,12 @@ Pillars of Eternity, Might & Magic X – Legacy (Unity 4.2, 32-bit) and Vampire 
   code, not just another method name in configuration.
 - UE4 before 4.23 (`TNameEntryArray` instead of `FNamePool`) and 32-bit games are not
   supported.
+- Tests across Unreal versions: the adapter has been checked in a few games (Avowed, Gothic
+  Remake, Queen's Domain, Fatekeeper), and each newer engine moved something (Fatekeeper:
+  object table header and item, `FFieldClass`). Check the reflection layouts on a range of
+  engine versions, UE 4.23 to the newest UE5. Small sample projects or games of known
+  version could be used. Add a stand-in variant to `tests/test_unreal.py` for each layout
+  found.
 
 ### IL2CPP: open
 
