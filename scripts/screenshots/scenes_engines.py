@@ -649,18 +649,17 @@ def call_graph(studio):
         Call("newobj", _framework("StoreTransactionEvent", ".ctor", "(Item,int)",
                                   "System.Void", "Assembly-CSharp")),
     ]
-    dialog._on_callees(dialog._callee_request, finalize, callees, [])
+    request = next(iter(dialog._requests))
+    dialog._on_callees(request, finalize, callees, [])
     dialog.search_callers()
-    dialog._on_callers(dialog._caller_request, finalize, [
+    request = next(iter(dialog._requests))
+    dialog._on_callers(request, finalize, [
         Call("call", _BY_NAME["UIStoreStorePage:OnConfirmClicked"]),
         Call("call", _method("UIStoreStorePage", "<Start>m__2A3", "(UnityEngine.GameObject)",
                                  static=True)),
         Call("call", _method("UIStoreStorePage", "OnKeyConfirm", "(KeyControl)",
                              "System.Boolean")),
     ], [])
-    dialog.findChild(QSplitter).setSizes([480, 240])
-    dialog.callees_table.selectRow(5)
-    dialog.callees_table.setFocus()
     return dialog
 
 
@@ -947,8 +946,10 @@ def _reference_dialog(studio, address, class_name):
         dialog = studio.keep(reference_graph.ReferenceGraphDialog(
             studio.translations, _ReferencePanel(), _POE_PID, address, class_name, _EDER,
             parent=studio.window))
-    dialog.progress.hide()
-    dialog.index = object()  # read: the way to a root can be looked for
+    # Read already: no dots, and the way to a root can be looked for
+    dialog._index_worker = None
+    dialog.index = object()
+    dialog._update_buttons()
     return dialog
 
 

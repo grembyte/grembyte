@@ -61,6 +61,8 @@ SETTINGS = (
             step=500_000),
     # Whether the reference graph shows holders in memory no object covers
     Setting("reference_other_memory", BOOL, False),
+    # Graphs (references, calls): what unfolding a node shows at most
+    Setting("graph_max_nodes", INT, 100, minimum=10, maximum=1000, step=10),
     Setting("wine_gadget_download", BOOL, False),
     Setting("language", CHOICE, "system", choices=("system", "de", "en"), restart=True),
     # Size of the whole interface in percent (Qt's scale factor, read at start)

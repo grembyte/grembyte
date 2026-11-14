@@ -132,11 +132,14 @@ Method hook scripts can reach other game code: `ctx.call` calls a static method,
 
 ## Call graph
 
-For Mono games the call graph shows which methods a method calls and which call it, read from the IL code. Open it with **Calls …** on a method of the catalog.
+For Mono games the call graph shows which methods a method calls and which call it, read from the IL code, drawn like the [reference graph](../guide/reference-graph.md). Open it with **Calls …** on a method of the catalog. The method stands in the middle, the methods it calls to its right, in the order of the code, and the methods calling it to its left.
 
-- **Calls (in the order of the code)** lists the calls in the method's IL code. For a virtual method or an interface it names the method the code was compiled against, not the override that runs; async methods and iterators are followed into the code the compiler made for them.
-- **Called by** lists the methods of the game's assemblies (or the [assembly selection](#assemblies)) that call it. **Search callers** reads the assemblies' code the first time, later from the cache. A method without callers there may still be called through delegates, reflection, virtually or by the engine.
-- A double click goes to a method; **Back** and **Forward** move through the methods visited.
+- **What it calls** comes from the method's IL code. For a virtual method or an interface it names the method the code was compiled against, not the override that runs; async methods and iterators are followed into the code the compiler made for them (labelled `async`). Edges of calls other than plain calls say how: `newobj` (a constructor), `ldftn` (a delegate or lambda) …
+- **Who calls it**: **Search callers** reads the code of the game's assemblies (or the [assembly selection](#assemblies)) the first time, later from the cache; from then on every method put in the middle shows its callers at once. A method without callers there may still be called through delegates, reflection, virtually or by the engine.
+- **Double-click** a method to unfold it the way it stands: a method on the right shows what it calls, one on the left its callers, the method in the middle its callers. Double-click it again to fold that in. A **+** on a side means there is more to unfold that way.
+- **Framework methods** (`mscorlib`, `UnityEngine` …) are left out unless ticked; they count in a method's **+n**, as do the methods beyond [Settings](../guide/settings.md) → *Graphs* → *Nodes shown per unfolding at most* (100 by default).
+- The **context menu of a method**: show or fold in its callers and the methods it calls, **Start from this method** (it moves to the middle; **Back** and **Forward** return), **Monitor**, **Copy signature**, **Highlight the way to the method in the middle**, **Hide** and **Hide all *Class***. The background's: **Fit**, **Clear the highlight**, **Show hidden (n)** and **Export as HTML**.
+- **Ctrl + mouse wheel** zooms, dragging the background moves the graph. **Copy signature** and **Monitor** below act on the method selected, else on the one in the middle.
 
 <figure markdown="span">
   ![Call graph](../assets/screenshots/call-graph-dark.webp#only-dark)

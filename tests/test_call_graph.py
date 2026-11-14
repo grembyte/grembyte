@@ -118,15 +118,18 @@ def test_a_generic_instance_keeps_its_signature():
     assert call.method.token == 0x0600000e
 
 
-def test_dialog_navigates_and_searches_callers(monkeypatch):
-    # pylint: disable=import-outside-toplevel,protected-access,too-many-locals
+def test_dialog_draws_the_calls_as_a_graph(monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access,too-many-locals,too-many-statements
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QApplication, QMenu  # pylint: disable=import-error,no-name-in-module
+    from grembyte.core import settings
     from grembyte.engines.registry import engine_by_id
     from grembyte.features.call_graph import CallGraphWorker
+    from grembyte.features.call_graph_model import CALLEES, CALLERS, method_key
     from grembyte.ui.localization import load_translations
     from grembyte.ui.widgets.call_graph import CallGraphDialog
+    from tests.test_object_browser import _python_owned
 
     _app = QApplication.instance() or QApplication([])
     asked = []
@@ -136,39 +139,94 @@ def test_dialog_navigates_and_searches_callers(monkeypatch):
     monkeypatch.setattr(CallGraphWorker, "callers",
                         lambda self, method: asked.append(("callers", method.name)) or len(asked))
     methods = {m.token: m for m in catalog_methods("Assembly-CSharp", _CLASSES)}
-    load, load_bin, move_next = methods[0x06000001], methods[0x06000002], methods[0x06000004]
+    load, load_bin, lambda_, move_next = (methods[0x06000001], methods[0x06000002],
+                                          methods[0x06000003], methods[0x06000004])
+    concat = CatalogMethod("mscorlib", "System.String", "Concat", "(string,string)",
+                           "System.String", True, 0x06000100,
+                           "System.String:Concat (string,string)")
+
+    def menu_texts(key):
+        menu = QMenu()
+        dialog.fill_menu(menu, key)
+        return [action.text() for action in menu.actions() if not action.isSeparator()]
 
     dialog = CallGraphDialog(load_translations("de"), 4242, load, engine=engine_by_id("mono"))
     monitored = []
     dialog.monitor_requested.connect(monitored.append)
     try:
-        assert asked == [("callees", "Load")]
-        dialog._worker.callees_found.emit(1, load, [], [Call("call", load_bin)])
-        assert dialog.callees_table.item(0, 0).text() == "call · async"
-        assert dialog.callees_table.item(0, 1).text() == "Game.Loader:LoadBin (string)"
+        center = dialog.graph.center
+        # Every widget left to Qt (see test_the_windows_leave_their_widgets_to_qt)
+        assert _python_owned(dialog) == []
+        assert asked == [("callees", "Load")] and dialog.busy.is_busy()
+        dialog._worker.callees_found.emit(1, load, [Call("ldftn", lambda_), Call("call", concat)],
+                                          [Call("call", load_bin)])
+        assert not dialog.busy.is_busy()
         assert "async-Teil" in dialog.status_label.text()
+        # Called methods to the right, labelled how they are called; the
+        # framework's only counted
+        bin_key, lambda_key = method_key(load_bin), method_key(lambda_)
+        assert set(dialog._items) == {center, bin_key, lambda_key}
+        assert dialog._items[bin_key].pos().x() > dialog._items[center].pos().x()
+        # In the order of the code: the lambda before the async part's call
+        assert dialog._items[lambda_key].pos().y() < dialog._items[bin_key].pos().y()
+        labels = {edge.callee: edge.label for edge in dialog.graph.edges}
+        assert labels[bin_key] == "async" and labels[lambda_key] == "ldftn"
+        assert "2 von 3 aufgerufenen Methoden gezeigt" in dialog._items[center].toolTip()
+        dialog.framework_check.setChecked(True)
+        assert method_key(concat) in dialog._items
+        dialog.framework_check.setChecked(False)
 
-        # Callers: searched once, then for every method gone to.
+        # Callers: searched once, to the left
+        assert dialog.callers_button.isEnabled()
         dialog.callers_button.click()
+        assert asked[-1] == ("callers", "Load") and not dialog.callers_button.isEnabled()
         dialog._worker.progress.emit(0, 2, "Assembly-CSharp")
-        assert "Assembly-CSharp (0 von 2)" in dialog.callers_progress.format()
+        assert "Assembly-CSharp (0 von 2)" in dialog.status_label.text()
         dialog._worker.callers_found.emit(2, load, [Call("call", move_next)], [])
-        assert dialog.callers_table.item(0, 1).text() == "Game.Loader:Load (async)"
+        caller = method_key(move_next)
+        assert dialog._items[caller].pos().x() < dialog._items[center].pos().x()
+        assert dialog.graph.nodes[caller].name == "Load (async)"
 
-        dialog.callees_table.setCurrentCell(0, 1)
+        # A double click unfolds the way the method stands, a second folds it in
+        dialog._activated(dialog._items[bin_key])
+        assert asked[-1] == ("callees", "LoadBin")
+        dialog._worker.callees_found.emit(len(asked), load_bin, [Call("call", lambda_)], [])
+        assert dialog.graph.nodes[bin_key].unfolded[CALLEES]
+        assert "Aufgerufene Methoden einklappen" in menu_texts(bin_key)
+        dialog._activated(dialog._items[bin_key])
+        assert not dialog.graph.nodes[bin_key].unfolded[CALLEES]
+        dialog._activated(dialog._items[caller])
+        assert asked[-1] == ("callers", "MoveNext")
+        assert {"Aufrufer zeigen", "Von dieser Methode ausgehen", "Ausblenden"} <= set(
+            menu_texts(lambda_key))
+
+        # The setting limits what an unfolding shows
+        settings.apply({"graph_max_nodes": 10})
+        try:
+            many = [CatalogMethod("Assembly-CSharp", "Game.Many", f"M{number}", "()",
+                                  "System.Void", False, 0x06001000 + number,
+                                  f"Game.Many:M{number} ()") for number in range(12)]
+            dialog._activated(dialog._items[lambda_key])
+            dialog._worker.callees_found.emit(len(asked), lambda_,
+                                              [Call("call", method) for method in many], [])
+            assert dialog.graph.nodes[lambda_key].shown[CALLEES] == 10
+        finally:
+            settings.apply({"graph_max_nodes": 100})
+
+        # The method chosen goes to the monitor; another one becomes the centre
+        dialog._items[bin_key].setSelected(True)
         dialog.monitor_button.click()
         assert monitored == [load_bin]
-        dialog.callees_table.cellDoubleClicked.emit(0, 1)
-        assert dialog.method == load_bin and asked[-2:] == [("callees", "LoadBin"),
-                                                            ("callers", "LoadBin")]
-        # An answer for the method left behind is not shown.
-        dialog._worker.callees_found.emit(1, load, [Call("call", load_bin)], [])
-        assert dialog.callees_table.rowCount() == 0
-
+        dialog.go_to(load_bin)
+        # Callers were searched once: from now on for every centre
+        assert asked[-2:] == [("callees", "LoadBin"), ("callers", "LoadBin")]
+        assert not dialog.graph.nodes[dialog.graph.center].unfolded[CALLERS]
+        # An answer for the graph left behind is not shown
+        dialog._worker.callees_found.emit(1, load, [Call("call", lambda_)], [])
+        assert set(dialog._items) == {dialog.graph.center}
         dialog.back_button.click()
         assert dialog.method == load and dialog.forward_button.isEnabled()
-        dialog.forward_button.click()
-        assert dialog.method == load_bin and not dialog.forward_button.isEnabled()
+        assert "<svg" in dialog.render_html()
     finally:
         dialog.close()
 

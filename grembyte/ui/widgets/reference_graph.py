@@ -1,36 +1,16 @@
 """Window of the reference graph: which objects hold an object, up to the roots."""
 
-from dataclasses import dataclass
 from datetime import datetime
 
 import shiboken6  # pylint: disable=import-error,no-name-in-module
-from PySide6.QtCore import (  # pylint: disable=import-error,no-name-in-module
-    QPointF,
-    QRectF,
-    Qt,
-    Signal,
-)
-from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
-    QBrush,
-    QFont,
-    QGuiApplication,
-    QPainter,
-    QPainterPath,
-    QPen,
-    QPolygonF,
-)
+from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtGui import QGuiApplication  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QButtonGroup,
     QCheckBox,
     QDialog,
     QFileDialog,
-    QGraphicsItem,
-    QGraphicsPathItem,
-    QGraphicsPolygonItem,
-    QGraphicsRectItem,
     QGraphicsScene,
-    QGraphicsSimpleTextItem,
-    QGraphicsView,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -61,21 +41,20 @@ from grembyte.ui.localization import language_code
 from grembyte.ui.widgets import graph_export
 from grembyte.ui.widgets.busy import BusyDots
 from grembyte.ui.widgets.docking import PinButton
+from grembyte.ui.widgets.graph_canvas import (
+    GraphView,
+    NodeBox,
+    column_positions,
+    draw_edge,
+    short_class,
+)
 from grembyte.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 from grembyte.ui.widgets.labels import DocsHint
 from grembyte.ui.workers import connect_while_alive, keep_until_finished
 
-# Layout of the graph, in scene pixels
-NODE_WIDTH = 230
-NODE_HEIGHT = 46
-COLUMN_GAP = 150
-ROW_GAP = 22
-ZOOM_STEP = 1.15
 # Locations named per request to the agent: the Wine gadget drops messages
 # to the agent above 128 KiB (see docs/development/implementation-notes.md)
 RESOLVE_BATCH = 2000
-# Text of a node line at most, in characters
-MAX_LINE = 34
 # How a node or edge is marked: on the way to a root found by the search, or
 # on the way from a node to the object the user asked to highlight; the
 # theme colour of each
@@ -98,17 +77,6 @@ def find_reference_opener(widget):
             return opener if can is None or can() else None
         node = node.parentWidget() if hasattr(node, "parentWidget") else None
     return None
-
-
-def short_class(name):
-    """A class name without its namespace (generic arguments kept)."""
-    head, bracket, rest = (name or "?").partition("<")
-    return head.rsplit(".", 1)[-1] + bracket + rest
-
-
-def _clip(text, limit=MAX_LINE):
-    text = " ".join(str(text).split())
-    return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
 def node_lines(node, translations):
@@ -180,107 +148,14 @@ def node_tooltip(node, translations, hidden=0, hidden_user=0, hidden_filter=0,
 def layout_positions(graph, hidden=()):
     """``{key: QPointF}`` of the nodes' top left corners: the target on the
     right, each step to its holders a column further left (the other way,
-    TARGETS: on the left, what it points to further right); in a column the
-    nodes follow the order of the nodes they lead from, which keeps edges
-    from crossing. Nodes of the kinds ``hidden`` are left out."""
-    depth = graph.depths(hidden)
+    TARGETS: on the left, what it points to further right). Nodes of the
+    kinds ``hidden`` are left out (see graph_canvas.column_positions)."""
     side = -1 if graph.direction == HOLDERS else 1
-    columns = {}
-    for key, steps in depth.items():
-        columns.setdefault(steps, []).append(key)
-    row_of = {graph.target: 0.0}
-    positions = {}
-    for steps in sorted(columns):
-        keys = columns[steps]
-        if steps > 0:
-            def place(key, steps=steps):
-                rows = [row_of[other] for other in graph.leading(key)
-                        if depth.get(other) == steps - 1]
-                return (min(rows) if rows else 0.0, key)
-            keys.sort(key=place)
-        middle = (len(keys) - 1) / 2
-        for row, key in enumerate(keys):
-            row_of[key] = row
-            positions[key] = QPointF(side * steps * (NODE_WIDTH + COLUMN_GAP),
-                                     (row - middle) * (NODE_HEIGHT + ROW_GAP))
-    return positions
+    return column_positions({key: side * steps for key, steps in graph.depths(hidden).items()},
+                            graph.leading)
 
 
-@dataclass
-class EdgeRoute:
-    """How an edge is drawn: its line, the arrow's tip and which way it points
-    (1: right, -1: left), and where its label goes (``align``: which side of
-    the label ``label`` is: "center", "right" or "left")."""
-
-    path: QPainterPath
-    tip: QPointF
-    direction: int
-    label: QPointF
-    align: str
-
-
-def edge_route(start, end):
-    """The EdgeRoute from a holder to the node it holds (their top left corners).
-
-    Holders usually stand one column left of what they hold: the edge runs
-    from the holder's right side to the held node's left side, labelled in
-    the gap between. A holder can also stand in the same column (an array
-    and an object both holding the target, the array also holding the
-    object) or further right: those edges never cross the nodes of a column.
-    The same column's loop out to the left, into the gap before the column,
-    labelled at its outermost point; one running backwards goes from the
-    holder's left side to the held node's right side.
-    """
-    if end.x() - start.x() > NODE_WIDTH / 2:
-        source, tip, direction = right_mid(start), left_mid(end), 1
-    elif abs(end.x() - start.x()) <= NODE_WIDTH / 2:
-        source, tip = left_mid(start), left_mid(end)
-        # Further out the further apart, never past a third of the gap
-        bulge = min(COLUMN_GAP / 3, 18 + abs(tip.y() - source.y()) * 0.1)
-        # A cubic curve reaches 3/4 of the way to its control points
-        out = source.x() - bulge * 4 / 3
-        path = QPainterPath(source)
-        path.cubicTo(QPointF(out, source.y()), QPointF(out, tip.y()), tip)
-        middle = path.pointAtPercent(0.5)
-        return EdgeRoute(path, tip, 1, QPointF(middle.x() - 4, middle.y()), "right")
-    else:
-        source, tip, direction = left_mid(start), right_mid(end), -1
-    middle = (source.x() + tip.x()) / 2
-    path = QPainterPath(source)
-    path.cubicTo(QPointF(middle, source.y()), QPointF(middle, tip.y()), tip)
-    if direction == 1 or abs(tip.x() - source.x()) <= COLUMN_GAP + 1:
-        point = path.pointAtPercent(0.5)
-        return EdgeRoute(path, tip, direction, QPointF(point.x(), point.y() - 10), "center")
-    # Backwards over several columns: labelled in the gap beside the held node
-    return EdgeRoute(path, tip, direction, QPointF(tip.x() + 12, tip.y() - 12), "left")
-
-
-# How often a label moves off the others before it stays where it is
-MAX_LABEL_MOVES = 6
-
-
-def free_place(rect, taken):
-    """``rect`` moved up or down, by its height a step, as little as it
-    takes to overlap none of ``taken``; where it was if no place is near."""
-    step = rect.height() + 1
-    for move in range(MAX_LABEL_MOVES + 1):
-        for sign in (1, -1) if move else (1,):
-            candidate = rect.translated(0, sign * move * step)
-            if not any(candidate.intersects(other) for other in taken):
-                return candidate
-    return rect
-
-
-def left_mid(corner):
-    """The middle of the left side of the node with top left corner ``corner``."""
-    return QPointF(corner.x(), corner.y() + NODE_HEIGHT / 2)
-
-
-def right_mid(corner):
-    return QPointF(corner.x() + NODE_WIDTH, corner.y() + NODE_HEIGHT / 2)
-
-
-class NodeItem(QGraphicsRectItem):
+class NodeItem(NodeBox):
     """One node of the graph: a box with two lines of text."""
 
     def __init__(self, node, translations, target=False, hidden=0, hidden_user=0,
@@ -289,92 +164,29 @@ class NodeItem(QGraphicsRectItem):
         """``hidden`` of the locations holding it are not shown (other
         memory), ``hidden_user`` because the user hid them, ``hidden_filter``
         because only singletons are shown."""
-        super().__init__(0, 0, NODE_WIDTH, NODE_HEIGHT)
-        self.node = node
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
-        self.setAcceptHoverEvents(True)
-        self.setToolTip(node_tooltip(node, translations, hidden, hidden_user, hidden_filter,
-                                     direction))
-        self.setBrush(QBrush(theme_qcolor("surface")))
-        self._target = target
-        self.set_highlight(None)
         hidden += hidden_user + hidden_filter
         first, second = node_lines(node, translations)
-        title = QGraphicsSimpleTextItem(_clip(first), self)
-        font = QFont(title.font())
-        font.setBold(True)
-        title.setFont(font)
-        title.setBrush(QBrush(theme_qcolor("text")))
-        title.setPos(10, 5)
-        detail = QGraphicsSimpleTextItem(_clip(second), self)
-        detail.setBrush(QBrush(theme_qcolor("muted")))
-        detail.setPos(10, 25)
-        if node.can_expand:
-            # A handle on the left: there are holders to unfold
-            marker = QGraphicsSimpleTextItem("+", self)
-            marker.setFont(font)
-            marker.setBrush(QBrush(theme_qcolor("accent")))
-            marker.setPos(-14, NODE_HEIGHT / 2 - 10)
-        elif node.kind == OBJECT and node.total > node.shown - hidden:
-            # In the bottom right corner (an address is short there), clear
-            # of the arrows coming in on the left
-            more = QGraphicsSimpleTextItem(f"+{node.total - node.shown + hidden}", self)
-            more.setBrush(QBrush(theme_qcolor("muted")))
-            more.setPos(NODE_WIDTH - 8 - more.boundingRect().width(), 25)
+        # A handle on the left: there is more to unfold
+        more = (node.total - node.shown + hidden
+                if not node.can_expand and node.kind == OBJECT and node.total > node.shown - hidden
+                else None)
+        super().__init__(node, first, second,
+                         node_tooltip(node, translations, hidden - hidden_user - hidden_filter,
+                                      hidden_user, hidden_filter, direction),
+                         expand_left=node.can_expand, more=more)
+        self._target = target
+        self.set_highlight(None)
 
-    def set_highlight(self, mark):
-        """Draw the node as part of a marked way (``mark``: ROOT_PATH or
-        MARKED_PATH) or, with None, as usual."""
+    def border(self, mark):
         node = self.node
+        style = Qt.PenStyle.DashLine if node.kind == UNKNOWN else Qt.PenStyle.SolidLine
         if mark is not None:
-            color, width = theme_qcolor(_MARK_COLORS[mark]), 2.5
-        elif self._target:
-            color, width = theme_qcolor("accent"), 2.5
-        elif node.is_root:
-            color, width = theme_qcolor("success"), 2
-        else:
-            color, width = theme_qcolor("border"), 1.2
-        pen = QPen(color, width)
-        if node.kind == UNKNOWN:
-            pen.setStyle(Qt.PenStyle.DashLine)
-        self.setPen(pen)
-
-
-class GraphView(QGraphicsView):
-    """The scene's view: drag to move, Ctrl+wheel to zoom."""
-
-    # the NodeItem double-clicked
-    node_activated = Signal(object)
-
-    def __init__(self, scene, parent=None):
-        super().__init__(scene, parent)
-        self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        self.setBackgroundBrush(QBrush(theme_qcolor("background")))
-
-    def wheelEvent(self, event):  # pylint: disable=invalid-name
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            factor = ZOOM_STEP if event.angleDelta().y() > 0 else 1 / ZOOM_STEP
-            self.scale(factor, factor)
-            event.accept()
-            return
-        super().wheelEvent(event)
-
-    def node_at(self, position):
-        """The NodeItem at ``position`` (viewport coordinates), or None."""
-        item = self.itemAt(position)
-        while item is not None and not isinstance(item, NodeItem):
-            item = item.parentItem()
-        return item
-
-    def mouseDoubleClickEvent(self, event):  # pylint: disable=invalid-name
-        item = self.node_at(event.position().toPoint())
-        if item is None:
-            super().mouseDoubleClickEvent(event)
-            return
-        self.node_activated.emit(item)
-        event.accept()
+            return theme_qcolor(_MARK_COLORS[mark]), 2.5, style
+        if self._target:
+            return theme_qcolor("accent"), 2.5, style
+        if node.is_root:
+            return theme_qcolor("success"), 2, style
+        return theme_qcolor("border"), 1.2, style
 
 
 class ReferenceGraphDialog(QDialog):
@@ -741,7 +553,7 @@ class ReferenceGraphDialog(QDialog):
 
     def _finish(self, graph, key, linked, total, quiet=False):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
-        graph.add_holders(key, linked, total)
+        graph.add_holders(key, linked, total, limit=settings.get("graph_max_nodes"))
         node = graph.nodes[key]
         t = self.translations
         holders = graph.direction == HOLDERS
@@ -927,44 +739,14 @@ class ReferenceGraphDialog(QDialog):
     def _draw_edge(self, start, end, label, mark, taken):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         """An arrow from the holder (top left corner ``start``) to the held
-        node (``end``), its label where ``edge_route`` puts it, or moved up
-        or down off the labels already ``taken`` (their QRectFs); ``mark``
-        as in NodeItem.set_highlight."""
-        route = edge_route(start, end)
+        node (``end``), see graph_canvas.draw_edge; ``mark`` as in
+        NodeItem.set_highlight."""
         color = theme_qcolor("muted" if mark is None else _MARK_COLORS[mark])
-        line = QGraphicsPathItem(route.path)
-        line.setPen(QPen(color, 1.2 if mark is None else 2))
-        # Marked ways above the others where lines cross
-        line.setZValue(-2 if mark is None else -1)
-        self.scene.addItem(line)
-        tip, back = route.tip, -9 * route.direction
-        arrow = QGraphicsPolygonItem(QPolygonF([
-            tip, QPointF(tip.x() + back, tip.y() - 5), QPointF(tip.x() + back, tip.y() + 5)]))
-        arrow.setBrush(QBrush(color))
-        arrow.setPen(QPen(color))
-        self.scene.addItem(arrow)
-        if label:
-            text = QGraphicsSimpleTextItem(_clip(label, 26))
-            text.setBrush(QBrush(theme_qcolor("text")))
-            text.setToolTip(label)
-            width = text.boundingRect().width()
-            height = text.boundingRect().height()
-            point = route.label
-            left = {"center": point.x() - width / 2, "right": point.x() - width}.get(
-                route.align, point.x())
-            rect = free_place(QRectF(left - 3, point.y() - height / 2 - 1, width + 6, height + 2),
-                              taken)
-            taken.append(rect)
-            text.setPos(rect.x() + 3, rect.y() + 1)
-            box = QGraphicsRectItem(rect)
-            box.setBrush(QBrush(theme_qcolor("background")))
-            box.setPen(QPen(Qt.PenStyle.NoPen))
-            self.scene.addItem(box)
-            self.scene.addItem(text)
+        draw_edge(self.scene, start, end, label, color, mark is not None, taken)
 
     def fit(self):
         """Zoom so that the whole graph fits the window."""
-        self.view.fitInView(self.scene.itemsBoundingRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self.view.fit()
 
     # --- Actions -------------------------------------------------------------------
     def _selected(self):

@@ -49,7 +49,8 @@ KIND, BY_USER, FILTERED = "kind", "user", "filtered"
 # in native memory, at lower addresses than the engine's objects, so far
 # more are looked at than shown.
 MAX_REFERRERS = 5000
-# Holders shown per node at most: roots first, then objects
+# Holders shown per node at most: roots first, then objects (the windows pass
+# the setting graph_max_nodes)
 MAX_HOLDERS = 100
 # How the holders are ordered when there are more than MAX_HOLDERS
 HOLDER_ORDER = {STATIC: 0, MODULE: 1, OBJECT: 2, STACK: 3, UNKNOWN: 4}

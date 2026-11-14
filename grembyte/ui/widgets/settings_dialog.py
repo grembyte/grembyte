@@ -33,7 +33,8 @@ _SETTING_CATEGORIES = (
                          "pointer_value_alignment")),
     ("trace", "track_changes", ("wine_trace_limit", "large_trace", "trace_sequence")),
     ("hooks", "webhook", ("hook_short_jump", "hook_repatch", "hook_profiling")),
-    ("objects", "account_tree", ("object_browser_limit", "reference_other_memory")),
+    ("objects", "account_tree", ("object_browser_limit",)),
+    ("graphs", "hub", ("graph_max_nodes", "reference_other_memory")),
     ("wine", "wine_bar", ("wine_gadget_download",)),
 )
 
