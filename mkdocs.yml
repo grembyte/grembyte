@@ -87,6 +87,7 @@ nav:
   - Getting started:
       - Installation: getting-started/installation.md
       - Permissions: getting-started/permissions.md
+      - How Grembyte works: getting-started/how-it-works.md
       - Wine and Proton: wine-proton.md
       - "Tutorial: your first hook": getting-started/first-hook.md
   - User guide:
