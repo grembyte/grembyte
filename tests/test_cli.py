@@ -16,14 +16,17 @@ from tests.test_hooks import requires_target
 
 def test_split_arguments_takes_options_before_the_command():
     assert cli.split_arguments(["--delay", "2", "/game", "--delay", "9"]) == (
-        2.0, False, ["/game", "--delay", "9"])
-    assert cli.split_arguments(["--delay=0.5", "--", "-game"]) == (0.5, False, ["-game"])
-    assert cli.split_arguments(["-h"]) == (cli.DEFAULT_DELAY_S, True, [])
+        2.0, False, ["/game", "--delay", "9"], True)
+    assert cli.split_arguments(["--delay=0.5", "--", "-game"]) == (0.5, False, ["-game"], True)
+    assert cli.split_arguments(["-h"]) == (cli.DEFAULT_DELAY_S, True, [], True)
     # Whatever is typed, the command is kept and the delay stays sane.
     assert cli.split_arguments(["--delay", "soon", "/game"]) == (
-        cli.DEFAULT_DELAY_S, False, ["/game"])
+        cli.DEFAULT_DELAY_S, False, ["/game"], True)
     assert cli.split_arguments(["--delay", "-3", "/game"]) == (
-        cli.DEFAULT_DELAY_S, False, ["/game"])
+        cli.DEFAULT_DELAY_S, False, ["/game"], True)
+    # Sound off for this launch, the game's own options untouched
+    assert cli.split_arguments(["--no-sound", "/game", "--no-sound"]) == (
+        cli.DEFAULT_DELAY_S, False, ["/game", "--no-sound"], False)
 
 
 def test_clean_environment_drops_steams_loader_settings():
@@ -275,7 +278,8 @@ def test_grembyte_cli_runs_manual_scripts_by_their_hotkeys(monkeypatch, capsys):
 
     from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
 
-    from grembyte.core import messages
+    from grembyte.core import messages, sounds
+    from grembyte.core import settings as app_settings
     from grembyte.features import scripts
     from grembyte.platform import keyboard as keyboard_module
     from grembyte.ui.localization import load_translations
@@ -297,6 +301,7 @@ def test_grembyte_cli_runs_manual_scripts_by_their_hotkeys(monkeypatch, capsys):
             for name in ("worker_failed", "script_added", "script_failed", "script_ran"):
                 setattr(self, name, getattr(self.signals, name))
             self.runs = []
+            self.updates = []
 
         def start(self):
             pass
@@ -306,6 +311,9 @@ def test_grembyte_cli_runs_manual_scripts_by_their_hotkeys(monkeypatch, capsys):
 
         def run_now(self, script_id, args=None):
             self.runs.append((script_id, args))
+
+        def update_script(self, script_id, spec):
+            self.updates.append((script_id, spec.enabled))
 
         def requestInterruption(self):  # pylint: disable=invalid-name
             pass
@@ -317,6 +325,8 @@ def test_grembyte_cli_runs_manual_scripts_by_their_hotkeys(monkeypatch, capsys):
             return False
 
     keyboard = FakeKeyboard(focused=4242)
+    played = []
+    monkeypatch.setattr(sounds, "play", played.append)
     monkeypatch.setattr(scripts, "ScriptWorker", FakeWorker)
     monkeypatch.setattr(keyboard_module, "open_reader", lambda: keyboard)
 
@@ -325,23 +335,69 @@ def test_grembyte_cli_runs_manual_scripts_by_their_hotkeys(monkeypatch, capsys):
                                seconds=5.0, enabled=enabled, params=None, hotkey=hotkey)
 
     rows = [row(1, "Gold", "manual", "Ctrl+G"), row(2, "Heal", "manual"),
-            row(3, "Paused", "manual", "F9", enabled=False), row(4, "Tick", "repeat")]
-    repository = SimpleNamespace(list_scripts=lambda _process_id: rows)
+            row(3, "Paused", "manual", "F9", enabled=False), row(4, "Tick", "repeat"),
+            row(5, "Regenerate", "repeat", "F8", enabled=False)]
+    stored = []
+    repository = SimpleNamespace(
+        list_scripts=lambda _process_id: rows,
+        update_script=lambda row_id, **fields: stored.append((row_id, fields)))
     game = cli.AttachedGame(4242, "PillarsOfEternity", 1, None, repository)
     game._start("scripts")
     try:
         worker = game.workers["scripts"]
-        assert game.hotkeys is not None and game.hotkeyed == {1: "Ctrl+G"}
+        # A paused repeating script's hotkey is listened for: it resumes it
+        assert game.hotkeys is not None and game.hotkeyed == {1: "Ctrl+G", 4: "F8"}
         game.hotkeys.poll()
         keyboard.down = {"ctrl", "G"}
         game.hotkeys.poll()
         assert worker.runs == [(1, None)]
         worker.script_ran.emit(1, {"result": "Gold +1000", "error": None})
         worker.script_added.emit(1)
+        # A sound for a run the hotkey started, once it is in; none for the others
+        assert played == [sounds.SUCCESS]
+        worker.script_ran.emit(4, {"result": "tick", "error": None})
+        worker.script_ran.emit(1, {"result": "again", "error": None})
+        assert played == [sounds.SUCCESS]
+        for result, error, sound in (("true", None, sounds.ON), ("false", None, sounds.OFF),
+                                     ("", "TypeError: x", sounds.ERROR)):
+            keyboard.down = set()
+            game.hotkeys.poll()
+            keyboard.down = {"ctrl", "G"}
+            game.hotkeys.poll()
+            worker.script_ran.emit(1, {"result": result, "error": error})
+            assert played[-1] == sound
+        keyboard.down = set()
+        game.hotkeys.poll()
+        keyboard.down = {"ctrl", "G"}
+        game.hotkeys.poll()
+        worker.script_failed.emit(1, "the session ended")
+        assert played[-1] == sounds.ERROR and len(played) == 5
+        # The repeating script: resumed, then paused, saved; never run
+        for enabled, sound in ((True, sounds.ON), (False, sounds.OFF)):
+            keyboard.down = set()
+            game.hotkeys.poll()
+            keyboard.down = {"F8"}
+            game.hotkeys.poll()
+            assert worker.updates[-1] == (4, enabled)  # the worker's id
+            assert stored[-1] == (5, {"enabled": enabled})  # the saved row's
+            assert played[-1] == sound
+        assert (4, None) not in worker.runs
+        del played[5:]
+        # Off in the settings (or by --no-sound): silent
+        app_settings.apply({"hotkey_sounds": False})
+        keyboard.down = set()
+        game.hotkeys.poll()
+        keyboard.down = {"ctrl", "G"}
+        game.hotkeys.poll()
+        worker.script_ran.emit(1, {"result": "Gold +1000", "error": None})
+        assert len(played) == 5
     finally:
+        app_settings.reset()
         game.stop()
     assert keyboard.closed
     output = capsys.readouterr().err
     assert 'Ctrl+G: running script "Gold".' in output
     assert 'Script "Gold": Gold +1000' in output
     assert 'Script "Gold" runs on Ctrl+G.' in output
+    assert 'F8: script "Regenerate" resumed.' in output
+    assert 'F8: script "Regenerate" paused.' in output

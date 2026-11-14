@@ -29,6 +29,7 @@ A link, not a copy: it keeps using Grembyte's virtual environment, and updates o
 | Option | Meaning |
 | --- | --- |
 | `--delay SECONDS` | How long to wait after the game was found before attaching (default 5). Raise it for games that load their engine slowly. |
+| `--no-sound` | No [sound](scripts.md#hotkeys) when a hotkey ran its script, for this launch; the setting stays as it is. |
 | `-h`, `--help` | Show the options. |
 
 Options go before `%command%`, for example `grembyte-cli --delay 15 %command%` (with the full path, unless you linked it as above).
@@ -36,7 +37,7 @@ Options go before `%command%`, for example `grembyte-cli --delay 15 %command%` (
 ## What it installs
 
 - **Hooks** and **method hooks**, as the hook panel restores them at attach. A hook that learns its callers or its C# method keeps them, as in the window.
-- **Scripts** that run once or repeatedly, and manual scripts with a [hotkey](scripts.md#hotkeys): pressed in the game, it runs the script with the defaults of its parameters. Manual scripts without a hotkey are left out: only the window can run them.
+- **Scripts** that run once or repeatedly, and manual scripts with a [hotkey](scripts.md#hotkeys): pressed in the game, it runs the script with the defaults of its parameters. The hotkey of a repeating script pauses and resumes it, and the change is saved, as in the window. Manual scripts without a hotkey are left out: only the window can run them.
 - If a session ends while the game still runs, `grembyte-cli` starts it again up to three times.
 
 Its messages go to the terminal (start Steam from a terminal to see them) and to `grembyte.log` (see [Files and environment](../reference/files.md)).

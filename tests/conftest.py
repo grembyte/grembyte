@@ -23,6 +23,16 @@ def _private_window_state(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _silent_sounds(monkeypatch):
+    """No hotkey sounds while the tests run (see grembyte.core.sounds); a test
+    that checks them puts a recorder in ``sounds.play``."""
+    # pylint: disable=import-outside-toplevel
+    from grembyte.core import sounds
+
+    monkeypatch.setattr(sounds, "play", lambda _sound: None)
+
+
+@pytest.fixture(autouse=True)
 def _english_messages():
     """Undo the language a window chose for error messages (see grembyte.core.messages)."""
     # pylint: disable=import-outside-toplevel

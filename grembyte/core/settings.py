@@ -67,6 +67,8 @@ SETTINGS = (
     Setting("language", CHOICE, "system", choices=("system", "de", "en"), restart=True),
     # Size of the whole interface in percent (Qt's scale factor, read at start)
     Setting("ui_scale", INT, 100, minimum=100, maximum=150, step=10, restart=True),
+    # A short sound once a hotkey ran its script (window and grembyte-cli)
+    Setting("hotkey_sounds", BOOL, True),
     Setting("scan_aligned", BOOL, True),
     # Pointer scan: "auto" is the pointer size of the scanned process
     Setting("pointer_location_step", CHOICE, "auto", choices=("auto", "4")),

@@ -12,6 +12,7 @@
 | Setting | Meaning |
 | --- | --- |
 | Language | Deutsch, English, or as the system (the default). Takes effect at the next start. |
+| Sound when a hotkey ran its script | On by default: a short system sound once a script started by its [hotkey](scripts.md#hotkeys) has run, for success, an error, or a script that switched something on or off; and when a hotkey paused or resumed a repeating script. In the window at once, in `grembyte-cli` at its next start. |
 | Interface size (%) | Enlarges text, icons and spacing of the whole interface, from 100 % (the default) to 150 % in steps of 10 %. Takes effect at the next start and adds to the scaling of the desktop. Only the code fields can also be [zoomed on their own](../reference/javascript.md#where-javascript-is-used). |
 | Refresh remembered addresses every (ms) | How often tracked addresses read their values (default 1000, 100 to 10 000). |
 | Record the activity log | Write the [activity log](tools.md#log-and-activity) (off by default). Takes effect at once. |

@@ -196,27 +196,7 @@ never deleted) and the delete dialog. Open:
   started under two Proton versions has two sets. Showing the notes of all processes of the
   same name (as the export groups them) would avoid that.
 
-### 11. Script hotkeys: sound feedback and timed scripts
-
-Manual scripts can have a [hotkey](docs/guide/scripts.md#hotkeys), also without a window
-through `grembyte-cli`. Open:
-
-- **Sound feedback:** in a fullscreen game nothing shows that a hotkey ran its script. Play a
-  short system sound in Grembyte's own process (not the game's, so nothing changes under
-  Wine): named sounds of the freedesktop sound theme through `canberra-gtk-play -i <name>`,
-  which follows the desktop's theme and its "system sounds off" setting, falling back to
-  `pw-play`/`paplay` with the file from `/usr/share/sounds/freedesktop/stereo/`, and silent
-  without either. Candidates: `bell` for success, `dialog-warning` for an error; a toggle
-  script (one that changes a value on the first press and restores it from `ctx.state` on the
-  second) could report "on" or "off" for two different sounds. Switchable off, in the
-  window's settings and as a `grembyte-cli` option.
-- **Hotkeys for timed scripts:** a script that runs repeatedly (for example healing the hero)
-  is often only wanted for a boss or a hard passage. A hotkey on such a script pauses it
-  while it runs and resumes it while it is paused, in the window and in `grembyte-cli`; with
-  sound feedback, a different sound for each. Today a paused script ignores its hotkey and
-  only manual scripts can have one.
-
-### 12. grembyte-cli on Windows
+### 11. grembyte-cli on Windows
 
 [`grembyte-cli`](docs/guide/launch-option.md) runs on Linux only, though the window, Frida
 (without a gadget) and the hotkey reader (`grembyte/platform/windows.py`) work on Windows,
@@ -239,6 +219,23 @@ and Steam takes `%command%` there too. Open:
   outside Steam's process chain (EA app, Ubisoft Connect) may not pass the mark on.
 - The test suite runs on Linux only: the Windows paths need a test on a Windows machine with
   Steam.
+
+### 12. Steam Deck
+
+Grembyte has not been tried on a Steam Deck. Its Desktop Mode is KDE Plasma, as on a Linux
+PC; Game Mode runs each game under the compositor gamescope with its own XWayland. To check:
+
+- **Hotkeys in Game Mode:** the Deck has no keyboard; Steam Input can put keyboard keys on its
+  buttons (the back buttons L4, L5, R4, R5 suit hotkeys), sent through a virtual keyboard. The
+  hotkey reader (`grembyte/platform/keyboard.py`) needs `XQueryKeymap` to see them and the
+  window with the input focus to carry the game's `_NET_WM_PID` under gamescope. Whether
+  Steam Input can send a combination (`Ctrl+G`) or only single keys (`F8`) decides which
+  hotkeys to recommend.
+- **The sounds** (`pw-play`) in Game Mode.
+- **Installing:** SteamOS's root is read-only: Grembyte in a virtual environment in the home
+  folder, the launch option with the full path (no link in `/usr/local/bin`); whether `gcc`
+  and MinGW for the Wine helper are there, and `kernel.yama.ptrace_scope`.
+- Then a section for the Deck in the docs (installing, Steam Input for hotkeys).
 
 ### Recommendation
 

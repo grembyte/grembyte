@@ -24,9 +24,20 @@ Scripts reach game objects and methods through the engine adapters of [Unity and
 
 A script that runs only by hand can have a **Hotkey**, for example ++ctrl+shift+g++. Pressed while the game has the focus, it runs the script with the defaults of its parameters, without asking. This also works when the game was started through [grembyte-cli](launch-option.md), with no window open. The table shows the hotkey next to *On request*.
 
+A script that runs **repeatedly** can have one as well: it **pauses** the script, and the next press resumes it, as the pause button does (the state is kept for the next start too). Healing the hero every few seconds, for example, only for a boss fight. The table shows the hotkey next to *Every … s*. A script that runs once after some seconds has no hotkey.
+
 - A hotkey is one key (a letter, a digit, ++f1++ to ++f12++, ++insert++, ++delete++, ++home++, ++end++, ++page-up++, ++page-down++, ++pause++ or ++space++) with any of ++ctrl++, ++shift++, ++alt++ and ++meta++. It fires once per press, only with exactly its modifiers: ++ctrl+g++ does not fire on ++ctrl+shift+g++.
 - The game gets the keys as well; Grembyte only reads them. Pick a combination the game does not use.
-- A paused script does not react to its hotkey.
+- A paused manual script does not react to its hotkey; a paused repeating one is resumed by it.
+- Once the script has run, a short **sound** says how it went (pausing and resuming a repeating script sound as switching off and on), so a hotkey is heard in a fullscreen game too: one for success, one for an error. A script that returns `true` or `false` sounds as switched on or off, each its own way; a toggle that changes a value on the first press and restores it from `ctx.state` on the second can say which it did:
+
+    ```js
+    ctx.state.on = !ctx.state.on;
+    stats.Speed = ctx.state.on ? 2 : 1;
+    return ctx.state.on;
+    ```
+
+    The sounds are the freedesktop sound theme's (`bell`, `dialog-warning`, `device-added`, `device-removed`), played by Grembyte through `pw-play` or `paplay`, not by the game. They sound also when the desktop's notification sounds are muted: [Settings](settings.md) → *Sound when a hotkey ran its script* turns them off, `grembyte-cli --no-sound` for one launch.
 - On Linux, Grembyte reads the keyboard through X11. Games under Wayland run through XWayland, so this covers native games and Proton alike. A game that is a Wayland client itself is not seen.
 
 ## Parameters
