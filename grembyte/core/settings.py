@@ -59,6 +59,8 @@ SETTINGS = (
     Setting("trace_sequence", INT, 100_000, minimum=1000, maximum=500_000, step=10_000),
     Setting("object_browser_limit", INT, 2_000_000, minimum=100_000, maximum=10_000_000,
             step=500_000),
+    # Whether the reference graph shows holders in memory no object covers
+    Setting("reference_other_memory", BOOL, False),
     Setting("wine_gadget_download", BOOL, False),
     Setting("language", CHOICE, "system", choices=("system", "de", "en"), restart=True),
     Setting("scan_aligned", BOOL, True),

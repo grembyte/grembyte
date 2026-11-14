@@ -100,6 +100,7 @@ nav:
       - Native trace and monitor: guide/native-tools.md
       - Code explorer: guide/code-explorer.md
       - Object browser: guide/object-browser.md
+      - Reference graph: guide/reference-graph.md
       - Notes: guide/notes.md
       - Docking, memory, sessions, logs and help: guide/tools.md
       - Settings and themes: guide/settings.md

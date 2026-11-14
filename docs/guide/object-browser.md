@@ -20,9 +20,9 @@ The first level lists the classes that have live objects, with how many objects 
 
 Games keep hundreds of thousands of objects, so a class's objects are only read when you open it, and a class lists at most 5,000 of them. The filter narrows them.
 
-Double-click an object, or select it and click **Open in inspector**, to show its fields in the [object inspector](../engines/index.md#object-inspector). The context menu copies an object's address or name, or a class's name or address.
+Double-click an object, or select it and click **Open in inspector**, to show its fields in the [object inspector](../engines/index.md#object-inspector). The context menu copies an object's address or name, or a class's name or address. **Show references** opens the object's [reference graph](reference-graph.md): which objects hold it, back to a static field or a module's global data, or which objects it points to.
 
-Objects live only for a while: a level, a fight, a session. To keep an interesting one for later, use **Save as HTML …** in its inspector. The page records its fields and getters as they were then.
+Objects live only for a while: a level, a fight, a session. To keep an interesting one for later, use **Save …** in its inspector (it saves an HTML page). The page records its fields and getters as they were then.
 
 ## Narrowing the list
 

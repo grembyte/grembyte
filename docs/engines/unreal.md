@@ -33,6 +33,8 @@ Many shipping builds keep their cheat manager: in Avowed `BP_CheatManager_C` (an
 
 **View → Object browser …** lists every live object of the game by class, read from `GUObjectArray`, and opens them in the object inspector. Packages, a filter on class and object names, singletons and templates are explained in the [object browser guide](../guide/object-browser.md#unreal-engine).
 
+From an object, the [reference graph](../guide/reference-graph.md#unreal-engine) shows which objects hold it, or which objects it points to.
+
 ## GAS attributes
 
 Games built on Unreal's Gameplay Ability System keep values such as health, strength or damage multipliers as *attributes*. **View → GAS attributes …** shows the player's attribute sets with base and current value, live. The window can be [docked](../guide/tools.md#docking-windows) beside the scanner.

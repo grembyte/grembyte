@@ -2467,6 +2467,98 @@ const unreal = (() => {
     return { instances, count, truncated: count > instances.length };
   }
 
+  // --- References: what holds an object (the reference graph) ----------------------
+  // As the Mono adapter's locateReferences: the object of the table whose
+  // memory (UStruct::PropertiesSize of its class) holds a location, and the
+  // property there. The elements of TArray, TMap and TSet lie in blocks of
+  // their own, outside the object: such a location is 'unknown' here.
+
+  // How deep struct members are named (a.b.c)
+  const MAX_FIELD_DEPTH = 4;
+  // UObjectBase's own pointers to objects, which are no properties
+  const HEADER_FIELDS = new Map([[OBJECT_CLASS, 'ClassPrivate'], [OBJECT_OUTER, 'OuterPrivate']]);
+  // { read, order: object table indices sorted by address, starts: Float64Array }
+  let referenceOrder = null;
+
+  function sortedObjects(s) {
+    if (referenceOrder !== null && referenceOrder.read === s.read)
+      return referenceOrder;
+    const order = Array.from(s.address.keys()).sort((a, b) => s.address[a] - s.address[b]);
+    const starts = Float64Array.from(order, i => s.address[i]);
+    referenceOrder = { read: s.read, order, starts };
+    return referenceOrder;
+  }
+
+  function propertyAt(klass, offset, depth = 0) {
+    // The property of a class or struct at ``offset`` (from its start), a
+    // struct's members as ``field.member``, a static array's element as
+    // ``field[i]``, or null
+    const L = ue.layout;
+    for (const field of layout(klass).fields) {
+      const property = field.property;
+      const elementSize = property.add(L.elementSize).readS32();
+      const count = property.add(L.arrayDim).readS32();
+      if (offset < field.offset || offset >= field.offset + elementSize * Math.max(count, 1))
+        continue;
+      const name = field.name.replace(/\[\d+\]$/, '');
+      const index = elementSize > 0 ? Math.floor((offset - field.offset) / elementSize) : 0;
+      const shown = count > 1 ? `${name}[${index}]` : name;
+      const rest = offset - field.offset - index * elementSize;
+      if (rest === 0)
+        return shown;
+      if (field.type.kind === KIND.VALUETYPE && !field.type.klass.isNull()
+          && depth < MAX_FIELD_DEPTH) {
+        const inner = propertyAt(field.type.klass, rest, depth + 1);
+        if (inner !== null)
+          return `${shown}.${inner}`;
+      }
+      return `${shown}+0x${rest.toString(16)}`;
+    }
+    return null;
+  }
+
+  function locateReferences(locations) {
+    // For the reference graph: what holds each of ``locations``, in their
+    // order: { kind: 'field', object, klass, className, name, field, size }
+    // or { kind: 'unknown' } (see the Mono adapter's). Memory reads only.
+    reflection();
+    const L = ue.layout;
+    const s = objects();
+    const { order, starts } = sortedObjects(s);
+    return locations.map(text => {
+      const location = Number(ptr(text).toString());
+      const unknown = { location: ptr(location).toString(), kind: 'unknown' };
+      let low = 0, high = starts.length - 1, found = -1;
+      while (low <= high) {
+        const middle = (low + high) >> 1;
+        if (starts[middle] <= location) {
+          found = middle;
+          low = middle + 1;
+        } else {
+          high = middle - 1;
+        }
+      }
+      if (found < 0)
+        return unknown;
+      const i = order[found];
+      const offset = location - s.address[i];
+      try {
+        const klass = ptr(s.klass[i]);
+        // Every object has UObjectBase's header, whatever its class says
+        const size = Math.max(klass.add(L.propertiesSize).readS32(), OBJECT_OUTER + 8);
+        if (offset >= size)
+          return unknown;
+        return { location: unknown.location, kind: 'field', object: ptr(s.address[i]).toString(),
+                 klass: klass.toString(), className: cppName(s.klass[i]),
+                 name: objectName(s, i), size,
+                 field: HEADER_FIELDS.get(offset) || propertyAt(klass, offset)
+                   || `+0x${offset.toString(16)}` };
+      } catch (_error) {
+        return unknown;  // an object freed since the table was read
+      }
+    });
+  }
+
   // --- Gameplay Ability System: the player's attributes -----------------------------
   // GAS games keep attributes (Health, Might, DamageOutgoingMult ...) as
   // FGameplayAttributeData (vtable, BaseValue, CurrentValue) in UAttributeSet
@@ -2804,6 +2896,7 @@ const unreal = (() => {
     instanceName: uobjectName,
     browseClasses,
     browseInstances,
+    locateReferences,
     gasAttributes,
     gasSetBase,
     classChain,

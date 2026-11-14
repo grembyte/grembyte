@@ -10,7 +10,7 @@ Windows of their own cannot be kept beside the main window on every desktop (Way
   <figcaption>The memory viewer and an object inspector docked beside the scanner.</figcaption>
 </figure>
 
-- **At the side:** pointer scan, object inspector, object browser, write watch, memory viewer, GAS attributes, [notes](notes.md).
+- **At the side:** pointer scan, object inspector, object browser, reference graph, write watch, memory viewer, GAS attributes, [notes](notes.md).
 - **At the bottom**, where wide tables have room: trace, native trace, method monitor, native function monitor, log.
 - Each side holds its windows as tabs. The ✕ on a tab, or a middle click, closes the window. A docked object inspector shows the object's name in its tab (else its class); the full title is in the tooltip.
 - Grembyte remembers per kind of window whether the last one was docked: the next opens the same way. An object opened from a docked inspector opens as a tab beside it.

@@ -15,8 +15,9 @@ DEFAULT_THEME = "Github-Dark"
 THEME_DIRECTORY = Path(__file__).parents[1] / "themes"
 CODE_COLOR_KEYS = ("code_text", "code_keyword", "code_string", "code_number")
 # Colours widgets use for their content (pointers, method templates; value
-# types, changed bytes) rather than the stylesheet.
-CONTENT_COLOR_KEYS = ("purple", "orange")
+# types, changed bytes; the marked way in the reference graph) rather than the
+# stylesheet.
+CONTENT_COLOR_KEYS = ("purple", "orange", "highlight")
 # The colour of the logo and the name in the toolbar (icons.set_brand_icon, styles.py)
 BRAND_COLOR_KEYS = ("brand",)
 COLOR_KEYS = tuple(dict.fromkeys(

@@ -189,7 +189,7 @@ class ObjectInspectorDialog(QDialog):
     def __init__(self, translations, open_object, target=None, request=None,
                  contents=None, captured=None, evaluate=None, name="", depth=1, parent=None,
                  show_text=None, list_methods=None, call_method=None, instance_name=None,
-                 pid=None):
+                 pid=None, show_references=None):
         # pylint: disable=too-many-positional-arguments
         super().__init__(parent)
         self.setModal(False)
@@ -203,6 +203,7 @@ class ObjectInspectorDialog(QDialog):
         self._show_text = show_text
         self._list_methods = list_methods
         self._call_method = call_method
+        self._show_references = show_references
         self._captured = captured
         self.name = name
         self.instance_name = instance_name
@@ -240,22 +241,28 @@ class ObjectInspectorDialog(QDialog):
 
     def _build_ui(self, live):
         layout = QVBoxLayout(self)
-        bar = QHBoxLayout()
+        # The title on a line of its own: beside the buttons a docked, narrow
+        # inspector left it a few characters per line
         self.title_label = SelectableText()
-        bar.addWidget(self.title_label, 1)
+        layout.addWidget(self.title_label)
+        bar = QHBoxLayout()
+        bar.addStretch(1)
         self.live_check = QCheckBox(self.translations["inspector.live"])
         self.live_check.setToolTip(self.translations["inspector.live_tooltip"])
         self.live_check.toggled.connect(self._toggle_live)
         self.refresh_button = QPushButton(self.translations["inspector.refresh"])
         set_button_icon(self.refresh_button, "refresh")
         self.refresh_button.clicked.connect(self.refresh)
-        self.add_address_button = QPushButton(self.translations["inspector.add_address"])
-        set_button_icon(self.add_address_button, "bookmark_add")
-        self.add_address_button.setToolTip(self.translations["inspector.add_address_tooltip"])
-        self.add_address_button.setEnabled(False)
-        self.add_address_button.clicked.connect(lambda: self.add_address(self.table.currentRow()))
-        bar.addWidget(self.add_address_button)
-        self.export_button = QPushButton(self.translations["inspector.export"])
+        self.references_button = QPushButton(self.translations["inspector.references"])
+        set_button_icon(self.references_button, "account_tree")
+        self.references_button.setToolTip(self.translations["inspector.references_tooltip"])
+        self.references_button.setEnabled(False)
+        self.references_button.clicked.connect(self.show_references)
+        # Only for a live object, in a game whose engine can name the holders
+        self.references_button.setVisible(live and self._show_references is not None)
+        bar.addWidget(self.references_button)
+        # Short, for narrow windows; the tooltip says it is HTML
+        self.export_button = QPushButton(self.translations["inspector.save"])
         set_button_icon(self.export_button, "save")
         self.export_button.setToolTip(self.translations["inspector.export_tooltip"])
         self.export_button.setEnabled(False)
@@ -334,9 +341,6 @@ class ObjectInspectorDialog(QDialog):
         self.table.cellDoubleClicked.connect(lambda row, _column: self.open_row(row))
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_field_menu)
-        self.table.currentCellChanged.connect(
-            lambda row, *_args: self.add_address_button.setEnabled(
-                self.address_entry(row) is not None))
         return self.table
 
     def _build_properties_table(self):
@@ -508,7 +512,9 @@ class ObjectInspectorDialog(QDialog):
             return
         address, _value_type = self._field_location(row)
         menu = QMenu(self)
+        menu.setToolTipsVisible(True)
         add = menu.addAction(self.translations["inspector.add_address"])
+        add.setToolTip(self.translations["inspector.add_address_tooltip"])
         add.setEnabled(self.address_entry(row) is not None)
         add.triggered.connect(lambda: self.add_address(row))
         copy = menu.addAction(self.translations["inspector.copy_address"])
@@ -530,6 +536,7 @@ class ObjectInspectorDialog(QDialog):
         fields = contents.get("fields", [])
         self._contents = contents
         self.export_button.setEnabled(self._export_path is None)
+        self.references_button.setEnabled(bool(contents.get("address")))
         class_name = contents.get("name", "?")
         address = contents.get("address", "")
         instance_name = contents.get("instanceName") or self.instance_name
@@ -589,11 +596,18 @@ class ObjectInspectorDialog(QDialog):
         self._filter_fields()
         if 0 <= selected < len(fields):
             self.table.selectRow(selected)
-        self.add_address_button.setEnabled(self.address_entry(self.table.currentRow()) is not None)
 
         self._show_property_names(contents.get("properties", []))
         if not known:
             self._filter_methods()  # the own class is known now
+
+    def show_references(self):
+        """Open the reference graph of the object shown (see reference_graph)."""
+        contents = self._contents
+        if self._show_references is None or not contents or not contents.get("address"):
+            return
+        self._show_references(int(contents["address"], 16), contents.get("name", ""),
+                              contents.get("instanceName") or self.instance_name)
 
     def show_error(self, message):
         self._pending = False

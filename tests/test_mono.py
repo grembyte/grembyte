@@ -620,6 +620,11 @@ void *mono_vtable_get_static_field_data(VTable *vtable) {
 int mono_class_data_size(Class *k) {
     return k == &classes[3] ? 4 : k == &classes[13] ? 8 : 0;
 }
+/* The size of a class's objects, header included (the reference graph) */
+int mono_class_instance_size(Class *k) {
+    return k == &classes[3] ? (int)sizeof(Combat) : k == &classes[10] ? (int)sizeof(GameObject)
+        : (int)sizeof(Object);
+}
 void *mono_class_get_parent(Class *k) { return k->parent; }
 int mono_class_get_rank(Class *k) { return k->rank; }
 void *mono_class_get_element_class(Class *k) { return k->element; }
@@ -1584,15 +1589,13 @@ def test_inspector_puts_number_fields_on_the_address_list(qt_app, translations):
     requested = []
     dialog.address_requested.connect(requested.append)
     try:
-        assert not dialog.add_address_button.isEnabled()
-        dialog.table.selectRow(0)
-        assert dialog.add_address_button.isEnabled()
-        dialog.add_address_button.click()
+        # Through the field's context menu, the only way since the button is gone
+        assert not hasattr(dialog, "add_address_button")
+        dialog.add_address(0)
         assert requested == [{"address": 0x7F55E9339244, "value_type": "int32",
                               "label": "CharacterStats.BaseMight"}]
         assert "CharacterStats.BaseMight" in dialog.status_label.text()
-        dialog.table.selectRow(1)  # a reference, no number
-        assert not dialog.add_address_button.isEnabled()
+        assert dialog.address_entry(1) is None  # a reference, no number
         assert dialog.address_entry(2) is None  # static
 
         array = ObjectInspectorDialog(translations, lambda *_: None, captured="16:58:56.791",
@@ -3092,6 +3095,66 @@ def test_object_browser_reads_live_objects_with_the_world_stopped(tmp_path, qt_a
         instances = ask("browse_instances", classes["Game.Combat"]["klass"], "wolf")
         assert [entry["name"] for entry in instances["instances"]] == ["Young Wolf"]
         assert target.send("liveness", 0) == (0, 2)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_reference_graph_names_what_holds_an_object(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.object_references import MODULE, ReferenceIndex
+    from grembyte.features.scripts import ScriptWorker
+
+    target = _MonoTarget(_build(tmp_path, ("FAKE_LIVENESS_BLOCKS",)))
+    worker = ScriptWorker(target.pid)
+    answers, failed = [], []
+    for answer in ("classes_browsed", "instances_browsed", "references_resolved"):
+        getattr(worker, answer).connect(lambda _request, value: answers.append(value))
+    for failure in ("browse_failed", "instances_failed", "references_failed"):
+        getattr(worker, failure).connect(lambda _request, message: failed.append(message))
+
+    def ask(request, *args):
+        answers.clear()
+        failed.clear()
+        getattr(worker, request)(*args)
+        _wait_for(qt_app, lambda: target.send("tick", 0) and (answers or failed))
+        assert not failed, failed
+        return answers[0]
+
+    try:
+        target.send("spawn", 0)
+        worker.start()
+        classes = {entry["name"]: entry for entry in ask("browse_classes")["classes"]}
+        wolf = next(entry for entry in
+                    ask("browse_instances", classes["Game.Combat"]["klass"])["instances"]
+                    if entry["name"] == "Young Wolf")
+        address = int(wolf["address"], 16)
+
+        index = ReferenceIndex.build(target.pid)
+        locations, total = index.referrers(address, limit=1000)
+        assert total == len(locations) > 0
+        places = {location: index.place(location) for location in locations}
+        # The runtime's list of Unity objects lies in its module's data: a root
+        assert any(kind == MODULE and text.startswith("libmonosgen-2.0.so+0x")
+                   for kind, text in places.values())
+        heap = [location for location, (kind, _text) in places.items() if kind is None]
+        resolved = ask("resolve_references", heap, ("mscorlib", "UnityEngine"))
+        assert [int(entry["location"], 16) for entry in resolved] == heap
+        named = {(entry["kind"], entry.get("className"), entry.get("field"), entry.get("name"))
+                 for entry in resolved}
+        # The static field of a class without objects (from the game's
+        # assemblies), and the GameObject whose component it is (a field the
+        # stand-in does not declare: named from the one before it)
+        assert ("static", "Game.Loop", "Current", None) in named
+        # Grembyte's own copy of the live objects is cleared once read: it
+        # holds none of them (the stand-in's array of Unity objects does)
+        assert sum(entry["kind"] == "unknown" for entry in resolved) == 1
+        assert ("field", "UnityEngine.GameObject", "m_CachedPtr+0x10", "Young Wolf") in named
+        # The other way: the object's own address names it with its size
+        own = ask("resolve_references", [address], ("mscorlib", "UnityEngine"))[0]
+        assert int(own["object"], 16) == address and own["size"] >= 16
     finally:
         worker.requestInterruption()
         worker.wait(5000)

@@ -2559,6 +2559,13 @@ function browseInstances(klass, options) {
   return engine.browseInstances(ptr(klass), options || {});
 }
 
+// --- Reference graph: what holds the locations that point to an object -----------------
+// (see grembyte/features/object_references.py and the adapters' locateReferences)
+
+function resolveReferences(locations, options) {
+  return engine.locateReferences(locations, options || {});
+}
+
 // ctx.gas in scripts (they run on the game thread)
 const scriptGas = {
   attributes: gasAttributes,
@@ -2641,6 +2648,7 @@ rpc.exports = {
   gasSetBase,
   browseClasses,
   browseInstances,
+  resolveReferences,
   addScript,
   updateScript,
   removeScript,

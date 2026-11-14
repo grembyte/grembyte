@@ -776,6 +776,7 @@ int main(void) {
     Object *controller_class = object(class_class, "PlayerController", engine);
     controller_class->super = actor;
     property(controller_class, object_property, "Pawn", 8, 0x70, 0, hero);
+    controller_class->properties_size = 0x78;
     Object *controller = object(controller_class, "PlayerController_0", level);
     *(Object **)((char *)controller + 0x70) = player;
     /* Numbered anew on every load, as in Gothic 1 Remake */
@@ -1486,6 +1487,58 @@ def test_gas_base_values_are_set_through_angelscript_attribute_sets(tmp_path, qt
         set_base("Might", 7)
         assert values == [{"base": 7, "current": 10.5}]
         assert target.send("attribute", 0) == (70, 105)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_reference_graph_names_the_objects_holding_one(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.object_references import ReferenceIndex
+    from grembyte.features.scripts import ScriptWorker
+
+    target = _Target(_build(tmp_path))
+    worker = ScriptWorker(target.pid)
+    answers, failed = [], []
+    for answer in ("classes_browsed", "instances_browsed", "references_resolved"):
+        getattr(worker, answer).connect(lambda _request, value: answers.append(value))
+    for failure in ("browse_failed", "instances_failed", "references_failed"):
+        getattr(worker, failure).connect(lambda _request, message: failed.append(message))
+
+    def ask(request, *args):
+        answers.clear()
+        failed.clear()
+        getattr(worker, request)(*args)
+        _wait_for(qt_app, lambda: answers or failed)
+        assert not failed, failed
+        return answers[0]
+
+    try:
+        worker.start()
+        classes = {entry["name"]: entry for entry in ask("browse_classes")["classes"]}
+        player = next(entry for entry in
+                      ask("browse_instances", classes["BP_Hero_C"]["klass"])["instances"]
+                      if entry["name"] == "BP_Hero_C_0")
+        index = ReferenceIndex.build(target.pid)
+        locations, _total = index.referrers(int(player["address"], 16), limit=1000)
+        heap = [location for location in locations if index.place(location)[0] is None]
+        resolved = ask("resolve_references", heap)
+        named = {(entry["kind"], entry.get("className"), entry.get("field"), entry.get("name"))
+                 for entry in resolved}
+        # A property of the controller, and the widget tree whose outer it is;
+        # the object table's chunk is no object
+        assert ("field", "APlayerController", "Pawn", "PlayerController_0") in named
+        assert ("field", "UWidgetTree", "OuterPrivate", "WidgetTree_7") in named
+        assert ("unknown", None, None, None) in named
+        # The other way: the object's own address names it with its size, and
+        # the pointers inside lead to its class (ClassPrivate)
+        address = int(player["address"], 16)
+        own = ask("resolve_references", [address])[0]
+        assert int(own["object"], 16) == address and own["size"] >= 0x28
+        pairs, _total = index.pointers_in(address, address + own["size"])
+        assert int(classes["BP_Hero_C"]["klass"], 16) in {value for _location, value in pairs}
     finally:
         worker.requestInterruption()
         worker.wait(5000)
