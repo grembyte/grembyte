@@ -774,13 +774,13 @@ def log_activity(studio):
 # --------------------------------------------------------------------------
 @scene("settings", size=(720, 400), description="Settings window")
 def settings_window(studio):
-    """The general settings with their defaults, on the page of the hooks."""
+    """The general settings with their defaults, on the page General."""
     # pylint: disable=import-outside-toplevel
     from grembyte.db.repository.settings import SettingsRepository
     from grembyte.ui.widgets.settings_dialog import SettingsDialog
 
     dialog = SettingsDialog(studio.translations, SettingsRepository())
-    dialog.categories.setCurrentRow(3)
+    dialog.categories.setCurrentRow(0)
     return studio.keep(dialog)
 
 

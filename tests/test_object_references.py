@@ -300,21 +300,28 @@ def test_window_unfolds_holders_and_marks_the_way_to_a_root(qt_app, monkeypatch)
         assert dialog.windowTitle() == "Verweise auf GameManager 0x10100"
         assert dialog.status_label.text() == "Lese den Speicher des Spiels …"
         assert not dialog.path_button.isEnabled()
+        # Reading the memory: the dots, and how far it got in the status line
+        assert dialog.busy.is_busy()
+        dialog._index_worker.progress.emit(42)
+        assert dialog.status_label.text() == "Lese den Speicher des Spiels … 42 %"
         dialog._index_worker.ready.emit(_index())
         dialog._index_worker.finished.emit()
 
         # The roots are placed at once, the heap locations named by the agent
         worker = panel._worker
         assert worker.requests[-1] == ("resolve_references", [0x10208, 0x10308], ("mscorlib",))
+        assert dialog.busy.is_busy()  # the agent names them
         worker.references_resolved.emit(len(worker.requests), [
             _loader_entry(), {"location": "0x10308", "kind": "unknown"}])
+        assert not dialog.busy.is_busy()
         kinds = sorted(node.kind for node in dialog.graph.nodes.values())
         assert kinds == [MODULE, OBJECT, OBJECT, STACK, UNKNOWN]
         assert dialog.status_label.text() == "4 von 4 Stellen, die das Objekt halten."
         # Other memory only counts, unless the settings show it (at once)
         assert len(dialog._items) == 4
         assert dialog._items[dialog.graph.target].toolTip().endswith(
-            "1 in anderem Speicher, ausgeblendet (Einstellungen → Objekt-Browser)")
+            "1 in anderem Speicher, ausgeblendet (Einstellungen → Objekt-Browser)\n"
+            "Doppelklick: wieder einklappen")
         settings.apply({"reference_other_memory": True})
         assert len(dialog._items) == 5
         settings.apply({"reference_other_memory": False})
@@ -325,19 +332,32 @@ def test_window_unfolds_holders_and_marks_the_way_to_a_root(qt_app, monkeypatch)
         assert dialog._path == ["module:game.so+0x8", dialog.graph.target]
         assert dialog.status_label.text() == "Weg zur Wurzel gefunden, Länge 1."
 
-        # A double click unfolds an object; once unfolded it opens in the inspector
-        loader = dialog._items[f"object:{LOADER:x}"]
-        dialog._activated(loader)
+        # A double click unfolds an object, a second one folds it in again
+        loader_key = f"object:{LOADER:x}"
+        boot_answer = [{"location": "0x10600", "kind": "static", "klass": "0x98",
+                        "className": "Game.Boot", "field": "Loader"}]
+        dialog._activated(dialog._items[loader_key])
         assert worker.requests[-1] == ("resolve_references", [0x10600], ("mscorlib",))
-        worker.references_resolved.emit(len(worker.requests), [
-            {"location": "0x10600", "kind": "static", "klass": "0x98",
-             "className": "Game.Boot", "field": "Loader"}])
+        worker.references_resolved.emit(len(worker.requests), boot_answer)
         assert dialog.graph.nodes["static:Game.Boot.Loader"].is_root
+        assert "Einklappen" in _menu_texts(dialog, dialog.graph.nodes[loader_key])
+        requests = len(worker.requests)
+        dialog._activated(dialog._items[loader_key])
+        assert len(worker.requests) == requests  # nothing asked
+        assert "static:Game.Boot.Loader" not in dialog.graph.nodes
+        assert "static:Game.Boot.Loader" not in dialog._items
+        assert dialog.graph.nodes[loader_key].can_expand
+        # What the target's own unfolding found stays
+        assert len(dialog._items) == 4
+        dialog._activated(dialog._items[loader_key])
+        worker.references_resolved.emit(len(worker.requests), boot_answer)
+        assert "static:Game.Boot.Loader" in dialog.graph.nodes
+        # The inspector opens from the context menu
         opened = []
         monkeypatch.setattr(panel.inspections, "inspect",
                             lambda target, name="", instance_name=None: opened.append(
                                 (target, name, instance_name)))
-        dialog._activated(dialog._items[f"object:{LOADER:x}"])
+        dialog.inspect(dialog.graph.nodes[loader_key])
         assert opened == [({"address": "0x10200"}, "Loader", None)]
 
         # Many locations are named in batches, the holders shown once all are back
@@ -350,7 +370,9 @@ def test_window_unfolds_holders_and_marks_the_way_to_a_root(qt_app, monkeypatch)
         assert (first[1], second[1]) == ([0x10208], [0x10308])
         worker.references_resolved.emit(len(worker.requests) - 1, [_loader_entry()])
         assert not dialog.graph.edges
+        assert dialog.busy.is_busy()  # until the last batch is back
         worker.references_resolved.emit(len(worker.requests), [{"kind": "unknown"}])
+        assert not dialog.busy.is_busy()
         assert len(dialog.graph.holders_of(dialog.graph.target)) == 4
         assert boot.key in dialog.graph.nodes
 
@@ -456,7 +478,8 @@ def test_window_hides_highlights_and_exports_the_graph(qt_app, monkeypatch, tmp_
         dialog.hide_node(loader.key)
         assert set(dialog._items) == {graph.target, module.key}
         assert all(item.pen().color().name() != highlight for item in dialog._items.values())
-        assert dialog._items[graph.target].toolTip().endswith("1 von dir ausgeblendet")
+        assert dialog._items[graph.target].toolTip().endswith(
+            "1 von dir ausgeblendet\nDoppelklick: wieder einklappen")
         assert "Ausgeblendete zeigen (1)" in _menu_texts(dialog)
         dialog.show_hidden()
         assert len(dialog._items) == 4
@@ -498,7 +521,8 @@ def test_window_hides_highlights_and_exports_the_graph(qt_app, monkeypatch, tmp_
             {"klass": "0x55", "name": "Boot", "package": "Game", "count": 1}]})
         assert dialog.status_label.text() == "1 Singleton-Klassen."
         assert set(dialog._items) == {graph.target, module.key}
-        assert dialog._items[graph.target].toolTip().endswith("1 keine Singletons, ausgeblendet")
+        assert dialog._items[graph.target].toolTip().endswith(
+            "1 keine Singletons, ausgeblendet\nDoppelklick: wieder einklappen")
         dialog.singletons_check.setChecked(False)
         assert len(dialog._items) == 4
         requests = len(worker.requests)
@@ -585,6 +609,58 @@ def test_window_switches_to_what_the_object_points_to(qt_app, monkeypatch):
         panel.set_process(None)
 
 
+def test_window_shows_what_the_static_fields_of_the_class_point_to(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from grembyte.ui.widgets import reference_graph, scripts
+
+    # GameState keeps the player in a static field (Pillars of Eternity:
+    # GameState.s_playerCharacter), not in the object; a second one is empty.
+    player, data = 0x10c00, 0x10a00
+    pointer_map = _PointerMap([(LOADER, 0x10108), (player, data)])
+    index = ReferenceIndex(pointer_map, [Region(0x10000, 0x20000, HEAP)])
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    monkeypatch.setattr(reference_graph, "ReferenceIndexWorker", _FakeIndexWorker)
+    translations = load_translations("de")
+    panel = scripts.ScriptPanel(translations)
+    panel.set_process(4242)
+    dialog = reference_graph.ReferenceGraphDialog(
+        translations, panel, 4242, TARGET, "GameState")
+    try:
+        dialog._index_worker.ready.emit(index)
+        dialog._index_worker.finished.emit()
+        dialog.set_direction(TARGETS)
+        worker = panel._worker  # nothing holds the object: asked first now
+        assert worker.requests[-1][1] == [TARGET]
+        own = {"location": hex(TARGET), "kind": "field", "object": hex(TARGET), "size": 0x20,
+               "klass": "0x98", "className": "GameState", "field": None}
+        worker.references_resolved.emit(len(worker.requests), [{**own, "statics": [
+            ["s_playerCharacter", hex(data), "GameState"],
+            ["m_stronghold", hex(data + 8), "GameState"]]}])
+        # The field in the object and the static field's value, named in one go
+        assert worker.requests[-1][1] == [0x10108, LOADER, player]
+        worker.references_resolved.emit(len(worker.requests), [
+            {**own, "field": "loader"},
+            {**_loader_entry(LOADER), "size": 0x40},
+            {"location": hex(player), "kind": "field", "object": hex(player), "size": 0x80,
+             "klass": "0x9a", "className": "PlayerCharacter", "name": "Player", "field": None}])
+        graph = dialog.graph
+        static = "static:GameState.s_playerCharacter"
+        # Drawn as the holders show it: the object, the static field's node, its object
+        assert {(edge.holder, edge.held) for edge in graph.edges} == {
+            (static, f"object:{player:x}"), (graph.target, static),
+            (graph.target, f"object:{LOADER:x}")}
+        assert graph.nodes[static].kind == STATIC
+        assert dialog._items[static].toolTip().startswith(
+            "Ein statisches Feld der Klasse des Objekts")
+        assert graph.nodes[graph.target].total == 2
+        assert "object:a" not in graph.nodes  # the empty static field leads nowhere
+        assert (dialog._items[f"object:{player:x}"].pos().x()
+                > dialog._items[static].pos().x() > dialog._items[graph.target].pos().x())
+    finally:
+        dialog.close()
+        panel.set_process(None)
+
+
 def test_inspector_offers_references_only_where_a_window_opens_them(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument
     from PySide6.QtWidgets import QWidget  # pylint: disable=import-error,no-name-in-module
@@ -613,3 +689,29 @@ def test_inspector_offers_references_only_where_a_window_opens_them(qt_app):
     main.can = False
     assert find_reference_opener(child) is None
     assert find_reference_opener(QWidget()) is None
+
+
+def test_folding_in_keeps_what_another_way_still_reaches():
+    graph = ReferenceGraph.for_object(TARGET, "Game.GameManager", direction=TARGETS)
+    target = graph.target
+
+    def node(address, name):
+        return graph.node_for(target, address, entry={
+            "location": hex(address), "kind": "field", "object": hex(address),
+            "className": name, "size": 0x20})
+
+    first, second, shared, only = (node(0x20000, "A"), node(0x20100, "B"),
+                                   node(0x20200, "Shared"), node(0x20300, "Only"))
+    graph.add_holders(target, [(first, "a"), (second, "b")], 2)
+    graph.add_holders(first.key, [(shared, "s"), (only, "o")], 2)
+    graph.add_holders(second.key, [(shared, "s")], 1)
+    removed = graph.collapse(first.key)
+    # Only reached through the node folded in: gone; the shared one stays
+    assert removed == [only.key]
+    assert set(graph.nodes) == {target, first.key, second.key, shared.key}
+    assert {(edge.holder, edge.held) for edge in graph.edges} == {
+        (target, first.key), (target, second.key), (second.key, shared.key)}
+    assert first.can_expand and first.total == 0
+    # Folding in the object itself leaves it alone
+    graph.collapse(target)
+    assert list(graph.nodes) == [target] and not graph.edges

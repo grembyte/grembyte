@@ -153,6 +153,9 @@ class Node:
     locations: list = field(default_factory=list)
     # An object's size in bytes, once the agent said it (the other way, TARGETS)
     size: int | None = None
+    # The static fields of an object's class, once the agent said them (TARGETS):
+    # [(field, location, class name)]
+    statics: list | None = None
 
     @property
     def is_root(self):
@@ -167,6 +170,18 @@ class Node:
         if self.kind != OBJECT:
             return None
         return {"address": hex(self.address)}
+
+
+def static_fields(entry):
+    """``[(field, location, class name)]`` of the ``statics`` in an answer of the
+    agent's ``resolveReferences``: the static fields of an object's class (only
+    Mono has them); None when the answer is not about the object's start, so
+    that it does not tell them."""
+    location, start = entry.get("location"), entry.get("object")
+    if not location or not start or int(location, 16) != int(start, 16):
+        return None
+    return [(field, int(at, 16), class_name)
+            for field, at, class_name in entry.get("statics") or ()]
 
 
 @dataclass(frozen=True)
@@ -224,7 +239,8 @@ class ReferenceGraph:
         elif entry is not None and entry.get("object"):
             address = int(entry["object"], 16)
             node = Node(object_key(address), OBJECT, address, entry.get("className", ""),
-                        entry.get("name"), entry.get("klass"), size=entry.get("size"))
+                        entry.get("name"), entry.get("klass"), size=entry.get("size"),
+                        statics=static_fields(entry))
         else:
             node = Node(f"unknown:{held}", UNKNOWN, location)
         node = self.nodes.setdefault(node.key, node)
@@ -265,6 +281,46 @@ class ReferenceGraph:
             if edge not in known:
                 known.add(edge)
                 self.edges.append(edge)
+
+    def add_static_target(self, key, field, location, class_name, target):
+        """The other way (TARGETS): node ``key`` reaches node ``target`` through the
+        static field ``field`` of its class ``class_name`` at ``location``, drawn as
+        that field's node between them (as the holders show it). Returns the
+        field's node; ``add_holders`` links ``key`` to it."""
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
+        node = self.node_for(key, location, entry={
+            "kind": STATIC, "className": class_name, "field": field})
+        node.expanded = True
+        node.total = node.shown = 1
+        edge = Edge(node.key, target.key, "")
+        if edge not in self.edges:
+            self.edges.append(edge)
+        return node
+
+    def collapse(self, key):
+        """Fold node ``key`` in again: forget what unfolding it found, and every
+        node only reached through that. Returns the keys of the nodes removed."""
+        node = self.nodes[key]
+        node.expanded = False
+        node.total = node.shown = 0
+        leaving = {edge for edge, _other in self.following(key)}
+        self.edges = [edge for edge in self.edges if edge not in leaving]
+        reached = {self.target}
+        frontier = [self.target]
+        while frontier:
+            following = []
+            for current in frontier:
+                for _edge, other in self.following(current):
+                    if other not in reached:
+                        reached.add(other)
+                        following.append(other)
+            frontier = following
+        removed = [other for other in self.nodes if other not in reached]
+        for other in removed:
+            del self.nodes[other]
+        self.edges = [edge for edge in self.edges
+                      if edge.holder in reached and edge.held in reached]
+        return removed
 
     def holders_of(self, key):
         return [edge for edge in self.edges if edge.held == key]

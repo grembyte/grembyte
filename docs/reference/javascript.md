@@ -11,6 +11,8 @@ Grembyte uses JavaScript wherever you tell it *what* to do with a value or with 
 | [Script](../examples/hermesquest-scripts.md) | the **body** of a function | by hand or on a timer, on the game's main thread | `ctx.static`, `ctx.find`, `ctx.call`, `ctx.args`, `ctx.state`, `ctx.log` | shown as the script's result |
 | Options of a choice parameter | the **body** of a function | when the run dialog asks for them | the same `ctx` as scripts | the list of options |
 
+The code fields of all four use a fixed-width font. **Tab** and **Shift+Tab** indent and outdent the selected lines; **Ctrl+mouse wheel**, **Ctrl+Plus** and **Ctrl+Minus** make the code larger or smaller in every code field at once, **Ctrl+0** returns to the normal size. Grembyte remembers the size.
+
 All of them get one object, `ctx` (for *context*), through which they reach everything else. The [hook context](hook-context.md) and [script context](script-context.md) references list its fields.
 
 A **function** is code with a name for its input; a **body** is just the code inside. A template is a function because Grembyte stores and tests it on its own; a script is a body because Grembyte wraps it into a function for you:

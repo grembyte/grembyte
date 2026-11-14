@@ -2445,15 +2445,48 @@ gpointer run_batch (gpointer data) {
              field: field === undefined ? `+0x${offset.toString(16)}` : field[0] };
   }
 
+  // klass -> the static fields of it and its bases (see classStatics)
+  const referenceClassStatics = new Map();
+
+  function classStatics(klass, framework) {
+    // [[field, location, className], ...]: the static fields of ``klass``
+    // and its bases, where they lie, for the reference graph's other way
+    // (what an object points to). Classes of the ``framework`` assemblies
+    // are left out: their statics (String.Empty ...) are not the game's.
+    const key = klass.toString();
+    let statics = referenceClassStatics.get(key);
+    if (statics !== undefined)
+      return statics;
+    const t = typesApi();
+    statics = [];
+    for (let current = klass; !current.isNull(); current = t.classParent(current)) {
+      const image = api.imageName(api.classImage(current)).readUtf8String() || '';
+      if (framework.some(prefix => image.startsWith(prefix)))
+        continue;
+      const fields = ownStaticFields(t, current);
+      const data = fields.length === 0 ? null : staticData(current);
+      if (data === null)
+        continue;
+      const className = layout(current).name;
+      for (const [name, offset] of fields)
+        statics.push([name, data.add(offset).toString(), className]);
+    }
+    if (referenceClassStatics.size >= MAX_CACHE)
+      referenceClassStatics.clear();
+    referenceClassStatics.set(key, statics);
+    return statics;
+  }
+
   function locateReferences(locations, options = {}) {
     // For the reference graph: what holds each of ``locations`` (addresses
     // that hold a pointer to an object), in their order: { kind: 'field' or
     // 'element' (of an array), object, klass, className, name, field, size
     // (the object's, in bytes) } for a
     // live object's field, { kind: 'static', klass, className, field } for a
-    // static field, { kind: 'unknown' } for anything else. ``framework``:
-    // the prefixes of the assemblies that are not the game's (the adapter's
-    // framework_prefixes).
+    // static field, { kind: 'unknown' } for anything else. A location that
+    // is an object's start also has ``statics``, its class's static fields
+    // (see classStatics). ``framework``: the prefixes of the assemblies that
+    // are not the game's (the adapter's framework_prefixes).
     typesApi();
     return onMainThread(() => {
       const live = liveObjects(options.maxObjects);
@@ -2464,6 +2497,14 @@ gpointer run_batch (gpointer data) {
         let found = null;
         try {
           found = objectReference(starts, location) || staticReference(areas, location);
+          if (found !== null && found.object !== null
+              && Number(ptr(found.object).toString()) === location) {
+            try {
+              found.statics = classStatics(ptr(found.klass), options.framework || []);
+            } catch (_error) {
+              found.statics = [];  // a class whose statics cannot be read
+            }
+          }
         } catch (_error) {
           // memory that went away since
         }

@@ -4,6 +4,8 @@ syntax highlighters for JavaScript, pseudocode and Markdown.
 Fixed-width font; Tab indents by spaces, as the built-in templates are
 written, rather than inserting a tab character eight characters wide.
 With several lines selected Tab and Shift+Tab indent and outdent them all.
+Ctrl+mouse wheel, Ctrl+Plus and Ctrl+Minus make the code larger or smaller
+in every code field at once, Ctrl+0 resets it; the size is remembered.
 """
 
 import re
@@ -20,7 +22,15 @@ from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
 )
 from PySide6.QtWidgets import QApplication, QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
 
+from grembyte.ui import window_state
+
 INDENT = "  "
+# Font size of the code in pixels: the application stylesheet's for inputs, and the bounds of zooming
+DEFAULT_FONT_SIZE = 13
+MIN_FONT_SIZE = 8
+MAX_FONT_SIZE = 32
+_FONT_SIZE_KEY = "codeEditor/fontSize"
+_WHEEL_STEP = 120  # angleDelta of one notch of a mouse wheel
 _BLOCK_COMMENT = 1
 _TEMPLATE_STRING = 2
 _NUMBER = re.compile(
@@ -431,18 +441,70 @@ class MarkdownHighlighter(QSyntaxHighlighter):
                         self._paint(position, marker, "marker")
 
 
+def code_font_size():
+    """The font size of the code fields in pixels, as last zoomed."""
+    try:
+        size = int(window_state.settings().value(_FONT_SIZE_KEY, DEFAULT_FONT_SIZE))
+    except (TypeError, ValueError):
+        size = DEFAULT_FONT_SIZE
+    return max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, size))
+
+
+def set_code_font_size(size):
+    """Show the code of every code field at ``size`` pixels and remember it."""
+    size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, int(size)))
+    window_state.settings().setValue(_FONT_SIZE_KEY, size)
+    application = QApplication.instance()
+    if application is not None:
+        for widget in application.allWidgets():
+            if isinstance(widget, CodeEditor):
+                widget.show_font_size(size)
+    return size
+
+
 class CodeEditor(QPlainTextEdit):
-    """QPlainTextEdit for code: fixed-width font, Tab indents by INDENT."""
+    """QPlainTextEdit for code: fixed-width font, Tab indents by INDENT, zooms."""
 
     def __init__(self, text="", parent=None):
         super().__init__(text, parent)
         self.highlighter = JavaScriptHighlighter(self.document(), _CODE_COLORS)
         self.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self._wheel_rest = 0
+        self.show_font_size(code_font_size())
+
+    def show_font_size(self, size):
+        """Show the code at ``size`` pixels.
+
+        The application stylesheet sets the font size of inputs, which beats
+        setFont and zoomIn; a stylesheet of the widget's own beats it.
+        """
+        self.setStyleSheet("" if size == DEFAULT_FONT_SIZE else f"font-size: {size}px;")
+        self.ensurePolished()
         # Tabs pasted from elsewhere are as wide as one indent
         self.setTabStopDistance(
             QFontMetricsF(self.font()).horizontalAdvance(" ") * len(INDENT))
 
+    def wheelEvent(self, event):  # pylint: disable=invalid-name
+        if not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            super().wheelEvent(event)
+            return
+        # Touchpads send small steps: a size step per notch's worth
+        self._wheel_rest += event.angleDelta().y()
+        steps = int(self._wheel_rest / _WHEEL_STEP)
+        if steps:
+            self._wheel_rest -= steps * _WHEEL_STEP
+            set_code_font_size(code_font_size() + steps)
+        event.accept()
+
     def keyPressEvent(self, event):  # pylint: disable=invalid-name
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            step = {Qt.Key.Key_Plus: 1, Qt.Key.Key_Equal: 1, Qt.Key.Key_Minus: -1}.get(event.key())
+            if step:
+                set_code_font_size(code_font_size() + step)
+                return
+            if event.key() == Qt.Key.Key_0:
+                set_code_font_size(DEFAULT_FONT_SIZE)
+                return
         if event.key() == Qt.Key.Key_Tab and not event.modifiers() & (
                 Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier):
             self.indent()

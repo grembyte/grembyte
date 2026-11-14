@@ -44,7 +44,7 @@ class ProcessSelectDialog(QDialog):
         self.search_input.setPlaceholderText(self.translations["process.search_placeholder"])
         self.search_input.textChanged.connect(self._filter)
         search_bar.addWidget(self.search_input, 1)
-        self.cli_only = QCheckBox(self.translations["process.cli_only"])
+        self.cli_only = QCheckBox(self.translations["process.cli_only"], self)
         self.cli_only.setToolTip(self.translations["process.cli_only_tooltip"])
         self.cli_only.toggled.connect(lambda _checked: self._filter())
         search_bar.addWidget(self.cli_only)

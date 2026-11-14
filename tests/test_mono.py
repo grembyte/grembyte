@@ -3155,6 +3155,12 @@ def test_reference_graph_names_what_holds_an_object(tmp_path, qt_app):
         # The other way: the object's own address names it with its size
         own = ask("resolve_references", [address], ("mscorlib", "UnityEngine"))[0]
         assert int(own["object"], 16) == address and own["size"] >= 16
+        # and the static fields of its class (not of its UnityEngine bases)
+        assert [(field, class_name) for field, _location, class_name in own["statics"]] == [
+            ("Instances", "Game.Combat")]
+        # Only for an object's start: a field's location has none
+        assert all("statics" not in entry for entry in resolved
+                   if entry.get("object") and entry["object"] != entry["location"])
     finally:
         worker.requestInterruption()
         worker.wait(5000)

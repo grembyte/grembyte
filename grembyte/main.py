@@ -1,10 +1,12 @@
 """Application entry point for the Grembyte desktop application."""
 
+import gc
+import logging
 import os
 import signal
 import sys
 
-from PySide6.QtCore import QStandardPaths, QTimer  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QSettings, QStandardPaths, QTimer  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtGui import QIcon  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import QApplication  # pylint: disable=import-error,no-name-in-module
 
@@ -12,6 +14,7 @@ from grembyte.core import activity, former_name, logs, settings
 from grembyte.core.sessions import SESSIONS
 from grembyte.db.engine import init_db
 from grembyte.db.repository.settings import SettingsRepository
+from grembyte.hooks import syntax
 from grembyte.ui.main_window import ICON_PATH, MainWindow
 from grembyte.ui.activity_recorder import UiRecorder
 from grembyte.ui.garbage import GarbageCollector
@@ -37,6 +40,56 @@ def _set_windows_app_id():
         ctypes.WinDLL("shell32").SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_ID)
     except (AttributeError, OSError) as error:
         logs.log.warning("cannot set the Windows app ID: %s", error)
+
+
+SCALE_VARIABLE = "QT_SCALE_FACTOR"
+
+
+def scale_interface(create_application):
+    """Run ``create_application`` with Qt's scale factor at the setting ``ui_scale``.
+
+    Qt reads ``QT_SCALE_FACTOR`` once, when the application is created; it
+    enlarges text, icons, spacing and fixed sizes alike. A factor the user
+    already set is multiplied. The variable is restored afterwards so that the
+    processes Grembyte starts (e.g. the Wine helper) do not inherit it.
+    """
+    percent = settings.get("ui_scale")
+    previous = os.environ.get(SCALE_VARIABLE)
+    if percent == 100:
+        return create_application()
+    try:
+        base = float(previous) if previous else 1.0
+    except ValueError:
+        base = 1.0
+    os.environ[SCALE_VARIABLE] = f"{base * percent / 100:g}"
+    try:
+        return create_application()
+    finally:
+        if previous is None:
+            os.environ.pop(SCALE_VARIABLE, None)
+        else:
+            os.environ[SCALE_VARIABLE] = previous
+
+
+def leave(code):
+    """End the process once everything is saved, without Python's teardown.
+
+    At exit PySide deletes the widgets it thinks Python owns: those added to
+    a layout before the layout belonged to a window (hundreds in Grembyte).
+    Qt deleted them with their window already, and the second delete crashed
+    Grembyte (QCheckBox, see docs/development/implementation-notes.md). A
+    worker that hangs in a call to the target would also make Python abort
+    destroying its running QThread. So the settings Qt still holds, the
+    syntax checker and the logs are closed here, then the process ends.
+    """
+    for kept in gc.get_objects():
+        if isinstance(kept, QSettings):
+            kept.sync()
+    syntax.close_checker()
+    logging.shutdown()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)  # pylint: disable=protected-access
 
 
 def start_activity_log():
@@ -80,7 +133,7 @@ def main() -> int:
     settings.subscribe(_follow_activity_setting)
 
     _set_windows_app_id()
-    app = QApplication(sys.argv)
+    app = scale_interface(lambda: QApplication(sys.argv))
     garbage_collector = GarbageCollector(app)
     garbage_collector.start()
     add_window_buttons(app)
@@ -127,14 +180,11 @@ def main() -> int:
         in_flight=activity.in_flight())
     activity.teardown()
     if hanging:
+        # A worker hangs in a call to the target (see ShutdownDialog)
         logs.log.warning("exiting hard: %d session(s) did not end",
                          len(SESSIONS.sessions()))
-        # A worker hangs in a call to the target (see ShutdownDialog). Python
-        # would abort destroying its running QThread: leave without that.
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(code)  # pylint: disable=protected-access
-    return code
+    leave(code)
+    return code  # not reached
 
 
 if __name__ == "__main__":

@@ -160,6 +160,17 @@ def checker():
         return _checker
 
 
+def close_checker():
+    """Close the shared SyntaxChecker, if one was started (Grembyte leaves
+    without running atexit, see grembyte.main.leave)."""
+    global _checker  # pylint: disable=global-statement
+    with _checker_lock:
+        checker_, _checker = _checker, None
+    if checker_ is not None:
+        atexit.unregister(checker_.close)
+        checker_.close()
+
+
 def check_function(source):
     """The SyntaxIssue of a template's source (a function expression), else None."""
     return checker().check(FUNCTION, source)

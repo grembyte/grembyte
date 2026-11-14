@@ -51,7 +51,7 @@ Stack and other-memory locations of one object share a node, which counts them; 
 
 ## The two ways
 
-**What holds it** grows the graph to the left, to the holders, as described above. **What it points to** grows it to the right: the object's fields that point to the start of another object, labelled with the field. The pointers lie in the object's own memory, its size as the engine knows it (in Unreal the class's `PropertiesSize`). A pointer to anything else – a vtable, the element block of an array – is not shown and only counts in **+n**.
+**What holds it** grows the graph to the left, to the holders, as described above. **What it points to** grows it to the right: the object's fields that point to the start of another object, labelled with the field. The pointers lie in the object's own memory, its size as the engine knows it (in Unreal the class's `PropertiesSize`). A pointer to anything else – a vtable, the element block of an array – is not shown and only counts in **+n**. In Unity Mono games the static fields of the object's class (and of its bases from the game's assemblies) are followed too: each shows as its green **Static field** node between the object and what it points to. In Pillars of Eternity, for example, `GameState` reaches the player and the stronghold only that way, through `GameState.s_playerCharacter` and `GameState.m_stronghold`.
 
 <figure markdown="span">
   ![Reference graph: what an object points to](../assets/screenshots/reference-graph-targets-dark.webp#only-dark)
@@ -63,10 +63,10 @@ Each way has a graph of its own, kept while you switch, and a double click unfol
 
 ## Working with it
 
-- **Double-click** an object to unfold it: what holds it, or what it points to. Double-click an object that is unfolded already to show its fields in the object inspector.
+- **Double-click** an object to unfold it: what holds it, or what it points to. Double-click it again to fold it in: what unfolding it showed goes again, with everything only reached through it. Its fields open in the object inspector from the context menu.
 - **Ctrl + mouse wheel** zooms, dragging the background moves the graph.
 - The **context menu of a node**:
-    - **Find holders** (the other way: **Find what it points to**) unfolds it, **Open in inspector** shows its fields;
+    - **Find holders** (the other way: **Find what it points to**) unfolds it, **Fold in** folds it in again, **Open in inspector** shows its fields;
     - **Copy address**, and for a static field or global data **Copy name** (the field, or `module+0x…`);
     - **Highlight the way to the object** (the other way: *from* the object) marks the shortest way between the node and the start object in lime, beside the orange way to a root;
     - **Hide** leaves the node out, **Hide all *Class*** every object of its class – handy for the dozens of `UNiagaraComponent`s that hold an Unreal actor. What only hidden nodes led to goes with them, and the way to a root is looked for around them.

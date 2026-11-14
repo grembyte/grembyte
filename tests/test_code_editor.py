@@ -304,3 +304,69 @@ def test_highlight_code_and_the_editor_colour_fenced_code_alike(qt_app):
         assert color_at(1, "const") == colors["code_keyword"]
     finally:
         editor.close()
+
+
+def _wheel(editor, delta, modifiers):
+    # pylint: disable=import-outside-toplevel
+    from PySide6.QtCore import QPoint, QPointF, Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtGui import QWheelEvent  # pylint: disable=import-error,no-name-in-module
+
+    event = QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, delta),
+                        Qt.MouseButton.NoButton, modifiers, Qt.ScrollPhase.NoScrollPhase, False)
+    editor.wheelEvent(event)
+
+
+def test_ctrl_wheel_and_keys_zoom_every_code_field(qt_app, tmp_path):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    import shiboken6  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QWidget  # pylint: disable=import-error,no-name-in-module
+    from grembyte.ui.styles.styles import build_stylesheet
+    from grembyte.ui.styles.themes import ThemeManager
+    from grembyte.ui.widgets import code_editor
+    from grembyte.ui.widgets.code_editor import CodeEditor
+    from tests.test_themes import MemorySettings
+
+    # Under the application stylesheet, which sets the font size of inputs; set on a
+    # parent here: on the application it would stay with the tests that follow.
+    colors = ThemeManager(settings=MemorySettings(), user_theme_dir=str(tmp_path)).load_theme()["colors"]
+    parent = QWidget()
+    parent.setStyleSheet(build_stylesheet(colors, tmp_path))
+    try:
+        first, second = CodeEditor("a", parent), CodeEditor("b", parent)
+        default = code_editor.DEFAULT_FONT_SIZE
+        assert first.fontInfo().pixelSize() == default
+        _wheel(first, 120, Qt.KeyboardModifier.ControlModifier)
+        _wheel(first, 240, Qt.KeyboardModifier.ControlModifier)
+        assert first.fontInfo().pixelSize() == second.fontInfo().pixelSize() == default + 3
+        width = first.fontMetrics().horizontalAdvance(" ")
+        assert abs(first.tabStopDistance() - 2 * width) < 1
+        # Touchpad: half a notch does nothing yet, the second half one step
+        _wheel(first, -60, Qt.KeyboardModifier.ControlModifier)
+        assert code_editor.code_font_size() == default + 3
+        _wheel(first, -60, Qt.KeyboardModifier.ControlModifier)
+        assert code_editor.code_font_size() == default + 2
+        # Without Ctrl the wheel scrolls, the size stays
+        _wheel(first, 120, Qt.KeyboardModifier.NoModifier)
+        assert code_editor.code_font_size() == default + 2
+        _press_with(first, Qt.Key.Key_Minus, Qt.KeyboardModifier.ControlModifier)
+        assert code_editor.code_font_size() == default + 1
+        # Remembered: a new field starts at it
+        assert CodeEditor(parent=parent).fontInfo().pixelSize() == default + 1
+        _press_with(first, Qt.Key.Key_0, Qt.KeyboardModifier.ControlModifier)
+        assert second.fontInfo().pixelSize() == default and second.styleSheet() == ""
+        assert code_editor.set_code_font_size(500) == code_editor.MAX_FONT_SIZE
+        assert code_editor.set_code_font_size(1) == code_editor.MIN_FONT_SIZE
+        assert first.toPlainText() == "a"  # the keys did not type
+    finally:
+        shiboken6.delete(parent)
+
+
+def _press_with(editor, key, modifiers):
+    # Straight to the editor: QTest.keyClick with Ctrl on a hidden widget left Ctrl
+    # held for the application, and later tests selected table rows as with Ctrl.
+    # pylint: disable=import-outside-toplevel
+    from PySide6.QtCore import QEvent  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtGui import QKeyEvent  # pylint: disable=import-error,no-name-in-module
+
+    editor.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, key, modifiers))
