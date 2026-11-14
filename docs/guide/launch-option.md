@@ -5,13 +5,24 @@
 ## Setting it up
 
 1. Attach to the game in Grembyte and set up its [hooks](hooks.md), method hooks and [scripts](scripts.md). They are saved for the program, as always.
-2. In Steam, open the game's **Properties → General → Launch options** and put `grembyte-cli` in front of `%command%`, with the full path of your installation:
+2. In Grembyte, choose **File → Copy Steam launch option**. It puts the launch option on the clipboard: `grembyte-cli` in front of `%command%`, with the full path of your installation:
 
     ```text
     /path/to/grembyte/.venv/bin/grembyte-cli %command%
     ```
 
-3. Start the game from Steam.
+3. In Steam, open the game's **Properties → General → Launch options** and paste it.
+4. Start the game from Steam.
+
+### Without the path
+
+Steam looks for the command of a launch option only in `/usr/local/bin`, `/usr/bin` and `/bin`, not in the folders of your shell's `PATH` such as `~/.local/bin`. To write just `grembyte-cli %command%`, link it into `/usr/local/bin` once:
+
+```bash
+sudo ln -s /path/to/grembyte/.venv/bin/grembyte-cli /usr/local/bin/grembyte-cli
+```
+
+A link, not a copy: it keeps using Grembyte's virtual environment, and updates of Grembyte apply. **Copy Steam launch option** then copies the short form. It does so only if the link leads to the installation it runs from; for another one it keeps the full path.
 
 `grembyte-cli` starts the command first, so the game runs whatever goes wrong in Grembyte. Among the processes the command starts it looks for the one with something saved for it. It waits a few seconds so the engine can load, then attaches. It ends when the command ends and exits with the command's exit code.
 
@@ -20,7 +31,7 @@
 | `--delay SECONDS` | How long to wait after the game was found before attaching (default 5). Raise it for games that load their engine slowly. |
 | `-h`, `--help` | Show the options. |
 
-Options go before `%command%`, for example `/path/to/grembyte-cli --delay 15 %command%`.
+Options go before `%command%`, for example `grembyte-cli --delay 15 %command%` (with the full path, unless you linked it as above).
 
 ## What it installs
 

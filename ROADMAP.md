@@ -216,6 +216,30 @@ through `grembyte-cli`. Open:
   sound feedback, a different sound for each. Today a paused script ignores its hotkey and
   only manual scripts can have one.
 
+### 12. grembyte-cli on Windows
+
+[`grembyte-cli`](docs/guide/launch-option.md) runs on Linux only, though the window, Frida
+(without a gadget) and the hotkey reader (`grembyte/platform/windows.py`) work on Windows,
+and Steam takes `%command%` there too. Open:
+
+- **Finding the game:** the `GREMBYTE_LAUNCHER` mark and the descendants through `psutil`
+  instead of `/proc` (`environ()`, `children()`); the anti-cheat check through `psutil`'s
+  `cwd()` and `exe()`.
+- **No re-exec:** dropping Steam's `LD_PRELOAD` is Linux's need, and `os.execv` on Windows
+  starts a new process, which cuts the game off from its parent.
+- **Ending:** no `SIGHUP`; pass Steam's ending on to the game the Windows way.
+- **Taking the game over in the window:** `cli_link` uses a Unix socket in
+  `$XDG_RUNTIME_DIR`, which Python on Windows lacks. `QLocalServer`/`QLocalSocket` (a named
+  pipe on Windows) would serve both systems alike.
+- **No console window:** started from Steam, a console script opens a black window; a
+  `gui-scripts` entry point avoids it (messages go to `grembyte.log` anyway).
+- **Copy Steam launch option** and the docs: the Windows path in quotes, nothing about
+  `/usr/local/bin`.
+- Limits: games running as administrator cannot be inspected by a normal process; launchers
+  outside Steam's process chain (EA app, Ubisoft Connect) may not pass the mark on.
+- The test suite runs on Linux only: the Windows paths need a test on a Windows machine with
+  Steam.
+
 ### Recommendation
 
 The **code explorer and pseudocode** list above comes next, starting with names without PDB.
