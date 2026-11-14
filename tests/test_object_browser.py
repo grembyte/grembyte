@@ -68,7 +68,10 @@ def test_window_lists_classes_and_opens_their_objects(qt_app, monkeypatch):
     try:
         worker = panel._worker
         assert worker.requests[-1] == ("browse_classes", "", False)
+        # The dots while the agent reads, in the brand colour
+        assert dialog.busy.is_busy()
         worker.classes_browsed.emit(len(worker.requests), _CLASSES)
+        assert not dialog.busy.is_busy()
         assert len(_names(dialog)) == 7
         assert dialog.status_label.text() == "7 Klassen, 5009 Objekte"
         combo = dialog.package_combo
@@ -93,11 +96,13 @@ def test_window_lists_classes_and_opens_their_objects(qt_app, monkeypatch):
         hero = dialog.tree.topLevelItem(1)
         hero.setExpanded(True)
         assert worker.requests[-1] == ("browse_instances", "0x1000", "", False)
+        assert dialog.busy.is_busy()
         worker.instances_browsed.emit(len(worker.requests), {
             "count": 3, "truncated": False, "instances": [
                 {"address": "0x7f00", "name": "BP_Hero_C_0", "outer": "/Game/Maps/Start"},
                 {"address": "0x7f80", "name": "BP_Hero_C_1", "outer": "/Game/Maps/Start"},
                 {"address": "0x7fc0", "name": "Sidekick", "outer": "WidgetTree_7"}]})
+        assert not dialog.busy.is_busy()
         assert [hero.child(i).text(0) for i in range(hero.childCount())] == [
             '"BP_Hero_C_0"@0x7f00', '"BP_Hero_C_1"@0x7f80', '"Sidekick"@0x7fc0']
         assert hero.child(2).toolTip(0) == "Sidekick in WidgetTree_7"
@@ -141,4 +146,62 @@ def test_window_lists_classes_and_opens_their_objects(qt_app, monkeypatch):
         assert worker.requests[-1] == ("browse_classes", "hero", True)
     finally:
         dialog.close()
+        panel.set_process(None)
+
+
+def test_busy_dots_bounce_in_the_brand_colour(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from PySide6.QtGui import QImage  # pylint: disable=import-error,no-name-in-module
+    from grembyte.ui.widgets.busy import BusyDots
+    from grembyte.ui.widgets.icons import theme_qcolor
+
+    dots = BusyDots()
+    assert not dots.isVisibleTo(dots) and not dots.is_busy()
+    # Keeps its place when hidden: the status text beside it does not jump
+    assert dots.sizePolicy().retainSizeWhenHidden()
+    dots.set_busy(True)
+    assert dots.is_busy() and dots._timer.isActive()
+    dots.resize(dots.sizeHint())
+    dots._phase = 0.25  # the first dot at the top of its jump
+    image = QImage(dots.size(), QImage.Format.Format_ARGB32)
+    image.fill(0)
+    dots.render(image)
+    brand = theme_qcolor("brand")
+    colours = {image.pixelColor(x, y).rgb() for x in range(image.width())
+               for y in range(image.height()) if image.pixelColor(x, y).alpha() == 255}
+    assert brand.rgb() in colours
+    dots.set_busy(False)
+    assert not dots.is_busy() and not dots.isVisibleTo(dots)
+
+
+def _python_owned(widget):
+    """The widgets below ``widget`` that PySide would delete itself at exit."""
+    # pylint: disable=import-outside-toplevel
+    import shiboken6  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import QWidget  # pylint: disable=import-error,no-name-in-module
+
+    return [type(child).__name__ for child in widget.findChildren(QWidget)
+            if shiboken6.ownedByPython(child)]
+
+
+def test_the_windows_leave_their_widgets_to_qt(qt_app, monkeypatch):
+    # Widgets PySide thinks Python owns, under a parent, crashed Grembyte at exit.
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from grembyte.ui.widgets import reference_graph, scripts
+    from grembyte.ui.widgets.object_browser import ObjectBrowserDialog
+    from tests.test_object_references import _FakeIndexWorker
+
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    monkeypatch.setattr(reference_graph, "ReferenceIndexWorker", _FakeIndexWorker)
+    translations = load_translations("de")
+    panel = scripts.ScriptPanel(translations)
+    panel.set_process(4242)
+    browser = ObjectBrowserDialog(translations, panel)
+    graph = reference_graph.ReferenceGraphDialog(translations, panel, 4242, 0x1000, "X")
+    try:
+        assert _python_owned(browser) == []
+        assert _python_owned(graph) == []
+    finally:
+        browser.close()
+        graph.close()
         panel.set_process(None)

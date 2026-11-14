@@ -94,6 +94,14 @@ def test_the_window_saves_applies_and_resets(repository, qt_app, translations):
     assert repository.load()["activity_log"] is True
     assert settings.get("language") == "en" and settings.language() == "en"
 
+    # The interface size also takes effect only after a restart.
+    dialog = SettingsDialog(translations, repository)
+    assert not dialog.restart_label.isVisibleTo(dialog)
+    dialog.editors["ui_scale"].setValue(120)
+    assert dialog.restart_label.isVisibleTo(dialog)
+    dialog.editors["ui_scale"].setValue(100)
+    assert not dialog.restart_label.isVisibleTo(dialog)
+
     dialog = SettingsDialog(translations, repository)
     dialog.show_defaults()
     assert dialog.chosen() == {setting.key: setting.default for setting in settings.SETTINGS}
@@ -179,3 +187,46 @@ def test_the_activity_log_follows_its_setting(tmp_path, monkeypatch):
         assert activity.enabled()
     finally:
         activity.teardown()
+
+
+def test_the_interface_scale_is_set_only_while_qt_starts(monkeypatch):
+    # pylint: disable=import-outside-toplevel
+    import os
+    from grembyte import main
+
+    monkeypatch.delenv(main.SCALE_VARIABLE, raising=False)
+    seen = lambda: os.environ.get(main.SCALE_VARIABLE)  # noqa: E731
+    assert main.scale_interface(seen) is None  # 100 % leaves Qt alone
+    settings.apply({"ui_scale": 130})
+    assert main.scale_interface(seen) == "1.3"
+    # Restored at once: processes Grembyte starts must not inherit it.
+    assert main.SCALE_VARIABLE not in os.environ
+    monkeypatch.setenv(main.SCALE_VARIABLE, "2")
+    assert main.scale_interface(seen) == "2.6"
+    assert os.environ[main.SCALE_VARIABLE] == "2"
+    # Steps of 10 % between 100 % and 150 %
+    assert settings.BY_KEY["ui_scale"].coerce(200) == 150
+    assert settings.BY_KEY["ui_scale"].restart
+
+
+def test_leaving_saves_qt_settings_before_the_process_ends(tmp_path, monkeypatch):
+    # pylint: disable=import-outside-toplevel
+    from PySide6.QtCore import QSettings  # pylint: disable=import-error,no-name-in-module
+    from grembyte import main
+
+    path = tmp_path / "state.ini"
+    kept = QSettings(str(path), QSettings.Format.IniFormat)
+    kept.setValue("window/size", 42)
+    closed = []
+    monkeypatch.setattr(main.syntax, "close_checker", lambda: closed.append(True))
+    ended = []
+
+    def end(code):
+        # What is in the file when the process ends
+        ended.append((code, "size=42" in path.read_text(encoding="utf-8")))
+        raise SystemExit(code)
+
+    monkeypatch.setattr(main.os, "_exit", end)
+    with pytest.raises(SystemExit):
+        main.leave(3)
+    assert ended == [(3, True)] and closed == [True]

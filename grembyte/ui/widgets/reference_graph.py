@@ -34,7 +34,6 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QHBoxLayout,
     QLabel,
     QMenu,
-    QProgressBar,
     QPushButton,
     QVBoxLayout,
 )
@@ -55,10 +54,12 @@ from grembyte.features.object_references import (
     UNKNOWN,
     ReferenceGraph,
     ReferenceIndexWorker,
+    static_fields,
 )
 from grembyte.ui.export_folder import remember, suggested_path
 from grembyte.ui.localization import language_code
 from grembyte.ui.widgets import graph_export
+from grembyte.ui.widgets.busy import BusyDots
 from grembyte.ui.widgets.docking import PinButton
 from grembyte.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 from grembyte.ui.widgets.labels import DocsHint
@@ -153,6 +154,7 @@ def node_tooltip(node, translations, hidden=0, hidden_user=0, hidden_filter=0,
             lines.append(t[expand_hint])
         elif node.total == 0:
             lines.append(t[none_found])
+            lines.append(t["references.collapse_hint"])
         else:
             lines.append(t[count].format(
                 shown=node.shown - hidden - hidden_user - hidden_filter, total=node.total))
@@ -162,8 +164,11 @@ def node_tooltip(node, translations, hidden=0, hidden_user=0, hidden_filter=0,
                 lines.append(t["references.hidden_user"].format(count=hidden_user))
             if hidden_filter:
                 lines.append(t["references.hidden_filter"].format(count=hidden_filter))
+            lines.append(t["references.collapse_hint"])
     else:
-        lines.append(t[f"references.{node.kind}_tooltip"])
+        # The other way a static field is not a holder: its class's object reaches it
+        lines.append(t["references.static_target_tooltip" if node.kind == STATIC
+                       and direction == TARGETS else f"references.{node.kind}_tooltip"])
         lines.extend(f"0x{location:x}" for location in node.locations[:5])
         if len(node.locations) > 5:
             lines.append("…")
@@ -460,11 +465,14 @@ class ReferenceGraphDialog(QDialog):
         settings.unsubscribe(self._settings_changed)
 
     def _build_ui(self):
+        # The widgets get the window as parent at once: added to a row layout not
+        # yet attached, PySide kept them as Python's own and deleted them a second
+        # time at exit, which crashed Grembyte (a QCheckBox, seen in crash.log).
         t = self.translations
         layout = QVBoxLayout(self)
         layout.addWidget(DocsHint(t, t["references.hint"], "guide/reference-graph/"))
         bar = QHBoxLayout()
-        self.export_button = QPushButton(t["references.export"])
+        self.export_button = QPushButton(t["references.export"], self)
         set_button_icon(self.export_button, "download")
         self.export_button.setToolTip(t["references.export_tooltip"])
         self.export_button.clicked.connect(self.export_html)
@@ -473,7 +481,7 @@ class ReferenceGraphDialog(QDialog):
         self.direction_group = QButtonGroup(self)
         self.direction_buttons = {}
         for direction in (HOLDERS, TARGETS):
-            button = QPushButton(t[f"references.direction_{direction}"])
+            button = QPushButton(t[f"references.direction_{direction}"], self)
             button.setToolTip(t[f"references.direction_{direction}_tooltip"])
             button.setCheckable(True)
             button.setChecked(direction == self.graph.direction)
@@ -482,22 +490,22 @@ class ReferenceGraphDialog(QDialog):
             self.direction_buttons[direction] = button
             bar.addWidget(button)
         self._show_direction()
-        self.path_button = QPushButton(t["references.find_root"])
+        self.path_button = QPushButton(t["references.find_root"], self)
         set_button_icon(self.path_button, "account_tree")
         self.path_button.setToolTip(t["references.find_root_tooltip"])
         self.path_button.clicked.connect(self.find_root)
         bar.addWidget(self.path_button)
         bar.addStretch()
-        self.singletons_check = QCheckBox(t["references.only_singletons"])
+        self.singletons_check = QCheckBox(t["references.only_singletons"], self)
         self.singletons_check.setToolTip(t["references.only_singletons_tooltip"])
         self.singletons_check.toggled.connect(self._only_singletons)
-        self.refresh_button = QPushButton(t["references.refresh"])
+        self.refresh_button = QPushButton(t["references.refresh"], self)
         set_button_icon(self.refresh_button, "refresh")
         self.refresh_button.setToolTip(t["references.refresh_tooltip"])
         self.refresh_button.clicked.connect(self.read_memory)
         bar.addWidget(self.singletons_check)
         bar.addWidget(self.refresh_button)
-        self.pin_button = PinButton(t)
+        self.pin_button = PinButton(t, parent=self)
         bar.addWidget(self.pin_button)
         layout.addLayout(bar)
 
@@ -510,13 +518,12 @@ class ReferenceGraphDialog(QDialog):
         layout.addWidget(self.view, 1)
 
         bottom = QHBoxLayout()
-        self.status_label = QLabel("")
+        # While the memory is read or answers of the agent are due
+        self.busy = BusyDots(self)
+        bottom.addWidget(self.busy)
+        self.status_label = QLabel("", self)
         self.status_label.setWordWrap(True)
         bottom.addWidget(self.status_label, 1)
-        self.progress = QProgressBar()
-        self.progress.setMaximumWidth(220)
-        self.progress.hide()
-        bottom.addWidget(self.progress)
         layout.addLayout(bottom)
         self._update_buttons()
 
@@ -538,17 +545,21 @@ class ReferenceGraphDialog(QDialog):
         self.index = None
         self._redraw()
         worker = ReferenceIndexWorker(self.pid)
-        worker.progress.connect(self.progress.setValue)
+        worker.progress.connect(self._show_reading)
         worker.ready.connect(self._on_index)
         worker.failed.connect(self._on_index_failed)
         worker.finished.connect(self._index_read)
         self._index_worker = worker
         keep_until_finished(worker)
-        self.progress.setValue(0)
-        self.progress.show()
         self.status_label.setText(self.translations["references.reading"])
         self._update_buttons()
         worker.start()
+
+    def _show_reading(self, percent):
+        # A bound method: not called once the window is gone (see inspection.py)
+        if self._index_worker is not None:
+            self.status_label.setText(self.translations["references.reading_percent"].format(
+                percent=percent))
 
     def _index_read(self):
         # A bound method: not called once the window is gone (see inspection.py)
@@ -557,7 +568,6 @@ class ReferenceGraphDialog(QDialog):
 
     def _on_index(self, index):
         self.index = index
-        self.progress.hide()
         self.status_label.setText(self.translations["references.ready"].format(
             pointers=len(index.pointer_map)))
         if self.singletons_check.isChecked():
@@ -567,7 +577,6 @@ class ReferenceGraphDialog(QDialog):
         self.expand(self.graph.target)
 
     def _on_index_failed(self, message):
-        self.progress.hide()
         self.status_label.setText(message)
         self._update_buttons()
 
@@ -591,6 +600,7 @@ class ReferenceGraphDialog(QDialog):
             self._classes_request = None
             self._pending.clear()
             self._expansions.clear()
+            self._update_busy()
         return worker
 
     def expand(self, key):
@@ -629,13 +639,15 @@ class ReferenceGraphDialog(QDialog):
     def _expand_targets(self, graph, node):
         """The objects ``node`` points to: the pointers lying in its memory
         (its size from the agent) to the start of an object, labelled with
-        the field holding them."""
+        the field holding them, and those in the static fields of its class
+        (Mono), each through that field's node."""
         key, start = node.key, node.address
-        if node.size is None:
+        if node.size is None or node.statics is None:
             def sized(entries):
                 entry = entries.get(start) or {}
                 if entry.get("object") and int(entry["object"], 16) == start and entry.get("size"):
                     node.size = int(entry["size"])
+                    node.statics = static_fields(entry) or []
                     self._expand_targets(graph, node)
                 else:
                     self.status_label.setText(self.translations["references.not_an_object"])
@@ -643,23 +655,40 @@ class ReferenceGraphDialog(QDialog):
             self._resolve(graph, key, [start], sized)
             return
         pairs, total = self.index.pointers_in(start, start + node.size)
-        values = list(dict.fromkeys(value for _location, value in pairs
-                                    if value and value != start))
+        # The static fields holding a pointer: [(field, location, class name, value)]
+        statics = []
+        for field_name, location, class_name in node.statics:
+            held, _count = self.index.pointers_in(location, location + 1)
+            if held and held[0][1]:
+                statics.append((field_name, location, class_name, held[0][1]))
+        total += len(statics)
+        values = list(dict.fromkeys([value for _location, value in pairs
+                                     if value and value != start]
+                                    + [value for *_rest, value in statics]))
         if not values:
             self._finish(graph, key, [], total)
             return
+
+        def is_object(entry, value):
+            return entry.get("object") and int(entry["object"], 16) == value
 
         def named(entries):
             targets = []
             for location, value in pairs:
                 entry = entries.get(value) or {}
-                if not entry.get("object") or int(entry["object"], 16) != value:
+                if not is_object(entry, value):
                     continue  # not the start of an object
                 place = entries.get(location) or {}
                 label = (place.get("field") if place.get("object")
                          and int(place["object"], 16) == start
                          else None) or f"+0x{location - start:x}"
                 targets.append((graph.node_for(key, value, entry=entry), label))
+            for field_name, location, class_name, value in statics:
+                entry = entries.get(value) or {}
+                if is_object(entry, value):
+                    target = graph.node_for(key, value, entry=entry)
+                    targets.append((graph.add_static_target(
+                        key, field_name, location, class_name, target), ""))
             self._finish(graph, key, targets, total)
         self._resolve(graph, key,
                       list(dict.fromkeys([location for location, _value in pairs] + values)),
@@ -688,6 +717,7 @@ class ReferenceGraphDialog(QDialog):
         if worker is not self._worker or request not in self._pending:
             return
         direction, key, batch = self._pending.pop(request)
+        self._update_busy()
         expansion = self._expansions.get((direction, key))
         if expansion is None:
             return  # another batch of it failed
@@ -702,6 +732,7 @@ class ReferenceGraphDialog(QDialog):
         if worker is not self._worker or request not in self._pending:
             return
         direction, key, _batch = self._pending.pop(request)
+        self._update_busy()
         if self._expansions.pop((direction, key), None) is None:
             return
         self.status_label.setText(message)
@@ -779,6 +810,7 @@ class ReferenceGraphDialog(QDialog):
             return
         self._classes_request = worker.browse_classes("", False)
         self.status_label.setText(self.translations["references.reading_classes"])
+        self._update_busy()
 
     def _on_classes(self, worker, request, answer):
         if worker is not self._worker or request != self._classes_request:
@@ -801,6 +833,7 @@ class ReferenceGraphDialog(QDialog):
         if worker is not self._worker or request != self._classes_request:
             return
         self._classes_request = None
+        self._update_busy()
         self.status_label.setText(self.translations["references.classes_failed"].format(
             message=message.splitlines()[0] if message else message))
         target = self.graph.nodes[self.graph.target]
@@ -837,11 +870,13 @@ class ReferenceGraphDialog(QDialog):
     def _stop_search(self):
         self._searching = False
         self._path = None
+        self._update_busy()
 
     # --- Drawing -------------------------------------------------------------------
     def _redraw(self):
         if not getattr(shiboken6, "isValid")(self):
             return
+        self._update_busy()
         selected = self._selected()
         selected_key = None if selected is None else selected.key
         first = not self._items
@@ -942,11 +977,25 @@ class ReferenceGraphDialog(QDialog):
         return None
 
     def _activated(self, item):
-        """A double click: unfold a node's holders, or inspect it once unfolded."""
-        if item.node.can_expand:
-            self.expand(item.node.key)
-        else:
-            self.inspect(item.node)
+        """A double click: unfold an object the way shown, or fold it in again
+        (the inspector opens from the context menu)."""
+        node = item.node
+        if node.can_expand:
+            self.expand(node.key)
+        elif node.kind == OBJECT:
+            self.collapse(node.key)
+
+    def collapse(self, key):
+        """Fold node ``key`` in again: what unfolding it showed goes, with every
+        node only reached through it (an unfolding still due is left alone)."""
+        graph = self.graph
+        node = graph.nodes.get(key)
+        if (node is None or node.kind != OBJECT or not node.expanded
+                or (graph.direction, key) in self._expansions):
+            return
+        self._stop_search()
+        graph.collapse(key)
+        self._redraw()
 
     def inspect(self, node):
         """Open an object node in the object inspector."""
@@ -989,6 +1038,8 @@ class ReferenceGraphDialog(QDialog):
             expand = ("references.expand" if self.graph.direction == HOLDERS
                       else "references.expand_targets")
             menu.addAction(t[expand], lambda: self.expand(node.key))
+        elif node.kind == OBJECT and node.expanded:
+            menu.addAction(t["references.collapse"], lambda: self.collapse(node.key))
         if node.target() is not None:
             menu.addAction(t["references.inspect"], lambda: self.inspect(node)).setToolTip(
                 t["references.inspect_tooltip"])
@@ -1088,6 +1139,14 @@ class ReferenceGraphDialog(QDialog):
         self.path_button.setVisible(self.graph.direction == HOLDERS)
         self.path_button.setEnabled(ready and not self._searching)
         self.refresh_button.setEnabled(self._index_worker is None)
+        self._update_busy()
+
+    def _update_busy(self):
+        """The dots while the memory is read, the agent names objects or lists the
+        classes, or a root is sought."""
+        if hasattr(self, "busy"):
+            self.busy.set_busy(self._index_worker is not None or bool(self._pending)
+                               or self._classes_request is not None or self._searching)
 
     def closeEvent(self, event):  # pylint: disable=invalid-name
         self._forget_settings()

@@ -12,6 +12,7 @@
 | Setting | Meaning |
 | --- | --- |
 | Language | Deutsch, English, or as the system (the default). Takes effect at the next start. |
+| Interface size (%) | Enlarges text, icons and spacing of the whole interface, from 100 % (the default) to 150 % in steps of 10 %. Takes effect at the next start and adds to the scaling of the desktop. Only the code fields can also be [zoomed on their own](../reference/javascript.md#where-javascript-is-used). |
 | Refresh remembered addresses every (ms) | How often tracked addresses read their values (default 1000, 100 to 10 000). |
 | Record the activity log | Write the [activity log](tools.md#log-and-activity) (off by default). Takes effect at once. |
 | Aligned addresses only | The first [value scan](scanning.md#data-types) checks only addresses that are a multiple of the type's size (on by default). Faster and uses far less memory. |

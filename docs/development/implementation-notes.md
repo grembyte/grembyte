@@ -450,6 +450,17 @@ since it is chosen automatically on attach.
   them later, but PySide still counts them as Python's own and deletes them a second time when
   the application is torn down: the settings window, left as a child of the main window, crashed
   Grembyte at exit (segfault in `QWidgetPrivate::invalidateBackingStore`, `crash.log`).
+- **Leaving without PySide's teardown (2026-11-14):** the rule above was not kept everywhere: a
+  scan after every test found about 240 such widgets, eight of them check boxes. Grembyte kept
+  crashing at exit in `PySide::destroyQCoreApplication` → `QObject::~QObject`, from the
+  deleting destructor of `QCheckBoxWrapper` (the process dialog's *grembyte-cli only*, the reference
+  graph's *Only singletons*). `QtWidgets.abi3.so` is stripped; the class was found through the
+  vtable that points to the crashing function (its `R_X86_64_RELATIVE` relocations) and the
+  typeinfo name before it. Since then `grembyte.main.leave` ends the process with `os._exit`
+  once the activity log is closed: it syncs the `QSettings` still alive, closes the syntax
+  checker (registered with `atexit`, which no longer runs) and shuts logging down. New windows
+  should still give their widgets a parent, so that the rule holds where a window is deleted
+  while Grembyte runs.
 
 ## grembyte-cli and the window
 

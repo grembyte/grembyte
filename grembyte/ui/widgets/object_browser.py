@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QVBoxLayout,
 )
 
+from grembyte.ui.widgets.busy import BusyDots
 from grembyte.ui.widgets.code_explorer import BoundedComboBox
 from grembyte.ui.widgets.docking import PinButton
 from grembyte.ui.widgets.icons import set_button_icon, theme_qcolor
@@ -130,6 +131,9 @@ class ObjectBrowserDialog(QDialog):
         self.refresh()
 
     def _build_ui(self):
+        # The widgets get the window as parent at once: added to a row layout not
+        # yet attached, PySide kept them as Python's own and deleted them a second
+        # time at exit, which crashed Grembyte (a QCheckBox, seen in crash.log).
         t = self.translations
         layout = QVBoxLayout(self)
         mono = self.engine == "mono"
@@ -139,12 +143,12 @@ class ObjectBrowserDialog(QDialog):
 
         top = QHBoxLayout()
         # Hundreds of packages: the list stays in the window, with a scroll bar
-        self.package_combo = BoundedComboBox()
+        self.package_combo = BoundedComboBox(self)
         self.package_combo.setToolTip(t["objects.package_tooltip"])
         self.package_combo.setMinimumWidth(220)
         self.package_combo.currentIndexChanged.connect(lambda _index: self._fill())
         top.addWidget(self.package_combo)
-        self.filter_input = QLineEdit()
+        self.filter_input = QLineEdit(self)
         self.filter_input.setPlaceholderText(t["objects.filter_placeholder"])
         self.filter_input.setToolTip(t["objects.filter_tooltip"])
         self.filter_input.setClearButtonEnabled(True)
@@ -153,27 +157,27 @@ class ObjectBrowserDialog(QDialog):
         layout.addLayout(top)
 
         options = QHBoxLayout()
-        self.singleton_check = QCheckBox(t["objects.singletons"])
+        self.singleton_check = QCheckBox(t["objects.singletons"], self)
         self.singleton_check.setToolTip(t["objects.singletons_tooltip"])
         self.singleton_check.toggled.connect(lambda _checked: self._fill())
         options.addWidget(self.singleton_check)
-        self.internal_check = QCheckBox(t["objects.internal"])
+        self.internal_check = QCheckBox(t["objects.internal"], self)
         self.internal_check.setToolTip(t["objects.internal_tooltip"])
         self.internal_check.toggled.connect(lambda _checked: self.refresh())
         options.addWidget(self.internal_check)
         # Mono's liveness calculation finds no templates or reflection objects
         self.internal_check.setVisible(not mono)
         options.addStretch()
-        self.refresh_button = QPushButton(t["objects.refresh"])
+        self.refresh_button = QPushButton(t["objects.refresh"], self)
         set_button_icon(self.refresh_button, "refresh")
         self.refresh_button.setToolTip(t["objects.refresh_tooltip"])
         self.refresh_button.clicked.connect(self.refresh)
         options.addWidget(self.refresh_button)
-        self.pin_button = PinButton(t)
+        self.pin_button = PinButton(t, parent=self)
         options.addWidget(self.pin_button)
         layout.addLayout(options)
 
-        self.tree = QTreeWidget()
+        self.tree = QTreeWidget(self)
         self.tree.setColumnCount(len(_COLUMNS))
         self.tree.setHeaderLabels([t[column] for column in _COLUMNS])
         self.tree.headerItem().setToolTip(_COUNT, t["objects.column_count_tooltip"])
@@ -194,10 +198,13 @@ class ObjectBrowserDialog(QDialog):
         layout.addWidget(self.tree, 1)
 
         actions = QHBoxLayout()
-        self.status_label = QLabel("")
+        # While an answer of the agent is due: the classes or a class's objects
+        self.busy = BusyDots(self)
+        actions.addWidget(self.busy)
+        self.status_label = QLabel("", self)
         self.status_label.setWordWrap(True)
         actions.addWidget(self.status_label, 1)
-        self.inspect_button = QPushButton(t["objects.inspect"])
+        self.inspect_button = QPushButton(t["objects.inspect"], self)
         self.inspect_button.setObjectName("btn_primary")
         set_button_icon(self.inspect_button, "manage_search")
         self.inspect_button.setToolTip(t["objects.inspect_tooltip"])
@@ -225,6 +232,7 @@ class ObjectBrowserDialog(QDialog):
                                         (worker.instances_failed, self._on_instances_failed))]
             self._pending = None
             self._loading.clear()
+            self._update_busy()
         return worker
 
     def refresh(self):
@@ -239,6 +247,7 @@ class ObjectBrowserDialog(QDialog):
         self._pending = worker.browse_classes(" ".join(self._sent_words),
                                               self.internal_check.isChecked())
         self.status_label.setText(self.translations["objects.reading"])
+        self._update_busy()
 
     def _filter_changed(self, _text):
         # Class names at once; the objects' names when typing paused
@@ -260,12 +269,17 @@ class ObjectBrowserDialog(QDialog):
         request = worker.browse_instances(entry["klass"], item.data(0, _WORDS) or "",
                                           self.internal_check.isChecked())
         self._loading[request] = entry["klass"]
+        self._update_busy()
+
+    def _update_busy(self):
+        self.busy.set_busy(self._pending is not None or bool(self._loading))
 
     # --- Answers -------------------------------------------------------------------
     def _on_classes(self, worker, request, answer):
         if worker is not self._worker or request != self._pending:
             return
         self._pending = None
+        self._update_busy()
         self._classes = (answer or {}).get("classes", [])
         self._objects = (answer or {}).get("objects", 0)
         self._stats = (answer or {}).get("stats")
@@ -278,6 +292,7 @@ class ObjectBrowserDialog(QDialog):
         if worker is not self._worker or request != self._pending:
             return
         self._pending = None
+        self._update_busy()
         self.status_label.setText(self.translations["objects.failed"].format(
             message=message.splitlines()[0] if message else message))
 
@@ -285,6 +300,7 @@ class ObjectBrowserDialog(QDialog):
         if worker is not self._worker:
             return
         klass = self._loading.pop(request, None)
+        self._update_busy()
         item = self._items.get(klass)
         if item is None:
             return
@@ -313,6 +329,7 @@ class ObjectBrowserDialog(QDialog):
         if worker is not self._worker:
             return
         klass = self._loading.pop(request, None)
+        self._update_busy()
         item = self._items.get(klass)
         if item is None:
             return
@@ -423,6 +440,7 @@ class ObjectBrowserDialog(QDialog):
             if self._truncated:
                 status += " " + t["objects.truncated"]
             self.status_label.setText(status)
+        self._update_busy()
         self._update_buttons()
 
     def _expanded(self, item):

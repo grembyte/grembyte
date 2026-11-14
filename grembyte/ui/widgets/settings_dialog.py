@@ -27,7 +27,7 @@ from grembyte.ui.widgets.spin_boxes import SpinBox
 
 # (category, icon, keys): a page each, listed on the left in this order
 _SETTING_CATEGORIES = (
-    ("general", "settings", ("activity_log", "refresh_interval_ms", "language")),
+    ("general", "settings", ("activity_log", "refresh_interval_ms", "language", "ui_scale")),
     ("scan", "search", ("scan_aligned",)),
     ("pointer", "link", ("pointer_max_results", "pointer_stacks", "pointer_location_step",
                          "pointer_value_alignment")),
@@ -126,6 +126,7 @@ class SettingsDialog(QDialog):
             editor.setGroupSeparatorShown(True)
             if setting.minimum == 0:
                 editor.setSpecialValueText(self.translations[f"settings.{setting.key}_off"])
+            editor.valueChanged.connect(lambda _value: self._update_restart())
             return editor
         editor = QComboBox()
         for choice in setting.choices:
