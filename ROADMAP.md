@@ -196,6 +196,26 @@ never deleted) and the delete dialog. Open:
   started under two Proton versions has two sets. Showing the notes of all processes of the
   same name (as the export groups them) would avoid that.
 
+### 11. Script hotkeys: sound feedback and timed scripts
+
+Manual scripts can have a [hotkey](docs/guide/scripts.md#hotkeys), also without a window
+through `grembyte-cli`. Open:
+
+- **Sound feedback:** in a fullscreen game nothing shows that a hotkey ran its script. Play a
+  short system sound in Grembyte's own process (not the game's, so nothing changes under
+  Wine): named sounds of the freedesktop sound theme through `canberra-gtk-play -i <name>`,
+  which follows the desktop's theme and its "system sounds off" setting, falling back to
+  `pw-play`/`paplay` with the file from `/usr/share/sounds/freedesktop/stereo/`, and silent
+  without either. Candidates: `bell` for success, `dialog-warning` for an error; a toggle
+  script (one that changes a value on the first press and restores it from `ctx.state` on the
+  second) could report "on" or "off" for two different sounds. Switchable off, in the
+  window's settings and as a `grembyte-cli` option.
+- **Hotkeys for timed scripts:** a script that runs repeatedly (for example healing the hero)
+  is often only wanted for a boss or a hard passage. A hotkey on such a script pauses it
+  while it runs and resumes it while it is paused, in the window and in `grembyte-cli`; with
+  sound feedback, a different sound for each. Today a paused script ignores its hotkey and
+  only manual scripts can have one.
+
 ### Recommendation
 
 The **code explorer and pseudocode** list above comes next, starting with names without PDB.
