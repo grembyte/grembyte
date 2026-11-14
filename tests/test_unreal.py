@@ -20,6 +20,8 @@ and how often it ran.
 
 import subprocess
 
+import pytest
+
 from tests.test_hooks import (  # pylint: disable=unused-import
     _Target,
     _wait_for,
@@ -50,7 +52,13 @@ struct Frame {
 };
 typedef struct { uint16_t *data; int32_t num, max; } String;
 
-typedef struct { uint32_t name, number; uint64_t id, cast_flags; } FieldClass;
+typedef struct {
+#ifdef FATEKEEPER_LAYOUT
+    void *vtable;  /* newer engines: FFieldClass is polymorphic, its name after the vtable */
+#endif
+    uint32_t name, number;
+    uint64_t id, cast_flags;
+} FieldClass;
 typedef struct Field {
     void *vtable;
     FieldClass *klass;
@@ -169,13 +177,23 @@ struct {
     uint8_t *blocks[8192];
 } g_name_pool;
 
+#ifdef FATEKEEPER_LAYOUT
+/* Newer engines (Fatekeeper): the 64-bit FlagsAndRefCount before the object;
+   no PreAllocatedObjects, and the counts before the maxima */
+typedef struct { int64_t flags; Object *object; int32_t serial, cluster; } Item;
+#else
 typedef struct { Object *object; int32_t flags, cluster, serial, pad; } Item;
+#endif
 /* FUObjectArray: GC indexes, then FChunkedFixedUObjectArray */
 struct {
     int32_t first_gc, last_non_gc, max_not_gc, open;
     Item **objects;
+#ifdef FATEKEEPER_LAYOUT
+    int32_t num, max, num_chunks, max_chunks;
+#else
     Item *preallocated;
     int32_t max, num, max_chunks, num_chunks;
+#endif
 } g_uobject_array;
 
 #define FUNC_EVENT 0x800
@@ -217,6 +235,9 @@ static Object *object(Object *klass, const char *text, Object *outer) {
 
 static FieldClass *field_class(const char *text) {
     FieldClass *created = calloc(1, sizeof(FieldClass));
+#ifdef FATEKEEPER_LAYOUT
+    created->vtable = (void *)0x9abc;
+#endif
     created->name = name(text);
     return created;
 }
@@ -1343,12 +1364,17 @@ def test_process_event_is_found_when_it_calls_an_out_of_line_invoke(tmp_path, qt
 
 
 @requires_target
-def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app):
+@pytest.mark.parametrize("defines", [(), ("FATEKEEPER_LAYOUT",)],
+                         ids=["common-layout", "fatekeeper-layout"])
+def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app, defines):
     # pylint: disable=import-outside-toplevel
     from grembyte.features.scripts import ScriptSpec, ScriptWorker
     from grembyte.ui.widgets.gas_attributes import hold_spec
 
-    target = _Target(_build(tmp_path))
+    # The layout of most games and the one of newer engines (Fatekeeper): the
+    # object not first in its item of the object table (the weak pointer in
+    # the FGameplayAttribute needs the item's serial), FFieldClass with a vtable.
+    target = _Target(_build(tmp_path, *defines))
     worker = ScriptWorker(target.pid)
     listed, values, failed = [], [], []
     worker.gas_listed.connect(lambda _request, state: listed.append(state))

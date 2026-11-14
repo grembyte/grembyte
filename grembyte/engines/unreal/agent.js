@@ -93,11 +93,24 @@ const unreal = (() => {
     throw grembyteError('error.unreal.no_name_pool');
   }
 
-  // FChunkedFixedUObjectArray: Objects, PreAllocatedObjects, MaxElements,
-  // NumElements, MaxChunks, NumChunks. Chunks hold 65536 FUObjectItems, whose
-  // size differs between versions and games (Object pointer first).
+  // FChunkedFixedUObjectArray: the chunk table (Objects), then the counts. Up
+  // to UE 5.5 or so: Objects, PreAllocatedObjects, MaxElements, NumElements,
+  // MaxChunks, NumChunks; newer engines (Fatekeeper) dropped
+  // PreAllocatedObjects and put the counts first: Objects, NumElements,
+  // MaxElements, NumChunks, MaxChunks. Offsets of the counts in the array:
+  const ARRAY_LAYOUTS = [
+    { max: 0x10, count: 0x14, maxChunks: 0x18, numChunks: 0x1c },
+    { count: 0x08, max: 0x0c, numChunks: 0x10, maxChunks: 0x14 }
+  ];
+  // Chunks hold 65536 FUObjectItems, whose size differs between versions and
+  // games. The Object pointer is first (Object, Flags, ClusterRootIndex,
+  // SerialNumber) or, in newer engines, after the 64-bit FlagsAndRefCount
+  // (FlagsAndRefCount, Object, SerialNumber, ClusterRootIndex). Either way
+  // SerialNumber is at 0x10.
   const CHUNK = 0x10000;
   const ITEM_SIZES = [0x18, 0x10, 0x14, 0x20, 0x28];
+  const ITEM_OBJECTS = [0, 8];
+  const ITEM_SERIAL = 0x10;
   // UObjectBase: vtable, ObjectFlags, InternalIndex, ClassPrivate, NamePrivate, OuterPrivate
   const OBJECT_FLAGS = 0x08, OBJECT_INDEX = 0x0c, OBJECT_CLASS = 0x10, OBJECT_NAME = 0x18,
     OBJECT_OUTER = 0x20;
@@ -105,40 +118,65 @@ const unreal = (() => {
   function findObjectArray(ranges) {
     for (const { base, view } of ranges) {
       for (let at = 0; at + 0x20 <= view.byteLength; at += 4) {
-        const max = view.getInt32(at + 0x10, true), count = view.getInt32(at + 0x14, true);
-        if (count <= 0x1000 || max < count || max > 0x4000000
-            || view.getInt32(at + 0x18, true) !== Math.ceil(max / CHUNK)
-            || view.getInt32(at + 0x1c, true) !== Math.ceil(count / CHUNK)
-            || u64(view, at) === 0)
+        if (u64(view, at) === 0)
           continue;
-        const table = base.add(at);
-        const itemSize = objectItemSize(table.readPointer());
-        if (itemSize !== null)
-          return { table, itemSize };
+        for (const layout of ARRAY_LAYOUTS) {
+          const max = view.getInt32(at + layout.max, true);
+          const count = view.getInt32(at + layout.count, true);
+          if (count <= 0x1000 || max < count || max > 0x4000000
+              || view.getInt32(at + layout.maxChunks, true) !== Math.ceil(max / CHUNK)
+              || view.getInt32(at + layout.numChunks, true) !== Math.ceil(count / CHUNK))
+            continue;
+          const table = base.add(at);
+          const item = objectItemLayout(table.readPointer());
+          if (item !== null)
+            return { table, count: layout.count, itemSize: item.size, itemObject: item.object };
+        }
       }
     }
     throw grembyteError('error.unreal.no_object_array');
   }
 
-  function objectItemSize(chunks) {
-    // The item size for which the objects know their own index.
-    const items = chunks.readPointer();
+  function objectItemLayout(chunks) {
+    // The item size and the Object pointer's place in the item for which
+    // the objects know their own index.
     let best = null;
-    for (const size of ITEM_SIZES) {
-      let found = 0;
-      for (let i = 1; i <= 32; i++) {
-        try {
-          const object = items.add(i * size).readPointer();
-          if (!object.isNull() && object.add(OBJECT_INDEX).readS32() === i)
-            found++;
-        } catch (_error) {
-          // not this size
+    try {
+      const items = chunks.readPointer();
+      for (const object of ITEM_OBJECTS) {
+        for (const size of ITEM_SIZES) {
+          if (object + Process.pointerSize > size)
+            continue;
+          let found = 0;
+          for (let i = 1; i <= 32; i++) {
+            try {
+              const pointer = items.add(i * size + object).readPointer();
+              if (!pointer.isNull() && pointer.add(OBJECT_INDEX).readS32() === i)
+                found++;
+            } catch (_error) {
+              // not this layout
+            }
+          }
+          if (found >= 16 && (best === null || found > best.found))
+            best = { size, object, found };
         }
       }
-      if (found >= 16 && (best === null || found > best.found))
-        best = { size, found };
+    } catch (_error) {
+      // no chunk table
     }
-    return best === null ? null : best.size;
+    return best;
+  }
+
+  function objectCount() {
+    return ue.objects.table.add(ue.objects.count).readS32();
+  }
+
+  function objectItem(index) {
+    // The FUObjectItem of object ``index``, or null outside the table.
+    if (index < 0 || index >= objectCount())
+      return null;
+    return ue.objects.table.readPointer().add(8 * Math.floor(index / CHUNK)).readPointer()
+      .add((index % CHUNK) * ue.objects.itemSize);
   }
 
   // --- Names and objects --------------------------------------------------------
@@ -159,14 +197,21 @@ const unreal = (() => {
     return nameText(pointer.readU32(), pointer.add(4).readU32());
   }
 
+  function fieldKind(field) {
+    // The name of an FField's class ("FloatProperty", "ArrayProperty" ...)
+    const L = ue.layout;
+    return fieldName(field.add(L.fieldClass).readPointer().add(L.fieldClassName));
+  }
+
   function readSnapshot() {
     // Every live object: address, class, name, outer (numbers, so that maps
     // can key by them). Read in one go per object; an object freed meanwhile
     // is skipped.
     const table = ue.objects.table;
     const size = ue.objects.itemSize;
+    const itemObject = ue.objects.itemObject;
     const chunks = table.readPointer();
-    const count = table.add(0x14).readS32();
+    const count = objectCount();
     const s = { address: [], klass: [], name: [], number: [], outer: [], flags: [],
                 index: new Map(), read: Date.now() };
     for (let chunk = 0; chunk * CHUNK < count; chunk++) {
@@ -176,7 +221,7 @@ const unreal = (() => {
         continue;
       const view = new DataView(items.readByteArray(inChunk * size));
       for (let i = 0; i < inChunk; i++) {
-        const address = u64(view, i * size);
+        const address = u64(view, i * size + itemObject);
         if (address === 0)
           continue;
         let object;
@@ -304,6 +349,9 @@ const unreal = (() => {
     if (L.childProperties === undefined)
       throw grembyteError('error.unreal.unknown_layout', { what: 'UStruct::ChildProperties' });
     const x = vector.add(L.childProperties).readPointer();
+    // FFieldClass: Name first, or after a vtable in newer engines (Fatekeeper)
+    L.fieldClassName = search(0, 0x18, 8, at => /^(Float|Double)Property$/.test(
+      fieldName(x.add(L.fieldClass).readPointer().add(at))), 'FFieldClass::Name');
     L.fieldNext = search(0x10, L.fieldName, 8,
       at => named(x.add(at).readPointer(), L.fieldName, 'Y'), 'FField::Next');
     const y = x.add(L.fieldNext).readPointer();
@@ -398,7 +446,7 @@ const unreal = (() => {
   function propertyType(field) {
     // The C++ type of an FProperty, e.g. TArray<FVector> or AActor*.
     const L = ue.layout;
-    const kind = fieldName(field.add(L.fieldClass).readPointer());
+    const kind = fieldKind(field);
     const extra = offset => pointerField(field, L.extra + offset);
     const inner = offset => {
       const property = field.add(L.extra + offset).readPointer();
@@ -854,7 +902,7 @@ const unreal = (() => {
   function valueType(field, byref = false) {
     // The monitor's type of an FProperty: { kind, byref, name, ... }.
     const L = ue.layout;
-    const kind = fieldName(field.add(L.fieldClass).readPointer());
+    const kind = fieldKind(field);
     const type = { kind: 0, byref, name: propertyType(field) };
     const extra = offset => field.add(L.extra + offset);
     if (NUMBER_KINDS[kind] !== undefined) {
@@ -923,23 +971,17 @@ const unreal = (() => {
   function isObject(address) {
     // Whether a live UObject is at ``address``: the object table's item at
     // its index points back at it.
-    const index = address.add(OBJECT_INDEX).readS32();
-    const table = ue.objects.table;
-    if (index < 0 || index >= table.add(0x14).readS32())
-      return false;
-    const items = table.readPointer().add(8 * Math.floor(index / CHUNK)).readPointer();
-    return items.add((index % CHUNK) * ue.objects.itemSize).readPointer().equals(address);
+    const item = objectItem(address.add(OBJECT_INDEX).readS32());
+    return item !== null && item.add(ue.objects.itemObject).readPointer().equals(address);
   }
 
   function objectAt(index, serial) {
     // The object of a weak pointer (FWeakObjectPtr: index and serial number)
-    const table = ue.objects.table;
-    if (index < 0 || index >= table.add(0x14).readS32())
+    const item = objectItem(index);
+    if (item === null)
       return NULL;
-    const item = table.readPointer().add(8 * Math.floor(index / CHUNK)).readPointer()
-      .add((index % CHUNK) * ue.objects.itemSize);
-    // FUObjectItem: Object, Flags, ClusterRootIndex, SerialNumber
-    return item.add(Process.pointerSize + 8).readS32() === serial ? item.readPointer() : NULL;
+    return item.add(ITEM_SERIAL).readS32() === serial
+      ? item.add(ue.objects.itemObject).readPointer() : NULL;
   }
 
   function classOf(object) {
@@ -1477,7 +1519,7 @@ const unreal = (() => {
 
   function isProperty(field) {
     try {
-      return fieldName(field.add(ue.layout.fieldClass).readPointer()).endsWith('Property');
+      return fieldKind(field).endsWith('Property');
     } catch (_error) {
       return false;
     }
@@ -2648,12 +2690,11 @@ const unreal = (() => {
     nameAt.add(Process.pointerSize + 4).writeS32(name.length + 1);
     const owner = field.owner;
     const index = owner.add(OBJECT_INDEX).readS32();
-    const item = ue.objects.table.readPointer().add(8 * Math.floor(index / CHUNK)).readPointer()
-      .add((index % CHUNK) * ue.objects.itemSize);
+    const item = objectItem(index);
     const fieldPath = at('Attribute');
     fieldPath.writePointer(field.property);
     // FWeakObjectPtr: object index and serial number (none yet: resolved by the path)
-    const serial = item.add(Process.pointerSize + 8).readS32();
+    const serial = item === null ? 0 : item.add(ITEM_SERIAL).readS32();
     fieldPath.add(FIELD_PATH_OWNER).writeS32(serial === 0 ? -1 : index);
     fieldPath.add(FIELD_PATH_OWNER + 4).writeS32(serial);
     fieldPath.add(FIELD_PATH_PATH).writePointer(path);
@@ -2782,7 +2823,8 @@ const unreal = (() => {
     reflection: () => {
       const found = reflection();
       return { module: module.name, names: found.names, objects: found.objects.table,
-               itemSize: found.objects.itemSize, layout: found.layout };
+               itemSize: found.objects.itemSize, itemObject: found.objects.itemObject,
+               layout: found.layout };
     }
   };
 })();
