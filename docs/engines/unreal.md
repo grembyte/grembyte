@@ -105,9 +105,18 @@ In Gothic 1 Remake, a manual [script](../guide/scripts.md) adds any item to the 
       <figcaption>The ore nuggets in the inventory and the script's result in the log.</figcaption>
     </figure>
 
+## Call graph
+
+The [call graph](index.md#call-graph) reads the calls from **Blueprint bytecode**, the code of the functions made in the editor. A Blueprint function shows the functions it calls, Blueprint and native alike, in the order of its code; **Search callers** finds the Blueprint functions calling a function. Calls the engine makes by name show the label **virtual**: on the Blueprint itself they go to the function of its class or the nearest base class declaring it, on another object to the only function of that name (with several of that name they are left out).
+
+What it cannot see:
+
+- **Native (C++) functions have no bytecode.** What they call is not shown, and C++ code calling a Blueprint function does not show as a caller. In games written mostly in C++ (Avowed) the graph shows the Blueprint layer around it.
+- **Events of the event graph** all jump into one function, `ExecuteUbergraph_<Blueprint>`: an event shows that function as what it calls, and the calls of every event of the graph are that function's.
+- Functions whose Blueprint is not loaded at the moment (another level, a menu not opened) are not in the catalog and cannot be found.
+
 ## Not yet available
 
-- The call graph (from Blueprint bytecode).
 - Unreal Engine before 4.23 and 32-bit games.
 
 ## Tested games

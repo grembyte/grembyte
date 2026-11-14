@@ -19,6 +19,9 @@ the ``MoveNext`` method of a class it generates (``Outer.<Load>d__0``); the
 graph shows such a method under the method it came from (``async_owner``).
 Calls of virtual methods and interfaces name the method they were compiled
 against, not the override that runs.
+
+Unreal has no IL: its adapter finds the calls in Blueprint bytecode itself
+(``functionCalls``) and hands them over named; the index is the same.
 """
 
 import itertools
@@ -118,15 +121,22 @@ def method_tokens(classes):
     return [entry[4] for _class_name, methods in classes for entry in methods]
 
 
-def build_call_index(assembly, classes, read_bodies, resolve, progress=None):
+def build_call_index(assembly, classes, read_bodies, resolve, progress=None, read_calls=None):
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     """The calls of every method of ``assembly`` (``classes``: its catalog answer).
 
     ``read_bodies(tokens)`` returns ``{token: IL code}``, ``resolve(tokens)``
     ``[assembly, token, signature]`` (or None) for each token in the code;
-    ``progress(done, total)`` hears how far it is. The index is JSON:
-    ``{"targets": [[assembly, token, signature], ...],
+    ``progress(done, total)`` hears how far it is. An engine without IL
+    (Unreal) gives ``read_calls(tokens)`` instead: ``{token: [(opcode name,
+    [assembly, token, signature]), ...]}``, the calls already named. The
+    index is JSON: ``{"targets": [[assembly, token, signature], ...],
     "calls": [[caller token, [[opcode name, target index], ...]], ...]}``.
     """
+    if read_calls is None:
+        def read_calls(chunk):
+            bodies = read_bodies(chunk)
+            return {token: calls_in(bodies.get(token, b"")) for token in chunk}
     tokens = method_tokens(classes)
     own = {entry[4]: entry[5] for _class_name, methods in classes for entry in methods}
     found = []
@@ -134,11 +144,13 @@ def build_call_index(assembly, classes, read_bodies, resolve, progress=None):
         if progress is not None:
             progress(start, len(tokens))
         chunk = tokens[start:start + CHUNK]
-        bodies = read_bodies(chunk)
-        found.extend((token, calls_in(bodies.get(token, b""))) for token in chunk)
-    # What each token names: the assembly's own methods are known, others asked for.
+        read = read_calls(chunk)
+        found.extend((token, read.get(token, [])) for token in chunk)
+    # What each token names: the assembly's own methods are known, others asked
+    # for; a call already named needs nothing.
     named = {token: [assembly, token, signature] for token, signature in own.items()}
-    unknown = sorted({token for _caller, calls in found for _op, token in calls} - named.keys())
+    unknown = sorted({ref for _caller, calls in found for _op, ref in calls
+                      if isinstance(ref, int)} - named.keys())
     for start in range(0, len(unknown), CHUNK):
         chunk = unknown[start:start + CHUNK]
         named.update(zip(chunk, resolve(chunk)))
@@ -146,8 +158,8 @@ def build_call_index(assembly, classes, read_bodies, resolve, progress=None):
     calls = []
     for caller, found_calls in found:
         listed = []
-        for opcode, token in found_calls:
-            target = named.get(token)
+        for opcode, ref in found_calls:
+            target = named.get(ref) if isinstance(ref, int) else ref
             if target is None:
                 continue
             key = tuple(target)
@@ -275,6 +287,9 @@ class _OfflineApi:
     def resolve_tokens(self, name, _tokens):
         raise NotCached(name)
 
+    def function_calls(self, name, _tokens):
+        raise NotCached(name)
+
 
 class CallGraphWorker(QThread):
     """Keep a Frida session open and answer call graph questions about a process.
@@ -380,12 +395,10 @@ class CallGraphWorker(QThread):
         if index is None:
             # Not indexed yet: read just these methods instead of the assembly.
             wanted = {method.token} | {machine.token for machine in machines}
-            index = build_call_index(
-                method.assembly,
+            index = self._build_index(
+                api, method.assembly,
                 [[class_name, [entry for entry in entries if entry[4] in wanted]]
-                 for class_name, entries in classes],
-                lambda tokens: split_bodies(api.method_bodies(method.assembly, tokens)),
-                lambda tokens: api.resolve_tokens(method.assembly, tokens))
+                 for class_name, entries in classes])
         body = [call for machine in machines
                 for call in callees_of(index, machine, self._lookup, self.engine.id)]
         self.callees_found.emit(request_id, method,
@@ -442,6 +455,20 @@ class CallGraphWorker(QThread):
                 return None
         return self._known[name][3]
 
+    def _build_index(self, api, name, classes):
+        """The call index of the methods ``classes`` of assembly ``name``: from
+        their IL code, or (Unreal) the calls the agent finds in Blueprint bytecode."""
+        if self.engine.id == "unreal":
+            def read_calls(tokens):
+                return {token: [(opcode, [assembly, target, signature])
+                                for opcode, assembly, target, signature in calls]
+                        for token, calls in api.function_calls(name, tokens)}
+            return build_call_index(name, classes, None, None, read_calls=read_calls)
+        return build_call_index(
+            name, classes,
+            lambda tokens: split_bodies(api.method_bodies(name, tokens)),
+            lambda tokens: api.resolve_tokens(name, tokens))
+
     def _index(self, api, name, build=True):
         """The call index of assembly ``name`` (see build_call_index); without
         ``build`` only one from the cache (else NotCached)."""
@@ -451,10 +478,7 @@ class CallGraphWorker(QThread):
             def make():
                 if not build:
                     raise NotCached(name)
-                return build_call_index(
-                    name, classes,
-                    lambda tokens: split_bodies(api.method_bodies(name, tokens)),
-                    lambda tokens: api.resolve_tokens(name, tokens))
+                return self._build_index(api, name, classes)
             index = read_call_index(self.engine.id, name, mvid, self._assembly_mvids(api), make)
             self._known[name] = (mvid, classes, methods, index)
         return index

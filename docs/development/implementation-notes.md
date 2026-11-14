@@ -306,6 +306,17 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   discovery supports the standard AbilitySystemComponent/FGameplayAttribute pattern and
   AngelscriptGAS's `TrySetAttributeBaseValue(FName, float)` pattern (Gothic 1 Remake).
 
+- **Call graph from Blueprint bytecode (2026-11-14):** `functionCalls` does not walk the
+  bytecode expression by expression: that needs the size of each of about 100 `EExprToken`s,
+  and they differ between engine versions (UE5's large world coordinates doubled the vector
+  constants, newer versions added tokens). It searches the bytes for the call tokens
+  instead. In memory a direct call (`EX_FinalFunction` 0x1C, `EX_LocalFinalFunction` 0x46,
+  `EX_CallMath` 0x68) is followed by the `UFunction` pointer, so a hit counts only if those
+  eight bytes are a known `UFunction`; a virtual call (`EX_VirtualFunction` 0x1B,
+  `EX_LocalVirtualFunction` 0x45) by an `FScriptName` (12 bytes), which must name a function
+  of the calling class's chain (on self) or the only function of that name (on another
+  object). Native functions have no bytecode. Tested on the stand-in only so far.
+
 ## Native call diff trace
 
 The engine-independent native counterpart of the Mono trace. Frida's **Stalker** records which

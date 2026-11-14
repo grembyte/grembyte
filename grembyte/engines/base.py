@@ -43,7 +43,8 @@ Catalog (``CATALOG``): ``assemblies()`` (with the MVID the catalog cache
 keys them by), ``classes(assembly)`` (with the methods' ECMA-335 flags). For the
 call graph (``CALL_GRAPH``): ``methodBodies(assembly, tokens)`` (their IL code, see
 grembyte.features.call_graph) and ``resolveTokens(assembly, tokens)`` (the
-methods tokens in that code name).
+methods tokens in that code name); Unreal, without IL, has
+``functionCalls(assembly, tokens)`` instead (the calls in Blueprint bytecode).
 
 Trace (``TRACE``): ``methodsByToken(assembly, tokens)`` with ECMA-335 flags,
 ``checkAll(methods, progress)`` (which cannot be prepared safely),

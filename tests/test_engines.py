@@ -65,10 +65,8 @@ def test_unreal_ignores_launchers_and_other_engines(name):
 def test_unreal_adapter_capabilities_and_framework_filter():
     unreal = engine_by_id("unreal")
     for capability in (base.CATALOG, base.TRACE, base.MONITOR, base.METHOD_HOOKS, base.CALL,
-                       base.CALL_FOUND):
+                       base.CALL_FOUND, base.CALL_GRAPH):
         assert unreal.supports(capability)
-    # Not yet: the call graph
-    assert not unreal.supports(base.CALL_GRAPH)
     for package in ("/Script/CoreUObject", "/Script/Engine", "/Script/UMG",
                     "/Script/GameplayAbilities", "/Engine/EngineMaterials"):
         assert unreal.is_framework_assembly(package)

@@ -17,7 +17,7 @@ Which of Grembyte's engine tools are available for games built on each engine. T
 | [Object inspector](#object-inspector) | :material-check: | :material-check: | :material-check: |
 | [Method hooks](#method-hooks) | :material-check: | :material-check: | :material-check: |
 | [Call method](#call-method) | :material-check: | – | :material-check: |
-| [Call graph](#call-graph) | :material-check: | – | – |
+| [Call graph](#call-graph) | :material-check: | – | :material-check: |
 | [Scripts](../guide/scripts.md) | :material-check: | :material-check: | :material-check: |
 | [Object browser](../guide/object-browser.md) | :material-check: | – | :material-check: |
 | [Engine names](../guide/code-explorer.md#names-from-the-engine) in the code explorer | – | :material-check: | :material-check: |
@@ -132,7 +132,7 @@ Method hook scripts can reach other game code: `ctx.call` calls a static method,
 
 ## Call graph
 
-For Mono games the call graph shows which methods a method calls and which call it, read from the IL code, drawn like the [reference graph](../guide/reference-graph.md). Open it with **Calls …** on a method of the catalog. The method stands in the middle, the methods it calls to its right, in the order of the code, and the methods calling it to its left.
+For Mono games the call graph shows which methods a method calls and which call it, read from the IL code, drawn like the [reference graph](../guide/reference-graph.md); for Unreal games, from Blueprint bytecode (see [Unreal: call graph](unreal.md#call-graph)). Open it with **Calls …** on a method of the catalog. The method stands in the middle, the methods it calls to its right, in the order of the code, and the methods calling it to its left.
 
 - **What it calls** comes from the method's IL code. For a virtual method or an interface it names the method the code was compiled against, not the override that runs; async methods and iterators are followed into the code the compiler made for them (labelled `async`). Edges of calls other than plain calls say how: `newobj` (a constructor), `ldftn` (a delegate or lambda) …
 - **Who calls it**: **Search callers** reads the code of the game's assemblies (or the [assembly selection](#assemblies)) the first time, later from the cache; from then on every method put in the middle shows its callers at once. A method without callers there may still be called through delegates, reflection, virtually or by the engine.
