@@ -71,7 +71,7 @@ Each way has a graph of its own, kept while you switch, and a double click unfol
     - **Highlight the way to the object** (the other way: *from* the object) marks the shortest way between the node and the start object in lime, beside the orange way to a root;
     - **Hide** leaves the node out, **Hide all *Class*** every object of its class – handy for the dozens of `UNiagaraComponent`s that hold an Unreal actor. What only hidden nodes led to goes with them, and the way to a root is looked for around them.
 - The **context menu of the background**: **Fit** zooms so that the whole graph fits the window, **Clear the highlight**, **Show hidden (n)** shows everything hidden again, and **Export as HTML**.
-- Lists, events and caches can hold an object hundreds of times, and much of it is often native memory. Up to 5,000 locations are looked at per object and at most 100 shown: static fields and global data first, then objects; the stack and other memory are one node each (other memory only if the settings show it). **+n** in a node's corner says how many locations were left out; its tooltip says how many of them are other memory, hidden by you or not singletons.
+- Lists, events and caches can hold an object hundreds of times, and much of it is often native memory. Up to 5,000 locations are looked at per object and at most 100 shown (Settings → *Graphs* → *Nodes shown per unfolding at most*): static fields and global data first, then objects; the stack and other memory are one node each (other memory only if the settings show it). **+n** in a node's corner says how many locations were left out; its tooltip says how many of them are other memory, hidden by you or not singletons.
 
 ### Only singletons
 

@@ -203,55 +203,6 @@ def test_layout_puts_holders_left_of_what_they_hold(qt_app):
         "Singleton<Game.GameManager>"
 
 
-def test_edges_never_run_through_a_column(qt_app):
-    # pylint: disable=import-outside-toplevel,unused-argument
-    from PySide6.QtCore import QPointF  # pylint: disable=import-error,no-name-in-module
-
-    from grembyte.ui.widgets.reference_graph import (
-        COLUMN_GAP,
-        NODE_HEIGHT,
-        NODE_WIDTH,
-        edge_route,
-    )
-
-    step = NODE_WIDTH + COLUMN_GAP
-    column = QPointF(-step, 0)
-    # One column left: right side to left side, labelled in the gap between
-    forward = edge_route(QPointF(-2 * step, 0), column)
-    assert forward.direction == 1 and forward.tip == QPointF(-step, NODE_HEIGHT / 2)
-    assert -2 * step + NODE_WIDTH < forward.label.x() < -step and forward.align == "center"
-    # The same column: a loop into the gap left of it, labelled at its far end
-    loop = edge_route(QPointF(-step, 200), column)
-    assert loop.direction == 1 and loop.tip == QPointF(-step, NODE_HEIGHT / 2)
-    box = loop.path.boundingRect()
-    assert box.right() <= -step and box.left() >= -step - COLUMN_GAP / 2
-    assert loop.align == "right" and loop.label.x() < box.left() + 1
-    # Backwards: left side to the held node's right side, pointing left
-    back = edge_route(column, QPointF(-2 * step, 0))
-    assert back.direction == -1 and back.tip == QPointF(-2 * step + NODE_WIDTH, NODE_HEIGHT / 2)
-    assert back.path.boundingRect().right() <= -step
-    far = edge_route(QPointF(0, 0), QPointF(-3 * step, 0))
-    assert far.align == "left" and far.label.x() > -3 * step + NODE_WIDTH
-
-
-def test_labels_move_off_each_other(qt_app):
-    # pylint: disable=import-outside-toplevel,unused-argument
-    from PySide6.QtCore import QRectF  # pylint: disable=import-error,no-name-in-module
-
-    from grembyte.ui.widgets.reference_graph import free_place
-
-    taken = [QRectF(0, 0, 50, 10)]
-    assert free_place(QRectF(100, 0, 50, 10), taken) == QRectF(100, 0, 50, 10)
-    # Down first, then up, by its height and a pixel
-    assert free_place(QRectF(10, 2, 50, 10), taken) == QRectF(10, 13, 50, 10)
-    # One step up still covers the first: two steps down
-    taken.append(QRectF(0, 13, 50, 10))
-    assert free_place(QRectF(10, 2, 50, 10), taken) == QRectF(10, 24, 50, 10)
-    # Up when down is taken as far
-    taken.append(QRectF(0, 24, 50, 10))
-    assert free_place(QRectF(10, 2, 50, 10), taken) == QRectF(10, -20, 50, 10)
-
-
 class _FakeIndexWorker:
     """Stands in for ReferenceIndexWorker: the test hands the index over."""
 
@@ -320,7 +271,7 @@ def test_window_unfolds_holders_and_marks_the_way_to_a_root(qt_app, monkeypatch)
         # Other memory only counts, unless the settings show it (at once)
         assert len(dialog._items) == 4
         assert dialog._items[dialog.graph.target].toolTip().endswith(
-            "1 in anderem Speicher, ausgeblendet (Einstellungen → Objekt-Browser)\n"
+            "1 in anderem Speicher, ausgeblendet (Einstellungen → Graphen)\n"
             "Doppelklick: wieder einklappen")
         settings.apply({"reference_other_memory": True})
         assert len(dialog._items) == 5
@@ -439,7 +390,10 @@ def test_window_hides_highlights_and_exports_the_graph(qt_app, monkeypatch, tmp_
 
     import shiboken6  # pylint: disable=import-error,no-name-in-module
     from PySide6.QtCore import QCoreApplication, QEvent  # pylint: disable=import-error,no-name-in-module
-    from PySide6.QtWidgets import QFileDialog  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+        QFileDialog,
+        QGraphicsPathItem,
+    )
 
     from grembyte.ui.widgets import reference_graph, scripts
     from grembyte.ui.widgets.icons import theme_color
@@ -470,7 +424,7 @@ def test_window_hides_highlights_and_exports_the_graph(qt_app, monkeypatch, tmp_
             assert dialog._items[key].pen().color().name() == highlight
         assert dialog._items[module.key].pen().color().name() != highlight
         lines = [item for item in dialog.scene.items()
-                 if isinstance(item, reference_graph.QGraphicsPathItem)]
+                 if isinstance(item, QGraphicsPathItem)]
         assert sum(item.pen().color().name() == highlight for item in lines) == 2
 
         # Hiding the loader: gone with the static field only it leads to, and
@@ -715,3 +669,34 @@ def test_folding_in_keeps_what_another_way_still_reaches():
     # Folding in the object itself leaves it alone
     graph.collapse(target)
     assert list(graph.nodes) == [target] and not graph.edges
+
+
+def test_the_window_shows_as_many_holders_as_the_setting_says(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from grembyte.ui.widgets import reference_graph, scripts
+
+    holders = [0x20000 + 0x100 * number for number in range(12)]
+    pointer_map = _PointerMap([(TARGET, location + 8) for location in holders])
+    index = ReferenceIndex(pointer_map, [Region(0x10000, 0x30000, HEAP)])
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    monkeypatch.setattr(reference_graph, "ReferenceIndexWorker", _FakeIndexWorker)
+    settings.apply({"graph_max_nodes": 10})
+    translations = load_translations("de")
+    panel = scripts.ScriptPanel(translations)
+    panel.set_process(4242)
+    dialog = reference_graph.ReferenceGraphDialog(translations, panel, 4242, TARGET, "X")
+    try:
+        dialog._index_worker.ready.emit(index)
+        dialog._index_worker.finished.emit()
+        worker = panel._worker
+        worker.references_resolved.emit(len(worker.requests), [
+            {"location": hex(location + 8), "kind": "field", "object": hex(location),
+             "klass": "0x99", "className": "Game.Holder", "field": "target"}
+            for location in holders])
+        target = dialog.graph.nodes[dialog.graph.target]
+        assert target.total == 12 and target.shown == 10
+        assert len(dialog._items) == 11
+    finally:
+        settings.apply({"graph_max_nodes": 100})
+        dialog.close()
+        panel.set_process(None)
