@@ -859,6 +859,12 @@ int main(void) {
             printf("%d %d\n", g_name_length, g_loud);
             fflush(stdout);
             continue;
+        } else if (strcmp(cmd, "entry") == 0) {
+            /* The first 8 bytes of ProcessEvent: hooked or not */
+            const volatile int32_t *code = (const volatile int32_t *)(void *)UObject_ProcessEvent;
+            printf("%d %d\n", code[0], code[1]);
+            fflush(stdout);
+            continue;
         }
         printf("%d %d\n", g_gold, *(native_fn volatile *)&g_loot->func == ProcessInternal);
         fflush(stdout);
@@ -1419,6 +1425,47 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         _wait_for(qt_app, lambda: target.send("tick", 0)
                   and len([r for r in runs if r[0] == repeating]) >= 3)
         assert [r[1]["result"] for r in runs if r[0] == repeating][:3] == ["1", "2", "3"]
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_the_game_thread_hook_stays_between_script_runs(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptSpec, ScriptWorker
+
+    # Hooking and unhooking ProcessEvent for every run rewrote its first bytes
+    # while the game thread ran them; RoboCop crashed at ProcessEvent+4. The
+    # hook is set once and stays, and runs after the first use it.
+    target = _Target(_build(tmp_path))
+    original = target.send("entry", 0)
+    worker = ScriptWorker(target.pid)
+    added, failed, runs = [], {}, []
+    worker.script_added.connect(added.append)
+    worker.script_failed.connect(failed.__setitem__)
+    worker.script_ran.connect(lambda script_id, run: runs.append((script_id, run)))
+    try:
+        worker.start()
+        calls = worker.add_script(ScriptSpec('return ctx.call("Hero.AddGold", 1);'))
+        _wait_for(qt_app, lambda: calls in added or calls in failed)
+        assert not failed
+        hooked = None
+        for expected in range(101, 106):
+            runs.clear()
+            worker.run_now(calls)
+            _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+            assert runs[0][1]["error"] is None, runs[0][1]["error"]
+            assert runs[0][1]["result"] == str(expected)
+            # Ticks without waiting work pass the hook and leave it in place
+            for _ in range(3):
+                target.send("tick", 0)
+                qt_app.processEvents()
+            entry = target.send("entry", 0)
+            assert entry != original
+            assert hooked in (None, entry)  # not rewritten anew
+            hooked = entry
     finally:
         worker.requestInterruption()
         worker.wait(5000)

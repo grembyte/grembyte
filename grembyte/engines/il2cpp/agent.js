@@ -905,7 +905,7 @@ const il2cpp = (() => {
 
   const MAIN_TIMEOUT = 3000;
   const mainQueue = [];
-  let mainHooks = null;  // the listeners waiting for the main thread
+  let mainGate = null;  // the hooks the main thread runs the work in (mainThreadGate)
   let draining = false;
 
   function isMainThread() {
@@ -914,6 +914,10 @@ const il2cpp = (() => {
 
   function drainMain() {
     if (draining || !isMainThread())
+      return;
+    if (mainGate !== null)
+      mainGate.clear();
+    if (mainQueue.length === 0)
       return;
     draining = true;
     try {
@@ -929,22 +933,16 @@ const il2cpp = (() => {
     } finally {
       draining = false;
     }
-    if (mainHooks !== null) {
-      const hooks = mainHooks;
-      mainHooks = null;
-      // not from within their own callbacks
-      setTimeout(() => hooks.forEach(hook => hook.detach()), 0);
-    }
   }
 
   function onMainThread(work) {
-    let o;
     try {
-      o = objectsApi();
+      // Also when the game sleeps out of focus (wake: its GetMessage)
+      if (mainGate === null)
+        mainGate = mainThreadGate([objectsApi().runtimeInvokeAddress], drainMain, true);
     } catch (error) {
       return Promise.reject(error);
     }
-    mainThreadId();
     return new Promise((resolve, reject) => {
       const job = { work, resolve, reject };
       job.timer = setTimeout(() => {
@@ -954,13 +952,7 @@ const il2cpp = (() => {
         reject(grembyteError('error.il2cpp.main_thread_timeout'));
       }, MAIN_TIMEOUT);
       mainQueue.push(job);
-      if (mainHooks === null)
-        // Also when the game sleeps out of focus (see wakeMainThread)
-        mainHooks = [Interceptor.attach(o.runtimeInvokeAddress, {
-          onEnter() {
-            drainMain();
-          }
-        }), ...wakeMainThread(drainMain)];
+      mainGate.request();
     });
   }
 

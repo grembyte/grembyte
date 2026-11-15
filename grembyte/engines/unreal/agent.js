@@ -1912,11 +1912,12 @@ const unreal = (() => {
   // and C++ do it: the arguments in a block laid out like the function's
   // parameters (see signatureOf), where the result is written, too. Only on
   // the game thread (the main thread): onMainThread queues work until the game
-  // thread next enters ProcessEvent, which happens many times a frame.
+  // thread next enters ProcessEvent, which happens many times a frame. The
+  // hook there stays once set (see mainThreadGate).
 
   const MAIN_TIMEOUT = 3000;
   const mainQueue = [];
-  let mainHook = null;
+  let mainGate = null;
   let draining = false;
   let processEvent = null;
   // FStrings of the arguments of the call being made (the game copies them)
@@ -2076,9 +2077,16 @@ const unreal = (() => {
 
   function drainMain() {
     // Run the queued work; call it on any thread, it only acts on the game thread.
-    if (draining || mainQueue.length === 0 || !isGameThread())
+    if (draining || !isGameThread())
       return;
+    if (mainQueue.length === 0) {
+      if (mainGate !== null)
+        mainGate.clear();
+      return;
+    }
     draining = true;  // our own calls pass ProcessEvent, too
+    if (mainGate !== null)
+      mainGate.clear();
     try {
       while (mainQueue.length > 0) {
         const job = mainQueue.shift();
@@ -2092,19 +2100,13 @@ const unreal = (() => {
     } finally {
       draining = false;
     }
-    if (mainHook !== null) {
-      const hook = mainHook;
-      mainHook = null;
-      setTimeout(() => hook.detach(), 0);  // not from within its own callback
-    }
   }
 
   function onMainThread(work) {
     // A promise of work()'s result, computed on the game thread.
-    let start;
     try {
-      start = findProcessEvent().address;
-      mainThreadId();  // found here, not first in the hook on the game thread
+      if (mainGate === null)
+        mainGate = mainThreadGate([findProcessEvent().address], drainMain);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -2117,12 +2119,7 @@ const unreal = (() => {
         reject(grembyteError('error.unreal.game_thread_timeout'));
       }, MAIN_TIMEOUT);
       mainQueue.push(job);
-      if (mainHook === null)
-        mainHook = Interceptor.attach(start, {
-          onEnter() {
-            drainMain();
-          }
-        });
+      mainGate.request();
     });
   }
 

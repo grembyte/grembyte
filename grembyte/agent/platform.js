@@ -117,49 +117,119 @@ function mainThreadId() {
   return mainThread;
 }
 
-// Unity games out of focus may stop running frames: the main thread then
-// waits in GetMessage for its window's next message, and calls nothing an
-// engine's main-thread hook (runtime_invoke) sees. wakeMainThread hooks the
-// main thread's next GetMessage and posts it an empty message (WM_NULL, which
-// programs ignore), so ``onMain`` runs there, between two passes of its
-// message loop. Windows (and Wine) only; elsewhere it does nothing.
+// --- Work on the game's main thread ------------------------------------------
+// The engine adapters run work on the main thread the next time it enters a
+// function it calls many times a second (Unreal's ProcessEvent, Unity's
+// runtime_invoke). mainThreadGate hooks it once and keeps the hook: hooking
+// and unhooking it for every piece of work rewrote its first bytes thousands
+// of times while the game ran them, and RoboCop crashed when its game thread
+// stood between two of the rewritten instructions (2026-11-15, see the
+// implementation notes). A probe in C checks a flag and calls into JavaScript
+// only while work waits, so the hook costs next to nothing in between.
 //
-// The thread then sleeps in the hooked GetMessage again, and Frida waits for
-// it to leave before the script can unload: detaching posts another empty
-// message, so it leaves at once.
+// Unity games out of focus may stop running frames: the main thread then
+// waits in GetMessage for its window's next message and calls nothing the
+// engine hook sees. With ``wake`` the gate also probes GetMessageA/W, and each
+// request posts the main thread an empty message (WM_NULL, which programs
+// ignore), so the work runs between two passes of its message loop. Windows
+// (and Wine) only. A probe does not wait for the function to return, so a
+// thread sleeping in GetMessage does not hold up unloading the script.
 
 const WM_NULL = 0;
+const GATE_AGENT_THREAD = Process.getCurrentThreadId();
+// Bytes at a function's start Frida may rewrite (a jump and what it moves)
+const GATE_PATCH_SIZE = 16;
+const GATE_ATTEMPTS = 50;
 
-function wakeMainThread(onMain) {
-  // [listener] to detach once ``onMain`` did its work; [] if not Windows.
-  if (Process.platform !== 'windows')
-    return [];
-  const user32 = Process.findModuleByName('user32.dll');
-  const post = user32 === null ? null : user32.findExportByName('PostThreadMessageW');
-  if (post === null)
-    return [];
-  const postMessage = new NativeFunction(post, 'int', ['uint32', 'uint32', 'pointer', 'pointer']);
+const MAIN_GATE_SOURCE = `
+#include <gum/guminterceptor.h>
+
+extern volatile int pending;
+extern volatile unsigned long long main_thread;
+extern void run_main (void);
+
+void
+on_enter (GumInvocationContext * ic)
+{
+  if (pending == 0)
+    return;
+  if ((unsigned long long) gum_invocation_context_get_thread_id (ic) != main_thread)
+    return;
+  run_main ();
+}
+`;
+
+function mainThreadGate(addresses, onMain, wake = false) {
+  // { request(), clear() }: after request(), ``onMain`` runs each time the
+  // main thread enters one of ``addresses`` (with ``wake`` also GetMessage),
+  // until clear(). Errors of onMain are logged, never thrown into the game.
   const main = mainThreadId();
-  const listeners = [];
-  for (const name of ['GetMessageA', 'GetMessageW']) {
-    const address = user32.findExportByName(name);
-    if (address !== null)
-      listeners.push(Interceptor.attach(address, {
-        onEnter() {
-          if (Process.getCurrentThreadId() === main)
-            onMain();
-        }
-      }));
-  }
-  if (listeners.length === 0)
-    return [];
-  postMessage(main, WM_NULL, NULL, NULL);
-  return [{
-    detach() {
-      listeners.forEach(listener => listener.detach());
-      postMessage(main, WM_NULL, NULL, NULL);
+  const pending = Memory.alloc(4);
+  const mainThread = Memory.alloc(8);
+  mainThread.writeU64(main);
+  const runMain = new NativeCallback(() => {
+    try {
+      onMain();
+    } catch (error) {
+      console.error(`main thread work failed: ${error.stack || error}`);
     }
-  }];
+  }, 'void', []);
+  const cm = new CModule(MAIN_GATE_SOURCE,
+                         { pending, main_thread: mainThread, run_main: runMain });
+  const targets = addresses.slice();
+  let postMessage = null;
+  if (wake && Process.platform === 'windows') {
+    const user32 = Process.findModuleByName('user32.dll');
+    const post = user32 === null ? null : user32.findExportByName('PostThreadMessageW');
+    if (post !== null) {
+      for (const name of ['GetMessageA', 'GetMessageW']) {
+        const address = user32.findExportByName(name);
+        if (address !== null)
+          targets.push(address);
+      }
+      postMessage = new NativeFunction(post, 'int',
+                                       ['uint32', 'uint32', 'pointer', 'pointer']);
+    }
+  }
+  // The callback, the C code and the listeners live as long as the gate
+  const listeners = attachOutsideThreads(targets, cm.on_enter);
+  return {
+    cm, runMain, listeners,
+    request() {
+      pending.writeS32(1);
+      if (postMessage !== null)
+        postMessage(main, WM_NULL, NULL, NULL);
+    },
+    clear() {
+      pending.writeS32(0);
+    }
+  };
+}
+
+function attachOutsideThreads(addresses, probe) {
+  // Attach ``probe`` to each of ``addresses`` while no other thread stands
+  // in the bytes Frida rewrites there: a thread resumed in the middle of the
+  // new jump runs garbage. Threads are paused only from the agent's own
+  // thread (a game thread may hold locks the others need) and on Windows;
+  // elsewhere, or after GATE_ATTEMPTS tries, the hooks are set as they come.
+  const inPatch = ip => ip !== null && addresses.some(address =>
+    ip.compare(address) >= 0 && ip.compare(address.add(GATE_PATCH_SIZE)) < 0);
+  const canPause = Process.getCurrentThreadId() === GATE_AGENT_THREAD;
+  for (let attempt = 1; ; attempt++) {
+    const paused = canPause ? pauseThreads() : null;
+    if (paused !== null && paused.ips.some(inPatch) && attempt < GATE_ATTEMPTS) {
+      resumeThreads(paused);
+      Thread.sleep(0.001);
+      continue;
+    }
+    try {
+      const listeners = addresses.map(address => Interceptor.attach(address, probe));
+      Interceptor.flush();  // write the jumps before the threads run on
+      return listeners;
+    } finally {
+      resumeThreads(paused);
+    }
+  }
 }
 
 let threadPauser = null;
@@ -203,9 +273,13 @@ function pauseThreads() {
   // once it has. CONTEXT must be 16-byte aligned.
   const context = Memory.alloc(CONTEXT_SIZE + 16).add(15)
     .and(ptr(wide ? '0xfffffffffffffff0' : '0xfffffff0'));
+  // Where each thread stands (CONTEXT.Rip, CONTEXT.Eip): handles.ips, null
+  // for one whose context could not be read
+  const IP = wide ? 0xf8 : 0xb8;
+  handles.ips = [];
   for (const handle of handles) {
     context.add(CONTEXT_FLAGS).writeU32(CONTEXT_CONTROL);
-    t.context(handle, context);
+    handles.ips.push(t.context(handle, context) ? context.add(IP).readPointer() : null);
   }
   return handles;
 }
