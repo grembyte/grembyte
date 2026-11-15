@@ -144,13 +144,33 @@ Found with Dark Souls III (Arxan/GuardIT):
   32-bit, Proton) stops running frames when its window loses focus. Its main thread then
   sits in a single `GetMessageA` call and calls nothing else, not even `mono_runtime_invoke`
   (about 40,000 calls a second while it runs), so every main-thread request timed out after
-  3 s. `wakeMainThread` (`grembyte/agent/platform.js`) hooks `GetMessageA`/`GetMessageW` while a
-  request waits and posts the main thread a `WM_NULL` (`PostThreadMessageW`); the work runs in
-  the next `GetMessage` call, between two passes of the message loop. Mono and IL2CPP use it
-  beside their `runtime_invoke` hook. Learned: Frida waits for every thread to leave a hooked
-  function before a script unloads (it replaces the return address also for `onEnter` only,
-  see above), and the sleeping main thread stays inside the hooked `GetMessage`: unloading
-  hung until the game got a message. Detaching therefore posts a second `WM_NULL`.
+  3 s. `mainThreadGate` (`grembyte/agent/platform.js`, with `wake`) also hooks
+  `GetMessageA`/`GetMessageW`, and each request posts the main thread a `WM_NULL`
+  (`PostThreadMessageW`); the work runs in the next `GetMessage` call, between two passes of
+  the message loop. Mono and IL2CPP use it beside their `runtime_invoke` hook. Learned: Frida
+  waits for every thread to leave a function hooked with a JavaScript `onEnter` before a
+  script unloads (it replaces the return address also for `onEnter` only, see above), and the
+  sleeping main thread stays inside the hooked `GetMessage`: unloading hung until the game got
+  a message. The hooks were detached after each request, with a second `WM_NULL`. Since
+  2026-11-15 they are C probes that stay (see the next entry); a probe does not touch the
+  return address, and a script unloads while the main thread sleeps in `GetMessageW`
+  (checked under Proton's Wine with the gadget).
+
+- **The main-thread hook stays (2026-11-15):** RoboCop: Rogue City (UE 5.2, Proton) crashed
+  after 75 minutes with `EXCEPTION_ACCESS_VIOLATION` reading `0xffffffffffffffff` on its
+  game thread at `UObject::ProcessEvent+4`, a `push r12` that reads no memory. Each piece of
+  main-thread work (a script run, a call, a property read) attached to `ProcessEvent` (Mono
+  and IL2CPP: `runtime_invoke`) and detached once it ran; a script repeating every 1.5 s did
+  so about 2,100 times while the game thread entered the function thousands of times a
+  second. Frida rewrites the first bytes in place, so once the game thread stood at +4, inside
+  the new (or restored) jump, and ran bytes of both. `mainThreadGate` now attaches once and
+  keeps the hook: a C probe (CModule) checks a flag and the thread id and calls into
+  JavaScript only while work waits. The one attach happens while the game's threads are
+  paused (`pauseThreads`, which now also returns where each stands) and none stands in the
+  first 16 bytes; otherwise they run on and it tries again. Only from the agent's thread and
+  on Windows: a game thread may hold locks the others need. Test:
+  `test_the_game_thread_hook_stays_between_script_runs` (fails without it: `ProcessEvent`'s
+  bytes are back to the original after each run).
 
 ## Unity Mono adapter
 

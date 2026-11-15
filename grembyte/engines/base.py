@@ -94,7 +94,8 @@ method, static, owner}]``, the class's own methods first; a ``properties``
 entry's ``setter`` (Mono) is the property's set_ method or null.
 
 The platform helpers an adapter may use (``spawnThread``, ``watchUnmaps``,
-``pauseThreads``) are in grembyte/agent/platform.js.
+``pauseThreads``, ``mainThreadGate`` for ``onMainThread``) are in
+grembyte/agent/platform.js.
 """
 
 import ntpath

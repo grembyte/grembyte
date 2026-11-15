@@ -1430,12 +1430,12 @@ gpointer run_batch (gpointer data) {
   // logic) runs there via onMainThread: the next time the main thread starts
   // a script method through mono_runtime_invoke, the queued work runs first.
   // A game that sleeps out of focus (Unity 4: Might & Magic X) calls none; it
-  // is woken in its message loop instead (wakeMainThread). Which thread is the
+  // is woken in its message loop instead (mainThreadGate's ``wake``). Which thread is the
   // main one, see mainThreadId (platform layer).
 
   const MAIN_TIMEOUT = 3000;
   const mainQueue = [];
-  let mainHooks = null;  // the listeners waiting for the main thread
+  let mainGate = null;  // the hooks the main thread runs the work in (mainThreadGate)
   let draining = false;
 
   function isMainThread() {
@@ -1445,6 +1445,10 @@ gpointer run_batch (gpointer data) {
   function drainMain() {
     // Run the queued work; call it on any thread, it only acts on the main one.
     if (draining || !isMainThread())
+      return;
+    if (mainGate !== null)
+      mainGate.clear();
+    if (mainQueue.length === 0)
       return;
     draining = true;  // our own invocations pass mono_runtime_invoke, too
     try {
@@ -1460,19 +1464,19 @@ gpointer run_batch (gpointer data) {
     } finally {
       draining = false;
     }
-    if (mainHooks !== null) {
-      const hooks = mainHooks;
-      mainHooks = null;
-      // not from within their own callbacks
-      setTimeout(() => hooks.forEach(hook => hook.detach()), 0);
-    }
   }
 
   function onMainThread(work) {
     // A promise of work()'s result, computed on Unity's main thread.
     if (api === null || api.invoke === null)
       return Promise.reject(grembyteError('error.mono.no_invoke'));
-    mainThreadId();  // found here, not first in the hook on a game thread
+    try {
+      // Also when the game sleeps out of focus (wake: its GetMessage)
+      if (mainGate === null)
+        mainGate = mainThreadGate([api.invoke.runtimeInvokeAddress], drainMain, true);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     return new Promise((resolve, reject) => {
       const job = { work, resolve, reject };
       job.timer = setTimeout(() => {
@@ -1482,13 +1486,7 @@ gpointer run_batch (gpointer data) {
         reject(grembyteError('error.mono.main_thread_timeout'));
       }, MAIN_TIMEOUT);
       mainQueue.push(job);
-      if (mainHooks === null)
-        // Also when the game sleeps out of focus (see wakeMainThread)
-        mainHooks = [Interceptor.attach(api.invoke.runtimeInvokeAddress, {
-          onEnter() {
-            drainMain();
-          }
-        }), ...wakeMainThread(drainMain)];
+      mainGate.request();
     });
   }
 
