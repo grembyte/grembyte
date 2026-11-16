@@ -34,6 +34,7 @@ from grembyte.ui.widgets.busy import BusyDots
 from grembyte.ui.widgets.graph_canvas import (
     GraphView,
     NodeBox,
+    captions,
     column_positions,
     draw_edge,
     short_class,
@@ -382,15 +383,17 @@ class CallGraphDialog(QDialog):
             if key == selected:
                 item.setSelected(True)
         marked_edges = graph.path_edges(marked)
-        taken = []
         drawn = [edge for edge in graph.edges
                  if edge.caller in positions and edge.callee in positions]
-        # The labels of the marked way placed first
-        drawn.sort(key=lambda edge: (edge.caller, edge.callee) not in marked_edges)
+        # How a method is called, above the node; on the marked way in its colour
+        found = captions([(edge.caller, edge.callee, edge.label) for edge in drawn], positions)
+        for key, labels in found.items():
+            on_way = marked is not None and key in marked
+            self._items[key].set_caption(labels, theme_qcolor(_MARKED if on_way else "accent"))
         for edge in drawn:
             mark = (edge.caller, edge.callee) in marked_edges
-            draw_edge(self.scene, positions[edge.caller], positions[edge.callee], edge.label,
-                      theme_qcolor(_MARKED if mark else "muted"), mark, taken)
+            draw_edge(self.scene, positions[edge.caller], positions[edge.callee],
+                      theme_qcolor(_MARKED if mark else "muted"), mark)
         self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-80, -80, 80, 80))
         if first:
             self.view.centerOn(self._items[graph.center])

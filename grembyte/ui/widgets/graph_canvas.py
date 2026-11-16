@@ -6,12 +6,15 @@ The reference graph (grembyte.ui.widgets.reference_graph) and the call graph
 node a window starts from in column 0, each step away from it a column
 further out, to the left (negative columns) or to the right. Edges run from
 the node on the left to the one on the right of a step, and around columns
-where they go back or stay in one.
+where they go back or stay in one. An edge's label (the field, how a method
+is called) stands above the node of the edge further out (see caption_key),
+not on the line: where many lines run close, a label on them could not be
+told apart.
 """
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QPointF, Qt, Signal  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
     QBrush,
     QFont,
@@ -35,14 +38,12 @@ from grembyte.ui.widgets.icons import theme_qcolor
 NODE_WIDTH = 230
 NODE_HEIGHT = 46
 COLUMN_GAP = 150
-ROW_GAP = 22
+ROW_GAP = 30
 ZOOM_STEP = 1.15
 # Text of a node line at most, in characters
 MAX_LINE = 34
-# Text of an edge label at most
-MAX_LABEL = 26
-# How often a label moves off the others before it stays where it is
-MAX_LABEL_MOVES = 6
+# Where a node's caption (the labels of its edges) stands above it
+CAPTION_TOP = -20
 
 
 def short_class(name):
@@ -94,27 +95,23 @@ def column_positions(columns, leading, in_order=False):
 @dataclass
 class EdgeRoute:
     """How an edge is drawn: its line, the arrow's tip and which way it points
-    (1: right, -1: left), and where its label goes (``align``: which side of
-    the label ``label`` is: "center", "right" or "left")."""
+    (1: right, -1: left)."""
 
     path: QPainterPath
     tip: QPointF
     direction: int
-    label: QPointF
-    align: str
 
 
 def edge_route(start, end):
     """The EdgeRoute from one node to another (their top left corners).
 
     Usually the edge leads one column to the right: it runs from the first
-    node's right side to the other's left side, labelled in the gap between.
+    node's right side to the other's left side.
     It can also stay in the same column (an array and an object both holding
     the target, the array also holding the object) or lead back to the left:
     those edges never cross the nodes of a column. The same column's loop out
-    to the left, into the gap before the column, labelled at its outermost
-    point; one running backwards goes from the first node's left side to the
-    other's right side.
+    to the left, into the gap before the column; one running backwards goes
+    from the first node's left side to the other's right side.
     """
     if end.x() - start.x() > NODE_WIDTH / 2:
         source, tip, direction = right_mid(start), left_mid(end), 1
@@ -126,30 +123,32 @@ def edge_route(start, end):
         out = source.x() - bulge * 4 / 3
         path = QPainterPath(source)
         path.cubicTo(QPointF(out, source.y()), QPointF(out, tip.y()), tip)
-        middle = path.pointAtPercent(0.5)
-        return EdgeRoute(path, tip, 1, QPointF(middle.x() - 4, middle.y()), "right")
+        return EdgeRoute(path, tip, 1)
     else:
         source, tip, direction = left_mid(start), right_mid(end), -1
     middle = (source.x() + tip.x()) / 2
     path = QPainterPath(source)
     path.cubicTo(QPointF(middle, source.y()), QPointF(middle, tip.y()), tip)
-    if direction == 1 or abs(tip.x() - source.x()) <= COLUMN_GAP + 1:
-        point = path.pointAtPercent(0.5)
-        return EdgeRoute(path, tip, direction, QPointF(point.x(), point.y() - 10), "center")
-    # Backwards over several columns: labelled in the gap beside the node it leads to
-    return EdgeRoute(path, tip, direction, QPointF(tip.x() + 12, tip.y() - 12), "left")
+    return EdgeRoute(path, tip, direction)
 
 
-def free_place(rect, taken):
-    """``rect`` moved up or down, by its height a step, as little as it
-    takes to overlap none of ``taken``; where it was if no place is near."""
-    step = rect.height() + 1
-    for move in range(MAX_LABEL_MOVES + 1):
-        for sign in (1, -1) if move else (1,):
-            candidate = rect.translated(0, sign * move * step)
-            if not any(candidate.intersects(other) for other in taken):
-                return candidate
-    return rect
+def caption_key(start, end, positions):
+    """Of the edge from node ``start`` to ``end`` (keys of ``positions``,
+    their top left corners), the node its label stands above: the one
+    further from the node the graph starts from (in column 0), which a
+    graph reaches by that edge; of two in one column the one it leads to."""
+    return start if abs(positions[start].x()) > abs(positions[end].x()) else end
+
+
+def captions(edges, positions):
+    """``{node key: [label, …]}`` of ``edges`` [(start, end, label)]: each
+    label above its edge's caption_key, empty ones and repeats left out."""
+    found = {}
+    for start, end, label in edges:
+        texts = found.setdefault(caption_key(start, end, positions), [])
+        if label and label not in texts:
+            texts.append(label)
+    return {key: texts for key, texts in found.items() if texts}
 
 
 def left_mid(corner):
@@ -162,12 +161,10 @@ def right_mid(corner):
     return QPointF(corner.x() + NODE_WIDTH, corner.y() + NODE_HEIGHT / 2)
 
 
-def draw_edge(scene, start, end, label, color, marked, taken):
-    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+def draw_edge(scene, start, end, color, marked):
     """An arrow from the node with top left corner ``start`` to the one at
     ``end`` in ``color`` (a QColor), drawn wider and above the others when
-    ``marked``; its label where ``edge_route`` puts it, or moved up or down
-    off the labels already ``taken`` (their QRectFs, the new one added)."""
+    ``marked``. Its label is the caption of a node (NodeBox.set_caption)."""
     route = edge_route(start, end)
     line = QGraphicsPathItem(route.path)
     line.setPen(QPen(color, 2 if marked else 1.2))
@@ -180,24 +177,6 @@ def draw_edge(scene, start, end, label, color, marked, taken):
     arrow.setBrush(QBrush(color))
     arrow.setPen(QPen(color))
     scene.addItem(arrow)
-    if not label:
-        return
-    text = QGraphicsSimpleTextItem(clip(label, MAX_LABEL))
-    text.setBrush(QBrush(theme_qcolor("text")))
-    text.setToolTip(label)
-    width = text.boundingRect().width()
-    height = text.boundingRect().height()
-    point = route.label
-    left = {"center": point.x() - width / 2, "right": point.x() - width}.get(
-        route.align, point.x())
-    rect = free_place(QRectF(left - 3, point.y() - height / 2 - 1, width + 6, height + 2), taken)
-    taken.append(rect)
-    text.setPos(rect.x() + 3, rect.y() + 1)
-    box = QGraphicsRectItem(rect)
-    box.setBrush(QBrush(theme_qcolor("background")))
-    box.setPen(QPen(Qt.PenStyle.NoPen))
-    scene.addItem(box)
-    scene.addItem(text)
 
 
 class NodeBox(QGraphicsRectItem):
@@ -241,6 +220,15 @@ class NodeBox(QGraphicsRectItem):
             count.setBrush(QBrush(theme_qcolor("muted")))
             count.setPos(NODE_WIDTH - 8 - count.boundingRect().width(), 25)
         # The subclass's border needs its own attributes: it calls set_highlight
+
+    def set_caption(self, labels, color):
+        """Show ``labels`` (of the edges leading here, see captions) above
+        the box in ``color`` (a QColor), clipped to its width."""
+        text = ", ".join(labels)
+        caption = QGraphicsSimpleTextItem(clip(text), self)
+        caption.setBrush(QBrush(color))
+        caption.setToolTip(text)
+        caption.setPos(4, CAPTION_TOP)
 
     def border(self, mark):
         """``(QColor, width, Qt.PenStyle)`` of the border, for ``mark``: the

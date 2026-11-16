@@ -37,7 +37,8 @@ A method hook's script runs before or after the hooked method (**When**). Beside
 | `ctx.threadId` | Thread the call runs on |
 | `ctx.call(method, ...args)` | Call a static game method, as in [scripts](script-context.md) |
 | `ctx.static(field)` | Mono and IL2CPP: read a static field |
-| `ctx.find(className[, objectName])`, `ctx.forEach(…)`, `ctx.outerName(…)` | Find live objects, as in [scripts](script-context.md) |
+| `ctx.find(className[, objectName])`, `ctx.forEach(…)`, `ctx.object(…)`, `ctx.outerName(…)` | Find live objects, as in [scripts](script-context.md) |
+| `ctx.isPlaying()` | Unreal: whether the player is in the game, as in [scripts](script-context.md) |
 
 Objects – `ctx.this`, object arguments, results – are the same [wrappers as in scripts](script-context.md#object-wrappers): fields, properties and methods directly (`target.IsPlayer`, `obj.GetComponentByName("Stats")`). Before the call, assigning a field (`obj.Field = …`) or property (which calls its setter) changes what the method works with.
 

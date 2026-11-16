@@ -44,6 +44,7 @@ from grembyte.ui.widgets.docking import PinButton
 from grembyte.ui.widgets.graph_canvas import (
     GraphView,
     NodeBox,
+    captions,
     column_positions,
     draw_edge,
     short_class,
@@ -718,31 +719,23 @@ class ReferenceGraphDialog(QDialog):
             self._items[key] = item
             if key == selected_key:
                 item.setSelected(True)
-        labels = {}
-        for edge in self.graph.edges:
-            if edge.holder in positions and edge.held in positions:
-                labels.setdefault((edge.holder, edge.held), []).append(edge.label)
+        drawn = [(edge.holder, edge.held, edge.label) for edge in self.graph.edges
+                 if edge.holder in positions and edge.held in positions]
+        # The fields above the nodes, in the colour of the way they lie on
+        for key, names in captions(drawn, positions).items():
+            mark = marks.get(key)
+            self._items[key].set_caption(
+                names, theme_qcolor("accent" if mark is None else _MARK_COLORS[mark]))
         edge_marks = {pair: ROOT_PATH for pair in self.graph.path_edges(self._path)}
         edge_marks.update((pair, MARKED_PATH) for pair in self.graph.path_edges(marked))
-        # The labels placed so far; the edges of the marked ways first
-        taken = []
-        order = sorted(labels.items(), key=lambda pair: pair[0] not in edge_marks)
-        for (holder, held), names in order:
-            self._draw_edge(positions[holder], positions[held],
-                            ", ".join(name for name in names if name),
-                            edge_marks.get((holder, held)), taken)
+        for holder, held in dict.fromkeys((holder, held) for holder, held, _label in drawn):
+            mark = edge_marks.get((holder, held))
+            color = theme_qcolor("muted" if mark is None else _MARK_COLORS[mark])
+            draw_edge(self.scene, positions[holder], positions[held], color, mark is not None)
         self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-80, -80, 80, 80))
         if first:
             self.view.centerOn(self._items[self.graph.target])
         self._update_buttons()
-
-    def _draw_edge(self, start, end, label, mark, taken):
-        # pylint: disable=too-many-arguments,too-many-positional-arguments
-        """An arrow from the holder (top left corner ``start``) to the held
-        node (``end``), see graph_canvas.draw_edge; ``mark`` as in
-        NodeItem.set_highlight."""
-        color = theme_qcolor("muted" if mark is None else _MARK_COLORS[mark])
-        draw_edge(self.scene, start, end, label, color, mark is not None, taken)
 
     def fit(self):
         """Zoom so that the whole graph fits the window."""

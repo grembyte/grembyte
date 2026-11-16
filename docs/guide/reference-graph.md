@@ -29,13 +29,13 @@ Everything else is in the context menu (see [Working with it](#working-with-it))
 
 ## Reading the graph
 
-With *What holds it*, the object you started from is on the right. Each column to the left is one step further away: the objects holding it, the objects holding those, and so on. An arrow points from the holder to the object it holds and is labelled with the field it is held in:
+With *What holds it*, the object you started from is on the right. Each column to the left is one step further away: the objects holding it, the objects holding those, and so on. An arrow points from the holder to the object it holds. The field it is held in stands in the accent colour above the node further out: with *What holds it* above the holder, with *What it points to* above the object pointed to. Where many arrows run close together, each node still shows the field it is reached by. A field can be:
 
 - a field: `_gameManager`, a struct's member as `stats.owner`;
 - an array element: `[3]`, an element of an array of structs as `[1422].value`;
 - in Unreal games also `OuterPrivate`, the object an object belongs to.
 
-An object can also hold one in its own column, e.g. an array that holds both the start object and another of its holders. Such an arrow loops out to the left of the column; one pointing back to a column further right runs from the holder's left side to the other's right side. Labels that would cover each other move apart.
+An object can also hold one in its own column, e.g. an array that holds both the start object and another of its holders. Such an arrow loops out to the left of the column; one pointing back to a column further right runs from the holder's left side to the other's right side. A node reached by several arrows lists their fields side by side; on a highlighted way they take its colour. A field shown as an offset (`+0x17d0`) has no reflection data: the game keeps a pointer there that the engine does not describe, so the [object inspector](../engines/index.md#object-inspector) does not list it. Scripts reach it with `ctx.object(obj.address.add(0x17d0).readPointer())`.
 
 A node shows the class and the object's name (Unity and Unreal objects, strings) or its address. The boxes stand for different kinds of holders:
 
