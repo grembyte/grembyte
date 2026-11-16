@@ -1103,6 +1103,11 @@ const unreal = (() => {
       type.structSize = field.add(L.elementSize).readS32();
     } else if (WEAK_KINDS.has(kind)) {
       type.engine = 'weak';
+      if (kind.startsWith('Soft')) {
+        // TSoftObjectPtr, TSoftClassPtr: scripts can pass one (writeSoftPointer)
+        type.soft = true;
+        type.size = field.add(L.elementSize).readS32();
+      }
     } else if (kind === 'InterfaceProperty') {
       type.engine = 'interface';
     } else if (kind === 'StrProperty') {
@@ -2168,9 +2173,75 @@ const unreal = (() => {
       case 'bool':
         writeValue(type, address, value);
         return;
+      case 'weak':
+        if (type.soft) {
+          writeSoftPointer(type, address, value);
+          return;
+        }
+        throw grembyteError('error.unreal.script_unpassable', { type: type.name });
       default:
         throw grembyteError('error.unreal.script_unpassable', { type: type.name });
     }
+  }
+
+  function writeSoftPointer(type, address, value) {
+    // A TSoftObjectPtr or TSoftClassPtr argument naming a loaded object
+    // (``value``, its address; null leaves it empty). FSoftObjectPtr is a
+    // TPersistentObjectPtr<FSoftObjectPath>: a weak pointer to the object,
+    // in older engines a tag (0: resolve the path), and the path at its end.
+    // The path's layout comes from the engine's SoftObjectPath struct: UE5.1+
+    // FTopLevelAssetPath (the package's and the asset's FName), before it one
+    // FName "/Game/Package.Asset"; then the FString of a subobject's path.
+    if (value === null || value === undefined)
+      return;  // the parameter block is zeroed: an empty soft pointer
+    if (!(value instanceof NativePointer))
+      throw grembyteError('error.unreal.soft_pointer_object', { type: type.name });
+    if (!isObject(value))
+      throw grembyteError('error.unreal.no_object', { address: value });
+    const L = ue.layout;
+    const pathStruct = findStruct('SoftObjectPath');
+    const pathAt = address.add(type.size - pathStruct.add(L.propertiesSize).readS32());
+    const part = (fields, name) => fields.find(field => field.name === name);
+    const pathFields = layout(pathStruct).fields;
+    // The object's outers up to its package: package, asset, subobjects
+    const chain = [];
+    for (let current = value; !current.isNull(); current = current.add(OBJECT_OUTER).readPointer())
+      chain.unshift(current);
+    const writeName = (at, object) => Memory.copy(at, object.add(OBJECT_NAME), 8);
+    const assetPath = part(pathFields, 'AssetPath');
+    if (assetPath !== undefined) {
+      const top = layout(assetPath.type.klass).fields;
+      const at = pathAt.add(assetPath.offset);
+      writeName(at.add(part(top, 'PackageName').offset), chain[0]);
+      if (chain.length > 1)
+        writeName(at.add(part(top, 'AssetName').offset), chain[1]);
+    } else {
+      const assetPathName = part(pathFields, 'AssetPathName');
+      if (assetPathName === undefined)
+        throw grembyteError('error.unreal.soft_pointer_layout');
+      const names = chain.slice(0, 2).map(object => fieldName(object.add(OBJECT_NAME)));
+      let found;
+      try {
+        found = nameOf(names.join('.'));
+      } catch (_error) {
+        // Older engines name the path in one FName, made only when the game uses it
+        throw grembyteError('error.unreal.soft_pointer_path', { path: names.join('.') });
+      }
+      const [index, number] = found;
+      pathAt.add(assetPathName.offset).writeU32(index);
+      pathAt.add(assetPathName.offset + 4).writeU32(number);
+    }
+    const subPath = part(pathFields, 'SubPathString');
+    if (subPath !== undefined && chain.length > 2) {
+      writeParameter({ engine: 'string' }, pathAt.add(subPath.offset),
+        chain.slice(2).map(object => fieldName(object.add(OBJECT_NAME))).join('.'));
+    }
+    // The weak pointer, if the object has a serial number (else the path resolves it)
+    const index = value.add(OBJECT_INDEX).readS32();
+    const item = objectItem(index);
+    const serial = item === null ? 0 : item.add(ITEM_SERIAL).readS32();
+    address.writeS32(serial === 0 ? -1 : index);
+    address.add(4).writeS32(serial);
   }
 
   const nameIndexes = new Map();
@@ -2226,6 +2297,26 @@ const unreal = (() => {
       if (classNameMatches(klass, name)) {
         classesByName.set(name, klass);
         return klass;
+      }
+    }
+    throw grembyteError('error.unreal.no_class', { name });
+  }
+
+  const structsByName = new Map();
+
+  function findStruct(name) {
+    // A loaded script struct by its name, e.g. "SoftObjectPath".
+    reflection();
+    const cached = structsByName.get(name);
+    if (cached !== undefined && isObject(cached))
+      return cached;
+    const s = objects();
+    for (let i = 0; i < s.address.length; i++) {
+      if (s.klass[i] === ue.layout.scriptStruct && s.outer[i] !== 0
+          && nameOfAddress(s.address[i]) === name) {
+        const found = ptr(s.address[i]);
+        structsByName.set(name, found);
+        return found;
       }
     }
     throw grembyteError('error.unreal.no_class', { name });

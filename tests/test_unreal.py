@@ -473,6 +473,73 @@ __attribute__((noinline)) void exec_TrySetAttributeBaseValue(Object *context, Fr
     }
 }
 
+/* TSoftClassPtr (UE5.1+): a TPersistentObjectPtr, the weak pointer and
+   FSoftObjectPath (FTopLevelAssetPath: the package's and the asset's FName,
+   then the subobject's path) */
+typedef struct { uint32_t package, package_number, asset, asset_number; String sub; } SoftPath;
+typedef struct { int32_t index, serial; SoftPath path; } SoftPointer;
+_Static_assert(sizeof(SoftPointer) == 0x28, "FSoftObjectPtr");
+static SoftPointer g_equipped;
+static char g_equipped_sub[64];
+static volatile int32_t g_equips;
+static Object *g_soft_class, *g_soft_sidekick;
+
+/* Equip(TSoftClassPtr<Hero> Kind): keeps what it was given */
+__attribute__((noinline)) void exec_Equip(Object *context, Frame *stack, void *result) {
+    (void)context;
+    (void)result;
+    g_equipped = *(SoftPointer *)stack->locals;
+    memset(g_equipped_sub, 0, sizeof g_equipped_sub);
+    for (int i = 0; i < g_equipped.path.sub.num && i < 63; i++)
+        g_equipped_sub[i] = (char)g_equipped.path.sub.data[i];
+    g_equipped.path.sub.data = NULL;
+    g_equips = g_equips + 1;
+}
+
+static void append_name(char *text, uint32_t index) {
+    const uint8_t *entry = g_name_pool.blocks[0] + index * 2;
+    uint16_t header;
+    memcpy(&header, entry, 2);
+    strncat(text, (const char *)entry + 2, header >> 6);
+}
+
+/* Whether the soft pointer Equip was given names ``target`` by its path */
+static int names(Object *target) {
+    Object *chain[8];
+    int n = 0;
+    for (Object *current = target; current != NULL && n < 8; current = current->outer)
+        chain[n++] = current;
+    const SoftPath *path = &g_equipped.path;
+    if (path->package != chain[n - 1]->name || path->package_number != chain[n - 1]->number)
+        return 0;
+    if (path->asset != (n > 1 ? chain[n - 2]->name : 0))
+        return 0;
+    char sub[64] = "";
+    for (int i = n - 3; i >= 0; i--) {
+        append_name(sub, chain[i]->name);
+        if (i > 0)
+            strcat(sub, ".");
+    }
+    return strcmp(sub, g_equipped_sub) == 0;
+}
+
+/* Whether the player plays (ctx.isPlaying): GameplayStatics' IsGamePaused,
+   and the actor the controller's camera shows */
+static volatile int32_t g_paused;
+static Object *volatile g_view_target;
+
+__attribute__((noinline)) void exec_IsGamePaused(Object *context, Frame *stack, void *result) {
+    (void)context;
+    (void)stack;
+    *(uint8_t *)result = (uint8_t)g_paused;
+}
+
+__attribute__((noinline)) void exec_GetViewTarget(Object *context, Frame *stack, void *result) {
+    (void)context;
+    (void)stack;
+    *(Object **)result = g_view_target;
+}
+
 /* The script interpreter: Loot's script calls AddGold(Amount), then
    broadcasts a delegate that ticks the hero (through ProcessEvent). */
 __attribute__((noinline)) void ProcessInternal(Object *context, Frame *stack, void *result) {
@@ -538,6 +605,15 @@ int main(void) {
     FieldClass *object_property = field_class("ObjectProperty");
     FieldClass *str_property = field_class("StrProperty");
     FieldClass *bool_property = field_class("BoolProperty");
+    FieldClass *name_property = field_class("NameProperty");
+    Object *top_level_path = object(script_struct, "TopLevelAssetPath", core);
+    top_level_path->properties_size = 16;
+    property(top_level_path, name_property, "PackageName", 8, 0, 0, NULL);
+    property(top_level_path, name_property, "AssetName", 8, 8, 0, NULL);
+    Object *soft_path = object(script_struct, "SoftObjectPath", core);
+    soft_path->properties_size = 32;
+    property(soft_path, struct_property, "AssetPath", 16, 0, 0, top_level_path);
+    property(soft_path, str_property, "SubPathString", 16, 16, 0, NULL);
 
     Object *vector = object(script_struct, "Vector", core);
     vector->properties_size = 0x18;
@@ -629,10 +705,18 @@ int main(void) {
                          exec_MoveBy, 2, 28, 0xffff);
     property(g_move_by, struct_property, "Offset", 0x18, 0, CPF_PARM, vector);
     property(g_move_by, int_property, "Distance", 4, 0x18, CPF_PARM | CPF_OUT_PARM, NULL);
+    Object *equip = function(function_class, hero, "Equip", FUNC_NATIVE | FUNC_STATIC | FUNC_PUBLIC,
+                             exec_Equip, 1, 0x28, 0xffff);
+    Field *kind = property(equip, field_class("SoftClassProperty"), "Kind", 0x28, 0, CPF_PARM,
+                           class_class);
+    kind->extra[1] = hero;
 
     Object *blueprint = object(package_class, "/Game/Blueprints/BP_Hero", NULL);
     Object *bp_hero = object(generated_class, "BP_Hero_C", blueprint);
     bp_hero->super = hero;
+    /* Something has a weak pointer to the class: it has a serial number */
+    g_uobject_array.objects[0][bp_hero->index].serial = 5;
+    g_soft_class = bp_hero;
     g_loot = function(function_class, bp_hero, "Loot", FUNC_PUBLIC, ProcessInternal,
                       2, 12, 0xffff);
     property(g_loot, object_property, "Target", 8, 0, CPF_PARM, hero);
@@ -749,6 +833,7 @@ int main(void) {
     Object *tree = object(widget_tree_class, "WidgetTree_7", player);
     Object *sidekick = object(bp_hero, "Sidekick", tree);
     *(int32_t *)((char *)sidekick + 0x70) = 12;
+    g_soft_sidekick = sidekick;
     /* A second hero: scripts find it by its name */
     Object *rival = object(bp_hero, "BP_Hero_C_1", level);
     *(int32_t *)((char *)rival + 0x70) = 30;
@@ -812,6 +897,19 @@ int main(void) {
     controller_class->properties_size = 0x78;
     Object *controller = object(controller_class, "PlayerController_0", level);
     *(Object **)((char *)controller + 0x70) = player;
+    Object *view_target = function(function_class, controller_class, "GetViewTarget",
+                                   FUNC_NATIVE | FUNC_PUBLIC, exec_GetViewTarget, 1, 8, 0);
+    property(view_target, object_property, "ReturnValue", 8, 0, CPF_PARM | CPF_RETURN_PARM, actor);
+    g_view_target = player;
+    Object *statics = object(class_class, "GameplayStatics", engine);
+    statics->super = object_class;
+    object(statics, "Default__GameplayStatics", engine);
+    Object *is_paused = function(function_class, statics, "IsGamePaused",
+                                 FUNC_NATIVE | FUNC_STATIC | FUNC_PUBLIC, exec_IsGamePaused,
+                                 2, 9, 8);
+    property(is_paused, object_property, "WorldContextObject", 8, 0, CPF_PARM, object_class);
+    property(is_paused, bool_property, "ReturnValue", 1, 8, CPF_PARM | CPF_RETURN_PARM,
+             (void *)0xff010001ULL);
     /* Numbered anew on every load, as in Gothic 1 Remake */
     g_hero_set = object(hero_set_class, "HeroAttributeSet_2147445233", player);
     float *might = (float *)((char *)g_hero_set + 0x38);
@@ -853,6 +951,23 @@ int main(void) {
             continue;
         } else if (strcmp(cmd, "moved") == 0) {
             printf("%d %d\n", g_moved, g_moves);
+            fflush(stdout);
+            continue;
+        } else if (strcmp(cmd, "pause") == 0) {
+            g_paused = value;
+        } else if (strcmp(cmd, "camera") == 0) {
+            /* 1: on the player, 0: on a camera of its own (a menu, a cutscene) */
+            g_view_target = value ? player : controller;
+        } else if (strcmp(cmd, "equipped") == 0) {
+            /* 0: whether the path names BP_Hero_C, the sidekick; 1: whether
+               the weak pointer names BP_Hero_C, the calls */
+            const Item *item = g_equipped.index < 0 ? NULL
+                : &g_uobject_array.objects[0][g_equipped.index];
+            if (value == 0)
+                printf("%d %d\n", names(g_soft_class), names(g_soft_sidekick));
+            else
+                printf("%d %d\n", item != NULL && item->object == g_soft_class
+                                      && item->serial == g_equipped.serial, g_equips);
             fflush(stdout);
             continue;
         } else if (strcmp(cmd, "renamed") == 0) {
@@ -913,8 +1028,8 @@ def test_catalog_lists_packages_classes_and_ufunctions(tmp_path, qt_app):
         found = _run(qt_app, worker, worker.assemblies_found)[0][0]
         # Packages with functions; Blueprints grouped by their first folder
         assert [(a["name"], a["classes"]) for a in found] == [
-            ("/Script/CoreUObject", 8), ("/Script/FakeGame", 2), ("/Game/Blueprints", 1),
-            ("/Script/GameplayAbilities", 3)]
+            ("/Script/CoreUObject", 8), ("/Script/Engine", 5), ("/Script/FakeGame", 2),
+            ("/Game/Blueprints", 1), ("/Script/GameplayAbilities", 3)]
         assert all(a["mvid"] for a in found)
         assert engine.is_framework_assembly("/Script/CoreUObject")
         # The framework is left out unless asked for.
@@ -927,12 +1042,14 @@ def test_catalog_lists_packages_classes_and_ufunctions(tmp_path, qt_app):
             ("Hero", "Rename", "(FString,bool)", "void", False, "Hero:Rename (FString,bool)"),
             ("Hero", "OnLooted", "(AHero*)", "void", False, "Hero:OnLooted (AHero*)"),
             ("Hero", "MoveBy", "(FVector,int32&)", "void", True, "Hero:MoveBy (FVector,int32&)"),
+            ("Hero", "Equip", "(TSoftClassPtr<AHero>)", "void", True,
+             "Hero:Equip (TSoftClassPtr<AHero>)"),
         ]
         assert all(method.engine == "unreal" for method in hero.values())
         [loot] = loaded["/Game/Blueprints"]
         assert loot.signature == "BP_Hero_C:Loot (AHero*,int32)"
         # Tokens hash the names: the same in every run of the game.
-        assert len({m.token for m in hero.values()} | {loot.token}) == 6
+        assert len({m.token for m in hero.values()} | {loot.token}) == 7
     finally:
         target.close()
 
@@ -1027,7 +1144,7 @@ def test_trace_hooks_native_and_blueprint_functions(tmp_path, qt_app):
         _wait_for(qt_app, lambda: planned or failed)
         assert not failed
         # OnLooted has no script: nothing to hook.
-        assert planned[0] == {"methods": 5, "skipped": {"abstract": 1, "native": 0, "generic": 0},
+        assert planned[0] == {"methods": 6, "skipped": {"abstract": 1, "native": 0, "generic": 0},
                               "assemblies": ["/Script/FakeGame", "/Game/Blueprints"]}
 
         worker.trace([])
@@ -1036,7 +1153,7 @@ def test_trace_hooks_native_and_blueprint_functions(tmp_path, qt_app):
         methods, info = started[0]
         assert (info["notCompiled"], info["failed"]) == (0, 0)
         assert sorted(method.name for method in methods) == [
-            "AddGold", "Loot", "MoveBy", "Rename", "Tick"]
+            "AddGold", "Equip", "Loot", "MoveBy", "Rename", "Tick"]
         # The Blueprint function runs through a stub of its own now.
         assert target.send("loot", 0)[1] == 0
 
@@ -1376,6 +1493,55 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
         assert run["logs"] == ["3 /Game/Maps/Start.BP_Hero_C_0=75 BP_Hero_C_0.Sidekick=12"
                                " /Game/Maps/Start.BP_Hero_C_1=30"]
         assert run["result"] == "112"
+
+        # ctx.object: the object at an address (pointer, text or number) as
+        # a wrapper, null for a null pointer, an error for what is none
+        at = worker.add_script(ScriptSpec("""
+            const hero = ctx.find("BP_Hero_C", "BP_Hero_C_1");
+            const again = ctx.object(hero.address);
+            const fromText = ctx.object(hero.address.toString());
+            const errors = [];
+            for (const wrong of [hero.address.add(8), "nowhere"]) {
+                try { ctx.object(wrong); } catch (error) { errors.push(error.message); }
+            }
+            ctx.log(errors.length);
+            return again.Health + fromText.Health + (ctx.object(0) === null ? 1000 : 0)
+                + (ctx.object(again) === again ? 100 : 0);
+        """))
+        _wait_for(qt_app, lambda: at in added)
+        run = run_on_game_thread(at)
+        assert run["error"] is None, run["error"]
+        assert run["logs"] == ["2"]
+        assert run["result"] == "1160"
+
+        # TSoftClassPtr arguments: a loaded class (weak pointer and path), a
+        # subobject (its path: package, asset, the rest), null, no object
+        def equip(argument):
+            script = worker.add_script(ScriptSpec(f'ctx.call("Hero.Equip", {argument});'))
+            _wait_for(qt_app, lambda: script in added)
+            return run_on_game_thread(script)["error"]
+
+        assert equip('ctx.findClass("BP_Hero_C")') is None
+        assert target.send("equipped", 0) == (1, 0)
+        assert target.send("equipped", 1) == (1, 1)
+        assert equip('ctx.find("BP_Hero_C", "BP_Hero_C_0.Sidekick")') is None
+        assert target.send("equipped", 0) == (0, 1)
+        assert target.send("equipped", 1) == (0, 2)
+        assert equip("null") is None
+        assert target.send("equipped", 0) == (0, 0)
+        assert "error.unreal.soft_pointer_object" in equip('"BP_Hero_C"')
+
+        # ctx.isPlaying: a pawn, not paused, the camera on the pawn
+        playing = worker.add_script(ScriptSpec("return ctx.isPlaying();"))
+        _wait_for(qt_app, lambda: playing in added)
+        assert run_on_game_thread(playing)["result"] == "true"
+        target.send("pause", 1)
+        assert run_on_game_thread(playing)["result"] == "false"
+        target.send("pause", 0)
+        target.send("camera", 0)
+        assert run_on_game_thread(playing)["result"] == "false"
+        target.send("camera", 1)
+        assert run_on_game_thread(playing)["result"] == "true"
 
         # Parameters: ctx.args holds the defaults, or what a run by hand
         # passes; a choice's options come from its code on the game thread.

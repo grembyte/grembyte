@@ -27,6 +27,15 @@ Grembyte supports Unreal Engine 4.23 and later, 64-bit, natively and under Proto
 
 Not possible as arguments: `TArray`, `TMap`, `TSet`, `FText` and delegates.
 
+In [scripts](../reference/script-context.md), a `TSubclassOf<>` argument takes a class from `ctx.findClass("BP_Sword_C")`, a `TSoftObjectPtr<>` or `TSoftClassPtr<>` a loaded object or class (or `null`): Grembyte fills in its weak pointer and its path. Assets that are not loaded cannot be passed by their path. Before UE 5.1 the path is one `FName` that exists only if the game has used it; otherwise the call is refused.
+
+`ctx.isPlaying()` tells a script whether the player is in the game rather than in a menu, e.g. to let a timer script act only then:
+
+```js
+if (!ctx.isPlaying())
+  return;
+```
+
 Many shipping builds keep their cheat manager: in Avowed `BP_CheatManager_C` (an `AlabamaCheatManager`) has 147 functions with code, such as `GiveHealth`, `AddCurrency` and `ToggleUnlimitedStamina`.
 
 ## Object browser

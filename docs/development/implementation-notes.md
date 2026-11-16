@@ -336,6 +336,22 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   `EX_LocalVirtualFunction` 0x45) by an `FScriptName` (12 bytes), which must name a function
   of the calling class's chain (on self) or the only function of that name (on another
   object). Native functions have no bytecode. Tested on the stand-in only so far.
+- **Soft pointers as arguments (2026-11-16):** `TSoftObjectPtr`/`TSoftClassPtr` are an
+  `FSoftObjectPtr`, a `TPersistentObjectPtr<FSoftObjectPath>`: a weak pointer, in older
+  engines a tag, the path at its end. Rather than guess the engine version, the path's
+  layout is read from the reflected script struct `SoftObjectPath` (its size gives the path's
+  offset from the property's ElementSize): UE5.1+ has `AssetPath`, an `FTopLevelAssetPath`
+  of the package's and the asset's FName (both exist: objects carry them), older ones
+  `AssetPathName`, one FName `"/Game/Package.Asset"` that exists only if the game made it.
+  Subobjects go into `SubPathString` (`Outer.Object`). The weak pointer is filled only when
+  the object has a serial number; the tag stays 0, so older engines resolve the path. Not
+  yet tried in a real game.
+- **`ctx.isPlaying()` (2026-11-16, RoboCop: Rogue City):** in the main menu RoboCop has a
+  player controller *with* a pawn and is not paused; what tells the menu apart is the view
+  target, a `CineCameraActor` instead of the pawn. In the pause menu the camera stays on the
+  pawn but `IsGamePaused` is true. So isPlaying needs a pawn, no pause and
+  `GetViewTarget() == Pawn`; all three cases checked live. The mouse cursor
+  (`bShowMouseCursor`) was left out: top-down games show it while playing.
 
 ## Native call diff trace
 

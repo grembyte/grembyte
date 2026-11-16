@@ -1665,7 +1665,7 @@ function invokeWithParms(method, signature, self, args) {
     if (param.out && (value === null || value === undefined))
       return;  // an output: the function writes it
     if (type.engine !== undefined)
-      engine.writeParameter(type, address, value);
+      engine.writeParameter(type, address, value instanceof ManagedObject ? value.address : value);
     else if (type.kind === T.VALUETYPE) {
       if (!(value instanceof ManagedObject))
         throw grembyteError('error.monitor.argument_type', { name: param.name, type: type.name });
@@ -1769,6 +1769,42 @@ function forEachObject(className, callback) {
       break;
   }
   return count;
+}
+
+function objectAt(address) {
+  // ctx.object(player.address.add(0x17d0).readPointer()): the object at an
+  // address (a NativePointer, a number or a text like "0x7f…") as a wrapper,
+  // e.g. one a field without reflection points to; null for a null pointer.
+  // Its class is read from the object itself.
+  if (address instanceof ManagedObject)
+    return address;  // a wrapper already
+  let pointer;
+  try {
+    pointer = address instanceof NativePointer ? address : ptr(address);
+  } catch (_error) {
+    throw grembyteError('error.monitor.object_address', { address: String(address) });
+  }
+  return objectJs(pointer);
+}
+
+function isPlaying() {
+  // ctx.isPlaying() (Unreal): whether the player is in the game: a local
+  // PlayerController with a pawn, the game not paused, and the camera on the
+  // pawn. A main menu often shows a pawn too, but through a camera of its own
+  // (RoboCop: a CineCameraActor); cutscenes do the same. False while the
+  // objects change (loading).
+  if (engine.id !== 'unreal')
+    throw grembyteError('error.monitor.is_playing_unreal_only');
+  try {
+    const controller = findObject('PlayerController');
+    const pawn = controller === null ? null : controller.Pawn;
+    if (pawn === null || staticCall('GameplayStatics.IsGamePaused', controller))
+      return false;
+    const view = controller.GetViewTarget();
+    return view !== null && view.address.equals(pawn.address);
+  } catch (_error) {
+    return false;
+  }
 }
 
 function outerName(object) {
@@ -2026,6 +2062,8 @@ function hookBefore(hook, invocation) {
     static: staticField,
     find: findObject,
     forEach: forEachObject,
+    object: objectAt,
+    isPlaying,
     outerName,
     log: (...items) => { logs.push(formatHookLog(items)); }
   };
@@ -2125,6 +2163,8 @@ function hookLeave(hook, invocation, retval) {
     static: staticField,
     find: findObject,
     forEach: forEachObject,
+    object: objectAt,
+    isPlaying,
     outerName,
     log: (...items) => { logs.push(formatHookLog(items)); }
   };
@@ -2413,6 +2453,8 @@ function scriptContext(script, logs, args) {
   return {
     find: findObject,
     forEach: forEachObject,
+    object: objectAt,
+    isPlaying,
     outerName,
     findClass: scriptClass,
     call: staticCall,
