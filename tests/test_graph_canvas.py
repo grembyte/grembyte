@@ -16,40 +16,48 @@ def test_edges_never_run_through_a_column(qt_app):
 
     step = NODE_WIDTH + COLUMN_GAP
     column = QPointF(-step, 0)
-    # One column left: right side to left side, labelled in the gap between
+    # One column left: right side to left side
     forward = edge_route(QPointF(-2 * step, 0), column)
     assert forward.direction == 1 and forward.tip == QPointF(-step, NODE_HEIGHT / 2)
-    assert -2 * step + NODE_WIDTH < forward.label.x() < -step and forward.align == "center"
-    # The same column: a loop into the gap left of it, labelled at its far end
+    # The same column: a loop into the gap left of it
     loop = edge_route(QPointF(-step, 200), column)
     assert loop.direction == 1 and loop.tip == QPointF(-step, NODE_HEIGHT / 2)
     box = loop.path.boundingRect()
     assert box.right() <= -step and box.left() >= -step - COLUMN_GAP / 2
-    assert loop.align == "right" and loop.label.x() < box.left() + 1
     # Backwards: left side to the held node's right side, pointing left
     back = edge_route(column, QPointF(-2 * step, 0))
     assert back.direction == -1 and back.tip == QPointF(-2 * step + NODE_WIDTH, NODE_HEIGHT / 2)
     assert back.path.boundingRect().right() <= -step
-    far = edge_route(QPointF(0, 0), QPointF(-3 * step, 0))
-    assert far.align == "left" and far.label.x() > -3 * step + NODE_WIDTH
 
 
-def test_labels_move_off_each_other(qt_app):
+def test_labels_stand_above_the_node_further_out(qt_app):
     # pylint: disable=import-outside-toplevel,unused-argument
-    from PySide6.QtCore import QRectF  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtCore import QPointF  # pylint: disable=import-error,no-name-in-module
 
-    from grembyte.ui.widgets.graph_canvas import free_place
+    from grembyte.ui.widgets.graph_canvas import NodeBox, captions
 
-    taken = [QRectF(0, 0, 50, 10)]
-    assert free_place(QRectF(100, 0, 50, 10), taken) == QRectF(100, 0, 50, 10)
-    # Down first, then up, by its height and a pixel
-    assert free_place(QRectF(10, 2, 50, 10), taken) == QRectF(10, 13, 50, 10)
-    # One step up still covers the first: two steps down
-    taken.append(QRectF(0, 13, 50, 10))
-    assert free_place(QRectF(10, 2, 50, 10), taken) == QRectF(10, 24, 50, 10)
-    # Up when down is taken as far
-    taken.append(QRectF(0, 24, 50, 10))
-    assert free_place(QRectF(10, 2, 50, 10), taken) == QRectF(10, -20, 50, 10)
+    positions = {"start": QPointF(0, 0), "left": QPointF(-380, 0), "left2": QPointF(-380, 70),
+                 "far": QPointF(-760, 0), "right": QPointF(380, 0)}
+    edges = [
+        # Holders to the left: the field above the holder
+        ("left", "start", "Player"), ("left", "start", "Owner"), ("left", "start", "Player"),
+        ("far", "left", "Party"),
+        # Called to the right: above the method called
+        ("start", "right", "async"),
+        # Backwards: above the node further out still
+        ("start", "far", "Back"),
+        # The same column: above the node it leads to; no label, no caption
+        ("left", "left2", "Items"), ("left2", "start", ""),
+    ]
+    assert captions(edges, positions) == {
+        "left": ["Player", "Owner"], "far": ["Party", "Back"], "right": ["async"],
+        "left2": ["Items"]}
+    box = NodeBox(None, "Party", "\"Hero\"", "")
+    box.set_caption(["Player", "Owner"], box.brush().color())
+    caption = box.childItems()[-1]
+    assert caption.text() == "Player, Owner" and caption.toolTip() == "Player, Owner"
+    # Above the box, in the gap to the row above
+    assert caption.y() + caption.boundingRect().height() <= 0
 
 
 def test_columns_follow_the_nodes_they_come_from(qt_app):
