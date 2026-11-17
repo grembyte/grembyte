@@ -183,6 +183,35 @@ const unreal = (() => {
 
   const names = new Map();
 
+  // FNames compare without case, and the name pool keeps the spelling that was
+  // registered first: in Stellar Blade UStruct's name reads "struct". Names
+  // are therefore never compared exactly.
+  function sameName(text, wanted) {
+    // Cheap for the usual case: the same spelling, or a different length
+    if (text === wanted)
+      return true;
+    return typeof text === 'string' && typeof wanted === 'string'
+      && text.length === wanted.length && text.toLowerCase() === wanted.toLowerCase();
+  }
+
+  function isDefaultName(text) {
+    // A class default object's name: Default__<Class>
+    return /^default__/i.test(text);
+  }
+
+  // The property kinds the agent tells apart, in their usual spelling: what
+  // fieldKind returns whatever spelling the game's name pool has.
+  const KIND_SPELLING = new Map([
+    'BoolProperty', 'ByteProperty', 'Int8Property', 'Int16Property', 'IntProperty',
+    'Int64Property', 'UInt16Property', 'UInt32Property', 'UInt64Property', 'FloatProperty',
+    'DoubleProperty', 'StrProperty', 'NameProperty', 'TextProperty', 'EnumProperty',
+    'StructProperty', 'ObjectProperty', 'ObjectPtrProperty', 'ClassProperty',
+    'ClassPtrProperty', 'WeakObjectProperty', 'LazyObjectProperty', 'SoftObjectProperty',
+    'SoftClassProperty', 'InterfaceProperty', 'ArrayProperty', 'SetProperty', 'MapProperty',
+    'DelegateProperty', 'MulticastDelegateProperty', 'MulticastInlineDelegateProperty',
+    'MulticastSparseDelegateProperty', 'FieldPathProperty', 'OptionalProperty'
+  ].map(kind => [kind.toLowerCase(), kind]));
+
   function nameText(index, number) {
     let text = names.get(index);
     if (text === undefined) {
@@ -200,7 +229,8 @@ const unreal = (() => {
   function fieldKind(field) {
     // The name of an FField's class ("FloatProperty", "ArrayProperty" ...)
     const L = ue.layout;
-    return fieldName(field.add(L.fieldClass).readPointer().add(L.fieldClassName));
+    const kind = fieldName(field.add(L.fieldClass).readPointer().add(L.fieldClassName));
+    return KIND_SPELLING.get(kind.toLowerCase()) || kind;
   }
 
   function readSnapshot() {
@@ -278,20 +308,20 @@ const unreal = (() => {
   function findLayout() {
     const s = objects();
     const core = s.address.find((address, i) => s.outer[i] === 0
-                                && objectName(s, i) === '/Script/CoreUObject');
+                                && sameName(objectName(s, i), '/Script/CoreUObject'));
     if (core === undefined)
       throw grembyteError('error.unreal.no_core_package');
     const inCore = new Map();
     s.address.forEach((address, i) => {
       if (s.outer[i] === core)
-        inCore.set(`${objectName(s, i)}|${s.klass[i]}`, address);
+        inCore.set(`${objectName(s, i).toLowerCase()}|${s.klass[i]}`, address);
     });
     const classClass = s.address.find((address, i) =>
-      s.outer[i] === core && s.klass[i] === address && objectName(s, i) === 'Class');
+      s.outer[i] === core && s.klass[i] === address && sameName(objectName(s, i), 'Class'));
     if (classClass === undefined)
       throw grembyteError('error.unreal.no_core_class', { name: 'Class' });
     const coreClass = name => {
-      const found = inCore.get(`${name}|${classClass}`);
+      const found = inCore.get(`${name.toLowerCase()}|${classClass}`);
       if (found === undefined)
         throw grembyteError('error.unreal.no_core_class', { name });
       return found;
@@ -299,7 +329,7 @@ const unreal = (() => {
     const struct = coreClass('Struct'), functionClass = coreClass('Function');
     const objectClass = coreClass('Object'), scriptStruct = coreClass('ScriptStruct');
     const coreStruct = name => {
-      const found = inCore.get(`${name}|${scriptStruct}`);
+      const found = inCore.get(`${name.toLowerCase()}|${scriptStruct}`);
       if (found === undefined)
         throw grembyteError('error.unreal.no_core_struct', { name });
       return ptr(found);
@@ -330,7 +360,8 @@ const unreal = (() => {
     // FProperty: ArrayDim, ElementSize, PropertyFlags, ..., Offset_Internal
     const vector = coreStruct('Vector');
     L.fieldClass = 8;
-    const named = (field, offset, text) => !field.isNull() && fieldName(field.add(offset)) === text;
+    const named = (field, offset, text) => !field.isNull()
+      && sameName(fieldName(field.add(offset)), text);
     for (let at = L.children + 8; at < L.children + 0x30 && L.childProperties === undefined;
       at += 8) {
       const first = vector.add(at).readPointer();
@@ -350,7 +381,7 @@ const unreal = (() => {
       throw grembyteError('error.unreal.unknown_layout', { what: 'UStruct::ChildProperties' });
     const x = vector.add(L.childProperties).readPointer();
     // FFieldClass: Name first, or after a vtable in newer engines (Fatekeeper)
-    L.fieldClassName = search(0, 0x18, 8, at => /^(Float|Double)Property$/.test(
+    L.fieldClassName = search(0, 0x18, 8, at => /^(Float|Double)Property$/i.test(
       fieldName(x.add(L.fieldClass).readPointer().add(at))), 'FFieldClass::Name');
     L.fieldNext = search(0x10, L.fieldName, 8,
       at => named(x.add(at).readPointer(), L.fieldName, 'Y'), 'FField::Next');
@@ -375,7 +406,7 @@ const unreal = (() => {
     const transform = coreStruct('Transform');
     const quat = coreStruct('Quat');
     let rotation = transform.add(L.childProperties).readPointer();
-    while (!rotation.isNull() && fieldName(rotation.add(L.fieldName)) !== 'Rotation')
+    while (!rotation.isNull() && !sameName(fieldName(rotation.add(L.fieldName)), 'Rotation'))
       rotation = rotation.add(L.fieldNext).readPointer();
     if (rotation.isNull())
       throw grembyteError('error.unreal.no_rotation');
@@ -387,7 +418,8 @@ const unreal = (() => {
     // bytes, no return value. It runs Blueprint code: its Func is the
     // script interpreter (UObject::ProcessInternal).
     const ubergraph = ptr(objectClass).add(L.children).readPointer();
-    if (ubergraph.isNull() || nameOfAddress(Number(ubergraph.toString())) !== 'ExecuteUbergraph')
+    if (ubergraph.isNull()
+        || !sameName(nameOfAddress(Number(ubergraph.toString())) || '', 'ExecuteUbergraph'))
       throw grembyteError('error.unreal.no_execute_ubergraph');
     L.functionFlags = search(L.propertiesSize, 0x180, 4, at =>
       ubergraph.add(at + 4).readU8() === 1 && ubergraph.add(at + 6).readU16() === 4
@@ -422,7 +454,7 @@ const unreal = (() => {
     if (prefix === undefined) {
       prefix = 'U';
       for (let current = klass; current !== 0; current = superOf(current)) {
-        if (nameOfAddress(current) === 'Actor') {
+        if (sameName(nameOfAddress(current), 'Actor')) {
           prefix = 'A';
           break;
         }
@@ -1692,7 +1724,7 @@ const unreal = (() => {
 
   function isProperty(field) {
     try {
-      return fieldKind(field).endsWith('Property');
+      return /Property$/i.test(fieldKind(field));
     } catch (_error) {
       return false;
     }
@@ -1979,7 +2011,7 @@ const unreal = (() => {
     reflection();
     const s = objects();
     const index = s.address.findIndex((_address, i) => s.outer[i] !== 0
-      && objectName(s, i) === 'Default__Object');
+      && sameName(objectName(s, i), 'Default__Object'));
     if (index < 0)
       throw grembyteError('error.unreal.not_found', { name: 'Default__Object' });
     const vtable = ptr(s.address[index]).readPointer();
@@ -2201,7 +2233,7 @@ const unreal = (() => {
     const L = ue.layout;
     const pathStruct = findStruct('SoftObjectPath');
     const pathAt = address.add(type.size - pathStruct.add(L.propertiesSize).readS32());
-    const part = (fields, name) => fields.find(field => field.name === name);
+    const part = (fields, name) => fields.find(field => sameName(field.name, name));
     const pathFields = layout(pathStruct).fields;
     // The object's outers up to its package: package, asset, subobjects
     const chain = [];
@@ -2256,9 +2288,10 @@ const unreal = (() => {
     const match = /^(.*)_(\d+)$/.exec(text);
     for (let i = 0; i < s.address.length && found === undefined; i++) {
       const base = nameText(s.name[i], 0);
-      if (base === text)
+      if (sameName(base, text))
         found = [s.name[i], 0];
-      else if (match !== null && base === match[1] && String(Number(match[2])) === match[2])
+      else if (match !== null && sameName(base, match[1])
+               && String(Number(match[2])) === match[2])
         found = [s.name[i], Number(match[2]) + 1];
     }
     if (found === undefined)
@@ -2277,7 +2310,7 @@ const unreal = (() => {
   function classNameMatches(klass, name) {
     // By its name (BP_Player_C) or C++ name (ABP_Player_C, UAlabamaCheatManager)
     const own = nameOfAddress(Number(klass.toString()));
-    return own === name || cppName(Number(klass.toString())) === name;
+    return sameName(own, name) || sameName(cppName(Number(klass.toString())), name);
   }
 
   const classesByName = new Map();
@@ -2313,7 +2346,7 @@ const unreal = (() => {
     const s = objects();
     for (let i = 0; i < s.address.length; i++) {
       if (s.klass[i] === ue.layout.scriptStruct && s.outer[i] !== 0
-          && nameOfAddress(s.address[i]) === name) {
+          && sameName(nameOfAddress(s.address[i]), name)) {
         const found = ptr(s.address[i]);
         structsByName.set(name, found);
         return found;
@@ -2345,7 +2378,7 @@ const unreal = (() => {
     // ``argumentCount`` arguments; ``wantStatic`` true/false or null for any.
     for (const current of classChain(klass)) {
       for (const fn of functionsOf(current)) {
-        if (fn.name !== name)
+        if (!sameName(fn.name, name))
           continue;
         const signature = signatureOf(fn.address);
         if ((wantStatic === null || !signature.instance === wantStatic)
@@ -2413,7 +2446,7 @@ const unreal = (() => {
     const s = objects();
     const wanted = `Default__${nameOfAddress(Number(klass.toString()))}`;
     const i = s.address.findIndex((address, k) => s.klass[k] === Number(klass.toString())
-      && objectName(s, k) === wanted);
+      && sameName(objectName(s, k), wanted));
     if (i < 0)
       throw grembyteError('error.unreal.not_found', { name: wanted });
     return ptr(s.address[i]);
@@ -2432,7 +2465,7 @@ const unreal = (() => {
     const name = fieldName(object.add(OBJECT_NAME));
     let outer = object.add(OBJECT_OUTER).readPointer();
     if (!outer.isNull() && isObject(outer)
-        && fieldName(outer.add(OBJECT_CLASS).readPointer().add(OBJECT_NAME)) === 'WidgetTree')
+        && sameName(fieldName(outer.add(OBJECT_CLASS).readPointer().add(OBJECT_NAME)), 'WidgetTree'))
       outer = outer.add(OBJECT_OUTER).readPointer();
     return outer.isNull() || !isObject(outer) ? name
       : `${fieldName(outer.add(OBJECT_NAME))}.${name}`;
@@ -2442,8 +2475,8 @@ const unreal = (() => {
     // Whether ``object`` is named ``named``: a name, or one as outerName gives
     if (named === null)
       return true;
-    return named.includes('.') ? outerName(object) === named
-      : fieldName(object.add(OBJECT_NAME)) === named;
+    return named.includes('.') ? sameName(outerName(object), named)
+      : sameName(fieldName(object.add(OBJECT_NAME)), named);
   }
 
   // RF_ClassDefaultObject, RF_ArchetypeObject
@@ -2454,7 +2487,7 @@ const unreal = (() => {
     // an archetype, or a part of one or of a class (a widget in a Widget
     // Blueprint's tree, the template of the widgets shown).
     for (let k = i; k !== undefined; k = s.index.get(s.outer[k])) {
-      if (objectName(s, k).startsWith('Default__') || (s.flags[k] & RF_TEMPLATE) !== 0
+      if (isDefaultName(objectName(s, k)) || (s.flags[k] & RF_TEMPLATE) !== 0
           || (k !== i && isClass(s, s.klass[k], classKinds)))
         return true;
     }
@@ -2547,9 +2580,10 @@ const unreal = (() => {
 
   // Engine classes a game has one object of (or of a subclass of them); the
   // first of a class's chain names its role
-  const SINGLETON_BASES = new Set(['GameEngine', 'Engine', 'GameInstance', 'Subsystem',
+  const SINGLETON_BASES = new Map(['GameEngine', 'Engine', 'GameInstance', 'Subsystem',
     'GameModeBase', 'GameStateBase', 'WorldSettings', 'GameUserSettings', 'AssetManager',
-    'GameViewportClient', 'LocalPlayer', 'PlayerController', 'CheatManager']);
+    'GameViewportClient', 'LocalPlayer', 'PlayerController', 'CheatManager']
+    .map(name => [name.toLowerCase(), name]));
   // Instances a class lists at most (the filter narrows them)
   const MAX_INSTANCES = 5000;
 
@@ -2589,7 +2623,7 @@ const unreal = (() => {
     // hundreds of thousands of objects, mostly in a few outers. 0: not known
     // yet, 1: no template, 2: one (or a part of one or of a class).
     const insideTemplate = new Uint8Array(s.address.length);
-    const ownTemplate = i => objectName(s, i).startsWith('Default__')
+    const ownTemplate = i => isDefaultName(objectName(s, i))
       || (s.flags[i] & RF_TEMPLATE) !== 0;
     const inside = i => {
       // Whether an object in outer ``i`` is part of a template or a class
@@ -2638,9 +2672,9 @@ const unreal = (() => {
   function singletonRole(klass) {
     // The engine class (SINGLETON_BASES) ``klass`` is or derives from, or null
     for (let current = klass; current !== 0; current = superOf(current)) {
-      const name = nameOfAddress(current);
-      if (SINGLETON_BASES.has(name))
-        return name;
+      const role = SINGLETON_BASES.get(String(nameOfAddress(current)).toLowerCase());
+      if (role !== undefined)
+        return role;
     }
     return null;
   }
@@ -2847,7 +2881,8 @@ const unreal = (() => {
     if (type.kind !== KIND.VALUETYPE || type.klass === undefined)
       return false;
     const names = layout(type.klass).fields.map(field => field.name);
-    return names.includes('BaseValue') && names.includes('CurrentValue');
+    return names.some(name => sameName(name, 'BaseValue'))
+      && names.some(name => sameName(name, 'CurrentValue'));
   }
 
   function attributeFields(klass) {
@@ -2856,7 +2891,7 @@ const unreal = (() => {
 
   function propertyOf(klass, name) {
     // The field (see layout) of an object's property, or undefined
-    return layout(klass).fields.find(field => field.name === name);
+    return layout(klass).fields.find(field => sameName(field.name, name));
   }
 
   function pointerProperty(object, name) {
@@ -2941,7 +2976,7 @@ const unreal = (() => {
           attributes: attributeFields(klass).map(field => {
             const data = layout(field.type.klass).fields;
             const at = name => set.add(field.offset)
-              .add(data.find(entry => entry.name === name).offset).readFloat();
+              .add(data.find(entry => sameName(entry.name, name)).offset).readFloat();
             return { name: field.name, base: at('BaseValue'), current: at('CurrentValue') };
           })
         };
@@ -2965,7 +3000,7 @@ const unreal = (() => {
     let onSet = null;
     for (let i = 0; i < s.address.length; i++) {
       if (s.klass[i] !== functionClass
-          || !/^(Try)?Set\w*Attribute\w*Base/.test(objectName(s, i)))
+          || !/^(Try)?Set\w*Attribute\w*Base/i.test(objectName(s, i)))
         continue;
       const fn = ptr(s.address[i]);
       let signature;
@@ -2981,8 +3016,8 @@ const unreal = (() => {
         && [KIND.R4, KIND.R8].includes(parameter.type.kind);
       const [component, attribute, value] = signature.params;
       if (!signature.instance && isNumber(value) && component.type.kind === KIND.CLASS
-          && /AbilitySystemComponent/.test(component.type.name)
-          && attribute.type.name === 'FGameplayAttribute' && !attribute.type.byref) {
+          && /AbilitySystemComponent/i.test(component.type.name)
+          && sameName(attribute.type.name, 'FGameplayAttribute') && !attribute.type.byref) {
         attributeSetter = setter;
         break;
       }
@@ -3007,10 +3042,11 @@ const unreal = (() => {
     const attribute = dot < 0 ? name : name.substring(dot + 1);
     for (const set of parts.sets) {
       const found = wantedSet === null ? null : setName(set);
-      if (found !== null && found !== wantedSet && found.replace(/_\d+$/, '') !== wantedSet)
+      if (found !== null && !sameName(found, wantedSet)
+          && !sameName(found.replace(/_\d+$/, ''), wantedSet))
         continue;
       const field = attributeFields(set.add(OBJECT_CLASS).readPointer())
-        .find(entry => entry.name === attribute);
+        .find(entry => sameName(entry.name, attribute));
       if (field !== undefined)
         return { set, field };
     }
@@ -3021,7 +3057,7 @@ const unreal = (() => {
     // An FGameplayAttribute naming ``field`` as the game makes one
     const parts = layout(type.klass).fields;
     const at = name => {
-      const part = parts.find(entry => entry.name === name);
+      const part = parts.find(entry => sameName(entry.name, name));
       if (part === undefined)
         throw grembyteError('error.unreal.gameplay_attribute_field', { name });
       return address.add(part.offset);
@@ -3105,7 +3141,7 @@ const unreal = (() => {
       throw grembyteError('error.unreal.attribute_not_found', { name });
     const data = layout(field.type.klass).fields;
     const read = entry => set.add(field.offset)
-      .add(data.find(part => part.name === entry).offset).readFloat();
+      .add(data.find(part => sameName(part.name, entry)).offset).readFloat();
     return { base: read('BaseValue'), current: read('CurrentValue') };
   }
 

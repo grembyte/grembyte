@@ -1243,7 +1243,8 @@ class ManagedObject {
 
   field(name) {
     const layout = engine.layout(this.klass);
-    const field = layout.fields.find(candidate => candidate.name === name && !candidate.static);
+    const field = layout.fields.find(candidate => sameMember(candidate.name, name)
+      && !candidate.static);
     if (field === undefined)
       throw grembyteError('error.monitor.no_field', { className: layout.name, name });
     return readJs(field.type, this.fieldBase(layout).add(field.offset));
@@ -1260,7 +1261,8 @@ class ManagedObject {
   setField(name, value) {
     // Change a field (in the "before the call" phase, the method sees it).
     const layout = engine.layout(this.klass);
-    const field = layout.fields.find(candidate => candidate.name === name && !candidate.static);
+    const field = layout.fields.find(candidate => sameMember(candidate.name, name)
+      && !candidate.static);
     if (field === undefined)
       throw grembyteError('error.monitor.no_field', { className: layout.name, name });
     const address = this.fieldBase(layout).add(field.offset);
@@ -1272,7 +1274,8 @@ class ManagedObject {
   }
 
   get(name) {
-    const property = engine.properties(this.klass).find(candidate => candidate.name === name);
+    const property = engine.properties(this.klass)
+      .find(candidate => sameMember(candidate.name, name));
     if (property === undefined)
       throw grembyteError('error.monitor.no_property', { className: this.className, name });
     const { result, exception } = engine.getProperty(this.address, property, this.isStruct);
@@ -1350,6 +1353,19 @@ function staticFieldAddress(layout, field) {
   return data.add(field.offset);
 }
 
+// Unreal's names (FNames) compare without case, and the game's name pool
+// keeps the spelling registered first (Stellar Blade: "struct"): a script's
+// Pawn finds a property spelled pawn. C# names keep their case.
+function memberKey(name) {
+  return engine.id === 'unreal' ? String(name).toLowerCase() : name;
+}
+
+function sameMember(name, wanted) {
+  return name === wanted || (engine.id === 'unreal' && typeof name === 'string'
+    && typeof wanted === 'string' && name.length === wanted.length
+    && name.toLowerCase() === wanted.toLowerCase());
+}
+
 // Scripts may also write object.Health, object.IsPartyMember or
 // object.GetComponentByName("Stats"): names the wrapper does not have are
 // looked up as a field, then as a property (getter), then as a method (a
@@ -1366,14 +1382,14 @@ const shortcuts = {
     if (typeof key !== 'string' || key in target)
       return Reflect.get(target, key, receiver);
     const layout = engine.layout(target.klass);
-    if (layout.fields.some(field => field.name === key && !field.static))
+    if (layout.fields.some(field => sameMember(field.name, key) && !field.static))
       return target.field(key);
-    const staticField = layout.fields.find(field => field.name === key && field.static);
+    const staticField = layout.fields.find(field => sameMember(field.name, key) && field.static);
     if (staticField !== undefined)
       return readJs(staticField.type, staticFieldAddress(layout, staticField));
-    if (engine.properties(target.klass).some(property => property.name === key))
+    if (engine.properties(target.klass).some(property => sameMember(property.name, key)))
       return target.get(key);
-    const isStatic = methodNames(target.klass).get(key);
+    const isStatic = methodNames(target.klass).get(memberKey(key));
     if (isStatic === undefined)
       return undefined;
     // An overload by the number of arguments, as .call() and ctx.call() pick it
@@ -1386,11 +1402,11 @@ const shortcuts = {
     if (typeof key !== 'string' || key in target)
       return Reflect.set(target, key, value, receiver);
     const layout = engine.layout(target.klass);
-    if (layout.fields.some(field => field.name === key && !field.static)) {
+    if (layout.fields.some(field => sameMember(field.name, key) && !field.static)) {
       target.setField(key, value);
       return true;
     }
-    const staticField = layout.fields.find(field => field.name === key && field.static);
+    const staticField = layout.fields.find(field => sameMember(field.name, key) && field.static);
     if (staticField !== undefined) {
       storeField(staticField.type, staticFieldAddress(layout, staticField), null, value,
                  `${shortClass(layout.name)}.${key}`);
@@ -1417,8 +1433,10 @@ function methodNames(klass) {
   let names = methodNameCache.get(key);
   if (names === undefined) {
     names = new Map();
-    for (const method of engine.methods(klass))
-      names.set(method.name, (names.get(method.name) ?? true) && method.static);
+    for (const method of engine.methods(klass)) {
+      const name = memberKey(method.name);
+      names.set(name, (names.get(name) ?? true) && method.static);
+    }
     methodNameCache.set(key, names);
   }
   return names;
@@ -1734,7 +1752,8 @@ function staticField(qualifiedName) {
     throw grembyteError('error.monitor.not_qualified_field', { name: qualifiedName });
   const layout = engine.layout(engine.findClass(name.substring(0, split)));
   const fieldName = name.substring(split + 1);
-  const field = layout.fields.find(candidate => candidate.name === fieldName && candidate.static);
+  const field = layout.fields.find(candidate => sameMember(candidate.name, fieldName)
+    && candidate.static);
   if (field === undefined)
     throw grembyteError('error.monitor.no_static_field', { className: layout.name, name: fieldName });
   return readJs(field.type, staticFieldAddress(layout, field));
@@ -2552,7 +2571,7 @@ function gasSetBase(name, value) {
 
 function gasSetMatches(setName, wanted) {
   // Whether set ``setName`` is the one named ``wanted`` (see above)
-  return setName === wanted || setName.replace(/_\d+$/, '') === wanted;
+  return sameMember(setName, wanted) || sameMember(setName.replace(/_\d+$/, ''), wanted);
 }
 
 function gasValue(name) {
@@ -2568,7 +2587,7 @@ function gasValue(name) {
   for (const set of state.sets) {
     if (wantedSet !== null && !gasSetMatches(set.name, wantedSet))
       continue;
-    const attribute = set.attributes.find(entry => entry.name === wanted);
+    const attribute = set.attributes.find(entry => sameMember(entry.name, wanted));
     if (attribute !== undefined)
       return { base: attribute.base, current: attribute.current };
   }

@@ -32,6 +32,7 @@ from tests.test_hooks import (  # pylint: disable=unused-import
 
 
 _FAKE_GAME_SOURCE = r"""
+#include <ctype.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -207,12 +208,42 @@ struct {
 #define CPF_RETURN_PARM 0x400
 #define FILLERS 5000
 
+#ifdef LOWERCASE_NAMES
+/* FNames ignore case and the pool keeps the spelling registered first: in
+   Stellar Blade UStruct is "struct". These names are stored lowercase. */
+static const char *const LOWERCASE[] = {
+    "Class", "Struct", "Function", "ScriptStruct", "Package", "Enum", "Default__Object",
+    "X", "Y", "Rotation", "ExecuteUbergraph", "Actor", "WidgetTree", "PlayerController",
+    "Pawn", "AttributeSet", "AbilitySystemComponent", "GameplayAttribute", "BaseValue",
+    "CurrentValue", "AttributeName", "Attribute", "AttributeOwner", "SoftObjectPath",
+    "AssetPath", "PackageName", "AssetName", "SubPathString", NULL
+};
+
+static int lowercased(const char *text) {
+    size_t length = strlen(text);
+    if (length > 8 && strcmp(text + length - 8, "Property") == 0)
+        return 1;  /* every property kind */
+    for (int i = 0; LOWERCASE[i] != NULL; i++) {
+        if (strcmp(text, LOWERCASE[i]) == 0)
+            return 1;
+    }
+    return 0;
+}
+#endif
+
 static uint32_t name(const char *text) {
     size_t length = strlen(text);
     uint8_t *entry = g_name_pool.blocks[0] + g_name_pool.cursor;
     uint16_t header = (uint16_t)(length << 6);
     memcpy(entry, &header, 2);
     memcpy(entry + 2, text, length);
+#ifdef LOWERCASE_NAMES
+    /* not None and ByteProperty, the engine's first entries */
+    if (g_name_pool.cursor >= 20 && lowercased(text)) {
+        for (size_t i = 0; i < length; i++)
+            entry[2 + i] = (uint8_t)tolower(entry[2 + i]);
+    }
+#endif
     uint32_t index = g_name_pool.cursor / 2;
     g_name_pool.cursor += (uint32_t)((2 + length + 1) & ~(size_t)1);
     return index;
@@ -1013,12 +1044,13 @@ def _run(qt_app, worker, signal):
 
 
 @requires_target
-def test_catalog_lists_packages_classes_and_ufunctions(tmp_path, qt_app):
+@pytest.mark.parametrize("defines", [(), ("LOWERCASE_NAMES",)], ids=["default", "lowercase"])
+def test_catalog_lists_packages_classes_and_ufunctions(tmp_path, qt_app, defines):
     # pylint: disable=import-outside-toplevel
     from grembyte.engines.registry import detect_engine
     from grembyte.features.catalog import CatalogWorker
 
-    target = _Target(_build(tmp_path))
+    target = _Target(_build(tmp_path, *defines))
     try:
         engine = detect_engine(target.pid)
         assert engine.id == "unreal"
@@ -1348,12 +1380,13 @@ def test_the_call_dialog_calls_ufunctions_static_and_on_found_objects(tmp_path, 
 
 
 @requires_target
-def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
+@pytest.mark.parametrize("defines", [(), ("LOWERCASE_NAMES",)], ids=["default", "lowercase"])
+def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app, defines):
     # pylint: disable=import-outside-toplevel
     from grembyte.core import messages
     from grembyte.features.scripts import ScriptParam, ScriptSpec, ScriptWorker
 
-    target = _Target(_build(tmp_path))
+    target = _Target(_build(tmp_path, *defines))
     worker = ScriptWorker(target.pid, language="de")
     added, failed, runs = [], {}, []
     worker.script_added.connect(added.append)
@@ -1672,8 +1705,8 @@ def test_process_event_is_found_when_it_calls_an_out_of_line_invoke(tmp_path, qt
 
 
 @requires_target
-@pytest.mark.parametrize("defines", [(), ("FATEKEEPER_LAYOUT",)],
-                         ids=["common-layout", "fatekeeper-layout"])
+@pytest.mark.parametrize("defines", [(), ("FATEKEEPER_LAYOUT",), ("LOWERCASE_NAMES",)],
+                         ids=["common-layout", "fatekeeper-layout", "lowercase"])
 def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app, defines):
     # pylint: disable=import-outside-toplevel
     from grembyte.features.scripts import ScriptSpec, ScriptWorker
