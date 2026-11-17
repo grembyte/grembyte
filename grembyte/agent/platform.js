@@ -212,9 +212,14 @@ function attachOutsideThreads(addresses, probe) {
   // new jump runs garbage. Threads are paused only from the agent's own
   // thread (a game thread may hold locks the others need) and on Windows;
   // elsewhere, or after GATE_ATTEMPTS tries, the hooks are set as they come.
+  // Each step goes to the activity log, so a game that hangs here shows
+  // where (main_gate_pausing, main_gate_attaching, then main_gate_attached
+  // or main_gate_failed).
   const inPatch = ip => ip !== null && addresses.some(address =>
     ip.compare(address) >= 0 && ip.compare(address.add(GATE_PATCH_SIZE)) < 0);
   const canPause = Process.getCurrentThreadId() === GATE_AGENT_THREAD;
+  const began = Date.now();
+  noteActivity('main_gate_pausing', { targets: addresses.length, pause: canPause });
   for (let attempt = 1; ; attempt++) {
     const paused = canPause ? pauseThreads() : null;
     if (paused !== null && paused.ips.some(inPatch) && attempt < GATE_ATTEMPTS) {
@@ -222,42 +227,78 @@ function attachOutsideThreads(addresses, probe) {
       Thread.sleep(0.001);
       continue;
     }
+    // Sent while the threads are paused: Frida's own threads, which deliver
+    // it, are not among them (Process.enumerateThreads leaves them out).
+    noteActivity('main_gate_attaching', {
+      attempt, waited_ms: Date.now() - began,
+      ...(paused === null ? {} : paused.stats)
+    });
+    const attaching = Date.now();
+    let attached = false;
     try {
       const listeners = addresses.map(address => Interceptor.attach(address, probe));
       Interceptor.flush();  // write the jumps before the threads run on
+      attached = true;
       return listeners;
     } finally {
       resumeThreads(paused);
+      noteActivity(attached ? 'main_gate_attached' : 'main_gate_failed', {
+        attempts: attempt, attach_ms: Date.now() - attaching, total_ms: Date.now() - began
+      });
     }
   }
+}
+
+function noteActivity(event, fields = {}) {
+  // An entry in Grembyte's activity log (activity.jsonl), with the agent's
+  // name, pid and session added there (see grembyte/attach/frida_attach.py).
+  // Only the course of things, never values of the game's memory.
+  send({ 'grembyte:activity': event, fields });
 }
 
 let threadPauser = null;
 
 function pauseThreads() {
+  // Suspend all threads but this one; the handles, with where each stands
+  // (ips) and how long it took (stats). Nothing here may wait for a lock a
+  // paused thread could hold:
+  // - The calls keep Frida's JavaScript lock (scheduling 'exclusive'). By
+  //   default a NativeFunction gives it up while it runs, a game thread in a
+  //   JavaScript hook (another agent's, too: they share the lock) took it and
+  //   was suspended holding it, and the agent waited for it for good when
+  //   SuspendThread returned (RoboCop under Proton, 2026-11-17).
+  // - The CONTEXT buffer is allocated once, before any thread is suspended.
   if (Process.platform !== 'windows')
     return null;
+  // CONTEXT differs between x64 and x86 in size, layout and flag values.
+  const wide = Process.pointerSize === 8;
+  const CONTEXT_SIZE = wide ? 0x4d0 : 0x2cc, CONTEXT_FLAGS = wide ? 0x30 : 0;
+  const CONTEXT_CONTROL = wide ? 0x100001 : 0x10001;
   if (threadPauser === null) {
     const kernel32 = Process.getModuleByName('kernel32.dll');
-    const fn = (name, ret, args) => new NativeFunction(kernel32.getExportByName(name), ret, args);
+    const exclusive = { scheduling: 'exclusive' };
+    const fn = (name, ret, args) =>
+      new NativeFunction(kernel32.getExportByName(name), ret, args, exclusive);
     threadPauser = {
       open: fn('OpenThread', 'pointer', ['uint32', 'int', 'uint32']),
       suspend: fn('SuspendThread', 'uint32', ['pointer']),
       resume: fn('ResumeThread', 'uint32', ['pointer']),
       context: fn('GetThreadContext', 'int', ['pointer', 'pointer']),
-      close: fn('CloseHandle', 'int', ['pointer'])
+      close: fn('CloseHandle', 'int', ['pointer']),
+      // CONTEXT must be 16-byte aligned.
+      contextBuffer: Memory.alloc(CONTEXT_SIZE + 16).add(15)
+        .and(ptr(wide ? '0xfffffffffffffff0' : '0xfffffff0'))
     };
   }
   const THREAD_SUSPEND_RESUME = 0x0002, THREAD_GET_CONTEXT = 0x0008;
   const SUSPEND_FAILED = 0xffffffff;
-  // CONTEXT differs between x64 and x86 in size, layout and flag values.
-  const wide = Process.pointerSize === 8;
-  const CONTEXT_SIZE = wide ? 0x4d0 : 0x2cc, CONTEXT_FLAGS = wide ? 0x30 : 0;
-  const CONTEXT_CONTROL = wide ? 0x100001 : 0x10001;
   const t = threadPauser;
+  const context = t.contextBuffer;
   const self = Process.getCurrentThreadId();
+  const threads = Process.enumerateThreads();
   const handles = [];
-  for (const thread of Process.enumerateThreads()) {
+  const began = Date.now();
+  for (const thread of threads) {
     if (thread.id === self)
       continue;
     const handle = t.open(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, 0, thread.id);
@@ -269,18 +310,22 @@ function pauseThreads() {
     }
     handles.push(handle);
   }
+  const suspended = Date.now();
   // SuspendThread only asks the thread to stop; reading its context returns
-  // once it has. CONTEXT must be 16-byte aligned.
-  const context = Memory.alloc(CONTEXT_SIZE + 16).add(15)
-    .and(ptr(wide ? '0xfffffffffffffff0' : '0xfffffff0'));
-  // Where each thread stands (CONTEXT.Rip, CONTEXT.Eip): handles.ips, null
-  // for one whose context could not be read
+  // once it has. Where each thread stands (CONTEXT.Rip, CONTEXT.Eip):
+  // handles.ips, null for one whose context could not be read
   const IP = wide ? 0xf8 : 0xb8;
   handles.ips = [];
   for (const handle of handles) {
     context.add(CONTEXT_FLAGS).writeU32(CONTEXT_CONTROL);
     handles.ips.push(t.context(handle, context) ? context.add(IP).readPointer() : null);
   }
+  handles.stats = {
+    threads: handles.length,
+    suspend_ms: suspended - began,
+    context_ms: Date.now() - suspended,
+    unreadable: handles.ips.filter(ip => ip === null).length
+  };
   return handles;
 }
 

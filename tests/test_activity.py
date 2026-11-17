@@ -231,6 +231,38 @@ def test_frida_sessions_note_agents_rpcs_and_their_end(activity_file):
 
 
 @requires_target
+def test_agents_write_their_own_entries_into_the_activity_log(activity_file, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.attach.frida_attach import attach_session
+
+    process = subprocess.Popen(["sleep", "30"])
+    received = []
+    try:
+        _wait_for_sleeping(process.pid)
+        session = attach_session(process.pid)
+        script = session.create_script("""
+            send({ 'grembyte:activity': 'main_gate_attached', fields: { attempts: 2 } });
+            send({ kind: 'other' });
+        """)
+        script.on("message", lambda message, _data: received.append(message["payload"]))
+        script.load()
+        _wait_for(qt_app, lambda: received)
+        script.unload()
+        session.detach()
+    finally:
+        process.kill()
+        process.wait()
+    # The workers see only their own messages
+    assert received == [{"kind": "other"}]
+    [entry] = [entry for entry in _events(activity_file, "main_gate_attached")
+               if entry.get("pid") == process.pid]
+    loaded = next(item for item in _events(activity_file, "agent_loaded")
+                  if item["pid"] == process.pid)
+    assert entry["attempts"] == 2
+    assert (entry["agent"], entry["session"]) == (loaded["agent"], loaded["session"])
+
+
+@requires_target
 def test_large_agents_reach_the_gadget_in_parts(activity_file):
     # pylint: disable=import-outside-toplevel
     import frida

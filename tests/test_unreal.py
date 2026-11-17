@@ -22,6 +22,7 @@ import subprocess
 
 import pytest
 
+from tests.test_activity import _events, fixture_activity_file  # pylint: disable=unused-import
 from tests.test_hooks import (  # pylint: disable=unused-import
     _Target,
     _wait_for,
@@ -1598,7 +1599,7 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app):
 
 
 @requires_target
-def test_the_game_thread_hook_stays_between_script_runs(tmp_path, qt_app):
+def test_the_game_thread_hook_stays_between_script_runs(tmp_path, qt_app, activity_file):
     # pylint: disable=import-outside-toplevel
     from grembyte.features.scripts import ScriptSpec, ScriptWorker
 
@@ -1636,6 +1637,10 @@ def test_the_game_thread_hook_stays_between_script_runs(tmp_path, qt_app):
         worker.requestInterruption()
         worker.wait(5000)
         target.close()
+    # Setting the hook is in the activity log, step by step, once
+    steps = [entry["event"] for entry in _events(activity_file) if entry.get("pid") == target.pid
+             and entry["event"].startswith("main_gate_")]
+    assert steps == ["main_gate_pausing", "main_gate_attaching", "main_gate_attached"]
 
 
 @requires_target

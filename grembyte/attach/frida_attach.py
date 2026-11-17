@@ -62,6 +62,9 @@ GADGET_SOURCE_PART = 16_000
 GADGET_LOAD_TIMEOUT = 30.0
 LOADER_MESSAGE = "grembyte:source"
 LOADED_KEY = "grembyte:loaded"
+# An agent's entry for the activity log: send({'grembyte:activity': event,
+# fields: {...}}) (noteActivity in grembyte/agent/platform.js)
+ACTIVITY_KEY = "grembyte:activity"
 # Indirect eval runs the agent as global code, as Frida would.
 LOADER_SOURCE = f"""\
 const parts = [];
@@ -190,6 +193,18 @@ def _is_loaded_message(message):
             and payload.get(LOADED_KEY) is True)
 
 
+def _activity_note(message):
+    """(event, fields) of an agent's activity entry, or None for other messages."""
+    payload = message.get("payload")
+    if message.get("type") != "send" or not isinstance(payload, dict):
+        return None
+    event = payload.get(ACTIVITY_KEY)
+    if not isinstance(event, str):
+        return None
+    fields = payload.get("fields")
+    return event, fields if isinstance(fields, dict) else {}
+
+
 class RecordedScript:
     """A Frida script that notes its loading, unloading, RPCs and errors."""
 
@@ -216,6 +231,11 @@ class RecordedScript:
             def callback(message, data):  # pylint: disable=function-redefined
                 _name_frida_thread()
                 if _is_loaded_message(message):
+                    return None
+                note = _activity_note(message)
+                if note is not None:
+                    event, fields = note
+                    activity.record(event, **{**fields, **self._fields()})
                     return None
                 if message.get("type") == "error":
                     activity.record("agent_error", **self._fields(),

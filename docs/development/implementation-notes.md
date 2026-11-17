@@ -172,6 +172,20 @@ Found with Dark Souls III (Arxan/GuardIT):
   `test_the_game_thread_hook_stays_between_script_runs` (fails without it: `ProcessEvent`'s
   bytes are back to the original after each run).
 
+- **No locks while the threads are paused (2026-11-17, not yet confirmed in the game):**
+  RoboCop (Proton) hung on the first script run of a session, with a JavaScript hook of
+  another agent (an ammo hook) in the game: `run_script_now` did not return for 60 s, until
+  the game was gone. That first run sets the main-thread hook, with the game's threads
+  paused. `pauseThreads` called `SuspendThread` and `GetThreadContext` through
+  `NativeFunction`s with the default scheduling, which gives up Frida's JavaScript lock
+  during the call. The agents in a process share that lock, so a game thread entering the
+  hook's JavaScript could take it and be suspended holding it, and the agent then waited
+  for it for good. The calls now keep the lock (`scheduling: 'exclusive'`), and the
+  `CONTEXT` buffer is allocated before any thread is suspended. Setting the hook writes its
+  steps into the activity log (`main_gate_pausing`, `main_gate_attaching` with the thread
+  count and timings, then `main_gate_attached` or `main_gate_failed`; `noteActivity` in
+  `grembyte/agent/platform.js`), so if it hangs again, the last entry shows where.
+
 ## Unity Mono adapter
 
 - **Object browser:** Unity's Mono has no way to walk its heap: `mono_gc_walk_heap` belongs to Mono's SGen collector and does nothing in the Boehm collector Unity uses. The browser uses Unity's own liveness calculation instead (`mono_unity_liveness_*`, which `Resources.UnloadUnusedAssets` uses), from the static fields and from all Unity objects, with the world stopped. Both generations of its API work: `calculation_begin`/`end` (Unity 4 to 2020) and `allocate_struct` (Unity 2021 and later, including Unity 6). The calculation runs on the game's main thread.

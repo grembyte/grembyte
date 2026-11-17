@@ -53,6 +53,7 @@ The **Activity** tab shows the activity log: the course of every run, written to
 - the attached process with its details: 32 or 64 bit, native or Wine/Proton with the Proton version, engine, how the gadget was loaded;
 - sessions and agents in the order they started and ended;
 - every call into the game with its duration and outcome (frequent ones summed up);
+- steps inside the game that can make it hang, such as setting the hook that runs scripts on the game thread;
 - clicks in Grembyte, and why a Frida session ended, with Frida's crash report.
 
 Values from the game's memory are not in it. The activity log is off by default: switch it on under **Settings → General …** (**Record the activity log**), best before you reproduce a problem.
