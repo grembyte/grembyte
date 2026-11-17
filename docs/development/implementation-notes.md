@@ -276,6 +276,15 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   `GUObjectArray`, and then the inspector and the GAS window failed with "access violation
   accessing 0x6aa0" (the vtable read as a name index). The stand-in game in
   `tests/test_unreal.py` builds this layout with `FATEKEEPER_LAYOUT`.
+- Learned (2026-11-17): **Stellar Blade** (UE4, Proton) names CoreUObject's `UStruct`
+  class `struct`. FNames compare without case and the name pool keeps the spelling that was
+  registered first, so a lowercase `struct` from elsewhere won. The exact comparison failed
+  with "class Struct not found in /Script/CoreUObject". Since then the Unreal agent never
+  compares names exactly: `sameName` everywhere (layout, classes, structs, functions,
+  fields, GAS, soft object paths), `fieldKind` returns the usual spelling of every known
+  property kind, and in `monitor.js` scripts find Unreal fields, properties and functions
+  without case (`sameMember`; C# names keep their case). The stand-in stores the names the
+  agent looks for in lowercase with `LOWERCASE_NAMES`.
 - Learned: on Linux most of `.bss` is an anonymous mapping right after the module, which
   Frida's `Module.enumerateRanges` leaves out; the agent adds the ranges that follow the
   module's own.

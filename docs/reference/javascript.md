@@ -42,7 +42,7 @@ healed = player.Heal(5);
 
 - `const name = value;` gives a value a name. It cannot be given another value later – use it by default.
 - `let name = value;` is the same, but may change later (`healed = …`).
-- Names are **case-sensitive**: `player` and `Player` are different, and so are the game's fields – `Stats.Health`, never `stats.health`.
+- Names are **case-sensitive**: `player` and `Player` are different, and so are the game's fields in Unity games – `Stats.Health`, never `stats.health`. Unreal ignores case in its names, so Grembyte does too: `controller.Pawn` and `controller.pawn` read the same property, and a class or function is found however its name is written.
 
 ## Values
 
