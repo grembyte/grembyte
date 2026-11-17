@@ -41,6 +41,49 @@ The wrapper's own names come first: `name`, `className`, `address`, `field`, `ge
 
 A wrapper returned from the script is shown as the result and can be opened in the object inspector.
 
+## Memory at an address
+
+Scripts run in Frida's JavaScript runtime, in every game: Unity (Mono, IL2CPP), Unreal and native. Besides `ctx`, Frida's own API is there – `ptr`, `NativePointer`, `Memory`, `Process`, `Module`. With it a script reads and writes memory directly, at a fixed address or at an offset the reflection does not name.
+
+`ptr(value)` makes a `NativePointer` from a number or a text like `"0x147D94408"`. A wrapper's `address` and the results of `ctx.native` are `NativePointer`s already.
+
+| Function | Meaning |
+| --- | --- |
+| `p.add(offset)`, `p.sub(offset)` | The address `offset` bytes further or back; `p` itself does not change. |
+| `p.readPointer()`, `p.writePointer(q)` | Read or write a pointer (8 bytes in 64-bit games, 4 in 32-bit ones). |
+| `p.readS8()` … `p.readS64()`, `p.readU8()` … `p.readU64()` | Read a signed or unsigned integer of 8, 16, 32 or 64 bits. 64-bit ones come as Frida's `Int64`/`UInt64`; `.toNumber()` makes a number of them. |
+| `p.writeS32(value)`, `p.writeU8(value)` and so on | Write an integer of that size. |
+| `p.readFloat()`, `p.readDouble()`, `p.writeFloat(value)`, `p.writeDouble(value)` | Read or write a floating-point number. |
+| `p.readUtf8String([length])`, `p.readUtf16String([length])` | Read text up to its terminating zero or of `length` characters. Unity's and Unreal's strings are UTF-16. |
+| `p.readByteArray(length)` | Read raw bytes as an `ArrayBuffer`, e.g. for `hexdump(…)`. |
+| `p.isNull()`, `p.equals(q)`, `p.toString()` | Test for null, compare, show as `"0x…"`. |
+
+Fixed addresses change when the game is updated, and absolute ones also when the module is loaded elsewhere. An address relative to the module (`ctx.native.module().base.add(…)`), a pattern (`ctx.native.scan`) or an offset from an object the script finds by name lasts longer.
+
+```js title="Unity: a field the reflection does not show, by its offset"
+const stats = ctx.find("CharacterStats");
+const p = stats.address.add(0x1c4);
+ctx.log(`raw value ${p.readS32()}`);
+p.writeS32(99);
+```
+
+```js title="Unreal: follow a pointer, then wrap what it points to"
+const pawn = ctx.find("BP_PlayerCharacter_C");
+const component = pawn.address.add(0x17d0).readPointer();
+if (!component.isNull()) {
+  const obj = ctx.object(component);
+  ctx.log(obj.className, obj.name);
+}
+```
+
+```js title="A fixed address in the game's executable"
+const p = ctx.native.module().base.add(0x7d94408);  // or ptr("0x147D94408")
+ctx.log(p.readFloat());
+p.writeFloat(250.0);
+```
+
+A wrong address throws an access violation, which ends up in the script log. Writing to a wrong address that is mapped can crash the game: check the address in the [memory viewer](../guide/tools.md#memory-viewer) first. Frida's [JavaScript API](https://frida.re/docs/javascript-api/#nativepointer) lists all functions.
+
 ## Native code (`ctx.native`)
 
 Works in every game; in games without an engine adapter it is the way into the game (see [Scripts in native games](../guide/scripts.md#scripts-in-native-games)). Addresses are Frida `NativePointer`s; where a function takes one, a number or a text like `"0x140257270"` works too.

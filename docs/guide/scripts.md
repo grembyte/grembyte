@@ -78,7 +78,7 @@ Without an engine adapter Grembyte looks for a function the game calls every fra
 
 There are no class or method names to go by, so `ctx.native` finds code by its bytes: a pattern of the function's first instructions, with `??` for the bytes that change between builds (addresses, offsets). A pattern survives game updates that leave the function alone, unlike a fixed address. The [code explorer](code-explorer.md) finds the code and copies its pattern, or a whole script skeleton. The [script context reference](../reference/script-context.md#native-code-ctxnative) lists the functions.
 
-Native scripts run with Frida's full JavaScript API: memory is read and written through `NativePointer` (`pointer.add(4).readS32()`), and `Process`, `Module` and `Memory` are available as in any Frida script. A wrong call can crash the game: check a function's parameters in the disassembly first, and try the script by hand before giving it a timer.
+Native scripts run with Frida's full JavaScript API, as all scripts do: memory is read and written through `NativePointer` (`pointer.add(4).readS32()`, see [Memory at an address](../reference/script-context.md#memory-at-an-address)), and `Process`, `Module` and `Memory` are available as in any Frida script. A wrong call can crash the game: check a function's parameters in the disassembly first, and try the script by hand before giving it a timer.
 
 An example with a real game: [Underkeep's hidden debug menu](../examples/underkeep-debug-menu.md), opened and made usable by two native scripts.
 
