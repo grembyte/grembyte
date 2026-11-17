@@ -6,7 +6,9 @@ crashing: the program attached with its details (32/64 bit, native or
 Wine/Proton, engine, how the gadget came in), the workers and agents in the
 order they started and ended, every RPC to an agent with its duration and
 outcome, the clicks in the window, and what Frida said when a session
-ended (with the crash report Frida has for a target that crashed).
+ended (with the crash report Frida has for a target that crashed). Agents
+add steps of their own that may hang the game (noteActivity in
+grembyte/agent/platform.js, e.g. setting the main-thread hook).
 
 Each entry holds ``t`` (local time), ``s`` (seconds since the start),
 ``run`` (one id per start of Grembyte) and ``event``; the rest depends on the
