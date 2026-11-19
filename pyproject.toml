@@ -45,6 +45,8 @@ include = ["grembyte*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Spread the tests over all CPU cores (pytest-xdist); "-n 0" runs them in one process.
+addopts = ["-n", "auto"]
 # A test that deadlocks (attach, paused threads) fails instead of hanging the run.
 # "thread" also fires while the main thread waits in native code (Frida), where
 # a signal handler would never run, and dumps every thread's stack; it ends the

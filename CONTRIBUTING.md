@@ -26,7 +26,7 @@ python3 -m venv .venv
 ./.venv/bin/python -m pytest
 ```
 
-Many tests compile a small C program and attach to it with Frida; they are skipped without `gcc`, with a different `ptrace_scope` or on machines other than x86-64. A test that runs longer than 120 seconds fails with the stacks of all threads (`pytest-timeout`); `pytest -n auto` runs the tests in parallel. The [development documentation](docs/development/index.md) explains the test targets, the [architecture](docs/development/architecture.md) and how the documentation and its screenshots are built.
+Many tests compile a small C program and attach to it with Frida; they are skipped without `gcc`, with a different `ptrace_scope` or on machines other than x86-64. A test that runs longer than 120 seconds fails with the stacks of all threads (`pytest-timeout`); the tests run in parallel on all CPU cores (`-n 0` runs them in one process). The [development documentation](docs/development/index.md) explains the test targets, the [architecture](docs/development/architecture.md) and how the documentation and its screenshots are built.
 
 ## Pull requests
 
