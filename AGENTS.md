@@ -48,7 +48,8 @@ Guidance for AI coding agents working in this repository. Human contributors: se
   `tests/test_localization.py` when translation texts changed. Add or update tests for
   changed behaviour. Many tests attach Frida to small C programs and stand-in engines (Mono,
   IL2CPP, Unreal); they need `gcc` and `ptrace_scope=0`.
-- Do not run the full suite on your own; it takes a few minutes. When a change touches shared
+- Do not run the full suite on your own; it runs on all CPU cores (`-n auto` is the default)
+  and takes from half a minute to several minutes. When a change touches shared
   code (attach, hooks, trace, engine adapters, the JavaScript agents, application start and
   exit), changes an interface other modules use, or you are not sure what it affects,
   recommend running the full suite in your report and say why. Run it only when the user

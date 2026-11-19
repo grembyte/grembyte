@@ -17,10 +17,10 @@ python3 -m venv .venv
 
 Many tests compile a small C program and attach to it with Frida: hooks, the watch, the native trace and monitor, the Mono features against a stand-in Mono runtime, the IL2CPP features against a stand-in `GameAssembly.so`, the Unreal features against a stand-in Unreal game. They are skipped if `gcc` is missing, `kernel.yama.ptrace_scope` is not `0` or the machine is not x86-64. Tests of the Windows helper need MinGW, some need Linux.
 
-Each test may take at most 120 seconds (`pytest-timeout`, set in `pyproject.toml`). A test that deadlocks, for example while attaching or with the target's threads paused, fails instead of hanging the run. The timeout prints the stack of every thread and ends the run. A test that needs more time gets `@pytest.mark.timeout(seconds)`. `-n auto` (`pytest-xdist`) spreads the tests over all CPU cores, which makes a full run faster:
+Each test may take at most 120 seconds (`pytest-timeout`, set in `pyproject.toml`). A test that deadlocks, for example while attaching or with the target's threads paused, fails instead of hanging the run. The timeout prints the stack of every thread and ends the run. A test that needs more time gets `@pytest.mark.timeout(seconds)`. The tests run on all CPU cores (`pytest-xdist`, `-n auto` in `pyproject.toml`); `-n 0` runs them in one process, for example to debug a test:
 
 ```bash
-./.venv/bin/python -m pytest -n auto
+./.venv/bin/python -m pytest -n 0 tests/test_hooks.py
 ```
 
 ## Test targets
