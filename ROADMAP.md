@@ -368,6 +368,28 @@ up in Grembyte without its window. Draft of the format:
 Open: identities of Unreal values and methods, signing packages (Ed25519) and showing their
 code before the first load, since packages run code in the game's process.
 
+## Scripted analysis and benchmarks
+
+Using Grembyte's tools from scripts, for example by an AI coding agent analysing a test game,
+shows which tools are missing or slow. Today `grembyte-cli` only starts a game with its saved
+hooks and scripts, and the Python API is used only by the tests. Planned in this order:
+
+1. **Benchmarks against HermesQuest:** the local Unity build (`test_app/unity/`) runs without
+   anyone at the keyboard, so measurements can be repeated: listing the catalog, the cost of
+   a hook call, a trace's load on the game, memory use. They give a baseline to compare
+   changes against and show where time goes.
+2. **`grembyte-cli inspect`:** analysis commands on a running game with JSON output (engines,
+   classes, trace for a time window, scan and read, monitor), started small and extended as
+   gaps show up. Built on the same workers as the window, so it shares their limits, and
+   useful to users for their own scripts. It should share the headless layer with the
+   runtime above rather than add a second one.
+3. **Sessions in real games** (Pillars of Eternity natively, Avowed under Proton): the agent
+   records and evaluates while a person plays, since many analyses need something to happen
+   in the game; simple key presses can be sent with `xdotool`.
+
+Limits: only single-player games without anti-cheat (see [CONTRIBUTING.md](CONTRIBUTING.md));
+games can crash, especially under Proton, so save first.
+
 ## Code health
 
 Left over from the code review of 2026-10-29 (the review itself is in the git history,
