@@ -17,6 +17,12 @@ python3 -m venv .venv
 
 Many tests compile a small C program and attach to it with Frida: hooks, the watch, the native trace and monitor, the Mono features against a stand-in Mono runtime, the IL2CPP features against a stand-in `GameAssembly.so`, the Unreal features against a stand-in Unreal game. They are skipped if `gcc` is missing, `kernel.yama.ptrace_scope` is not `0` or the machine is not x86-64. Tests of the Windows helper need MinGW, some need Linux.
 
+Each test may take at most 120 seconds (`pytest-timeout`, set in `pyproject.toml`). A test that deadlocks, for example while attaching or with the target's threads paused, fails instead of hanging the run. The timeout prints the stack of every thread and ends the run. A test that needs more time gets `@pytest.mark.timeout(seconds)`. `-n auto` (`pytest-xdist`) spreads the tests over all CPU cores, which makes a full run faster:
+
+```bash
+./.venv/bin/python -m pytest -n auto
+```
+
 ## Test targets
 
 - `test_app/dummy_game.c` – the GTK test game of the [tutorial](../getting-started/first-hook.md).
@@ -45,3 +51,14 @@ The workflow pins the versions of `mkdocs-material` and `mkdocs-glightbox`; rais
 ## Code style
 
 Comments, docstrings and documentation are in English. UI texts live in `grembyte/ui/localization/{de,en}.json`; icons are Google Material Icons (Outlined) in `grembyte/ui/resources/icons/`.
+
+## Editor support
+
+Two files set up language servers (in an editor, or the LSP plugins of Claude Code):
+
+- `[tool.pyright]` in `pyproject.toml` lets Pyright resolve imports from `.venv` and keeps its checks at `basic`.
+- `jsconfig.json` puts all agent files (`grembyte/**/*.js`) into one JavaScript project. Grembyte joins them into one script at run time (see [Architecture](architecture.md#agents)), so a function defined in one file, such as `registerEngine` in `engines/engine_prelude.js`, is found where another file calls it. Type checking of JavaScript stays off: Frida's API has no types there, and some names occur in several agents.
+
+The TypeScript language server needs TypeScript 6 or older. TypeScript 7 no longer ships `tsserver`.
+
+`ast-grep` (in the `test` extra) searches the code by syntax rather than text, for example `ast-grep run -l js -p 'grembyteError($KEY, $$$)' grembyte`. `scripts/agent_interface.py` uses it to write the [agent interface](agent-interface.md).
