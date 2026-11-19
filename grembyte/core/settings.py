@@ -56,6 +56,13 @@ SETTINGS = (
     Setting("hook_short_jump", BOOL, False),
     Setting("hook_repatch", BOOL, False),
     Setting("hook_profiling", BOOL, False),
+    # How long each script run takes, step by step, in the activity log
+    Setting("script_timings", BOOL, False),
+    # Unreal: keep the offsets the script agent found (name pool, object
+    # table, ProcessEvent) on disk per game build (see grembyte.features.scripts)
+    Setting("script_offset_cache", BOOL, True),
+    # Unreal: find what scripts need right after attaching (prewarmScripts)
+    Setting("script_prewarm", BOOL, True),
     Setting("trace_sequence", INT, 100_000, minimum=1000, maximum=500_000, step=10_000),
     Setting("object_browser_limit", INT, 2_000_000, minimum=100_000, maximum=10_000_000,
             step=500_000),

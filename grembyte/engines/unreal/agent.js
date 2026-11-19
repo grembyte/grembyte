@@ -4,7 +4,12 @@ const unreal = (() => {
   const RUNTIME_NAME = new RegExp('-(Win64|Win32|WinGDK|Linux|LinuxArm64)-' +
     '(Shipping|Test|Development|DebugGame)(\\.exe)?$|^(UE4|UE5|UnrealEditor)-CoreUObject', 'i');
   const SEARCH_INTERVAL = 2000;
-  // How long a snapshot of the object table serves before it is read anew
+  // How long a snapshot of the object table serves before it is read anew.
+  // Reading one on the game thread stalls the game (about 0.5 s in
+  // RoboCop): the agent reads it on its own thread after attaching
+  // (prewarm) and before it hands work to the game thread (onMainThread).
+  // A snapshot kept longer led the game thread through objects freed by a
+  // level change (RoboCop froze, 2026-11-19).
   const SNAPSHOT_AGE = 15000;
   const TWO32 = 4294967296;
   let module = null;
@@ -13,6 +18,53 @@ const unreal = (() => {
   let snapshot = null;
   // package group -> its classes (see packageIndex)
   let packages = null;
+
+  // --- Phase timings ----------------------------------------------------------
+  // How long the expensive steps took and how often they ran since
+  // takePhaseTimes() last asked; the monitor writes them to the activity log
+  // after each script run (script_phases). Each phase counts its own time
+  // only, not that of phases nested in it (findClass reading a fresh
+  // snapshot), so the phases add up. Some steps are only counted: names
+  // read from the name pool (thousands, each too short for Date.now()), the
+  // objects an object search looked at and why it passed them over
+  // (search_*), retries with a fresh snapshot (retry_*) and objects freed
+  // while the snapshot was read (snapshot_faults).
+  const phaseTimes = new Map();
+  const phaseStack = [];
+
+  function phaseEntry(phase) {
+    let entry = phaseTimes.get(phase);
+    if (entry === undefined) {
+      entry = { ms: 0, count: 0 };
+      phaseTimes.set(phase, entry);
+    }
+    return entry;
+  }
+
+  function timed(phase, work) {
+    const frame = { started: Date.now(), nested: 0 };
+    phaseStack.push(frame);
+    try {
+      return work();
+    } finally {
+      phaseStack.pop();
+      const total = Date.now() - frame.started;
+      if (phaseStack.length > 0)
+        phaseStack[phaseStack.length - 1].nested += total;
+      const entry = phaseEntry(phase);
+      entry.ms += total - frame.nested;
+      entry.count++;
+      entry.timed = true;
+    }
+  }
+
+  function takePhaseTimes() {
+    // { phase: { ms, count, timed } } since the last call; ``timed`` for
+    // phases measured with timed(), not only counted
+    const taken = Object.fromEntries(phaseTimes);
+    phaseTimes.clear();
+    return taken;
+  }
 
   function refresh() {
     // Cheap: only the module's name. The object table is looked for when a
@@ -218,6 +270,7 @@ const unreal = (() => {
       const block = ue.names.add(8 * (index >>> 16)).readPointer();
       text = entryText(block.add((index & 0xffff) * 2));
       names.set(index, text);
+      phaseEntry('name_reads').count++;
     }
     return number > 0 ? `${text}_${number - 1}` : text;
   }
@@ -233,7 +286,146 @@ const unreal = (() => {
     return KIND_SPELLING.get(kind.toLowerCase()) || kind;
   }
 
+  // Reading the snapshot in C: one Frida call per object made it take about
+  // 0.5 s in RoboCop (some 300 000 objects), and turning a buffer of entries
+  // into JavaScript arrays another 0.2 s. The loop writes each field into an
+  // array of its own (addresses as doubles, exact below 2^53, the rest as
+  // 32-bit numbers), which JavaScript takes over as typed arrays without
+  // touching each object. Before each object it writes its index into
+  // state[0]: an object freed meanwhile makes it fault, which the
+  // NativeFunction turns into an exception (Frida's default, exceptions:
+  // 'steal'), and the loop goes on after it. Its state lives in
+  // Memory.alloc'd memory: writing a CModule's own globals faulted under Wine.
+  const SNAPSHOT_FIELDS = [
+    ['address', 8], ['klass', 8], ['outer', 8], ['name', 4], ['number', 4], ['flags', 4]
+  ];
+  const SNAPSHOT_SOURCE = `
+#include <glib.h>
+
+#define CHUNK 0x10000
+
+typedef struct {
+  double * address;
+  double * klass;
+  double * outer;
+  guint32 * name;
+  guint32 * number;
+  guint32 * flags;
+} Fields;
+
+/* state[0]: the item being read, state[1]: objects written */
+guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
+    guint32 item_object, guint32 start, const Fields * out, guint32 capacity,
+    volatile guint32 * state)
+{
+  guint32 i, written = state[1];
+
+  for (i = start; i < count && written < capacity; i++)
+  {
+    guint8 * items = chunks[i / CHUNK];
+    guint8 * object;
+    guint64 klass, outer;
+    guint32 name, number, flags;
+
+    if (items == NULL)
+    {
+      i |= CHUNK - 1;
+      continue;
+    }
+    state[0] = i;
+    object = *(guint8 **) (items + (gsize) (i % CHUNK) * item_size + item_object);
+    if (object == NULL)
+      continue;
+    klass = *(guint64 *) (object + ${OBJECT_CLASS});
+    name = *(guint32 *) (object + ${OBJECT_NAME});
+    number = *(guint32 *) (object + ${OBJECT_NAME} + 4);
+    outer = *(guint64 *) (object + ${OBJECT_OUTER});
+    flags = *(guint32 *) (object + ${OBJECT_FLAGS});
+    /* Signed: user addresses lie below 2^63, and TinyCC targeting Windows
+       converts unsigned 64-bit numbers through a helper CModules lack. */
+    out->address[written] = (double) (gint64) object;
+    out->klass[written] = (double) (gint64) klass;
+    out->outer[written] = (double) (gint64) outer;
+    out->name[written] = name;
+    out->number[written] = number;
+    out->flags[written] = flags;
+    state[1] = ++written;
+  }
+  return i;
+}
+`;
+  let snapshotReader = null;
+
+  function nativeSnapshotReader() {
+    // { read, state, fields, regions, capacity }, or null where only
+    // JavaScript reads (32-bit: the C code reads 64-bit pointers).
+    if (snapshotReader === null) {
+      snapshotReader = false;
+      if (Process.pointerSize === 8) {
+        try {
+          const cm = new CModule(SNAPSHOT_SOURCE);
+          snapshotReader = {
+            cm,
+            read: new NativeFunction(cm.read_objects, 'uint32',
+              ['pointer', 'uint32', 'uint32', 'uint32', 'uint32', 'pointer', 'uint32', 'pointer'],
+              { scheduling: 'exclusive' }),
+            state: Memory.alloc(8),
+            fields: Memory.alloc(8 * SNAPSHOT_FIELDS.length),
+            regions: [],
+            capacity: 0
+          };
+        } catch (error) {
+          console.warn(`snapshot read in JavaScript: ${error}`);
+        }
+      }
+    }
+    return snapshotReader || null;
+  }
+
   function readSnapshot() {
+    const reader = nativeSnapshotReader();
+    return reader === null ? readSnapshotJs() : readSnapshotNative(reader);
+  }
+
+  function readSnapshotNative(reader) {
+    const count = objectCount();
+    if (reader.capacity < count) {
+      reader.capacity = count + 0x10000;  // room for objects added meanwhile
+      // Kept referenced: Memory.alloc'd memory goes with its pointer object.
+      reader.regions = SNAPSHOT_FIELDS.map(([, size]) => Memory.alloc(reader.capacity * size));
+      reader.regions.forEach((region, i) => reader.fields.add(8 * i).writePointer(region));
+    }
+    const chunks = ue.objects.table.readPointer();
+    reader.state.writeU32(0);
+    reader.state.add(4).writeU32(0);
+    timed('snapshot_native', () => {
+      for (let start = 0; start < count;) {
+        try {
+          start = reader.read(chunks, count, ue.objects.itemSize, ue.objects.itemObject, start,
+                              reader.fields, reader.capacity, reader.state);
+        } catch (_error) {
+          phaseEntry('snapshot_faults').count++;
+          start = reader.state.readU32() + 1;  // freed meanwhile: skip it
+        }
+      }
+    });
+    const written = reader.state.add(4).readU32();
+    const s = { index: new Map(), read: Date.now() };
+    timed('snapshot_copy', () => {
+      SNAPSHOT_FIELDS.forEach(([name, size], i) => {
+        const data = reader.regions[i].readByteArray(written * size);
+        s[name] = size === 8 ? new Float64Array(data) : new Uint32Array(data);
+      });
+    });
+    timed('snapshot_index', () => {
+      const address = s.address;
+      for (let i = 0; i < written; i++)
+        s.index.set(address[i], i);
+    });
+    return s;
+  }
+
+  function readSnapshotJs() {
     // Every live object: address, class, name, outer (numbers, so that maps
     // can key by them). Read in one go per object; an object freed meanwhile
     // is skipped.
@@ -274,10 +466,43 @@ const unreal = (() => {
 
   function objects() {
     if (snapshot === null || Date.now() - snapshot.read > SNAPSHOT_AGE) {
-      snapshot = readSnapshot();
+      const s = timed('snapshot', readSnapshot);
+      s.byClass = timed('snapshot_classes', () => classIndex(s));
+      s.ofClass = new Map();  // class -> its and its subclasses' objects (scanObjects)
+      snapshot = s;
       packages = null;
     }
     return snapshot;
+  }
+
+  function classIndex(s) {
+    // class -> the snapshot indexes of its objects (ascending): searches by
+    // class look only at the objects of the classes that fit (some tens of
+    // thousands of classes) instead of all objects (RoboCop: some 300 000,
+    // 70-80 ms per search).
+    const byClass = new Map();
+    const klass = s.klass;
+    for (let i = 0; i < klass.length; i++) {
+      const list = byClass.get(klass[i]);
+      if (list === undefined)
+        byClass.set(klass[i], [i]);
+      else
+        list.push(i);
+    }
+    return byClass;
+  }
+
+  function indexesOfClasses(s, fits) {
+    // The snapshot indexes of the objects whose class fits(class), in
+    // snapshot order, as a search over all objects met them.
+    const found = [];
+    for (const [klass, list] of s.byClass) {
+      if (fits(klass)) {
+        for (const i of list)
+          found.push(i);
+      }
+    }
+    return found.sort((a, b) => a - b);
   }
 
   function objectName(s, i) {
@@ -299,10 +524,111 @@ const unreal = (() => {
       return ue;
     if (!refresh())
       throw grembyteError('error.unreal.no_game');
-    const ranges = dataRanges();
-    ue = { names: findNamePool(ranges), objects: findObjectArray(ranges) };
-    ue.layout = findLayout();
+    const stored = timed('stored_offsets', storedReflection);
+    if (stored !== null) {
+      ue = stored;
+    } else {
+      const ranges = timed('data_ranges', dataRanges);
+      ue = { names: timed('name_pool', () => findNamePool(ranges)),
+             objects: timed('object_array', () => findObjectArray(ranges)) };
+    }
+    ue.layout = timed('layout', findLayout);
+    reportOffsets();
     return ue;
+  }
+
+  // --- Offsets kept on disk ------------------------------------------------------
+  // Grembyte keeps where this build of the game has its name pool, object
+  // table and ProcessEvent (setting script_offset_cache, see
+  // grembyte/features/scripts.py): useStoredOffsets hands them in, and
+  // each is used only once a quick check confirms it, else searched as
+  // without. What a search found goes out as 'unreal-offsets'. Offsets are
+  // relative to the module's base, which moves from start to start.
+  let storedOffsets = null;
+  let offsetsWanted = false;
+  let offsetsReported = null;
+
+  function reflectionBuild() {
+    // { module, build } of the game's module: its size and a hash of its
+    // first 4 KiB (on Windows the PE header with the link time), so that an
+    // updated game counts as another build. null without a game.
+    if (!refresh())
+      return null;
+    const head = new Uint8Array(module.base.readByteArray(Math.min(0x1000, module.size)));
+    let hash = 0x811c9dc5;
+    for (const byte of head)
+      hash = Math.imul(hash ^ byte, 0x01000193) >>> 0;
+    return { module: module.name,
+             build: `${module.size.toString(16)}-${hash.toString(16).padStart(8, '0')}` };
+  }
+
+  function useStoredOffsets(offsets) {
+    // The offsets Grembyte kept for this build (null for none); from now on
+    // what the searches find is reported.
+    storedOffsets = offsets !== null && typeof offsets === 'object' ? offsets : null;
+    offsetsWanted = true;
+    return true;
+  }
+
+  function storedReflection() {
+    // { names, objects } from the stored offsets once they check out, else null.
+    const stored = storedOffsets;
+    if (stored === null || typeof stored.namePool !== 'number'
+        || typeof stored.objectArray !== 'object' || stored.objectArray === null)
+      return null;
+    try {
+      const names = module.base.add(stored.namePool);
+      const first = names.readPointer();
+      if (entryText(first) !== 'None' || entryText(first.add(6)) !== 'ByteProperty')
+        return null;
+      const array = stored.objectArray;
+      const table = module.base.add(array.table);
+      const count = table.add(array.count).readS32();
+      const item = objectItemLayout(table.readPointer());
+      if (count <= 0x1000 || item === null || item.size !== array.itemSize
+          || item.object !== array.itemObject)
+        return null;
+      return { names, objects: { table, count: array.count, itemSize: item.size,
+                                 itemObject: item.object } };
+    } catch (_error) {
+      return null;  // not readable: another build after all
+    }
+  }
+
+  function storedProcessEvent() {
+    // ProcessEvent at the stored offset, if it is one of UObject's virtual
+    // functions; else null.
+    if (storedOffsets === null || typeof storedOffsets.processEvent !== 'number')
+      return null;
+    const fn = module.base.add(storedOffsets.processEvent);
+    const vtable = objectVtable();
+    for (let slot = 0; slot < 160; slot++) {
+      if (vtable.add(slot * Process.pointerSize).readPointer().equals(fn))
+        return processEventAt(fn);
+    }
+    return null;
+  }
+
+  function reportOffsets() {
+    // Send what this agent uses now, once it differs from what is stored.
+    if (!offsetsWanted || ue === null || ue.objects === undefined)
+      return;
+    const rva = address => Number(address.sub(module.base).toString());
+    const offsets = {
+      namePool: rva(ue.names),
+      objectArray: { table: rva(ue.objects.table), count: ue.objects.count,
+                     itemSize: ue.objects.itemSize, itemObject: ue.objects.itemObject }
+    };
+    // Not looked for yet: keep the stored one, checked when it is needed
+    if (processEvent !== null)
+      offsets.processEvent = rva(processEvent.address);
+    else if (storedOffsets !== null && typeof storedOffsets.processEvent === 'number')
+      offsets.processEvent = storedOffsets.processEvent;
+    const text = JSON.stringify(offsets);
+    if (text === offsetsReported || text === JSON.stringify(storedOffsets))
+      return;
+    offsetsReported = text;
+    send({ kind: 'unreal-offsets', ...reflectionBuild(), offsets });
   }
 
   function findLayout() {
@@ -446,6 +772,20 @@ const unreal = (() => {
     return Number(ptr(klass).add(ue.layout.superStruct).readPointer().toString());
   }
 
+  // Deeper than any class hierarchy: a chain read from freed memory (a
+  // snapshot older than a level change) may run in a circle.
+  const MAX_SUPER_DEPTH = 64;
+
+  function superChain(klass) {
+    // klass and its super structs up to UObject (numbers), at most
+    // MAX_SUPER_DEPTH of them.
+    const chain = [];
+    for (let current = klass; current !== 0 && chain.length < MAX_SUPER_DEPTH;
+      current = superOf(current))
+      chain.push(current);
+    return chain;
+  }
+
   function cppName(klass) {
     // UE's C++ name of a class: AActor for actors, UObject for the rest.
     if (klass === 0)
@@ -453,7 +793,7 @@ const unreal = (() => {
     let prefix = prefixes.get(klass);
     if (prefix === undefined) {
       prefix = 'U';
-      for (let current = klass; current !== 0; current = superOf(current)) {
+      for (const current of superChain(klass)) {
         if (sameName(nameOfAddress(current), 'Actor')) {
           prefix = 'A';
           break;
@@ -566,11 +906,15 @@ const unreal = (() => {
     let result = cache.get(klass);
     if (result === undefined) {
       result = false;
-      for (let current = klass; current !== 0; current = superOf(current)) {
-        if (current === ue.layout.classClass) {
-          result = true;
-          break;
+      try {
+        for (const current of superChain(klass)) {
+          if (current === ue.layout.classClass) {
+            result = true;
+            break;
+          }
         }
+      } catch (_error) {
+        // freed since the snapshot was read
       }
       cache.set(klass, result);
     }
@@ -811,7 +1155,7 @@ const unreal = (() => {
   function classesUp(klass) {
     // The addresses of ``klass`` and its super classes
     const result = new Set();
-    for (let current = Number(klass.toString()); current !== 0; current = superOf(current))
+    for (const current of superChain(Number(klass.toString())))
       result.add(current);
     return result;
   }
@@ -1588,7 +1932,7 @@ const unreal = (() => {
     const address = Number(klass.toString());
     const isStruct = Number(klass.add(OBJECT_CLASS).readPointer().toString()) === L.scriptStruct;
     const chain = [];
-    for (let current = address; current !== 0; current = superOf(current))
+    for (const current of superChain(address))
       chain.unshift(current);
     const fields = [];
     for (const current of chain) {
@@ -1690,6 +2034,12 @@ const unreal = (() => {
     let result = signatures.get(key);
     if (result !== undefined)
       return result;
+    result = timed('signature', () => readSignature(fn));
+    signatures.set(key, result);
+    return result;
+  }
+
+  function readSignature(fn) {
     const L = ue.layout;
     const params = [];
     let returns = { kind: KIND.VOID, byref: false, name: 'void' };
@@ -1716,10 +2066,8 @@ const unreal = (() => {
     }
     if (returns.kind !== KIND.VOID)
       returns.name = returns.name.replace(/&$/, '');
-    result = { instance: (functionInfo(fn).flags & FUNC_STATIC) === 0, parms: true, params,
-               returns, returnOffset, parmsSize };
-    signatures.set(key, result);
-    return result;
+    return { instance: (functionInfo(fn).flags & FUNC_STATIC) === 0, parms: true, params,
+             returns, returnOffset, parmsSize };
   }
 
   function isProperty(field) {
@@ -2000,21 +2348,43 @@ const unreal = (() => {
   }
 
   function findProcessEvent() {
+    if (processEvent !== null)
+      return processEvent;
+    reflection();
+    processEvent = timed('stored_offsets', storedProcessEvent)
+      || timed('process_event', searchProcessEvent);
+    reportOffsets();
+    return processEvent;
+  }
+
+  function objectVtable() {
+    // The virtual functions of UObject, from its class default object
+    const s = objects();
+    const index = s.address.findIndex((_address, i) => s.outer[i] !== 0
+      && sameName(objectName(s, i), 'Default__Object'));
+    if (index < 0)
+      throw grembyteError('error.unreal.not_found', { name: 'Default__Object' });
+    return ptr(s.address[index]).readPointer();
+  }
+
+  function processEventAt(address) {
+    return {
+      address,
+      // Exceptions go to the process's handlers: a write watch takes its trap
+      // and the call runs to its end (Frida's default would abort it)
+      call: new NativeFunction(address, 'void', ['pointer', 'pointer', 'pointer'],
+                               { exceptions: 'propagate' })
+    };
+  }
+
+  function searchProcessEvent() {
     // The one virtual function of UObject that calls a UFunction's Func
     // (call [reg + Func]); the others call into it. Where no slot does, the
     // one that calls a short function doing it (some games do not inline
     // UFunction::Invoke). Each function is searched up to its end where the
     // executable says where that is: read on, the search found such calls
     // in the functions after two slots and missed ProcessEvent (Queen's Domain).
-    if (processEvent !== null)
-      return processEvent;
-    reflection();
-    const s = objects();
-    const index = s.address.findIndex((_address, i) => s.outer[i] !== 0
-      && sameName(objectName(s, i), 'Default__Object'));
-    if (index < 0)
-      throw grembyteError('error.unreal.not_found', { name: 'Default__Object' });
-    const vtable = ptr(s.address[index]).readPointer();
+    const vtable = objectVtable();
     const funcOffset = ue.layout.func;
     const inCode = fn => fn.compare(module.base) >= 0
       && fn.compare(module.base.add(module.size)) < 0;
@@ -2098,14 +2468,7 @@ const unreal = (() => {
       found = search(false);
     if (found.length !== 1)
       throw grembyteError('error.unreal.no_process_event', { count: found.length });
-    processEvent = {
-      address: found[0],
-      // Exceptions go to the process's handlers: a write watch takes its trap
-      // and the call runs to its end (Frida's default would abort it)
-      call: new NativeFunction(found[0], 'void', ['pointer', 'pointer', 'pointer'],
-                               { exceptions: 'propagate' })
-    };
-    return processEvent;
+    return processEventAt(found[0]);
   }
 
   function isGameThread() {
@@ -2139,11 +2502,35 @@ const unreal = (() => {
     }
   }
 
+  function ensureMainGate() {
+    if (mainGate === null)
+      mainGate = timed('main_gate',
+                       () => mainThreadGate([findProcessEvent().address], drainMain));
+    return mainGate;
+  }
+
+  function prewarm() {
+    // What a script's first run needs, found right after attaching on the
+    // agent's thread (the script agent, setting script_prewarm): the
+    // reflection, ProcessEvent with the game-thread hook, and a snapshot of
+    // the objects. Without it the first run waited seconds for them.
+    reflection();
+    ensureMainGate();
+    objects();
+    return true;
+  }
+
   function onMainThread(work) {
     // A promise of work()'s result, computed on the game thread.
     try {
-      if (mainGate === null)
-        mainGate = mainThreadGate([findProcessEvent().address], drainMain);
+      ensureMainGate();
+      // A snapshot that runs out before the work may run: read anew here,
+      // not on the game thread (MAIN_TIMEOUT: the longest the work waits).
+      if (snapshot !== null && !isGameThread()
+          && Date.now() - snapshot.read > SNAPSHOT_AGE - MAIN_TIMEOUT) {
+        snapshot = null;
+        objects();
+      }
     } catch (error) {
       return Promise.reject(error);
     }
@@ -2284,6 +2671,15 @@ const unreal = (() => {
     let found = nameIndexes.get(text);
     if (found !== undefined)
       return found;
+    found = timed('name_search', () => retryFresh(() => searchName(text)));
+    if (found === null)
+      throw grembyteError('error.unreal.unknown_fname', { name: text });
+    nameIndexes.set(text, found);
+    return found;
+  }
+
+  function searchName(text) {
+    let found;
     const s = objects();
     const match = /^(.*)_(\d+)$/.exec(text);
     for (let i = 0; i < s.address.length && found === undefined; i++) {
@@ -2294,15 +2690,12 @@ const unreal = (() => {
                && String(Number(match[2])) === match[2])
         found = [s.name[i], Number(match[2]) + 1];
     }
-    if (found === undefined)
-      throw grembyteError('error.unreal.unknown_fname', { name: text });
-    nameIndexes.set(text, found);
-    return found;
+    return found === undefined ? null : found;
   }
 
   function classChain(klass) {
     const chain = [];
-    for (let current = Number(klass.toString()); current !== 0; current = superOf(current))
+    for (const current of superChain(Number(klass.toString())))
       chain.push(ptr(current));
     return chain;  // the class first, UObject last
   }
@@ -2321,8 +2714,17 @@ const unreal = (() => {
     const cached = classesByName.get(name);
     if (cached !== undefined && isObject(cached))
       return cached;
+    const klass = timed('find_class', () => retryFresh(() => searchClass(name)));
+    if (klass === null)
+      throw grembyteError('error.unreal.no_class', { name });
+    return klass;
+  }
+
+  function searchClass(name) {
     const s = objects();
     const kinds = new Map();
+    // All objects in order: it stops at the first match, sooner than
+    // gathering every class object (some 30 000) through byClass.
     for (let i = 0; i < s.address.length; i++) {
       if (s.outer[i] === 0 || !isClass(s, s.klass[i], kinds))
         continue;
@@ -2332,7 +2734,28 @@ const unreal = (() => {
         return klass;
       }
     }
-    throw grembyteError('error.unreal.no_class', { name });
+    return null;
+  }
+
+  function retryFresh(search) {
+    // search()'s answer, or null; when it finds nothing in a snapshot older
+    // than a second, or fails on memory freed since (a level changed), once
+    // more in a fresh one (the class or object may be newer than the snapshot).
+    const stale = () => snapshot !== null && Date.now() - snapshot.read >= 1000;
+    let found;
+    try {
+      found = search();
+    } catch (error) {
+      if (!stale())
+        throw error;
+      phaseEntry('retry_after_error').count++;
+      found = null;
+    }
+    if (found !== null || !stale())
+      return found;
+    phaseEntry('retry_fresh').count++;
+    snapshot = null;
+    return search();
   }
 
   const structsByName = new Map();
@@ -2504,6 +2927,10 @@ const unreal = (() => {
   }
 
   function searchObjects(klass, named, limit) {
+    return timed('object_search', () => scanObjects(klass, named, limit));
+  }
+
+  function scanObjects(klass, named, limit) {
     // Up to ``limit`` live objects of class ``klass`` (or a subclass) named
     // ``named`` (see isNamed), in the snapshot of the object table.
     const s = objects();
@@ -2513,11 +2940,15 @@ const unreal = (() => {
       let result = kinds.get(k);
       if (result === undefined) {
         result = false;
-        for (let current = k; current !== 0; current = superOf(current)) {
-          if (current === klass) {
-            result = true;
-            break;
+        try {
+          for (const current of superChain(k)) {
+            if (current === klass) {
+              result = true;
+              break;
+            }
           }
+        } catch (_error) {
+          // a class freed since the snapshot (a level changed)
         }
         kinds.set(k, result);
       }
@@ -2525,15 +2956,33 @@ const unreal = (() => {
     };
     const ownName = named === null ? null : named.substring(named.lastIndexOf('.') + 1);
     const found = [];
-    for (let i = 0; i < s.address.length && found.length < limit; i++) {
-      if (!derives(s.klass[i]) || (ownName !== null && objectName(s, i) !== ownName))
+    // The objects of ``klass`` and its subclasses, kept with the snapshot:
+    // a script looking for the same class every run checks only those.
+    let candidates = s.ofClass.get(klass);
+    if (candidates === undefined) {
+      candidates = indexesOfClasses(s, derives);
+      s.ofClass.set(klass, candidates);
+    }
+    for (const i of candidates) {
+      if (found.length >= limit)
+        break;
+      if (ownName !== null && objectName(s, i) !== ownName)
         continue;
       const object = ptr(s.address[i]);
+      phaseEntry('search_candidates').count++;
       try {
-        if (isObject(object) && !isTemplate(s, i, classKinds) && isNamed(object, named))
+        if (!isObject(object))
+          phaseEntry('search_not_object').count++;
+        else if (Number(object.add(OBJECT_CLASS).readPointer().toString()) !== s.klass[i])
+          // Freed since the snapshot and its memory given to another object
+          // (RoboCop: a PlayerController's to an object of another class)
+          phaseEntry('search_class_changed').count++;
+        else if (isTemplate(s, i, classKinds))
+          phaseEntry('search_template').count++;
+        else if (isNamed(object, named))
           found.push(object);
       } catch (_error) {
-        // freed meanwhile
+        phaseEntry('search_error').count++;  // freed meanwhile
       }
     }
     return found;
@@ -2551,15 +3000,10 @@ const unreal = (() => {
     if (cached !== undefined && stillFound(cached, klass, named))
       return cached;
     foundObjects.delete(key);
-    for (let fresh = 0; fresh < 2; fresh++) {
-      const [object] = searchObjects(klass, named, 1);
-      if (object !== undefined) {
-        foundObjects.set(key, object);
-        return object;
-      }
-      snapshot = null;  // the object may be newer than the snapshot
-    }
-    return null;
+    const object = retryFresh(() => searchObjects(klass, named, 1)[0] || null);
+    if (object !== null)
+      foundObjects.set(key, object);
+    return object;
   }
 
   function findObjects(className, named = null) {
@@ -2610,10 +3054,13 @@ const unreal = (() => {
       let result = shownClasses.get(klass);
       if (result === undefined) {
         result = klass !== 0;
-        for (let current = klass; result && current !== 0 && !internal;
-          current = superOf(current)) {
-          if (reflectionKinds.has(current))
-            result = false;
+        if (result && !internal) {
+          for (const current of superChain(klass)) {
+            if (reflectionKinds.has(current)) {
+              result = false;
+              break;
+            }
+          }
         }
         shownClasses.set(klass, result);
       }
@@ -2671,7 +3118,7 @@ const unreal = (() => {
 
   function singletonRole(klass) {
     // The engine class (SINGLETON_BASES) ``klass`` is or derives from, or null
-    for (let current = klass; current !== 0; current = superOf(current)) {
+    for (const current of superChain(klass)) {
       const role = SINGLETON_BASES.get(String(nameOfAddress(current)).toLowerCase());
       if (role !== undefined)
         return role;
@@ -3179,6 +3626,10 @@ const unreal = (() => {
     properties: () => [],
     drainMain,
     onMainThread,
+    takePhaseTimes,
+    reflectionBuild,
+    useStoredOffsets,
+    prewarm,
     signatureOf,
     findClass,
     findMethod,

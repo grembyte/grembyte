@@ -8,7 +8,9 @@ compiler gives each build a new one, so an updated or modded assembly is
 read again. Assemblies the runtime names no MVID for are not cached.
 
 The files lie in ``cache/<engine>/<assembly>/<mvid>.json.gz`` (``CLASSES``)
-and ``<mvid>.calls.json.gz`` (``CALLS``) next to the database; deleting them
+and ``<mvid>.calls.json.gz`` (``CALLS``) next to the database; Unreal's
+offsets (``OFFSETS``) in ``cache/unreal/<module>/<build>.offsets.json.gz``,
+the module and its build standing in for assembly and MVID; deleting them
 only costs the next reading. Several builds of an assembly stay side by side:
 games share assembly names (every Unity game has an ``Assembly-CSharp``).
 A file not used for ``MAX_AGE_DAYS`` goes (``prune``, once per run), e.g.
@@ -27,12 +29,13 @@ from PySide6.QtCore import QStandardPaths  # pylint: disable=import-error,no-nam
 
 from grembyte.core import logs
 
-CLASSES, CALLS = "classes", "calls"
+CLASSES, CALLS, OFFSETS = "classes", "calls", "offsets"
 
 # Raise when what is stored changes its shape; older files are then ignored.
 # classes 3: the methods' flags and parameter names
 # calls 2: the builds of the assemblies it refers to
-FORMATS = {CLASSES: 3, CALLS: 2}
+# offsets 1: Unreal's name pool, object table and ProcessEvent (see grembyte.features.scripts)
+FORMATS = {CLASSES: 3, CALLS: 2, OFFSETS: 1}
 
 # Characters kept in a file or directory name; others become "_".
 _UNSAFE = re.compile(r"[^\w.-]")
