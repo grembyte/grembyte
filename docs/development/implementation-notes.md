@@ -408,6 +408,43 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   `GetViewTarget() == Pawn`; all three cases checked live. The mouse cursor
   (`bShowMouseCursor`) was left out: top-down games show it while playing.
 
+- **The first script run (2026-11-19, RoboCop under Proton):** with the setting
+  "Scripts: measure each run" each run writes `script_phases` to the activity log: wait
+  until the game thread took it, time on it, and the Unreal adapter's steps (`timed()` in
+  `agent.js`: each phase its own time without nested ones, so they add up; some steps only
+  counted). The first run took 3.1 s: finding `FNamePool` 1.7 s, `GUObjectArray` 0.7 s
+  (both scans of the module's data in JavaScript), the object snapshot 0.5 s. Changes:
+  - *Offsets on disk* (setting `script_offset_cache`): name pool, object table and
+    `ProcessEvent` relative to the module, per build (module size and a hash of its first
+    4 KiB, on Windows the PE header with the link time), in the catalog cache as
+    `unreal/<module>/<build>.offsets.json.gz`. Each is checked before use (the pool starts
+    with `None` and `ByteProperty`, the table's items have the stored layout, `ProcessEvent`
+    is in UObject's vtable), else searched as before. The layout is measured anew (20 ms).
+  - *Prepared on attach* (setting `script_prewarm`): the script agent finds the reflection,
+    sets the game-thread hook and reads a snapshot right after attaching (`script_prewarm`
+    in the activity log). Before handing work to the game thread, `onMainThread` reads a
+    snapshot about to run out anew on the agent's thread.
+  - *The snapshot in C*: a CModule loop over the chunks writes each field into an array of
+    its own (addresses as doubles), which JavaScript takes over as typed arrays; an object
+    freed meanwhile faults, the NativeFunction turns that into an exception (Frida's
+    default `exceptions: 'steal'`) and the loop goes on after it. 0.5 s became about 60 ms:
+    the C loop takes under 10 ms, the map of address to index about 50. Learned under
+    Wine: TinyCC targeting Windows converts an unsigned 64-bit number to a double through a
+    helper CModules lack, so the module did not compile and JavaScript read silently (the
+    code converts through the signed type now and logs a failed compile); and writing a
+    CModule's own globals faulted, so state lives in `Memory.alloc`'d memory.
+  - *Searches by class* go through a map of class to its objects built with the snapshot,
+    and remember the objects of a class per snapshot: a search went from 70-80 ms to a few.
+  Result: the first run about 60 ms on the game thread, later runs about 1 ms. Learned the
+  hard way: a snapshot kept for minutes on the game thread led a search through objects
+  freed by a level change; a class's supers read from freed memory ran in a circle and
+  froze the game (walks of supers now stop after 64, `superChain`). And a snapshot keeps
+  each object's class as it was read: memory freed and given to an object of another
+  class still matched the search, which handed a script another object instead of the
+  PlayerController. A search now checks the object's class against the snapshot's, and a
+  lookup that finds nothing, or fails on freed memory, in a snapshot older than a second
+  tries once more in a fresh one (`retryFresh`).
+
 ## Native call diff trace
 
 The engine-independent native counterpart of the Mono trace. Frida's **Stalker** records which
@@ -530,6 +567,8 @@ switched off in the settings.
 
 - Learned: an agent whose `unload` waits for a thread blocked in Stalker's code shows up as
   `agent_unloaded … seconds=25`.
+- With the setting "Scripts: measure each run", script runs add `script_phases` and, under
+  Unreal, the preparation after attaching `script_prewarm` (see the Unreal adapter).
 
 ## Settings
 

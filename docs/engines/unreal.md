@@ -38,6 +38,15 @@ if (!ctx.isPlaying())
 
 Many shipping builds keep their cheat manager: in Avowed `BP_CheatManager_C` (an `AlabamaCheatManager`) has 147 functions with code, such as `GiveHealth`, `AddCurrency` and `ToggleUnlimitedStamina`.
 
+## Scripts
+
+Scripts run on the game thread, through `ProcessEvent`. Before the first one can run, Grembyte has to find the engine's name pool and object table, `ProcessEvent` itself, and read the list of live objects; in a large game that took seconds and stalled the game. Two [settings](../guide/settings.md) on the page Scripts, both on by default, make it quick:
+
+- **Keep Unreal offsets on disk**: what was found is kept per game build and only checked the next time. An updated game is searched again.
+- **Prepare Unreal games when attaching**: right after the scripts attach, Grembyte does the rest in the background, not when the first script runs.
+
+The list of live objects is read anew every 15 seconds, before a script needs it and not on the game thread. In RoboCop: Rogue City the first script run went from over 3 seconds to about 60 ms on the game thread; later runs take about a millisecond.
+
 ## Object browser
 
 **View → Object browser …** lists every live object of the game by class, read from `GUObjectArray`, and opens them in the object inspector. Packages, a filter on class and object names, singletons and templates are explained in the [object browser guide](../guide/object-browser.md#unreal-engine).
@@ -130,6 +139,6 @@ What it cannot see:
 
 ## Tested games
 
-Avowed (UE5, Proton), Gothic 1 Remake (UE5, Proton; its GAS setter follows AngelscriptGAS).
+Avowed (UE5, Proton), Gothic 1 Remake (UE5, Proton; its GAS setter follows AngelscriptGAS), RoboCop: Rogue City (UE5, Proton).
 
-<small>The screenshots of Avowed and Gothic 1 Remake on this page only illustrate how Grembyte works. All game names, trademarks and game content belong to their respective owners. Grembyte is not affiliated with, endorsed or sponsored by them.</small>
+<small>The games named on this page and the screenshots of Avowed and Gothic 1 Remake only illustrate how Grembyte works. All game names, trademarks and game content belong to their respective owners. Grembyte is not affiliated with, endorsed or sponsored by them.</small>

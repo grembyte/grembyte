@@ -2497,6 +2497,40 @@ function scriptClass(name) {
   return objectJs(engine.findClass(String(name)));
 }
 
+// With the setting script_timings each run is measured (see notePhases).
+let scriptTimings = false;
+
+function setScriptTimings(on) {
+  scriptTimings = on === true;
+  return true;
+}
+
+function prewarmScripts() {
+  // Under Unreal, find what scripts need right after attaching (see prewarm
+  // in the Unreal agent); with script_timings its phases go to the activity
+  // log (script_prewarm). Without a game (yet) the first run finds them.
+  if (!engine.refresh() || engine.id !== 'unreal')
+    return false;
+  engine.takePhaseTimes();
+  const started = Date.now();
+  let failed = null;
+  try {
+    engine.prewarm();
+  } catch (error) {
+    failed = String(error);
+  }
+  if (scriptTimings) {
+    const fields = { total_ms: Date.now() - started, failed: failed !== null };
+    for (const [phase, entry] of Object.entries(engine.takePhaseTimes())) {
+      if (entry.timed)
+        fields[`${phase}_ms`] = entry.ms;
+      fields[`${phase}_count`] = entry.count;
+    }
+    noteActivity('script_prewarm', fields);
+  }
+  return failed === null;
+}
+
 function runScript(script, args = null) {
   // Run it on the game thread with ``args`` as ctx.args (else the
   // defaults); reports 'script-run'.
@@ -2506,7 +2540,15 @@ function runScript(script, args = null) {
   const logs = [];
   const ctx = scriptContext(script, logs, args === null ? { ...script.args } : args);
   const started = Date.now();
+  const measured = scriptTimings;
+  const unrealPhases = measured && engine.id === 'unreal';
+  if (unrealPhases)
+    engine.takePhaseTimes();  // only this run's (see notePhases)
+  let onThread = null;
+  let ranMs = null;
   const report = (result, error) => {
+    if (measured)
+      notePhases(script, started, onThread, ranMs, unrealPhases, error);
     script.running = false;
     script.runs++;
     send({ kind: 'script-run', scriptId: script.id, time: started, runs: script.runs,
@@ -2518,9 +2560,36 @@ function runScript(script, args = null) {
     if (script.mode === 'repeat' || script.mode === 'once')
       timeScript(script);
   };
-  onGameThread(() => scriptResult(script.fn(ctx))).then(
-    result => report(result, null), error => report(undefined, error));
+  onGameThread(() => {
+    onThread = Date.now();
+    try {
+      return scriptResult(script.fn(ctx));
+    } finally {
+      ranMs = Date.now() - onThread;
+    }
+  }).then(result => report(result, null), error => report(undefined, error));
   return true;
+}
+
+function notePhases(script, started, onThread, ranMs, unrealPhases, error) {
+  // How long a script run took, in the activity log (script_phases): until
+  // the game thread took it (wait_ms, includes setting up the game-thread
+  // hook on the first run), on the game thread (game_thread_ms), in all
+  // (total_ms), and under Unreal the adapter's expensive steps (see
+  // takePhaseTimes in the Unreal agent) as <phase>_ms and <phase>_count.
+  const fields = {
+    script: script.id, script_run: script.runs + 1, total_ms: Date.now() - started,
+    wait_ms: onThread === null ? null : onThread - started, game_thread_ms: ranMs,
+    failed: error !== null
+  };
+  if (unrealPhases) {
+    for (const [phase, entry] of Object.entries(engine.takePhaseTimes())) {
+      if (entry.timed)
+        fields[`${phase}_ms`] = entry.ms;
+      fields[`${phase}_count`] = entry.count;
+    }
+  }
+  noteActivity('script_phases', fields);
 }
 
 function scriptOptions(id, name) {
@@ -2713,6 +2782,12 @@ rpc.exports = {
   addScript,
   updateScript,
   removeScript,
+  setScriptTimings,
+  prewarmScripts,
+  // Unreal offsets kept on disk (see useStoredOffsets in the Unreal agent)
+  reflectionBuild: () => (engine.refresh() && engine.id === 'unreal'
+    ? engine.reflectionBuild() : null),
+  useStoredOffsets: offsets => engine.id === 'unreal' && engine.useStoredOffsets(offsets),
   runScriptNow: (id, args) => runScript(requireScript(id), args === undefined ? null : args),
   scriptOptions,
   dispose() {

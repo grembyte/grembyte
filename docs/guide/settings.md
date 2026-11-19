@@ -2,7 +2,7 @@
 
 ## Settings
 
-**Settings → General …** holds the settings, stored in Grembyte's database. The list on the left chooses a page: General, Scan, Pointer scan, Trace, Hooks, Object browser, Graphs and Wine/Proton.
+**Settings → General …** holds the settings, stored in Grembyte's database. The list on the left chooses a page: General, Scan, Pointer scan, Trace, Hooks, Scripts, Object browser, Graphs and Wine/Proton.
 
 <figure markdown="span">
   ![Settings](../assets/screenshots/settings-dark.webp#only-dark){ width="640" }
@@ -27,6 +27,9 @@
 | Hooks: short jump in tight spots (experimental) | Off by default; see the [hook limitations](hooks.md#limitations). |
 | Hooks: patch hooks the game removed again | Off by default. For games that check and restore their code, e.g. Dark Souls III. Grembyte checks every second and patches again. Can be detected by anti-tamper systems. |
 | Hooks: measure their cost | Off by default. Measures every write at a hooked site: calls per second, skipped writes, waiting time and run time. Shown in the tooltip of the "Applied" column and in `grembyte.log`. |
+| Scripts: measure each run | Off by default. Writes to the [activity log](tools.md#log-and-activity) how long each script run took: until the game thread took it, on the game thread, and in Unreal games the engine's expensive steps. Needs the activity log switched on. Takes effect at once. |
+| Scripts: keep Unreal offsets on disk | On by default. Keeps where an Unreal game has its name pool, object table and `ProcessEvent`, per game build, so that scripts only check them the next time instead of searching; see [Unreal scripts](../engines/unreal.md#scripts). Takes effect when the scripts attach next. |
+| Scripts: prepare Unreal games when attaching | On by default. Right after the scripts attach to an Unreal game, Grembyte prepares what scripts need, so that the first run does not wait for it; see [Unreal scripts](../engines/unreal.md#scripts). Costs a fraction of a second in the background also when no script runs. Takes effect when the scripts attach next. |
 | Object browser: objects read (Unity Mono) | How many live objects the [object browser](object-browser.md#unity-mono) and the [reference graph](reference-graph.md#unity-mono) keep per read (default 2 million, up to 10 million). Each takes 16 bytes in the game while Grembyte is attached. Raise it when the browser reports that not all objects could be kept. Takes effect at the next refresh. |
 | Nodes shown per unfolding at most (page Graphs) | How many holders, targets, callers or called methods the [reference graph](reference-graph.md) and the [call graph](../engines/index.md#call-graph) show when a node is unfolded (default 100, 10 to 1,000). The others only count in the node's **+n**. Takes effect at the next unfolding. |
 | Reference graph: show other memory | Off by default: locations in memory no object of the engine covers only count in a node's **+n** in the [reference graph](reference-graph.md#reading-the-graph). On: they show as a node of their own. Takes effect at once, also in open graphs. |

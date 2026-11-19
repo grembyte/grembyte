@@ -106,6 +106,7 @@ from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-na
 from grembyte.core import hotkeys, logs, messages, settings
 from grembyte.core import sessions
 from grembyte.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
+from grembyte.features import catalog_cache
 from grembyte.features.monitor import build_agent_source
 
 
@@ -201,6 +202,35 @@ def choice_matches(value, text):
     if isinstance(value, float) and value.is_integer():
         return str(int(value)) == text
     return str(value) == text
+
+
+def _hand_in_offsets(api):
+    """Give the agent the Unreal offsets kept for this game build (setting
+    ``script_offset_cache``): it checks and uses them instead of searching,
+    and reports what it found otherwise (``unreal-offsets``, _store_offsets).
+    The first script run of an Unreal game spends seconds on that search."""
+    try:
+        build = api.reflection_build()
+        if build:
+            api.use_stored_offsets(catalog_cache.load("unreal", build["module"], build["build"],
+                                                      kind=catalog_cache.OFFSETS))
+    except frida.RPCException as error:
+        logs.log.warning("Unreal offsets not handed in: %s", messages.describe(error))
+
+
+def _prewarm(api):
+    """Let the agent find what Unreal scripts need now, not on the first run
+    (setting ``script_prewarm``); queued commands wait meanwhile."""
+    try:
+        api.prewarm_scripts()
+    except frida.RPCException as error:
+        logs.log.warning("Unreal not prepared for scripts: %s", messages.describe(error))
+
+
+def _store_offsets(payload):
+    if payload.get("module") and payload.get("build") and isinstance(payload.get("offsets"), dict):
+        catalog_cache.store("unreal", payload["module"], payload["build"], payload["offsets"],
+                            kind=catalog_cache.OFFSETS)
 
 
 @dataclass
@@ -465,6 +495,12 @@ class ScriptWorker(QThread):
             script.load()
             if not self._ready.wait(5):
                 raise messages.LocalizedRuntimeError("error.scripts.load_timeout")
+            script.exports_sync.set_script_timings(settings.get("script_timings"))
+            if settings.get("script_offset_cache"):
+                _hand_in_offsets(script.exports_sync)
+            if settings.get("script_prewarm"):
+                _prewarm(script.exports_sync)
+            settings.subscribe(self._on_settings_changed)
             while (not self.isInterruptionRequested() and self._detach_reason is None
                    and self._agent_error is None):
                 try:
@@ -481,6 +517,7 @@ class ScriptWorker(QThread):
             if not self.isInterruptionRequested():
                 self.worker_failed.emit(messages.describe(error))
         finally:
+            settings.unsubscribe(self._on_settings_changed)
             if script is not None:
                 try:
                     script.exports_sync.dispose()
@@ -509,11 +546,17 @@ class ScriptWorker(QThread):
                     self.script_removed.emit(script_id)
             elif action == "run":
                 api.run_script_now(script_id, argument)
+            elif action == "timings":
+                api.set_script_timings(argument)
             elif action in self._REQUESTS:
                 self._answer(api, action, script_id, argument)
                 return
         except frida.RPCException as error:
             self.script_failed.emit(script_id, messages.describe(error))
+
+    def _on_settings_changed(self, changed):
+        if "script_timings" in changed:
+            self._commands.put(("timings", 0, changed["script_timings"]))
 
     # request action -> (agent call, answer signal, failure signal)
     _REQUESTS = {
@@ -553,6 +596,8 @@ class ScriptWorker(QThread):
             self._ready.set()
         elif kind == "script-run":
             self.script_ran.emit(payload.get("scriptId", 0), payload)
+        elif kind == "unreal-offsets":
+            _store_offsets(payload)
 
     def _on_log(self, level, text):
         logs.agent_log("script agent", level, text)

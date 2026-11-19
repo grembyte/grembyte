@@ -18,7 +18,10 @@ only called by grembyte; ``moved 0`` answers with the sum of its last offset
 and how often it ran.
 """
 
+import gzip
+import json
 import subprocess
+import time
 
 import pytest
 
@@ -1006,6 +1009,27 @@ int main(void) {
             printf("%d %d\n", g_name_length, g_loud);
             fflush(stdout);
             continue;
+        } else if (strcmp(cmd, "newclass") == 0) {
+            /* A class loaded while the game runs: LateClass<value> */
+            char text[32];
+            snprintf(text, sizeof(text), "LateClass%d", value);
+            object(class_class, text, game)->super = object_class;
+        } else if (strcmp(cmd, "loop") == 0) {
+            /* Classes whose supers run in a circle, as freed memory may read,
+               and an object of one of them */
+            Object *first = object(class_class, "LoopA", game);
+            Object *second = object(class_class, "LoopB", game);
+            first->super = second;
+            second->super = first;
+            object(first, "LoopA_0", game);
+        } else if (strcmp(cmd, "dangling") == 0) {
+            /* An item whose object is gone: its memory is no longer mapped */
+            int32_t index = g_uobject_array.num++;
+            g_uobject_array.objects[index / 65536][index % 65536].object = (Object *)(uintptr_t)0x1000;
+        } else if (strcmp(cmd, "reclass") == 0) {
+            /* The player's memory now holds an object of another class, as
+               after the player was freed and the memory given anew */
+            player->klass = actor;
         } else if (strcmp(cmd, "entry") == 0) {
             /* The first 8 bytes of ProcessEvent: hooked or not */
             const volatile int32_t *code = (const volatile int32_t *)(void *)UObject_ProcessEvent;
@@ -1634,6 +1658,7 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app, d
 @requires_target
 def test_the_game_thread_hook_stays_between_script_runs(tmp_path, qt_app, activity_file):
     # pylint: disable=import-outside-toplevel
+    from grembyte.core import settings
     from grembyte.features.scripts import ScriptSpec, ScriptWorker
 
     # Hooking and unhooking ProcessEvent for every run rewrote its first bytes
@@ -1646,6 +1671,7 @@ def test_the_game_thread_hook_stays_between_script_runs(tmp_path, qt_app, activi
     worker.script_added.connect(added.append)
     worker.script_failed.connect(failed.__setitem__)
     worker.script_ran.connect(lambda script_id, run: runs.append((script_id, run)))
+    settings.apply({"script_timings": True})
     try:
         worker.start()
         calls = worker.add_script(ScriptSpec('return ctx.call("Hero.AddGold", 1);'))
@@ -1653,6 +1679,8 @@ def test_the_game_thread_hook_stays_between_script_runs(tmp_path, qt_app, activi
         assert not failed
         hooked = None
         for expected in range(101, 106):
+            if expected == 104:
+                settings.apply({"script_timings": False})  # reaches the running agent
             runs.clear()
             worker.run_now(calls)
             _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
@@ -1667,6 +1695,7 @@ def test_the_game_thread_hook_stays_between_script_runs(tmp_path, qt_app, activi
             assert hooked in (None, entry)  # not rewritten anew
             hooked = entry
     finally:
+        settings.apply({"script_timings": False})
         worker.requestInterruption()
         worker.wait(5000)
         target.close()
@@ -1674,6 +1703,26 @@ def test_the_game_thread_hook_stays_between_script_runs(tmp_path, qt_app, activi
     steps = [entry["event"] for entry in _events(activity_file) if entry.get("pid") == target.pid
              and entry["event"].startswith("main_gate_")]
     assert steps == ["main_gate_pausing", "main_gate_attaching", "main_gate_attached"]
+    phases = [entry for entry in _events(activity_file) if entry.get("pid") == target.pid
+              and entry["event"] == "script_phases"]
+    # With the setting script_timings each run's timings. Right after
+    # attaching the agent found the reflection and ProcessEvent, set the hook
+    # and read the objects (script_prewarm); the first run only looks up its
+    # class and function, later runs take all of it from the caches.
+    # Switched off, runs 4 and 5 are not measured.
+    [prewarm] = [entry for entry in _events(activity_file) if entry.get("pid") == target.pid
+                 and entry["event"] == "script_prewarm"]
+    for phase in ("name_pool", "object_array", "layout", "snapshot", "process_event",
+                  "main_gate"):
+        assert prewarm[f"{phase}_count"] == 1 and prewarm[f"{phase}_ms"] >= 0, phase
+    assert not prewarm["failed"] and prewarm["name_reads_count"] > 0
+    assert [entry["script_run"] for entry in phases] == [1, 2, 3]
+    first = phases[0]
+    assert first["find_class_count"] == 1 and first["signature_count"] == 1
+    assert not any(f"{phase}_count" in first for phase in ("name_pool", "snapshot", "main_gate"))
+    assert all(not any(key.endswith("_count") for key in entry) for entry in phases[1:])
+    assert all(entry["total_ms"] >= entry["game_thread_ms"] and not entry["failed"]
+               and isinstance(entry["run"], str) for entry in phases)
 
 
 @requires_target
@@ -1949,6 +1998,199 @@ def test_object_browser_lists_live_objects_by_class(tmp_path, qt_app):
             entry["name"] for entry in listed["classes"]}
         instances = ask("browse_instances", hero, "", True)
         assert instances["count"] == 4  # with the rival's template
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_scripts_keep_the_offsets_they_found_per_game_build(tmp_path, qt_app, activity_file,
+                                                            monkeypatch):
+    # pylint: disable=import-outside-toplevel,too-many-locals
+    from grembyte.core import settings
+    from grembyte.features import catalog_cache
+    from grembyte.features.scripts import ScriptSpec, ScriptWorker
+
+    # The first script run searched the name pool and the object table for
+    # seconds (RoboCop: 2.4 of 3.2 s). The offsets are kept per game build and
+    # only checked the next time; a wrong one is searched again and replaced.
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("GREMBYTE_CACHE_DIR", str(cache))
+    target = _Target(_build(tmp_path))
+
+    def first_run():
+        worker = ScriptWorker(target.pid)
+        added, failed, runs = [], {}, []
+        worker.script_added.connect(added.append)
+        worker.script_failed.connect(failed.__setitem__)
+        worker.script_ran.connect(lambda script_id, run: runs.append(run))
+        try:
+            worker.start()
+            calls = worker.add_script(ScriptSpec('return ctx.call("Hero.AddGold", 1);'))
+            _wait_for(qt_app, lambda: calls in added or calls in failed)
+            assert not failed
+            worker.run_now(calls)
+            _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+            assert runs[0]["error"] is None, runs[0]["error"]
+        finally:
+            worker.requestInterruption()
+            worker.wait(5000)
+        return [entry for entry in _events(activity_file) if entry.get("pid") == target.pid
+                and entry["event"] == "script_phases"][-1]
+
+    def stored():
+        [path] = cache.glob("unreal/*/*.offsets.json.gz")
+        with gzip.open(path, "rt", encoding="utf-8") as file:
+            return path, json.load(file)
+
+    settings.apply({"script_timings": True, "script_prewarm": False})
+    try:
+        searched = first_run()
+        assert searched["name_pool_count"] == 1 and searched["process_event_count"] == 1
+        path, kept = stored()
+        offsets = kept[catalog_cache.OFFSETS]
+        assert set(offsets) == {"namePool", "objectArray", "processEvent"}
+
+        checked = first_run()  # a fresh agent: only checks them
+        assert checked["stored_offsets_count"] == 2
+        assert not any(f"{phase}_count" in checked
+                       for phase in ("data_ranges", "name_pool", "object_array", "process_event"))
+
+        wrong = dict(offsets, namePool=offsets["namePool"] + 8)
+        with gzip.open(path, "wt", encoding="utf-8") as file:
+            json.dump(dict(kept, offsets=wrong), file)
+        searched_again = first_run()
+        assert searched_again["name_pool_count"] == 1
+        assert "process_event_count" not in searched_again  # the stored one still fits
+        assert stored()[1][catalog_cache.OFFSETS] == offsets
+    finally:
+        settings.apply({"script_timings": False, "script_prewarm": True})
+        target.close()
+
+
+@requires_target
+def test_a_class_newer_than_the_snapshot_is_found(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptSpec, ScriptWorker
+
+    # On the game thread a snapshot serves for minutes (reading one there
+    # stalls the game); a class it does not have yet is looked for in a
+    # fresh one.
+    target = _Target(_build(tmp_path))
+    worker = ScriptWorker(target.pid)
+    added, failed, runs = [], {}, []
+    worker.script_added.connect(added.append)
+    worker.script_failed.connect(failed.__setitem__)
+    worker.script_ran.connect(lambda script_id, run: runs.append(run))
+    try:
+        worker.start()
+        find = worker.add_script(ScriptSpec('return String(ctx.findClass("LateClass7"));'))
+        _wait_for(qt_app, lambda: find in added or find in failed)
+        assert not failed
+        worker.run_now(find)  # read the snapshot; the class is not there yet
+        _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+        assert "LateClass7" in (runs[0]["error"] or "")
+        time.sleep(1.1)  # the snapshot is older than a second
+        target.send("newclass", 7)
+        runs.clear()
+        worker.run_now(find)
+        _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+        assert runs[0]["error"] is None, runs[0]["error"]
+        assert runs[0]["result"].startswith("\"UClass@")
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_a_super_chain_in_a_circle_ends(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptSpec, ScriptWorker
+
+    # Read from memory freed since the snapshot (a level changed), a class's
+    # supers may run in a circle; walking them must end (RoboCop froze).
+    target = _Target(_build(tmp_path))
+    target.send("loop", 0)
+    worker = ScriptWorker(target.pid)
+    added, failed, runs = [], {}, []
+    worker.script_added.connect(added.append)
+    worker.script_failed.connect(failed.__setitem__)
+    worker.script_ran.connect(lambda script_id, run: runs.append(run))
+    try:
+        worker.start()
+        # A name no hero has: the search passes every object
+        find = worker.add_script(ScriptSpec('return String(ctx.find("Hero", "Nobody"));'))
+        _wait_for(qt_app, lambda: find in added or find in failed)
+        assert not failed
+        worker.run_now(find)
+        _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+        assert runs[0]["error"] is None, runs[0]["error"]
+        assert runs[0]["result"] == '"null"'
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_the_snapshot_skips_an_object_freed_while_it_is_read(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptSpec, ScriptWorker
+
+    # The snapshot is read in C; an object freed meanwhile faults there and
+    # is skipped, as the JavaScript reader skipped it, instead of ending the
+    # game. The objects after it are still found.
+    target = _Target(_build(tmp_path))
+    target.send("dangling", 0)
+    target.send("newclass", 3)  # an object after the dangling item
+    worker = ScriptWorker(target.pid)
+    added, failed, runs = [], {}, []
+    worker.script_added.connect(added.append)
+    worker.script_failed.connect(failed.__setitem__)
+    worker.script_ran.connect(lambda script_id, run: runs.append(run))
+    try:
+        worker.start()
+        find = worker.add_script(ScriptSpec(
+            'return String(ctx.find("Hero")) + " " + String(ctx.findClass("LateClass3"));'))
+        _wait_for(qt_app, lambda: find in added or find in failed)
+        assert not failed
+        worker.run_now(find)
+        _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+        assert runs[0]["error"] is None, runs[0]["error"]
+        assert "Hero" in runs[0]["result"] and "UClass@" in runs[0]["result"]
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_an_object_of_another_class_now_is_not_found(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptSpec, ScriptWorker
+
+    # The snapshot keeps each object's class as it was read. An object freed
+    # since, whose memory now holds an object of another class, is passed
+    # over: RoboCop's scripts got another object instead of the
+    # PlayerController and read its Pawn from the wrong place.
+    target = _Target(_build(tmp_path))
+    worker = ScriptWorker(target.pid)
+    added, failed, runs = [], {}, []
+    worker.script_added.connect(added.append)
+    worker.script_failed.connect(failed.__setitem__)
+    worker.script_ran.connect(lambda script_id, run: runs.append(run))
+    try:
+        worker.start()  # reads the snapshot right after attaching
+        find = worker.add_script(ScriptSpec('return String(ctx.find("BP_Hero_C", "BP_Hero_C_0"));'))
+        _wait_for(qt_app, lambda: find in added or find in failed)
+        assert not failed
+        target.send("reclass", 0)
+        worker.run_now(find)
+        _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+        assert runs[0]["error"] is None, runs[0]["error"]
+        assert runs[0]["result"] == '"null"'
     finally:
         worker.requestInterruption()
         worker.wait(5000)
