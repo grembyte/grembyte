@@ -186,6 +186,38 @@ Found with Dark Souls III (Arxan/GuardIT):
   count and timings, then `main_gate_attached` or `main_gate_failed`; `noteActivity` in
   `grembyte/agent/platform.js`), so if it hangs again, the last entry shows where.
 
+- **Two freezes on removing a trace's hooks (2026-11-19, confirmed in RoboCop the same day):**
+  RoboCop (Proton) froze for good twice on "Remove hooks" of an Unreal trace, with the
+  hooks, method-hook and script agents loaded. `stop` paused the game's threads, detached
+  the hooks and flushed. Two different causes:
+  - *A suspended thread held Frida's Interceptor lock.* Every game thread stayed suspended
+    and the agent waited on a Windows lock. Detaching takes the Interceptor lock (a critical
+    section), which each game thread takes for a moment as it enters or leaves a JavaScript
+    hook: Frida begins and ends an Interceptor transaction around each JavaScript scope,
+    outside the JavaScript lock. CModules cannot reach the lock to check it first.
+  - *`pauseThreads` wrote into freed memory.* The threads ran again, but Frida's JavaScript
+    thread, `gdbus` and another Frida thread spun for good: the JavaScript thread hit an
+    access violation inside Frida's memory allocator (dlmalloc, unlinking a free chunk with
+    a broken pointer) while holding its spin lock, and Frida's exception handler waited for
+    the same lock (`KiUserExceptionDispatcher` in the stack, read with
+    `winedbg --command "bt all"` against the game's prefix). The CONTEXT buffer for
+    `GetThreadContext` was `Memory.alloc(…).add(15).and(…)`: Frida frees an allocation once
+    the pointer `Memory.alloc` returned is collected, and the aligned pointer derived from it
+    does not keep it alive. The buffer is now kept referenced. Before, a Wine test program
+    hung in most runs of 300 pauses in a row; after, none did.
+  Changes: `trace.js` sets and removes its hooks with the threads running, and Frida writes
+  them at `Interceptor.flush()`. In the Wine test program, attaching and detaching 16 probes
+  1000 times while six threads called them ran clean in 10 of 10 runs. Only the main-thread
+  gate still pauses, once per agent, for one hook. For that pause, a watchdog thread (plain
+  C, no Frida locks) resumes the threads should the agent not have resumed them within 3 s
+  (`PAUSE_LIMIT_MS`), and logs `threads_pause_timeout` in the activity log. In the test
+  program it stepped in about once in 600 pauses of a hook cycle. There is one such thread
+  per agent, started before the first pause and ended when the agent unloads
+  (`Script.bindWeak`). The wait for it to start uses `Sleep` with the JavaScript lock kept:
+  with `Thread.sleep`, game threads in a busy JavaScript hook kept the lock from the agent.
+  Test: `tests/test_pause_watchdog.py` (Proton's wine, MinGW and the cached gadget; it
+  fails without the watchdog).
+
 ## Unity Mono adapter
 
 - **Object browser:** Unity's Mono has no way to walk its heap: `mono_gc_walk_heap` belongs to Mono's SGen collector and does nothing in the Boehm collector Unity uses. The browser uses Unity's own liveness calculation instead (`mono_unity_liveness_*`, which `Resources.UnloadUnusedAssets` uses), from the static fields and from all Unity objects, with the world stopped. Both generations of its API work: `calculation_begin`/`end` (Unity 4 to 2020) and `allocate_struct` (Unity 2021 and later, including Unity 6). The calculation runs on the game's main thread.

@@ -258,6 +258,94 @@ function noteActivity(event, fields = {}) {
 
 let threadPauser = null;
 
+// A paused section may take this long before the watchdog lets the threads
+// run on (milliseconds).
+const PAUSE_LIMIT_MS = 3000;
+// Threads the watchdog can resume; more are resumed by the agent only.
+const WATCH_CAPACITY = 4096;
+// Watch fields: eight 32-bit values, the wake-up event, then the handles.
+const WATCH_STARTED = 0, WATCH_ACTIVE = 4, WATCH_CLAIM = 8, WATCH_BEAT = 12,
+  WATCH_COUNT = 16, WATCH_LIMIT = 20, WATCH_FIRED = 24, WATCH_QUIT = 28,
+  WATCH_EVENT = 32;
+const WATCH_HANDLES = WATCH_EVENT + Process.pointerSize;
+
+const PAUSE_WATCH_SOURCE = `
+#include <glib.h>
+
+#ifdef __i386__
+# define WINAPI __attribute__ ((stdcall))
+#else
+# define WINAPI
+#endif
+
+/* kernel32's ResumeThread, Sleep and WaitForSingleObject */
+extern unsigned int WINAPI resume_thread (gpointer thread);
+extern void WINAPI sleep_ms (unsigned int milliseconds);
+extern unsigned int WINAPI wait_for (gpointer handle, unsigned int milliseconds);
+
+#define STEP_MS 10
+#define INFINITE 0xffffffff
+
+typedef struct
+{
+  volatile gint started;
+  volatile gint active;  /* a pause is on */
+  volatile gint claim;   /* who adds 1 to 0 resumes the threads */
+  volatile gint beat;
+  volatile gint count;
+  gint limit;
+  volatile gint fired;
+  volatile gint quit;
+  gpointer event;        /* wakes the watchdog for a pause, or to quit */
+  gpointer handles[1];
+} Watch;
+
+unsigned int WINAPI
+watch_pauses (gpointer data)
+{
+  Watch * w = data;
+
+  w->started = 1;
+  for (;;)
+  {
+    gint last, quiet = 0;
+
+    wait_for (w->event, INFINITE);
+    if (w->quit)
+      return 0;
+    last = w->beat;
+    while (w->active && !w->quit)
+    {
+      sleep_ms (STEP_MS);
+      if (w->beat != last)
+      {
+        last = w->beat;
+        quiet = 0;
+        continue;
+      }
+      quiet += STEP_MS;
+      if (quiet < w->limit)
+        continue;
+      if (g_atomic_int_add (&w->claim, 1) == 0)
+      {
+        gint i, n = w->count;
+
+        for (i = 0; i != n; i++)
+          resume_thread (w->handles[i]);
+        w->fired = 1;
+      }
+      break;
+    }
+  }
+}
+
+int
+claim_resume (Watch * w)
+{
+  return g_atomic_int_add (&w->claim, 1) == 0;
+}
+`;
+
 function pauseThreads() {
   // Suspend all threads but this one; the handles, with where each stands
   // (ips) and how long it took (stats). Nothing here may wait for a lock a
@@ -268,6 +356,12 @@ function pauseThreads() {
   //   was suspended holding it, and the agent waited for it for good when
   //   SuspendThread returned (RoboCop under Proton, 2026-11-17).
   // - The CONTEXT buffer is allocated once, before any thread is suspended.
+  // What the caller does while the threads are paused may still need a lock
+  // of Frida's that a game thread was suspended with: each game thread
+  // entering or leaving a JavaScript hook takes the Interceptor's lock for a
+  // moment, and attaching or detaching takes it too (RoboCop hung for good
+  // removing a trace's hooks, 2026-11-19). A watchdog thread lets the
+  // threads run on when the caller is not done after PAUSE_LIMIT_MS.
   if (Process.platform !== 'windows')
     return null;
   // CONTEXT differs between x64 and x86 in size, layout and flag values.
@@ -276,6 +370,11 @@ function pauseThreads() {
   const CONTEXT_CONTROL = wide ? 0x100001 : 0x10001;
   if (threadPauser === null) {
     const kernel32 = Process.getModuleByName('kernel32.dll');
+    // Kept referenced: Frida frees what Memory.alloc returned once that
+    // pointer object is collected, and a pointer derived from it (the
+    // aligned one) does not keep it alive. GetThreadContext then wrote into
+    // freed memory of Frida's heap, which broke it (RoboCop, 2026-11-19).
+    const contextMemory = Memory.alloc(CONTEXT_SIZE + 16);
     const exclusive = { scheduling: 'exclusive' };
     const fn = (name, ret, args) =>
       new NativeFunction(kernel32.getExportByName(name), ret, args, exclusive);
@@ -285,9 +384,14 @@ function pauseThreads() {
       resume: fn('ResumeThread', 'uint32', ['pointer']),
       context: fn('GetThreadContext', 'int', ['pointer', 'pointer']),
       close: fn('CloseHandle', 'int', ['pointer']),
+      // Thread.sleep would give up the JavaScript lock, which game threads in
+      // a busy hook may then keep from this one for long.
+      sleep: fn('Sleep', 'void', ['uint32']),
+      contextMemory,
       // CONTEXT must be 16-byte aligned.
-      contextBuffer: Memory.alloc(CONTEXT_SIZE + 16).add(15)
-        .and(ptr(wide ? '0xfffffffffffffff0' : '0xfffffff0'))
+      contextBuffer: contextMemory.add(15)
+        .and(ptr(wide ? '0xfffffffffffffff0' : '0xfffffff0')),
+      watch: startPauseWatch(kernel32, fn)
     };
   }
   const THREAD_SUSPEND_RESUME = 0x0002, THREAD_GET_CONTEXT = 0x0008;
@@ -295,11 +399,13 @@ function pauseThreads() {
   const t = threadPauser;
   const context = t.contextBuffer;
   const self = Process.getCurrentThreadId();
+  const watch = beginWatch(t.watch);
   const threads = Process.enumerateThreads();
   const handles = [];
+  handles.watch = watch;
   const began = Date.now();
   for (const thread of threads) {
-    if (thread.id === self)
+    if (thread.id === self || (watch !== null && thread.id === watch.id))
       continue;
     const handle = t.open(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, 0, thread.id);
     if (handle.isNull())
@@ -309,6 +415,13 @@ function pauseThreads() {
       continue;
     }
     handles.push(handle);
+    if (watch !== null && handles.length <= WATCH_CAPACITY) {
+      // The handle before the count: the watchdog reads only what is counted.
+      const memory = watch.memory;
+      memory.add(WATCH_HANDLES + (handles.length - 1) * Process.pointerSize)
+        .writePointer(handle);
+      memory.add(WATCH_COUNT).writeS32(handles.length);
+    }
   }
   const suspended = Date.now();
   // SuspendThread only asks the thread to stop; reading its context returns
@@ -329,12 +442,109 @@ function pauseThreads() {
   return handles;
 }
 
+function startPauseWatch(kernel32, fn) {
+  // The watchdog of this agent's pauses: one thread of plain C (no Frida
+  // locks, no JavaScript) for the agent's lifetime. It waits for an event,
+  // and during a pause resumes the paused threads once the agent has not
+  // resumed them within PAUSE_LIMIT_MS. Started before any thread is paused, and
+  // kept: a thread starting or ending runs code of every DLL (Frida's, too)
+  // under the loader's lock, which a paused thread may hold. Null if it
+  // cannot start: pauses then go on without.
+  const create = fn('CreateThread', 'pointer',
+                    ['pointer', 'size_t', 'pointer', 'pointer', 'uint32', 'pointer']);
+  const createEvent = fn('CreateEventW', 'pointer', ['pointer', 'int', 'int', 'pointer']);
+  const setEvent = fn('SetEvent', 'int', ['pointer']);
+  const wait = fn('WaitForSingleObject', 'uint32', ['pointer', 'uint32']);
+  const close = fn('CloseHandle', 'int', ['pointer']);
+  const sleep = fn('Sleep', 'void', ['uint32']);
+  const cm = new CModule(PAUSE_WATCH_SOURCE, {
+    resume_thread: kernel32.getExportByName('ResumeThread'),
+    sleep_ms: kernel32.getExportByName('Sleep'),
+    wait_for: kernel32.getExportByName('WaitForSingleObject')
+  });
+  const memory = Memory.alloc(WATCH_HANDLES + Process.pointerSize * WATCH_CAPACITY);
+  memory.add(WATCH_LIMIT).writeS32(PAUSE_LIMIT_MS);
+  const event = createEvent(NULL, 0, 0, NULL);  // auto-reset
+  if (event.isNull())
+    return null;
+  memory.add(WATCH_EVENT).writePointer(event);
+  const threadId = Memory.alloc(4);
+  const thread = create(NULL, 0, cm.watch_pauses, memory, 0, threadId);
+  if (thread.isNull()) {
+    close(event);
+    return null;
+  }
+  const START_MS = 1000;
+  const deadline = Date.now() + START_MS;
+  while (memory.add(WATCH_STARTED).readS32() === 0 && Date.now() < deadline)
+    sleep(1);
+  const watch = {
+    cm, memory, event, thread, id: threadId.readU32(), setEvent, sleep,
+    claim: new NativeFunction(cm.claim_resume, 'int', ['pointer'], { scheduling: 'exclusive' }),
+    began: 0
+  };
+  // Out of other agents' Process.enumerateThreads(): their pauses leave it be.
+  try {
+    Cloak.addThread(watch.id);
+  } catch (_error) {
+    // Older Frida: the others may suspend it, which only matters to this one.
+  }
+  // End it before the agent unloads and its C code goes.
+  Script.bindWeak(watch, () => {
+    memory.add(WATCH_QUIT).writeS32(1);
+    setEvent(event);
+    wait(thread, START_MS);
+    close(thread);
+    close(event);
+  });
+  return watch;
+}
+
+function beginWatch(watch) {
+  // Arm the watchdog for a pause; null if there is none or it is busy.
+  if (watch === null || watch.memory.add(WATCH_ACTIVE).readS32() !== 0)
+    return null;
+  const memory = watch.memory;
+  memory.add(WATCH_COUNT).writeS32(0);
+  memory.add(WATCH_FIRED).writeS32(0);
+  memory.add(WATCH_CLAIM).writeS32(0);
+  pauseHeartbeatOf(watch);
+  memory.add(WATCH_ACTIVE).writeS32(1);
+  watch.setEvent(watch.event);
+  watch.began = Date.now();
+  return watch;
+}
+
+function pauseHeartbeatOf(watch) {
+  const beat = watch.memory.add(WATCH_BEAT);
+  beat.writeS32((beat.readS32() + 1) | 0);
+}
+
 function resumeThreads(paused) {
   if (paused === null)
     return;
-  for (const handle of paused) {
-    threadPauser.resume(handle);
-    threadPauser.close(handle);
+  const t = threadPauser;
+  const watch = paused.watch;
+  // Whoever claims first resumes the threads: this agent or the watchdog.
+  const mine = watch === null || watch.claim(watch.memory) !== 0;
+  if (mine) {
+    for (const handle of paused)
+      t.resume(handle);
+  } else {
+    // The watchdog is at it: wait until it is through before the handles go.
+    const deadline = Date.now() + PAUSE_LIMIT_MS;
+    while (watch.memory.add(WATCH_FIRED).readS32() === 0 && Date.now() < deadline)
+      t.sleep(1);
+  }
+  if (watch !== null)
+    watch.memory.add(WATCH_ACTIVE).writeS32(0);
+  for (const handle of paused)
+    t.close(handle);
+  if (!mine) {
+    noteActivity('threads_pause_timeout', {
+      threads: paused.length, paused_ms: Date.now() - watch.began,
+      limit_ms: PAUSE_LIMIT_MS
+    });
   }
 }
 

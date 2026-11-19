@@ -56,20 +56,13 @@ let trace = null;
 // Stopped traces: a game thread may still be in their code, writing to their
 // memory.
 const retired = [];
-// The agent's own thread (RPCs run there); hooks run on game threads.
-const AGENT_THREAD = Process.getCurrentThreadId();
-
-function pauseForHooking() {
-  // Many hooks change at once: stop the game's threads meanwhile, so none
-  // enters code Frida is still changing (see pauseThreads). Never from a game
-  // thread: it may hold locks the others need.
-  return Process.getCurrentThreadId() === AGENT_THREAD ? pauseThreads() : null;
-}
-
-function resumeAfterHooking(paused) {
-  Interceptor.flush();  // write the pending changes before the game runs on
-  resumeThreads(paused);
-}
+// The game's threads keep running while hooks are set or removed: Frida
+// collects the changes and writes them at Interceptor.flush(). With the
+// threads paused (pauseThreads), a game thread suspended while it held
+// Frida's Interceptor lock left the agent waiting for it: RoboCop froze for
+// good removing a trace's hooks (2026-11-19). A Wine test program set and
+// removed hooks 1000 times in a row cleanly without pausing (see the
+// implementation notes).
 
 // assembly -> tokens of the methods to trace next, sent in parts (choose):
 // one message to Frida's gadget under Wine must stay below 128 KiB.
@@ -154,12 +147,11 @@ async function prepare(spec) {
     ...memory, cm, now: new NativeFunction(cm.now, 'int64', []),
     methods: [], listeners: [], starts: [], phase: null, baseline: null
   };
-  const paused = pauseForHooking();
   let counts;
   try {
     counts = await attachAll(codes, chosen, cm);
   } finally {
-    resumeAfterHooking(paused);
+    Interceptor.flush();
   }
   trace.starts.sort((a, b) => a.compare(b));
   updateUnmapWatch();
@@ -335,12 +327,11 @@ function stop() {
   const t = trace;
   trace = null;
   t.state.writeS32(0);
-  const paused = pauseForHooking();
   try {
     for (const listener of t.listeners)
       listener.detach();
   } finally {
-    resumeAfterHooking(paused);
+    Interceptor.flush();
   }
   engine.releaseCode();
   retired.push(t);
