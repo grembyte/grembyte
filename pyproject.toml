@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = ["pytest", "pytest-timeout", "pytest-xdist", "ast-grep-cli"]
 docs = ["mkdocs-material", "mkdocs-glightbox"]
 
 [project.scripts]
@@ -45,3 +45,16 @@ include = ["grembyte*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A test that deadlocks (attach, paused threads) fails instead of hanging the run.
+# "thread" also fires while the main thread waits in native code (Frida), where
+# a signal handler would never run, and dumps every thread's stack; it ends the
+# run (or the xdist worker) though. Longer tests: @pytest.mark.timeout(seconds).
+timeout = 120
+timeout_method = "thread"
+
+# For editors and the Claude Code LSP plugin: resolve imports from the project's
+# virtual environment; "basic" keeps the reports to likely bugs.
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "basic"

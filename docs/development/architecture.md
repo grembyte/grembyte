@@ -46,6 +46,8 @@ flowchart BT
 
 A feature's agent is put together from parts: the platform helpers (`agent/platform.js` with `agent/messages.js`), the engine prelude, every engine adapter's agent, the engine facade, and the feature's own script. The engine adapters register themselves; the facade picks the one whose runtime the game has loaded, so features use one `engine` object whatever the engine.
 
+Python calls an agent through Frida's RPC (`rpc.exports`, called as `script.exports_sync.<name>` in snake case). The [agent interface](agent-interface.md) lists every agent's exports and where Python calls them; `scripts/agent_interface.py` writes that page, and `tests/test_agent_interface.py` fails when it is out of date.
+
 Under Wine/Proton the agents run in Frida's Windows gadget. The gadget drops messages larger than 128 KiB, so `attach/frida_attach.py` sends larger agents in parts.
 
 ## Built-in hook templates

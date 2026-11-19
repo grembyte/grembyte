@@ -1,6 +1,14 @@
 """Settings every test shares."""
 
+import os
+
 import pytest
+
+# Every QApplication of the tests renders offscreen, whichever test creates it
+# first in a process. On the desktop's display, windows open on the user's
+# screen and the window manager applies resizes late, which fails layout tests
+# when the machine is busy (pytest -n auto).
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 @pytest.fixture(autouse=True)
