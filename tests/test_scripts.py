@@ -340,6 +340,8 @@ class _FakeScriptWorker:
             instances_failed = Signal(int, str)
             references_resolved = Signal(int, object)
             references_failed = Signal(int, str)
+            statics_read = Signal(int, object)
+            statics_failed = Signal(int, str)
             finished = Signal()
 
         self.signals = Signals()
@@ -370,6 +372,8 @@ class _FakeScriptWorker:
         self.instances_failed = self.signals.instances_failed
         self.references_resolved = self.signals.references_resolved
         self.references_failed = self.signals.references_failed
+        self.statics_read = self.signals.statics_read
+        self.statics_failed = self.signals.statics_failed
         self.finished = self.signals.finished
         self.requests = []
 
@@ -422,6 +426,10 @@ class _FakeScriptWorker:
 
     def browse_classes(self, filter_text="", internal=False):
         self.requests.append(("browse_classes", filter_text, internal))
+        return len(self.requests)
+
+    def static_fields(self, class_name):
+        self.requests.append(("static_fields", class_name))
         return len(self.requests)
 
     def browse_instances(self, klass, filter_text="", internal=False):

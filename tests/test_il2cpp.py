@@ -709,3 +709,37 @@ def test_field_catalog_lists_the_fields_each_class_declares(tmp_path, qt_app):
         assert all(field.engine == "il2cpp" for field in fields.values())
     finally:
         target.close()
+
+
+@requires_target
+def test_static_fields_of_a_class_are_read(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptWorker
+    from grembyte.ui.widgets.field_value import write_field
+
+    target = _Target(_build(tmp_path))
+    worker = ScriptWorker(target.pid)
+    answers, failed = [], []
+    worker.statics_read.connect(lambda _request, answer: answers.append(answer))
+    worker.statics_failed.connect(lambda _request, message: failed.append(message))
+
+    def statics(class_name):
+        answers.clear()
+        failed.clear()
+        worker.static_fields(class_name)
+        _wait_for(qt_app, lambda: answers or failed)
+        assert not failed, failed
+        return answers[0]
+
+    try:
+        worker.start()
+        [instances] = statics("Game.Hero")
+        assert (instances["name"], instances["storage"], instances["valueType"]) == (
+            "Instances", "data", "int32")
+        old = int(instances["value"]["text"])
+        write_field(target.pid, instances["edit"], str(old + 5))
+        assert statics("Game.Hero")[0]["value"]["text"] == str(old + 5)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
