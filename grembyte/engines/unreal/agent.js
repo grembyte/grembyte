@@ -2546,9 +2546,19 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     // agent's thread (the script agent, setting script_prewarm): the
     // reflection, ProcessEvent with the game-thread hook, and a snapshot of
     // the objects. Without it the first run waited seconds for them.
+    // Each step goes to the activity log as it begins (prewarm_step), so a
+    // game that hangs here shows in which (RoboCop froze in a prewarm,
+    // 2026-11-20).
+    const step = name => noteActivity('prewarm_step', { step: name });
+    step('reflection');
     reflection();
+    step('process_event');
+    findProcessEvent();
+    step('main_gate');
     ensureMainGate();
+    step('objects');
     objects();
+    step('done');
     return true;
   }
 

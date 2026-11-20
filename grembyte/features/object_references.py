@@ -323,9 +323,6 @@ class ReferenceGraph:
                       if edge.holder in reached and edge.held in reached]
         return removed
 
-    def holders_of(self, key):
-        return [edge for edge in self.edges if edge.held == key]
-
     def following(self, key):
         """``[(edge, key)]``: the nodes ``key`` leads to, away from the target."""
         if self.direction == HOLDERS:

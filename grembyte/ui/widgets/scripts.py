@@ -69,11 +69,11 @@ MAX_LOG_LINES = 2000
 # Characters of a result the table shows
 MAX_RESULT_TEXT = 120
 
-# The code a new script starts with: an example for the test game HermesQuest
+# The code a new script starts with: an example for the test game GrembyteQuest
 # (see docs/examples/hermesquest-scripts.md).
 EXAMPLE = """\
-// HermesQuest: heal the player by 10 health
-const player = ctx.static("HermesQuest.GameState.Current").Player;
+// GrembyteQuest: heal the player by 10 health
+const player = ctx.static("GrembyteQuest.GameState.Current").Player;
 const healed = player.Heal(10);
 return `Healed ${healed.toFixed(1)} health`;
 """

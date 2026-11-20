@@ -182,8 +182,10 @@ Found with Dark Souls III (Arxan/GuardIT):
   hook's JavaScript could take it and be suspended holding it, and the agent then waited
   for it for good. The calls now keep the lock (`scheduling: 'exclusive'`), and the
   `CONTEXT` buffer is allocated before any thread is suspended. Setting the hook writes its
-  steps into the activity log (`main_gate_pausing`, `main_gate_attaching` with the thread
-  count and timings, then `main_gate_attached` or `main_gate_failed`; `noteActivity` in
+  steps into the activity log (`main_gate_preparing` with `step` `main_thread`, finding the
+  main thread through Windows calls for each thread, and `cmodule`, compiling the C code;
+  then `main_gate_pausing`, `main_gate_attaching` with the thread count and timings, then
+  `main_gate_attached` or `main_gate_failed`; `noteActivity` in
   `grembyte/agent/platform.js`), so if it hangs again, the last entry shows where.
 
 - **Two freezes on removing a trace's hooks (2026-11-19, confirmed in RoboCop the same day):**
@@ -422,7 +424,11 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
     is in UObject's vtable), else searched as before. The layout is measured anew (20 ms).
   - *Prepared on attach* (setting `script_prewarm`): the script agent finds the reflection,
     sets the game-thread hook and reads a snapshot right after attaching (`script_prewarm`
-    in the activity log). Before handing work to the game thread, `onMainThread` reads a
+    in the activity log). Each step is noted as it begins (`prewarm_step`: `reflection`,
+    `process_event`, `main_gate`, `objects`, `done`): RoboCop once froze in a prewarm right
+    after the game started (2026-11-20), after `use_stored_offsets` and before
+    `main_gate_pausing`, and the log could not tell which step it was. Before handing work
+    to the game thread, `onMainThread` reads a
     snapshot about to run out anew on the agent's thread.
   - *The snapshot in C*: a CModule loop over the chunks writes each field into an array of
     its own (addresses as doubles), which JavaScript takes over as typed arrays; an object
@@ -588,8 +594,11 @@ of a session are recorded by proxies around Frida's session and script in `attac
 connects new controls every 500 ms (not an event filter: for a Python filter PyQt wraps the
 receiver of every event, also widgets being destroyed, and crashed in sip doing so).
 Snapshots of the game's threads (`/proc/<pid>/task/*`: state, CPU, system call) 1 s after a
-native trace starts, at `stop` and when a session is cut; the results of every trace phase
-in numbers. From three calls of the same method within 2 s, RPCs are summed up. It can be
+native trace starts, at `stop`, when a session is cut, and when an RPC has not returned
+after 10 s (`why: rpc_hanging`, with the calls in `rpcs`; once per call, from a watchdog
+thread that checks every second, `check_hangs`). A frozen game is usually killed by hand
+afterwards; the entry is written before that, so it shows who waited for whom. The results
+of every trace phase in numbers. From three calls of the same method within 2 s, RPCs are summed up. It can be
 switched off in the settings.
 
 - Learned: an agent whose `unload` waits for a thread blocked in Stalker's code shows up as

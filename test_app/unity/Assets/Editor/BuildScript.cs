@@ -5,30 +5,30 @@ using UnityEditor.Build.Reporting;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 
-namespace HermesQuest.Editor
+namespace GrembyteQuest.Editor
 {
     // Release builds with the Mono backend, like a shipped game: no development
     // build, no script debugging. From the command line:
     //     Unity -batchmode -quit -projectPath test_app/unity \
-    //           -executeMethod HermesQuest.Editor.BuildScript.BuildAll
+    //           -executeMethod GrembyteQuest.Editor.BuildScript.BuildAll
     public static class BuildScript
     {
         const string ScenePath = "Assets/Scenes/Main.unity";
-        const string ProductName = "HermesQuest";
+        const string ProductName = "GrembyteQuest";
 
-        [MenuItem("HermesQuest/Build Linux")]
+        [MenuItem("GrembyteQuest/Build Linux")]
         public static void BuildLinux()
         {
             Build(BuildTarget.StandaloneLinux64, "Build/Linux/" + ProductName + ".x86_64");
         }
 
-        [MenuItem("HermesQuest/Build Windows")]
+        [MenuItem("GrembyteQuest/Build Windows")]
         public static void BuildWindows()
         {
             Build(BuildTarget.StandaloneWindows64, "Build/Windows/" + ProductName + ".exe");
         }
 
-        [MenuItem("HermesQuest/Build All")]
+        [MenuItem("GrembyteQuest/Build All")]
         public static void BuildAll()
         {
             BuildLinux();
@@ -48,7 +48,7 @@ namespace HermesQuest.Editor
 
         static void ConfigurePlayer()
         {
-            PlayerSettings.companyName = "Hermes";
+            PlayerSettings.companyName = "Grembyte";
             PlayerSettings.productName = ProductName;
             PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, ScriptingImplementation.Mono2x);
             PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
