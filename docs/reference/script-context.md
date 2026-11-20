@@ -10,6 +10,8 @@ The object a script in the [Scripts](../guide/scripts.md) tab receives. It is se
 | `ctx.object(address)` | The object at an address as a [wrapper](#object-wrappers), its class read from the object itself; `null` for a null pointer. The address is a `NativePointer`, a number or a text like `"0x7f12…"`. For pointers the reflection does not name, e.g. `ctx.object(player.address.add(0x17d0).readPointer())`. |
 | `ctx.isPlaying()` | Unreal: whether the player is in the game – a local player controller with a pawn, the game not paused, and the camera on the pawn. `false` in the main menu, the pause menu, usually in cutscenes and while loading. Menus that neither pause the game nor move the camera (an inventory in some games) are not noticed. |
 | `ctx.outerName(object)` | Unreal: get an object's name including its outer, useful with `ctx.find`. |
+| `ctx.enum(enumName)` | Unreal and Mono: the values of an enum by their names, e.g. `ctx.enum("ELSecondStat").E_HEALTH_POINT_MAX` is `71`. Unreal names the enum as the object inspector shows it (`ELSecondStat`), without the prefix of its values and without UHT's `_MAX`; Mono by its full class name (`Game.DamageType`). A value with several names keeps the first. IL2CPP does not name the values of enums: use the numbers there. See [below](#enums-and-unreal-arrays). |
+| `ctx.enumName(enumName, value)` | Unreal and Mono: the name of an enum's value, e.g. `ctx.enumName("ELSecondStat", 71)` is `"E_HEALTH_POINT_MAX"`; `null` if no value has that number. |
 | `ctx.call(method, ...args)` | Call a static game method, by a dotted name or the `Namespace.Class:Method` form shown in catalogs. A parameter list after it, as **Copy signature** gives it, is ignored: the method taking as many arguments as given is called. |
 | `ctx.static(field)` | Mono and IL2CPP: read a static field, e.g. `ctx.static("HermesQuest.GameState.Current")` – the way to objects that are no Unity objects. |
 | `ctx.gas` | Unreal games with the Gameplay Ability System: `attributes()` lists the sets; `get(name)` returns `{base, current}`, or `null` if there is no player; `setBase(name, value)` changes the base value through the game's code, keeping active effects; `findSet(regex)` returns the name of the player's first set the regular expression (a `RegExp` or its text) matches, or `null`. Names are `"Attribute"` or `"Set.Attribute"`; a set whose object Unreal numbers anew on every load (`AttributeSet_Health_2147445233`) is also found without the number (`"AttributeSet_Health.Health"`). |
@@ -40,6 +42,37 @@ Objects of the game – from `ctx.find`, `ctx.forEach`, `ctx.static` and method 
 The wrapper's own names come first: `name`, `className`, `address`, `field`, `get`, `call` and `component`. If the game has a field or method of one of these names, use `.field("name")`, `.get("name")` or `.call("name", …)`.
 
 A wrapper returned from the script is shown as the result and can be opened in the object inspector.
+
+## Enums and Unreal arrays
+
+An enum field reads as its number. `ctx.enum` turns names into numbers, `ctx.enumName` numbers into names; the names are read once and kept, so both are quick in a loop too. In Unreal games, scripts look an enum up before their next run on Grembyte's own thread, as they do with classes, so the game's thread does not search for it.
+
+An Unreal `TArray` reads as a JavaScript array; an array of structs as wrappers of its elements, whose fields can be read and written like an object's. Lies of P, for example, keeps the player's values in a list of 196 entries, one per `ELSecondStat`:
+
+```js title="Unreal: change a stat of the player by the enum's name"
+const STAT = ctx.enum("ELSecondStat");          // { E_DEFAULT: 1, …, E_HEALTH_POINT_MAX: 71, … }
+const list = ctx.find("PlayerController").Pawn.StatComponent.StatDataList.StatList;
+const stat = type => list.find(entry => entry.StatType === type);
+
+stat(STAT.E_WEIGHT_LIMIT).Value = 2000;
+ctx.log(ctx.enumName("ELSecondStat", 71));      // "E_HEALTH_POINT_MAX"
+```
+
+```js title="Unreal: list the values that are set, by name"
+const list = ctx.find("PlayerController").Pawn.StatComponent.StatDataList.StatList;
+for (const entry of list) {
+  if (entry.Value !== 0)
+    ctx.log(ctx.enumName("ELSecondStat", entry.StatType), entry.Value);
+}
+```
+
+```js title="The names of all values at once, by number"
+const names = Object.fromEntries(
+  Object.entries(ctx.enum("ELSecondStat")).map(([name, value]) => [value, name]));
+names[71];   // "E_HEALTH_POINT_MAX"
+```
+
+Going through the player's controller (`ctx.find("PlayerController").Pawn`) finds the player's own list: `ctx.find("LStatList")` alone may give an enemy's. The list is made anew when the game loads a save or an area, so a repeating script looks it up on every run rather than keeping it.
 
 ## Memory at an address
 
