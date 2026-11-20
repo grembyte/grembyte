@@ -157,7 +157,7 @@ def test_hidden_objects_and_classes_are_left_out_and_gone_around():
                                                       "object": "0x10800", "klass": "0x77"})
     graph.nodes[target].expanded = False
     graph.add_holders(target, [(other, "a"), (single, "b")], 2, limit=1)
-    assert [edge.holder for edge in graph.holders_of(target)][-1] == single.key
+    assert [holder for _edge, holder in graph.following(target)][-1] == single.key
     graph.only_classes = None
     assert graph.path_from(boot.key) == [boot.key, loader.key, target]
 
@@ -324,7 +324,7 @@ def test_window_unfolds_holders_and_marks_the_way_to_a_root(qt_app, monkeypatch)
         assert dialog.busy.is_busy()  # until the last batch is back
         worker.references_resolved.emit(len(worker.requests), [{"kind": "unknown"}])
         assert not dialog.busy.is_busy()
-        assert len(dialog.graph.holders_of(dialog.graph.target)) == 4
+        assert len(dialog.graph.following(dialog.graph.target)) == 4
         assert boot.key in dialog.graph.nodes
 
         # Reading again starts from the object alone
