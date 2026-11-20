@@ -2778,6 +2778,71 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
 
   const classesByName = new Map();
 
+  // --- Enums by name (ctx.enum) ----------------------------------------------
+  const enumsByName = new Map();
+
+  function isEnumClass(klass, cache) {
+    // Whether objects of class ``klass`` are enums: it is Enum or derives
+    // from it (UserDefinedEnum of Blueprints)
+    let result = cache.get(klass);
+    if (result === undefined) {
+      result = false;
+      try {
+        for (const current of superChain(klass)) {
+          if (sameName(nameOfAddress(current), 'Enum')) {
+            result = true;
+            break;
+          }
+        }
+      } catch (_error) {
+        // freed since the snapshot was read
+      }
+      cache.set(klass, result);
+    }
+    return result;
+  }
+
+  function searchEnum(name) {
+    if (isGameThread())
+      phaseEntry('game_thread_search').count++;
+    const s = objects();
+    const kinds = new Map();
+    for (let i = 0; i < s.address.length; i++) {
+      if (s.outer[i] === 0 || !isEnumClass(s.klass[i], kinds))
+        continue;
+      if (sameName(objectName(s, i), name))
+        return ptr(s.address[i]);
+    }
+    return null;
+  }
+
+  function findEnum(name) {
+    // A loaded UEnum by its name, e.g. "ELSecondStat"; found once, then kept
+    // while it lives. Scripts' runs look it up before the run (lookups).
+    reflection();
+    const lookup = ['enum', name];
+    noteLookup(lookup);
+    const cached = enumsByName.get(name);
+    if (cached !== undefined && isObject(cached))
+      return cached;
+    if (trustedMissing(lookup))
+      throw grembyteError('error.unreal.no_enum', { name });
+    const uenum = timed('find_enum', () => retryFresh(() => searchEnum(name)));
+    noteFound(lookup, uenum !== null);
+    if (uenum === null)
+      throw grembyteError('error.unreal.no_enum', { name });
+    enumsByName.set(name, uenum);
+    return uenum;
+  }
+
+  function enumValuesNamed(name) {
+    // { "1": "E_DEFAULT", ... } of the enum ``name`` (see enumValues)
+    const values = enumValues(findEnum(name));
+    if (values === null)
+      throw grembyteError('error.unreal.enum_unreadable', { name });
+    return values;
+  }
+
   function findClass(name) {
     // A loaded class (or struct) by its name, e.g. "AlabamaCheatManager".
     reflection();
@@ -2802,7 +2867,8 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
   // the next run (prepareLookups), so the game thread finds them cached and
   // never reads the object table itself: a search there stalled RoboCop for
   // 130-260 ms about once a minute (2026-11-20). A lookup is
-  // ['class', name], ['object', className, named] or ['objects', className].
+  // ['class', name], ['object', className, named], ['objects', className]
+  // or ['enum', name] (ctx.enum).
 
   // key -> lookup while a script runs on the game thread, else null
   let recorded = null;
@@ -2879,6 +2945,11 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
 
   function prepareLookup(lookup, eager) {
     const [kind, name, named = null] = lookup;
+    if (kind === 'enum') {
+      if (searchAgain(lookup, eager))
+        findEnum(name);
+      return;
+    }
     // An object of a class not loaded is missing as long as its class
     if (!searchAgain(['class', name], eager) || (kind !== 'class' && !searchAgain(lookup, eager)))
       return;
@@ -3805,6 +3876,7 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     assemblies,
     classes,
     fields,
+    enumValuesNamed,
     methodsByToken,
     nativeSymbols,
     functionCalls,

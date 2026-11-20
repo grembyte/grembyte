@@ -54,6 +54,11 @@ The body gets one ``ctx`` object:
                      name of the first set matching, or null
     ctx.findClass("ClassName")   Unreal: the class itself, e.g. for a
                      TSubclassOf parameter: ctx.findClass("ItFo_Potion_Health_03")
+    ctx.enum("EnumName")   Unreal, Mono: the values of an enum by their names,
+                     ctx.enum("ELSecondStat").E_HEALTH_POINT_MAX is 71;
+                     ctx.enumName("ELSecondStat", 71) the name of a value
+                     (null if it has none). Unreal: found before the run on
+                     the agent's thread, as classes (see lookups)
     ctx.native       machine code, in any game: module(name?) (the executable
                      by default, also under Wine), scan(pattern, module?)
                      (the one address of "48 8B ?? 05"-style bytes; none or

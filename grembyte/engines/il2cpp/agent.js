@@ -1274,6 +1274,11 @@ const il2cpp = (() => {
     assemblies,
     classes,
     fields,
+    // The names of an enum's values are in the metadata's constants, which
+    // the IL2CPP API does not give (ctx.enum)
+    enumValuesNamed: name => {
+      throw grembyteError('error.il2cpp.no_enum_names', { name });
+    },
     methodsByToken,
     nativeSymbols,
     // Ahead-of-time code: nothing hangs, nothing to compile or undo.

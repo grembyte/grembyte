@@ -2312,3 +2312,41 @@ def test_field_catalog_lists_the_uproperties_each_class_declares(tmp_path, qt_ap
         assert all(field.engine == "unreal" and not field.static for field in fields.values())
     finally:
         target.close()
+
+
+@requires_target
+def test_scripts_name_the_values_of_unreal_enums(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptSpec, ScriptWorker
+
+    target = _Target(_build(tmp_path))
+    worker = ScriptWorker(target.pid)
+    added, runs = [], []
+    worker.script_added.connect(added.append)
+    worker.script_ran.connect(lambda script_id, run: runs.append((script_id, run)))
+
+    def run(source):
+        script_id = worker.add_script(ScriptSpec(source))
+        _wait_for(qt_app, lambda: script_id in added)
+        runs.clear()
+        worker.run_now(script_id)
+        _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+        return runs[0][1]
+
+    try:
+        worker.start()
+        # The names without the enum's prefix and without UHT's _MAX
+        result = run('const a = ctx.enum("EPrimaryAttribute");'
+                     ' return [JSON.stringify(a), ctx.enumName("EPrimaryAttribute", 2),'
+                     ' ctx.enumName("EPrimaryAttribute", 7)].join(" ");')
+        assert result["error"] is None, result["error"]
+        assert json.loads(result["result"]) == '{"Might":0,"Dexterity":2} Dexterity '
+        # Found before the next run on the agent's thread, as classes are
+        again = run('return ctx.enum("EPrimaryAttribute").Dexterity;')
+        assert again["result"] == "2"
+        missing = run('return ctx.enum("ENope");')
+        assert "error.unreal.no_enum:{\"name\":\"ENope\"}" in missing["error"]
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()

@@ -2142,6 +2142,8 @@ function hookBefore(hook, invocation) {
     object: objectAt,
     isPlaying,
     outerName,
+    enum: scriptEnum,
+    enumName: scriptEnumName,
     log: (...items) => { logs.push(formatHookLog(items)); }
   };
   let error = null;
@@ -2243,6 +2245,8 @@ function hookLeave(hook, invocation, retval) {
     object: objectAt,
     isPlaying,
     outerName,
+    enum: scriptEnum,
+    enumName: scriptEnumName,
     log: (...items) => { logs.push(formatHookLog(items)); }
   };
   let returned;
@@ -2551,6 +2555,8 @@ function scriptContext(script, logs, args) {
     isPlaying,
     outerName,
     findClass: scriptClass,
+    enum: scriptEnum,
+    enumName: scriptEnumName,
     call: staticCall,
     static: staticField,
     gas: scriptGas,
@@ -2562,6 +2568,23 @@ function scriptContext(script, logs, args) {
     runs: script.runs,
     scriptId: script.id
   };
+}
+
+function scriptEnum(name) {
+  // ctx.enum("ELSecondStat"): { E_HEALTH_POINT_MAX: 71, ... }, the values of
+  // an enum by their names (Unreal, Mono); the first name of a value wins
+  const result = {};
+  for (const [value, label] of Object.entries(engine.enumValuesNamed(String(name)))) {
+    if (!(label in result))
+      result[label] = Number(value);
+  }
+  return result;
+}
+
+function scriptEnumName(name, value) {
+  // ctx.enumName("ELSecondStat", 71): "E_HEALTH_POINT_MAX", or null
+  const label = engine.enumValuesNamed(String(name))[String(value)];
+  return label === undefined ? null : label;
 }
 
 function scriptClass(name) {

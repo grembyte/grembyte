@@ -31,6 +31,8 @@ The function gets one ``ctx`` object:
     ctx.forEach("ClassName", obj => ...)   every object ctx.find could give
     ctx.outerName(obj)   Unreal: "AttributeStatsWidget.PointsAvailableTracker",
                      a name ctx.find takes (see grembyte.features.scripts)
+    ctx.enum("EnumName"), ctx.enumName("EnumName", value)   Unreal, Mono: an
+                     enum's values by name and back (as in scripts)
     ctx.log(...)     output shown in the hook debug window
     ctx.method, ctx.hookId, ctx.threadId
 

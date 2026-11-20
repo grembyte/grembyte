@@ -1687,6 +1687,19 @@ gpointer run_batch (gpointer data) {
     return klass;
   }
 
+  function enumValuesNamed(fullName) {
+    // { "1": "Minor", ... } of the enum ``fullName`` (ctx.enum), from its
+    // constants (see enumValues)
+    const t = typesApi();
+    const klass = findClass(fullName);
+    if (t.isEnum(klass) === 0)
+      throw grembyteError('error.mono.not_an_enum', { name: fullName });
+    const values = enumValues(t, klass, t.typeKind(t.enumBase(klass)));
+    if (values === null)
+      throw grembyteError('error.mono.enum_unreadable', { name: fullName });
+    return values;
+  }
+
   function findMethod(klass, name, argumentCount, wantStatic) {
     // The first method ``name`` of the class or a base class taking
     // ``argumentCount`` arguments; ``wantStatic`` true/false or null for any.
@@ -2783,7 +2796,7 @@ gpointer run_batch (gpointer data) {
   return {
     id: 'mono',
     refresh, locate, name, describe, identify, compile, assemblies, classes, fields,
-    methodsByToken,
+    enumValuesNamed, methodsByToken,
     methodBodies, resolveTokens,
     // JIT code lies in no module file: nothing for the code explorer
     nativeSymbols: () => [],

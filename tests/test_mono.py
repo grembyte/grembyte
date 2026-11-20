@@ -2255,6 +2255,14 @@ def test_method_hook_replaces_the_result(tmp_path, qt_app):
         time.sleep(0.2)
         assert target.send("roll", 5) == (88, 42)
 
+        # Enums by name: Frost (2) times 10 plus the name of 1 (Fire: 4 letters).
+        worker.set_transform(hook_id, _method_transform(
+            'function (ctx) { const damage = ctx.enum("Game.DamageType");'
+            ' return damage.Frost * 10 + ctx.enumName("Game.DamageType", 1).length'
+            ' + (ctx.enumName("Game.DamageType", 9) === null ? 100 : 0); }'))
+        time.sleep(0.2)
+        assert target.send("roll", 5) == (124, 42)
+
         # An instance field is no static one.
         worker.set_transform(hook_id, _method_transform(
             'function (ctx) { return ctx.static("Game.Combat.Health"); }'))
