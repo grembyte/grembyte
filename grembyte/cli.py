@@ -251,6 +251,7 @@ def run(child_pid, delay, sound=True):
     def forward(signum, _frame):
         # Steam ends a game by signalling the launch option: pass it on and
         # wait for the game to exit.
+        launch.note_stop(signum)
         try:
             os.kill(child_pid, signum)
         except OSError:
@@ -258,8 +259,8 @@ def run(child_pid, delay, sound=True):
 
     signal.signal(signal.SIGTERM, forward)
     signal.signal(signal.SIGHUP, forward)
-    # Ctrl+C in a terminal reaches the game as well; it decides.
-    signal.signal(signal.SIGINT, lambda _signum, _frame: None)
+    # Ctrl+C in a terminal (or Steam's Stop) reaches the game as well; it decides.
+    signal.signal(signal.SIGINT, lambda signum, _frame: launch.note_stop(signum))
 
     timer = QTimer(app)
     timer.setInterval(int(POLL_S * 1000))
@@ -306,10 +307,35 @@ class Launch:
         self.script_repository = ScriptRepository()
         self.target = None
         self.released = False
+        # The game's threads were written when grembyte-cli was told to stop (note_stop)
+        self._stop_noted = False
         self._seen = set()
         self._attach_at = None
         self._agents_deadline = None
         self._attached = None
+
+    def note_stop(self, signum):
+        """grembyte-cli is told to stop (``signum``), e.g. by Steam's Stop for
+        a game that hangs while it exits: write what the game's threads do
+        to the activity log (``threads``, why ``stop_signal``), once, before
+        the signal reaches the game. No call of Grembyte's is running then,
+        so the watchdog of hanging calls (see activity.check_hangs) writes
+        nothing; this shows who waits for whom.
+        """
+        # pylint: disable=import-outside-toplevel
+        from grembyte.core import activity, logs
+        if self.target is None or self._stop_noted or not activity.enabled():
+            return
+        self._stop_noted = True
+        pid, name = self.target[:2]
+        if not os.path.exists(f"/proc/{pid}"):
+            return  # ended already
+        try:
+            activity.record_threads(pid, "stop_signal", signal=signal.Signals(signum).name,
+                                    game=name, attached=self._attached is not None,
+                                    released=self.released)
+        except OSError as error:
+            logs.log.warning("grembyte-cli: cannot read the game's threads: %s", error)
 
     def publish(self):
         """Write what this grembyte-cli does where the window finds it (cli_link)."""
