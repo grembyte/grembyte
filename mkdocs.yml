@@ -114,9 +114,9 @@ nav:
       - Unreal Engine: engines/unreal.md
   - Examples:
       - examples/index.md
-      - Scans and pointer scan: examples/hermesquest-scans.md
-      - Hooks: examples/hermesquest-hooks.md
-      - Scripts: examples/hermesquest-scripts.md
+      - Scans and pointer scan: examples/grembytequest-scans.md
+      - Hooks: examples/grembytequest-hooks.md
+      - Scripts: examples/grembytequest-scripts.md
       - Code explorer: examples/dummy-game-code-explorer.md
       - Pointer chain from the code: examples/dummy-game-pointer-chain.md
       - "Underkeep: a debug menu": examples/underkeep-debug-menu.md

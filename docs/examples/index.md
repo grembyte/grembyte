@@ -1,6 +1,6 @@
-# HermesQuest
+# GrembyteQuest
 
-HermesQuest is a small role-playing game made for trying out Grembyte. It is a Unity game with the Mono backend, so every tool works on it: value scans, pointer scans, the write watch, value hooks, and the [Unity (Mono)](../engines/unity-mono.md) tools – catalog, trace, method monitor, method hooks and scripts. The first three examples use it; the [next two](#examples-with-the-test-game) use the small C test game of the tutorial, and [one](#examples-in-other-games) a released game.
+GrembyteQuest is a small role-playing game made for trying out Grembyte. It is a Unity game with the Mono backend, so every tool works on it: value scans, pointer scans, the write watch, value hooks, and the [Unity (Mono)](../engines/unity-mono.md) tools – catalog, trace, method monitor, method hooks and scripts. The first three examples use it; the [next two](#examples-with-the-test-game) use the small C test game of the tutorial, and [one](#examples-in-other-games) a released game.
 
 It is deliberately built like a real game: the values live in heap objects behind pointers, "New game" moves them to new addresses, player and enemies share one class, and all damage goes through one pipeline that hooks and scripts can change.
 
@@ -8,44 +8,44 @@ It is deliberately built like a real game: the values live in heap objects behin
 
 | System | Download |
 | --- | --- |
-| Linux (native, x86-64) | [HermesQuest-RPG-Linux](https://github.com/grembyte/grembyte/releases/download/v0.5.0-alpha/HermesQuest-RPG-Linux) |
-| Windows, or Linux under Wine/Proton | [HermesQuest-RPG-Windows.zip](https://github.com/grembyte/grembyte/releases/download/v0.5.0-alpha/HermesQuest-RPG-Windows.zip) |
+| Linux (native, x86-64) | [GrembyteQuest-RPG-Linux](https://github.com/grembyte/grembyte/releases/download/v0.7.0-alpha/GrembyteQuest-RPG-Linux) |
+| Windows, or Linux under Wine/Proton | [GrembyteQuest-RPG-Windows.zip](https://github.com/grembyte/grembyte/releases/download/v0.7.0-alpha/GrembyteQuest-RPG-Windows.zip) |
 
 Both are zip archives with the game folder in them. The Linux file has no `.zip` extension, but unpacks the same way.
 
 === "Linux"
 
     ```bash
-    unzip HermesQuest-RPG-Linux -d HermesQuest
-    ./HermesQuest/Linux/HermesQuest.x86_64
+    unzip GrembyteQuest-RPG-Linux -d GrembyteQuest
+    ./GrembyteQuest/Linux/GrembyteQuest.x86_64
     ```
 
-    In Grembyte the game shows up as `HermesQuest.x86_64`. Remember the [permissions](../getting-started/permissions.md): with `kernel.yama.ptrace_scope` at `1`, Grembyte cannot reach a game it did not start.
+    In Grembyte the game shows up as `GrembyteQuest.x86_64`. Remember the [permissions](../getting-started/permissions.md): with `kernel.yama.ptrace_scope` at `1`, Grembyte cannot reach a game it did not start.
 
 === "Windows"
 
-    Unpack `HermesQuest-RPG-Windows.zip` and start `Windows\HermesQuest.exe`. In Grembyte it shows up as `HermesQuest.exe`.
+    Unpack `GrembyteQuest-RPG-Windows.zip` and start `Windows\GrembyteQuest.exe`. In Grembyte it shows up as `GrembyteQuest.exe`.
 
 === "Under Wine/Proton"
 
     The Windows build is also the test case for [Wine and Proton](../wine-proton.md):
 
     ```bash
-    unzip HermesQuest-RPG-Windows.zip -d HermesQuest
-    wine ./HermesQuest/Windows/HermesQuest.exe
+    unzip GrembyteQuest-RPG-Windows.zip -d GrembyteQuest
+    wine ./GrembyteQuest/Windows/GrembyteQuest.exe
     ```
 
-    or add `HermesQuest.exe` to Steam as a non-Steam game and start it with Proton. The first time you select it, Grembyte offers to download Frida's Windows gadget.
+    or add `GrembyteQuest.exe` to Steam as a non-Steam game and start it with Proton. The first time you select it, Grembyte offers to download Frida's Windows gadget.
 
 `-seed <n>` on the command line fixes the map and every roll, also after "New game", so a run can be repeated exactly:
 
 ```bash
-./HermesQuest/Linux/HermesQuest.x86_64 -seed 42
+./GrembyteQuest/Linux/GrembyteQuest.x86_64 -seed 42
 ```
 
 <figure markdown="span">
-  ![HermesQuest](../assets/photos/hermesquest-map.webp)
-  <figcaption>HermesQuest: the player <code>@</code> fighting a goblin and two orcs, the character on the right, the message log with every hit and its multipliers below.</figcaption>
+  ![GrembyteQuest](../assets/photos/grembytequest-map.webp)
+  <figcaption>GrembyteQuest at the start of a game: the player <code>@</code> on the map, the character's values on the right, the message log below.</figcaption>
 </figure>
 
 ## Playing
@@ -76,7 +76,7 @@ The **F1** view shows every value with all its decimal places – handy to check
 
 ## How the game is built
 
-This is what the examples rely on. All code is in the namespace `HermesQuest`; the catalog shows it in the assembly `Assembly-CSharp`.
+This is what the examples rely on. All code is in the namespace `GrembyteQuest`; the catalog shows it in the assembly `Assembly-CSharp`.
 
 ### The values
 
@@ -118,9 +118,9 @@ Combat.MeleeAttack / Combat.CastFireBolt
 
 ## The examples
 
-1. [Scans and pointer scan](hermesquest-scans.md): find gold, mana and experience, and a pointer chain that survives a new game.
-2. [Hooks](hermesquest-hooks.md): multiply gold at the instruction that writes it, protect the player but not the enemies, change damage with method hooks.
-3. [Scripts](hermesquest-scripts.md): read and change the character from JavaScript, heal on a timer, scripts with parameters.
+1. [Scans and pointer scan](grembytequest-scans.md): find gold, mana and experience, and a pointer chain that survives a new game.
+2. [Hooks](grembytequest-hooks.md): multiply gold at the instruction that writes it, protect the player but not the enemies, change damage with method hooks.
+3. [Scripts](grembytequest-scripts.md): read and change the character from JavaScript, heal on a timer, scripts with parameters.
 
 ## Examples with the test game
 

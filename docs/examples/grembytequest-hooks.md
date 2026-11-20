@@ -1,6 +1,6 @@
-# HermesQuest: hooks
+# GrembyteQuest: hooks
 
-Grembyte has two kinds of hooks, and HermesQuest is built to show both:
+Grembyte has two kinds of hooks, and GrembyteQuest is built to show both:
 
 | | Value hook | Method hook |
 | --- | --- | --- |
@@ -9,7 +9,7 @@ Grembyte has two kinds of hooks, and HermesQuest is built to show both:
 | Works in | every game | Unity (Mono, IL2CPP) and Unreal games |
 | Script | a [hook template](../guide/templates.md) | a [method script](#method-hooks) |
 
-The examples assume you have tracked Gold, Mana and Health as in [Scans and pointer scan](hermesquest-scans.md), ideally with pointer chains.
+The examples assume you have tracked Gold, Mana and Health as in [Scans and pointer scan](grembytequest-scans.md), ideally with pointer chains.
 
 ## Value hooks
 
@@ -24,7 +24,7 @@ From now on every kill brings ten times the gold. The column **Last** in the Hoo
 What happens: the game executes `Stats.Gold += amount`. The hook sits on exactly that instruction and replaces the result with `old + (new − old) × 10`. The game's own code and the log don't know about it – the log still says "5 gold", the character sheet shows the multiplied amount.
 
 !!! tip "After a restart"
-    Code compiled by Mono moves with every start. A value hook in such code remembers its C# method: when HermesQuest starts again, Grembyte has Mono compile `AddGold` and installs the hook in it right away. This needs the tracked address to have a pointer chain; see [Hooks after a restart](../guide/hooks.md#after-a-restart).
+    Code compiled by Mono moves with every start. A value hook in such code remembers its C# method: when GrembyteQuest starts again, Grembyte has Mono compile `AddGold` and installs the hook in it right away. This needs the tracked address to have a pointer chain; see [Hooks after a restart](../guide/hooks.md#after-a-restart).
 
 ### Protecting the player, not the enemies
 
@@ -60,7 +60,7 @@ Although the instruction also lowers the enemies' health, the hook only acts on 
 
 ## Method hooks
 
-A method hook does not need the write watch. It catches a whole method, and its script sees the method's arguments by name. For HermesQuest the right place for anything about damage is `Combat.CalculateDamage`: every hit of everyone goes through it, and its result is the damage that will be dealt.
+A method hook does not need the write watch. It catches a whole method, and its script sees the method's arguments by name. For GrembyteQuest the right place for anything about damage is `Combat.CalculateDamage`: every hit of everyone goes through it, and its result is the damage that will be dealt.
 
 ### Find the method and watch it
 
@@ -150,4 +150,4 @@ ctx.args.amount = Math.round(ctx.args.amount * 1.5);
 | Change what a method works with (its arguments) | Method hook, before the call |
 | Survive a new game without a pointer chain | Method hook – it catches the method, whichever objects it is called for |
 
-Both kinds are stored per program and reinstalled the next time you attach to HermesQuest. They can be paused, debugged and removed in the **Hooks** tab.
+Both kinds are stored per program and reinstalled the next time you attach to GrembyteQuest. They can be paused, debugged and removed in the **Hooks** tab.

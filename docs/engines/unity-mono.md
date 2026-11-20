@@ -11,8 +11,8 @@ Everything in the [engine overview](index.md) is available:
 - The **call graph** shows which methods a method calls and which call it, from the IL code.
 - The **object inspector** shows the fields of C# objects, and **Call method** runs a static method on the game's main thread. An enum argument is chosen from the enum's names, e.g. `StrongholdAdventure.Type`: `Minor (1)`, `Average (2)` …; a number can be typed in, too. Nested classes read as C# writes them (`StrongholdAdventure.Type`), not as Mono does (`StrongholdAdventure/Type`).
 
-!!! tip "Try it on HermesQuest"
-    HermesQuest is a small Unity Mono role-playing game made for trying out Grembyte – the running example of the [Examples](../examples/index.md) section. [Download](../examples/index.md#download) it for Linux or Windows (also for Wine/Proton). The examples walk through scans, pointer scans, value and method hooks and scripts on it.
+!!! tip "Try it on GrembyteQuest"
+    GrembyteQuest is a small Unity Mono role-playing game made for trying out Grembyte – the running example of the [Examples](../examples/index.md) section. [Download](../examples/index.md#download) it for Linux or Windows (also for Wine/Proton). The examples walk through scans, pointer scans, value and method hooks and scripts on it.
 
 ## Object browser
 
@@ -109,7 +109,7 @@ ctx.log(`Base damage changed from ${base_old} to ${ctx.args.damage.m_damageBase}
       <figcaption>The hook log shows a hit's base damage before and after, twenty times as high; the game's combat log reports the hit with it.</figcaption>
     </figure>
 
-The [HermesQuest examples](../examples/hermesquest-hooks.md#method-hooks) explain method hooks step by step.
+The [GrembyteQuest examples](../examples/grembytequest-hooks.md#method-hooks) explain method hooks step by step.
 
 ## Tested games
 

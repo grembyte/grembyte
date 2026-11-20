@@ -1,14 +1,14 @@
 # JavaScript in Grembyte
 
-Grembyte uses JavaScript wherever you tell it *what* to do with a value or with the game: hook templates, method hooks and scripts. You need little of the language for that. This page explains that part, along the [HermesQuest](../examples/index.md) examples – no previous knowledge of JavaScript assumed.
+Grembyte uses JavaScript wherever you tell it *what* to do with a value or with the game: hook templates, method hooks and scripts. You need little of the language for that. This page explains that part, along the [GrembyteQuest](../examples/index.md) examples – no previous knowledge of JavaScript assumed.
 
 ## Where JavaScript is used
 
 | Where | Shape | Runs | Gets | Its `return` |
 | --- | --- | --- | --- | --- |
 | [Hook template](../guide/templates.md) (value hook) | a **function**: `ctx => …` or `function (ctx) { … }` | after every hooked write, in the writing thread | `ctx.old`, `ctx.new`, `ctx.delta`, `ctx.params`, `ctx.state` | the value to store; nothing keeps the game's value |
-| [Method hook](../examples/hermesquest-hooks.md#method-hooks) with *Method script* | the **body** of a function: just the statements | before or after every call of the method | `ctx.args`, `ctx.this`, `ctx.result`, `ctx.phase`, `ctx.call`, `ctx.static`, `ctx.find` | after the call: the new result |
-| [Script](../examples/hermesquest-scripts.md) | the **body** of a function | by hand or on a timer, on the game's main thread | `ctx.static`, `ctx.find`, `ctx.call`, `ctx.args`, `ctx.state`, `ctx.log` | shown as the script's result |
+| [Method hook](../examples/grembytequest-hooks.md#method-hooks) with *Method script* | the **body** of a function: just the statements | before or after every call of the method | `ctx.args`, `ctx.this`, `ctx.result`, `ctx.phase`, `ctx.call`, `ctx.static`, `ctx.find` | after the call: the new result |
+| [Script](../examples/grembytequest-scripts.md) | the **body** of a function | by hand or on a timer, on the game's main thread | `ctx.static`, `ctx.find`, `ctx.call`, `ctx.args`, `ctx.state`, `ctx.log` | shown as the script's result |
 | Options of a choice parameter | the **body** of a function | when the run dialog asks for them | the same `ctx` as scripts | the list of options |
 
 The code fields of all four use a fixed-width font. **Tab** and **Shift+Tab** indent and outdent the selected lines; **Ctrl+mouse wheel**, **Ctrl+Plus** and **Ctrl+Minus** make the code larger or smaller in every code field at once, **Ctrl+0** returns to the normal size. Grembyte remembers the size.
@@ -22,7 +22,7 @@ A **function** is code with a name for its input; a **body** is just the code in
 ctx => ctx.new * 2
 
 // A body (script): statements, ctx is simply there
-const stats = ctx.static("HermesQuest.GameState.Current").Player.Stats;
+const stats = ctx.static("GrembyteQuest.GameState.Current").Player.Stats;
 return stats.Gold;
 ```
 
@@ -35,7 +35,7 @@ A script is a list of **statements**, run from top to bottom. A statement usuall
 /* A longer comment
    over several lines. */
 
-const player = ctx.static("HermesQuest.GameState.Current").Player;
+const player = ctx.static("GrembyteQuest.GameState.Current").Player;
 let healed = 0;
 healed = player.Heal(5);
 ```
@@ -100,7 +100,7 @@ Always use `===` and `!==`. The shorter `==` converts values before comparing (`
 
 ### Nothing: `null` and `undefined`
 
-- `null` means *no object*: `game.NearestEnemy(player, 8)` gives `null` when no enemy is near, `ctx.static("HermesQuest.GameState.Current")` before the first game exists.
+- `null` means *no object*: `game.NearestEnemy(player, 8)` gives `null` when no enemy is near, `ctx.static("GrembyteQuest.GameState.Current")` before the first game exists.
 - `undefined` means *not set*: a field of `ctx.state` you have not stored yet, or a function that ends without `return`.
 
 Using a field of `null` is an error (`cannot read property 'Stats' of null`), so check first:
@@ -124,7 +124,7 @@ if (ctx.args.attacker.IsPlayer) {
 }
 ```
 
-The block in `{ … }` runs only if the condition in `( … )` is `true`. With a single statement the braces may be left out, as in the [hooks examples](../examples/hermesquest-hooks.md#only-the-player-hits-harder-and-takes-less).
+The block in `{ … }` runs only if the condition in `( … )` is `true`. With a single statement the braces may be left out, as in the [hooks examples](../examples/grembytequest-hooks.md#only-the-player-hits-harder-and-takes-less).
 
 `return` ends the script (or function) at once. Everything after it is skipped – that is how `if (game === null) return;` stops a script early.
 
@@ -196,9 +196,9 @@ What `ctx.static`, `ctx.find`, `ctx.args`, `ctx.this` or a method give you for a
 | `stats.Health = 50` | writes 50 into the field |
 | `player.IsDead` | runs the property's getter `get_IsDead` in the game |
 | `player.Heal(10)` | calls the method `Heal` with 10 and gives its result |
-| `ctx.call("HermesQuest.Combat:HitChance", player, enemy)` | calls a static method; objects can be passed along |
-| `ctx.static("HermesQuest.GameState.Current")` | reads a static field |
-| `player.className` | the object's class, `"HermesQuest.Character"` |
+| `ctx.call("GrembyteQuest.Combat:HitChance", player, enemy)` | calls a static method; objects can be passed along |
+| `ctx.static("GrembyteQuest.GameState.Current")` | reads a static field |
+| `player.className` | the object's class, `"GrembyteQuest.Character"` |
 
 Because every read goes to the game, a value read twice may differ – mana regenerates between the two reads. Read it once into a `const` if you need it several times.
 

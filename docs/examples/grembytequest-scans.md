@@ -1,6 +1,6 @@
-# HermesQuest: scans and pointer scan
+# GrembyteQuest: scans and pointer scan
 
-Start [HermesQuest](index.md), attach to it with **Select process** (`HermesQuest.x86_64`, or `HermesQuest.exe` under Wine/Proton) and keep the **F1** view of the game at hand: it shows every value exactly.
+Start [GrembyteQuest](index.md), attach to it with **Select process** (`GrembyteQuest.x86_64`, or `GrembyteQuest.exe` under Wine/Proton) and keep the **F1** view of the game at hand: it shows every value exactly.
 
 The [scanning guide](../guide/scanning.md) explains the scan types; here they are applied to a game whose values behave like those of real games.
 
@@ -49,7 +49,7 @@ Press **N**: the game builds a new player, and all tracked addresses now point i
 5. In the pointer dialog click **Take from scan**, then **Filter with this address**. Chains that only matched by chance drop out.
 6. Repeat steps 4 and 5 once or twice. Then pick the shortest remaining chain and click **Use pointer**.
 
-From now on "Mana" resolves after every new game and every restart of HermesQuest.
+From now on "Mana" resolves after every new game and every restart of GrembyteQuest.
 
 !!! tip "How to read a chain"
     The game reaches mana as `GameState.Current → Player → Stats → Mana`. The last offsets of a good chain are exactly these steps: the offset of `Player` in `GameState`, of `Stats` in `Character` and of `Mana` in `CharacterStats`. The object inspector shows each field's offset (see [Unity (Mono)](../engines/unity-mono.md)), so you can check a chain against the game's own structure. What comes before is the way from the Mono runtime to the static field `GameState.Current`.
@@ -61,4 +61,4 @@ With the chain in place you can give **Gold** and **Experience** chains too: the
 
 ## A shortcut for Mono games
 
-For scripts and method hooks you need no pointer chain at all: they reach the player through the game's own static field, `GameState.Current`, which is always right – see [Scripts](hermesquest-scripts.md). Pointer chains matter for tracked addresses, freezing and value hooks.
+For scripts and method hooks you need no pointer chain at all: they reach the player through the game's own static field, `GameState.Current`, which is always right – see [Scripts](grembytequest-scripts.md). Pointer chains matter for tracked addresses, freezing and value hooks.

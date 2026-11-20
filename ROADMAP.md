@@ -376,7 +376,7 @@ Using Grembyte's tools from scripts, for example by an AI coding agent analysing
 shows which tools are missing or slow. Today `grembyte-cli` only starts a game with its saved
 hooks and scripts, and the Python API is used only by the tests. Planned in this order:
 
-1. **Benchmarks against HermesQuest:** the local Unity build (`test_app/unity/`) runs without
+1. **Benchmarks against GrembyteQuest:** the local Unity build (`test_app/unity/`) runs without
    anyone at the keyboard, so measurements can be repeated: listing the catalog, the cost of
    a hook call, a trace's load on the game, memory use. They give a baseline to compare
    changes against and show where time goes.
