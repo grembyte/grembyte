@@ -235,6 +235,10 @@ class ObjectBrowserDialog(QDialog):
             self._update_busy()
         return worker
 
+    def show_class(self, class_name):
+        """Show the classes named ``class_name`` with their objects (the filter)."""
+        self.filter_input.setText(class_name)
+
     def refresh(self):
         """Read the object table anew (unless an answer is still due)."""
         if self._pending is not None:

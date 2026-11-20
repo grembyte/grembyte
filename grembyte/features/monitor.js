@@ -403,6 +403,30 @@ function valueTypeName(type) {
   return type.byref ? null : (VALUE_TYPE_NAMES[type.kind] || null);
 }
 
+function editOf(type, at) {
+  // How the object inspector may change the value of ``type`` at ``at``, or
+  // null: { address, valueType, bool?, mask?, enumValues? }. Grembyte writes
+  // it into the game's memory itself (grembyte/ui/widgets/object_inspector.py);
+  // ``mask`` is the bit of a bitfield bool (Unreal) within the byte at
+  // ``address``. Strings, objects and structs are not changed there.
+  if (at === null || type.byref)
+    return null;
+  if (type.engine === 'bool')
+    return { address: at.add(type.byteOffset).toString(), valueType: 'uint8', bool: true,
+             mask: type.byteMask };
+  if (type.engine !== undefined)
+    return null;
+  const valueType = valueTypeName(type);
+  if (valueType === null)
+    return null;
+  const edit = { address: at.toString(), valueType };
+  if (type.kind === T.BOOLEAN)
+    edit.bool = true;
+  if (type.enumName && type.enumValues)
+    edit.enumValues = type.enumValues;
+  return edit;
+}
+
 function integer(pointer, bits, signed) {
   const value = BigInt(pointer.toString());
   return (signed ? BigInt.asIntN(bits, value) : BigInt.asUintN(bits, value)).toString();
@@ -640,7 +664,8 @@ function contents(target) {
         static: false,
         value: safely(() => readValue(layout.element, data.add(i * layout.elementSize))),
         address: data.add(i * layout.elementSize).toString(),
-        valueType: valueTypeName(layout.element)
+        valueType: valueTypeName(layout.element),
+        edit: editOf(layout.element, data.add(i * layout.elementSize))
       });
     return result;
   }
@@ -666,10 +691,12 @@ function contents(target) {
       entry.value = entry.value || { text: '' };
       entry.address = null;
       entry.valueType = null;
+      entry.edit = null;
     } else {
       entry.value = safely(() => readValue(field.type, at));
       entry.address = at.toString();
       entry.valueType = valueTypeName(field.type);
+      entry.edit = editOf(field.type, at);
     }
     result.fields.push(entry);
   }
@@ -686,7 +713,8 @@ function containerContents(target) {
       name: entry.key ? safely(() => ({ text: keyText(entry.key) })).text : entry.name,
       type: entry.type.name, offset: entry.offset, static: false,
       value: safely(() => readValue(entry.type, entry.address)),
-      address: entry.address.toString(), valueType: valueTypeName(entry.type)
+      address: entry.address.toString(), valueType: valueTypeName(entry.type),
+      edit: editOf(entry.type, entry.address)
     }))
   };
 }

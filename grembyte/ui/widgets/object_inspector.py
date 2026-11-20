@@ -33,6 +33,7 @@ from grembyte.ui import window_state
 from grembyte.ui.export_folder import remember, suggested_path
 from grembyte.ui.localization import language_code
 from grembyte.ui.widgets.docking import TAB_TITLE, PinButton
+from grembyte.ui.widgets.field_value import FieldValueDialog, write_field
 from grembyte.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
 from grembyte.ui.widgets.labels import SelectableText
 from grembyte.ui.widgets.table import add_copy_actions, copy_menu, resizable_columns, set_row_height
@@ -43,7 +44,7 @@ LIVE_INTERVAL_MS = 500
 _FIELD, _TYPE, _VALUE, _OFFSET, _OPEN = range(5)
 _P_NAME, _P_TYPE, _P_VALUE, _P_LINK, _P_SET = range(5)
 _M_NAME, _M_PARAMS, _M_RETURNS, _M_OWNER, _M_LINK = range(5)
-# Data role of the offset cell: the field's {address, valueType} (see monitor.js)
+# Data role of the offset cell: the field's {address, valueType, edit} (see monitor.js)
 _LOCATION_ROLE = Qt.ItemDataRole.UserRole + 1
 # What a static field shows when it has no value to read, by its storage
 _STATIC_KINDS = {"const": "inspector.static_const", "thread": "inspector.static_thread"}
@@ -176,7 +177,9 @@ class ObjectInspectorDialog(QDialog):
     Getters and methods fold away.
 
     A field holding a number can be put on the address list, to watch,
-    change or freeze its value there. A string (field or property) gets a
+    change or freeze its value there. In a live inspector numbers, bools and
+    enums can be changed (double click or context menu): Grembyte writes
+    them into the game's memory (see grembyte.ui.widgets.field_value). A string (field or property) gets a
     link that shows it whole: ``show_text(value, name, time)``.
     """
 
@@ -338,7 +341,7 @@ class ObjectInspectorDialog(QDialog):
             self.translations["inspector.open"], self.translations["inspector.text"]]))
         header.resizeSection(_TYPE, 200)
         resizable_columns(self.table)
-        self.table.cellDoubleClicked.connect(lambda row, _column: self.open_row(row))
+        self.table.cellDoubleClicked.connect(lambda row, _column: self._on_double_click(row))
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_field_menu)
         return self.table
@@ -466,12 +469,49 @@ class ObjectInspectorDialog(QDialog):
         else:
             self._timer.stop()
 
+    def _on_double_click(self, row):
+        if self.field_edit(row) is not None:
+            self.edit_field(row)
+        else:
+            self.open_row(row)
+
     def open_row(self, row):
         """Open the object in field ``row`` in a dialog of its own."""
         item = self.table.item(row, _FIELD)
         target = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
         if target:
             self._open_object(target, self, item.text())
+
+    # --- Changing a field --------------------------------------------------------
+    def field_edit(self, row):
+        """How the field in ``row`` can be changed (``edit``, see monitor.js), or
+        None: not a number, bool or enum, or not a live object of a running game."""
+        if not self.live or self.pid is None or row < 0:
+            return None
+        item = self.table.item(row, _OFFSET)
+        location = item.data(_LOCATION_ROLE) if item is not None else None
+        return (location or {}).get("edit") or None
+
+    def edit_field(self, row):
+        """Ask for a new value of the field in ``row`` and write it into the game."""
+        edit = self.field_edit(row)
+        if edit is None:
+            return
+        name = self.table.item(row, _FIELD).text()
+        dialog = FieldValueDialog(self.translations, name, self.table.item(row, _TYPE).text(),
+                                  self.table.item(row, _VALUE).text(), edit, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        value = dialog.value()
+        try:
+            write_field(self.pid, edit, value)
+        except (OSError, ValueError) as error:
+            self.status_label.setText(self.translations["inspector.write_failed"].format(
+                field=name, message=messages.describe(error)))
+            return
+        self.status_label.setText(self.translations["inspector.value_written"].format(
+            field=name, value=str(value).lower() if isinstance(value, bool) else value))
+        self.refresh()
 
     # --- Address list ------------------------------------------------------------
     def _field_location(self, row):
@@ -517,6 +557,10 @@ class ObjectInspectorDialog(QDialog):
         address, _value_type = self._field_location(row)
         menu = QMenu(self)
         menu.setToolTipsVisible(True)
+        change = menu.addAction(self.translations["inspector.edit_value"])
+        change.setToolTip(self.translations["inspector.edit_value_tooltip"])
+        change.setEnabled(self.field_edit(row) is not None)
+        change.triggered.connect(lambda: self.edit_field(row))
         add = menu.addAction(self.translations["inspector.add_address"])
         add.setToolTip(self.translations["inspector.add_address_tooltip"])
         add.setEnabled(self.address_entry(row) is not None)
@@ -586,7 +630,8 @@ class ObjectInspectorDialog(QDialog):
                 self.table.setItem(row, column, item)
             self.table.item(row, _FIELD).setData(Qt.ItemDataRole.UserRole, target)
             self.table.item(row, _OFFSET).setData(_LOCATION_ROLE, {
-                "address": field.get("address"), "valueType": field.get("valueType")})
+                "address": field.get("address"), "valueType": field.get("valueType"),
+                "edit": field.get("edit")})
             if field.get("address"):
                 self.table.item(row, _OFFSET).setToolTip(
                     self.translations["inspector.static_offset"].format(address=field["address"])

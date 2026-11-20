@@ -1892,6 +1892,7 @@ class MainWindow(QMainWindow):
             catalog.monitor_requested.connect(self._monitor_methods)
             catalog.hook_requested.connect(self._hook_method)
             catalog.call_requested.connect(self._call_method)
+            catalog.objects_requested.connect(self._show_objects_of_class)
             catalog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._catalog = catalog
         catalog.show()
@@ -2065,6 +2066,15 @@ class MainWindow(QMainWindow):
             self.dock_manager.add(dialog, "object_browser", RIGHT)
             return
         self.dock_manager.show(dialog)
+
+    def _show_objects_of_class(self, class_name):
+        """Show the live objects of ``class_name`` in the object browser (from
+        the field catalog)."""
+        if self._current_pid is None or self.script_panel is None:
+            return
+        self._open_object_browser()
+        if self._objects_dialog is not None:
+            self._objects_dialog.show_class(class_name)
 
     def can_open_reference_graph(self):
         """Whether the attached game's engine can name what holds an object."""

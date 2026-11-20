@@ -1242,6 +1242,36 @@ def test_catalog_dialog_searches_methods(tmp_path, qt_app, translations):
         _wait_for(qt_app, lambda: dialog._worker is None)
         assert dialog.model.rowCount() == 1
         assert dialog.model.method_at(0).assembly == "mscorlib"
+
+        # The fields: read when first shown, the framework switch still on
+        from grembyte.features.catalog import FIELDS, METHODS
+
+        objects = []
+        dialog.objects_requested.connect(objects.append)
+        dialog.framework_check.setChecked(False)
+        dialog.search_input.setText("")
+        dialog.set_kind(FIELDS)
+        _wait_for(qt_app, lambda: dialog._worker is None)
+        fields = {f"{field.class_name}.{field.name}": field for field in dialog.model.methods}
+        assert (fields["Game.Combat.Health"].type_name, fields["Game.Combat.Health"].static,
+                fields["Game.Combat.Health"].storage) == ("System.Int32", False, "")
+        assert (fields["Game.Combat.Instances"].static,
+                fields["Game.Combat.Instances"].storage) == (True, "data")
+        assert "Game.Combat.m_CachedPtr" not in fields  # inherited, declared elsewhere
+        assert "Felder" in dialog.status_label.text()
+        dialog.search_input.setText("combat type:int32")
+        dialog._apply_filter()
+        assert sorted(dialog.model.method_at(row).name
+                      for row in range(dialog.model.rowCount())) == ["Health", "Instances"]
+        dialog.field_view.selectRow(0)
+        assert dialog.objects_button.isEnabled() and dialog.copy_field_button.isEnabled()
+        assert dialog.details_label.text().startswith("Game.Combat.")
+        dialog.field_view.doubleClicked.emit(dialog.models[FIELDS].index(0, 1))
+        assert objects == ["Game.Combat"]
+        # Back to the methods: what was read of them stays
+        dialog.set_kind(METHODS)
+        assert dialog.view.isVisible() == dialog.isVisible() and dialog.model.methods
+        assert dialog.monitor_button.isVisible() == dialog.isVisible()
     finally:
         dialog.close()
         target.close()
@@ -1469,6 +1499,19 @@ def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
         assert int(fields["Damage"]["address"], 16) == base + 0x10
         assert [fields[name]["valueType"] for name in fields] == [
             "float", "int32", None, None, None]  # the enum counts as its base type
+        # What the inspector may change: numbers and enums (with their names)
+        assert fields["Damage"]["edit"] == {"address": fields["Damage"]["address"],
+                                            "valueType": "float"}
+        assert fields["Type"]["edit"]["enumValues"]["2"] == "Frost"
+        assert [fields[name]["edit"] for name in ("Name", "Owner", "Rolls")] == [None] * 3
+        # Written into the game's memory, the value is there when read again
+        from grembyte.ui.widgets.field_value import write_field
+
+        write_field(target.pid, fields["Type"]["edit"], "1")
+        write_field(target.pid, fields["Damage"]["edit"], "99.5")
+        changed = {field["name"]: field for field in inspect(after["target"])["fields"]}
+        assert changed["Type"]["value"]["text"].startswith("1 (")
+        assert changed["Damage"]["value"]["text"] == "99.5"
 
         rolls = inspect(fields["Rolls"]["value"]["target"])
         assert rolls["length"] == 3

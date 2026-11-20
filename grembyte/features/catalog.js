@@ -5,6 +5,10 @@ rpc.exports = {
   classes(assembly) {
     return engine.classes(assembly);
   },
+  fields(assembly) {
+    // The fields each class declares, for the field catalog
+    return engine.fields(assembly);
+  },
   methodBodies(assembly, tokens) {
     return engine.methodBodies(assembly, tokens);
   },

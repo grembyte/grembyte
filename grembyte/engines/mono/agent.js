@@ -2626,9 +2626,10 @@ gpointer run_batch (gpointer data) {
     return image;
   }
 
-  function eachClass(c, assembly, visit) {
-    // visit(class name, [method, ...]) for the classes of one assembly; row
-    // 1 of its type table is the <Module> pseudo class. On a Mono thread.
+  function eachClass(c, assembly, visit, withMethods = true) {
+    // visit(class name, [method, ...], class) for the classes of one
+    // assembly (no methods without ``withMethods``); row 1 of its type table
+    // is the <Module> pseudo class. On a Mono thread.
     const image = imageNamed(c, assembly);
     const iterator = Memory.alloc(Process.pointerSize);
     const rows = c.tableRows(image, TYPEDEF_TABLE);
@@ -2638,13 +2639,13 @@ gpointer run_batch (gpointer data) {
         continue;
       const methods = [];
       iterator.writePointer(NULL);
-      for (;;) {
+      while (withMethods) {
         const method = c.classMethods(klass, iterator);
         if (method.isNull())
           break;
         methods.push(method);
       }
-      visit(cString(c.typeName(c.classType(klass))), methods);
+      visit(cString(c.typeName(c.classType(klass))), methods, klass);
     }
   }
 
@@ -2660,6 +2661,35 @@ gpointer run_batch (gpointer data) {
           method => [...methodEntry(c, method), ...flagsOf(c, method, implFlags),
                      parameterNames(method)])]);
       });
+      return result;
+    });
+  }
+
+  async function fields(assembly) {
+    // [[class name, [[name, type, offset, static, storage], ...]], ...]: the
+    // fields each class of one assembly declares (not the inherited ones),
+    // for the field catalog; ``storage`` as in layout ('' for instance fields).
+    const c = catalogApi();
+    const t = typesApi();
+    return onMonoThread(() => {
+      const result = [];
+      const iterator = Memory.alloc(Process.pointerSize);
+      eachClass(c, assembly, (className, _methods, klass) => {
+        const entries = [];
+        iterator.writePointer(NULL);
+        for (let field = t.classFields(klass, iterator); !field.isNull();
+          field = t.classFields(klass, iterator)) {
+          const flags = t.fieldFlags(field);
+          const isStatic = (flags & FIELD_STATIC) !== 0;
+          const offset = t.fieldOffset(field);
+          const storage = !isStatic ? '' : (flags & FIELD_LITERAL) !== 0 ? 'const'
+            : offset === SPECIAL_STATIC_OFFSET ? 'thread' : 'data';
+          entries.push([t.fieldName(field).readUtf8String(),
+                        cString(t.typeName(t.fieldType(field))) || '?', offset, isStatic, storage]);
+        }
+        if (entries.length > 0)
+          result.push([className, entries]);
+      }, false);
       return result;
     });
   }
@@ -2752,7 +2782,8 @@ gpointer run_batch (gpointer data) {
   refresh();
   return {
     id: 'mono',
-    refresh, locate, name, describe, identify, compile, assemblies, classes, methodsByToken,
+    refresh, locate, name, describe, identify, compile, assemblies, classes, fields,
+    methodsByToken,
     methodBodies, resolveTokens,
     // JIT code lies in no module file: nothing for the code explorer
     nativeSymbols: () => [],

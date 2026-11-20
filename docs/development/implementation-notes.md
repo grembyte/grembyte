@@ -574,6 +574,19 @@ functions called newly or more often when, for example, paying or taking damage.
   compares the memory behind pointer arguments before and after the call (for C++ methods:
   which fields of `this` are set). Not yet tried in Baldur's Gate (native, Linux).
 
+## Object inspector
+
+- **Changing fields (2026-11-20):** `editOf` in `grembyte/features/monitor.js` tells for each
+  field whether the inspector may change it (numbers, bools, enums with their names) and
+  where its value is; `grembyte/ui/widgets/field_value.py` writes the new value into the
+  game's memory itself, as the address list does. No Frida call and no game thread: it
+  works while the game thread is busy or the agent hangs, and it adds no risk under Wine.
+  A bitfield bool (Unreal `FBoolProperty` with a `FieldMask`) is one bit of a byte; only
+  that bit is changed (read, mask, write). Strings are left out on purpose: a new managed
+  string must be allocated in the game on its main thread (old Mono crashes on other
+  threads) and stored with the collector's write barrier, and an `FString` would need
+  Unreal's allocator. Scripts can set strings (`storeField`).
+
 ## Scripts
 
 - **Native games:** without an engine adapter scripts run when a function the game calls every frame returns on its main thread (`grembyte/features/script_native.js`). The agent hooks the ones the game exports, in this order: `SDL_PollEvent`, `SDL_PumpEvents`, `SDL_GL_SwapWindow`, `glfwPollEvents`, `glfwSwapBuffers`, `PeekMessageW`, `PeekMessageA`, `SwapBuffers`, `wglSwapBuffers`, `glXSwapBuffers`, `eglSwapBuffers`, `vkQueuePresentKHR`, and for GTK and other GLib programs `g_main_context_iteration`. The first of them that runs on the main thread within half a second is kept (if none does, the first that runs on another thread). Games that export none of them, for example with SDL linked in statically, are reported.

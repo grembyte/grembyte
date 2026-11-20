@@ -19,7 +19,7 @@ from grembyte.db.repository.favorites import FavoriteRepository
 from grembyte.db.repository.hooks import HookRepository
 from grembyte.engines.registry import engine_by_id
 from grembyte.features.call_graph import Call
-from grembyte.features.catalog import CatalogMethod
+from grembyte.features.catalog import METHODS, CatalogMethod
 from grembyte.features.favorites import CATALOG, NATIVE_TRACE, TRACE
 from grembyte.features.favorites import favorite_from_function, favorite_from_method
 from grembyte.features.method_call import R4
@@ -300,21 +300,21 @@ def catalog(studio):
             studio.translations, _POE_PID, parent=studio.window, engine=MONO,
             favorites=favorites))
     found = _assemblies()
-    dialog._on_assemblies_found(found)
+    dialog._on_assemblies_found(METHODS, found)
     methods = _game_methods()
-    dialog._on_assembly_loaded("Assembly-CSharp", methods)
+    dialog._on_assembly_loaded(METHODS, "Assembly-CSharp", methods)
     firstpass = [_method(class_name, name, parameters, returns,
                          assembly="Assembly-CSharp-firstpass")
                  for class_name in ("UIPanel", "UILabel", "UISprite", "UIButton", "UIGrid",
                                     "UITweener", "UICamera", "UIRoot", "UIWidget", "UITable")
                  for name, parameters, returns in _MEMBERS[:12]]
-    dialog._on_assembly_loaded("Assembly-CSharp-firstpass", firstpass)
-    dialog._on_assembly_loaded("Assembly-UnityScript-firstpass", [])
-    dialog._on_assembly_loaded("ICSharpCode.SharpZipLib", [])
-    dialog._on_assembly_loaded("Polenter.SharpSerializer", [])
+    dialog._on_assembly_loaded(METHODS, "Assembly-CSharp-firstpass", firstpass)
+    dialog._on_assembly_loaded(METHODS, "Assembly-UnityScript-firstpass", [])
+    dialog._on_assembly_loaded(METHODS, "ICSharpCode.SharpZipLib", [])
+    dialog._on_assembly_loaded(METHODS, "Polenter.SharpSerializer", [])
     for assembly in ("Assembly-CSharp", "Assembly-CSharp-firstpass"):
         dialog._cached.add(assembly)
-    dialog._on_worker_finished(dialog._worker)
+    dialog._on_worker_finished(METHODS, dialog._worker)
     dialog.search_input.setText("PlayerInventory")
     dialog._filter_timer.stop()
     dialog._apply_filter()
