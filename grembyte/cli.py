@@ -725,6 +725,7 @@ class AttachedGame:
             worker.script_added.connect(mine(self._on_script_added))
             worker.script_failed.connect(mine(self._on_script_failed))
             worker.script_ran.connect(mine(self._on_script_ran))
+            worker.lookups_learned.connect(mine(self._on_lookups_learned))
             return
         worker.hook_installed.connect(mine(lambda item_id, _info: say(
             "cli.hook_installed", label=self._label(kind, item_id))))
@@ -796,6 +797,22 @@ class AttachedGame:
         elif item_id in self.hotkeyed and result.get("result"):
             say("cli.script_result", label=self._label("scripts", item_id),
                 result=result["result"])
+
+    def _on_lookups_learned(self, item_id, lookups):
+        # As the script panel does: a saved script keeps what it looked up
+        # (see ScriptSpec.lookups).
+        # pylint: disable=import-outside-toplevel
+        import dataclasses
+
+        from grembyte.features.scripts import lookups_to_json
+        spec = self.specs.get(item_id)
+        if spec is not None:
+            spec = dataclasses.replace(spec, lookups=tuple(map(tuple, lookups)))
+            self.specs[item_id] = spec
+        saved = self.saved["scripts"].get(item_id)
+        if saved is not None:
+            self.script_repository.update_script(
+                saved.id, lookups=lookups_to_json(tuple(map(tuple, lookups))) or "")
 
     def _on_callers_learned(self, item_id, callers):
         # As the hook panel does: a saved hook keeps the callers it learned.

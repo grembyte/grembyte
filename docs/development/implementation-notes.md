@@ -445,6 +445,33 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   lookup that finds nothing, or fails on freed memory, in a snapshot older than a second
   tries once more in a fresh one (`retryFresh`).
 
+- **Stutter from later script runs (2026-11-20, RoboCop under Proton):** a script every
+  5 s (`ctx.isPlaying()` and two `ctx.find`) stuttered noticeably, with the window and
+  with `grembyte-cli` alike. The measurements showed two patterns. Every 15 s
+  `onMainThread` read the snapshot anew on the agent's thread (about 100 ms: the map of
+  address to index and the class index, 45-50 ms each), although the run found
+  everything in its caches. And about once a minute a run spent 130-260 ms on the game
+  thread: a cached object no longer held, the search built the class's candidates in the
+  new snapshot (walking the supers of every class, about 30 ms per class), found
+  nothing, and `retryFresh` read a fresh snapshot there. Changes:
+  - *Lookups per script*: the monitor records the classes and objects a run looks up
+    (`recordLookups`, `takeLookups`), and before the next run the agent's thread finds
+    them (`prepareLookups`): the game thread finds them cached. A lookup still missing
+    is trusted missing on the game thread for 3 s instead of searched again; a repeating
+    script searches for it in a fresh snapshot at most every 15 s, a manual one before
+    each run (a hotkey must not miss). The lookups are sent with `script-run` when a run
+    added some and kept with the saved script (`game_scripts.lookups`, dropped with new
+    code), so a new session prepares the first run too. `prepare_ms` in `script_phases`
+    is that time (part of `wait_ms`); `game_thread_search` and `game_thread_snapshot`
+    count what still happened on the game thread.
+  - *No renewal for script runs*: the snapshot is read when a lookup needs it, not every
+    15 s. Naming (`nameOfAddress`, `functionsOf`) reads an object's name itself when the
+    snapshot no longer serves, instead of reading the object table.
+  - *Derivations across snapshots*: whether a class derives from a searched one is kept
+    per class address while the snapshot names the class the same (memory of a freed
+    class given to another one gets another name). `ctx.forEach` takes a snapshot up to
+    a second old as it is; its preparation reads one just before the run.
+
 ## Native call diff trace
 
 The engine-independent native counterpart of the Mono trace. Frida's **Stalker** records which

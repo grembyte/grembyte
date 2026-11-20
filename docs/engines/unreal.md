@@ -45,7 +45,9 @@ Scripts run on the game thread, through `ProcessEvent`. Before the first one can
 - **Keep Unreal offsets on disk**: what was found is kept per game build and only checked the next time. An updated game is searched again.
 - **Prepare Unreal games when attaching**: right after the scripts attach, Grembyte does the rest in the background, not when the first script runs.
 
-The list of live objects is read anew every 15 seconds, before a script needs it and not on the game thread. In RoboCop: Rogue City the first script run went from over 3 seconds to about 60 ms on the game thread; later runs take about a millisecond.
+Grembyte also remembers which classes and objects a script looks up with `ctx.find`, `ctx.forEach`, `ctx.findClass` and `ctx.isPlaying()`, and keeps that with the saved script. Before each run it finds them in the background, so the game thread finds them ready and never searches the list of live objects itself. That list is read only when a lookup needs it, for example after a level change. A repeating script looks again for an object that is missing (for instance while a level loads) at most every 15 seconds, so it can take that long to act again after loading. A manual script looks before every run. Changing a script's code makes Grembyte learn its lookups anew.
+
+In RoboCop: Rogue City the first script run went from over 3 seconds to about 60 ms on the game thread. A script running every 5 seconds now takes 0–2 ms there on each run; before, the game stalled for up to a quarter of a second about once a minute. With the setting **Measure each run**, the activity log shows the time spent preparing a run (`prepare_ms`) and any search that still happened on the game thread.
 
 ## Object browser
 

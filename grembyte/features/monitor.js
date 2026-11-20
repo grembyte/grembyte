@@ -2408,6 +2408,18 @@ function flushHooks() {
 
 const scripts = new Map();
 
+// Under Unreal, the classes and objects a script looked up (see
+// recordLookups in the Unreal adapter), at most this many: the agent's
+// thread finds them before each run, and Grembyte keeps them with the script.
+const MAX_SCRIPT_LOOKUPS = 64;
+
+function scriptLookups(list) {
+  return Array.isArray(list)
+    ? list.filter(lookup => Array.isArray(lookup) && typeof lookup[1] === 'string')
+      .slice(0, MAX_SCRIPT_LOOKUPS)
+    : [];
+}
+
 function compileScript(source) {
   return new Function('ctx', source);
 }
@@ -2416,8 +2428,9 @@ function compiledSpec(spec) {
   const options = new Map();
   for (const [name, source] of Object.entries(spec.options || {}))
     options.set(name, compileScript(source));
-  return { fn: compileScript(spec.source), mode: spec.mode, seconds: spec.seconds,
-           enabled: spec.enabled, args: spec.args || {}, options };
+  return { fn: compileScript(spec.source), source: spec.source, mode: spec.mode,
+           seconds: spec.seconds, enabled: spec.enabled, args: spec.args || {}, options,
+           lookups: scriptLookups(spec.lookups) };
 }
 
 function addScript(spec) {
@@ -2431,9 +2444,13 @@ function addScript(spec) {
 }
 
 function updateScript(id, spec) {
-  // New code or timing; the script's ctx.state stays.
+  // New code or timing; the script's ctx.state stays, and so do its
+  // lookups while the code is the same.
   const script = requireScript(id);
+  const lookups = script.source === spec.source ? script.lookups : [];
   Object.assign(script, compiledSpec(spec));
+  if (script.lookups.length === 0)
+    script.lookups = lookups;
   timeScript(script);
   return true;
 }
@@ -2541,20 +2558,34 @@ function runScript(script, args = null) {
   const ctx = scriptContext(script, logs, args === null ? { ...script.args } : args);
   const started = Date.now();
   const measured = scriptTimings;
-  const unrealPhases = measured && engine.id === 'unreal';
+  const unreal = engine.refresh() && engine.id === 'unreal';
+  const unrealPhases = measured && unreal;
   if (unrealPhases)
     engine.takePhaseTimes();  // only this run's (see notePhases)
+  let prepareMs = null;
+  if (unreal && script.lookups.length > 0) {
+    // What earlier runs looked up, found here and not on the game thread
+    const preparing = Date.now();
+    try {
+      engine.prepareLookups(script.lookups, script.mode === 'manual');
+    } catch (_error) {
+      // the run finds out (no game yet)
+    }
+    prepareMs = Date.now() - preparing;
+  }
   let onThread = null;
   let ranMs = null;
+  let learned = [];
   const report = (result, error) => {
     if (measured)
-      notePhases(script, started, onThread, ranMs, unrealPhases, error);
+      notePhases(script, started, onThread, ranMs, unrealPhases, error, prepareMs);
     script.running = false;
     script.runs++;
+    const lookups = learnLookups(script, learned);
     send({ kind: 'script-run', scriptId: script.id, time: started, runs: script.runs,
            result: error === null ? result.text : '',
            target: error === null ? result.target : undefined, logs,
-           gameThread: nativeThreadNews(),
+           gameThread: nativeThreadNews(), lookups,
            error: error === null ? null
              : (error && error.stack ? `${error}\n${error.stack}` : String(error)) });
     if (script.mode === 'repeat' || script.mode === 'once')
@@ -2562,16 +2593,36 @@ function runScript(script, args = null) {
   };
   onGameThread(() => {
     onThread = Date.now();
+    if (unreal)
+      engine.recordLookups();
     try {
       return scriptResult(script.fn(ctx));
     } finally {
+      if (unreal)
+        learned = engine.takeLookups();
       ranMs = Date.now() - onThread;
     }
-  }).then(result => report(result, null), error => report(undefined, error));
+  }, false).then(result => report(result, null), error => report(undefined, error));
   return true;
 }
 
-function notePhases(script, started, onThread, ranMs, unrealPhases, error) {
+function learnLookups(script, learned) {
+  // Add a run's lookups to the script's; all of them if that added any
+  // (Grembyte stores them with the script), else undefined.
+  const known = new Set(script.lookups.map(lookup => JSON.stringify(lookup)));
+  let added = false;
+  for (const lookup of scriptLookups(learned)) {
+    const key = JSON.stringify(lookup);
+    if (!known.has(key) && script.lookups.length < MAX_SCRIPT_LOOKUPS) {
+      known.add(key);
+      script.lookups.push(lookup);
+      added = true;
+    }
+  }
+  return added ? script.lookups.slice() : undefined;
+}
+
+function notePhases(script, started, onThread, ranMs, unrealPhases, error, prepareMs) {
   // How long a script run took, in the activity log (script_phases): until
   // the game thread took it (wait_ms, includes setting up the game-thread
   // hook on the first run), on the game thread (game_thread_ms), in all
@@ -2582,6 +2633,8 @@ function notePhases(script, started, onThread, ranMs, unrealPhases, error) {
     wait_ms: onThread === null ? null : onThread - started, game_thread_ms: ranMs,
     failed: error !== null
   };
+  if (prepareMs !== null)
+    fields.prepare_ms = prepareMs;  // part of wait_ms
   if (unrealPhases) {
     for (const [phase, entry] of Object.entries(engine.takePhaseTimes())) {
       if (entry.timed)

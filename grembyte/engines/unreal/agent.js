@@ -7,10 +7,23 @@ const unreal = (() => {
   // How long a snapshot of the object table serves before it is read anew.
   // Reading one on the game thread stalls the game (about 0.5 s in
   // RoboCop): the agent reads it on its own thread after attaching
-  // (prewarm) and before it hands work to the game thread (onMainThread).
+  // (prewarm), before a script's run when a lookup needs it (prepareLookups)
+  // and before it hands other work to the game thread (onMainThread).
   // A snapshot kept longer led the game thread through objects freed by a
   // level change (RoboCop froze, 2026-11-19).
   const SNAPSHOT_AGE = 15000;
+  // findObjects (ctx.forEach) takes a snapshot this young as it is: the
+  // agent's thread reads one just before a script's run (prepareLookups).
+  const SNAPSHOT_FRESH = 1000;
+  // What a script looked up and found missing, the agent's thread found
+  // missing again just before the run: the game thread trusts that this long
+  // instead of searching itself (a search reads the object table).
+  const MISSING_TRUST = 3000;
+  // A repeating script's lookup found missing is searched for again, in a
+  // fresh snapshot, at most this often (a manual script's before each run).
+  const MISSING_REFRESH = 15000;
+  // The lookups remembered per script (see recordLookups)
+  const MAX_LOOKUPS = 64;
   const TWO32 = 4294967296;
   let module = null;
   let lastSearch = -Infinity;
@@ -466,6 +479,8 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
 
   function objects() {
     if (snapshot === null || Date.now() - snapshot.read > SNAPSHOT_AGE) {
+      if (isGameThread())
+        phaseEntry('game_thread_snapshot').count++;  // what prepareLookups avoids
       const s = timed('snapshot', readSnapshot);
       s.byClass = timed('snapshot_classes', () => classIndex(s));
       s.ofClass = new Map();  // class -> its and its subclasses' objects (scanObjects)
@@ -509,10 +524,28 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     return nameText(s.name[i], s.number[i]);
   }
 
+  function servingSnapshot() {
+    // The snapshot while it serves, else null; never reads one.
+    return snapshot !== null && Date.now() - snapshot.read <= SNAPSHOT_AGE ? snapshot : null;
+  }
+
   function nameOfAddress(address) {
-    const s = objects();
-    const i = s.index.get(address);
-    return i === undefined ? null : objectName(s, i);
+    // The name of the object at ``address`` (a number), or null if none lives
+    // there: from the snapshot while it serves, else from the object itself.
+    // Naming (types, functions, class prefixes) runs on the game thread during
+    // scripts and must not read the object table there (about 100 ms).
+    const s = servingSnapshot();
+    if (s !== null) {
+      const i = s.index.get(address);
+      if (i !== undefined)
+        return objectName(s, i);
+    }
+    try {
+      const object = ptr(address);
+      return isObject(object) ? fieldName(object.add(OBJECT_NAME)) : null;
+    } catch (_error) {
+      return null;
+    }
   }
 
   // --- Layout: where the reflection structures keep their fields -----------------
@@ -952,13 +985,12 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
   function functionsOf(klass) {
     // The UFunctions a class declares (or overrides), in declaration order.
     const L = ue.layout;
-    const s = objects();
     const result = [];
     for (let field = ptr(klass).add(L.children).readPointer(); !field.isNull();
       field = field.add(L.next).readPointer()) {
-      const i = s.index.get(Number(field.toString()));
-      if (i !== undefined)
-        result.push({ address: field, name: objectName(s, i) });
+      const name = nameOfAddress(Number(field.toString()));
+      if (name !== null)
+        result.push({ address: field, name });
     }
     return result;
   }
@@ -2520,13 +2552,16 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     return true;
   }
 
-  function onMainThread(work) {
-    // A promise of work()'s result, computed on the game thread.
+  function onMainThread(work, renew = true) {
+    // A promise of work()'s result, computed on the game thread. Without
+    // ``renew`` the snapshot is not read anew beforehand: script runs read it
+    // only when a lookup needs it (prepareLookups); renewing it every 15 s
+    // cost about 100 ms each time in RoboCop.
     try {
       ensureMainGate();
       // A snapshot that runs out before the work may run: read anew here,
       // not on the game thread (MAIN_TIMEOUT: the longest the work waits).
-      if (snapshot !== null && !isGameThread()
+      if (renew && snapshot !== null && !isGameThread()
           && Date.now() - snapshot.read > SNAPSHOT_AGE - MAIN_TIMEOUT) {
         snapshot = null;
         objects();
@@ -2711,16 +2746,122 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
   function findClass(name) {
     // A loaded class (or struct) by its name, e.g. "AlabamaCheatManager".
     reflection();
+    const lookup = ['class', name];
+    noteLookup(lookup);
     const cached = classesByName.get(name);
     if (cached !== undefined && isObject(cached))
       return cached;
+    if (trustedMissing(lookup))
+      throw grembyteError('error.unreal.no_class', { name });
     const klass = timed('find_class', () => retryFresh(() => searchClass(name)));
+    noteFound(lookup, klass !== null);
     if (klass === null)
       throw grembyteError('error.unreal.no_class', { name });
     return klass;
   }
 
+  // --- Lookups of scripts ----------------------------------------------------------
+  // A script looks up the same classes and objects every run (ctx.find,
+  // ctx.isPlaying). The monitor records them on the game thread
+  // (recordLookups, takeLookups) and has the agent's thread find them before
+  // the next run (prepareLookups), so the game thread finds them cached and
+  // never reads the object table itself: a search there stalled RoboCop for
+  // 130-260 ms about once a minute (2026-11-20). A lookup is
+  // ['class', name], ['object', className, named] or ['objects', className].
+
+  // key -> lookup while a script runs on the game thread, else null
+  let recorded = null;
+  // key -> { checked, searched }: lookups last found missing; checked when
+  // the agent's thread last vouched for that, searched when it last looked
+  const missingLookups = new Map();
+
+  function lookupKey(lookup) {
+    return JSON.stringify(lookup);
+  }
+
+  function noteLookup(lookup) {
+    if (recorded !== null && recorded.size < MAX_LOOKUPS)
+      recorded.set(lookupKey(lookup), lookup);
+  }
+
+  function recordLookups() {
+    recorded = new Map();
+    return true;
+  }
+
+  function takeLookups() {
+    const lookups = recorded === null ? [] : Array.from(recorded.values());
+    recorded = null;
+    return lookups;
+  }
+
+  function noteFound(lookup, found) {
+    const key = lookupKey(lookup);
+    if (found) {
+      missingLookups.delete(key);
+    } else {
+      const now = Date.now();
+      missingLookups.set(key, { checked: now, searched: now });
+    }
+  }
+
+  function trustedMissing(lookup) {
+    // On the game thread: whether the agent's thread found this missing just
+    // before, so searching again (in the object table) is no use.
+    if (!isGameThread())
+      return false;
+    const missing = missingLookups.get(lookupKey(lookup));
+    return missing !== undefined && Date.now() - missing.checked < MISSING_TRUST;
+  }
+
+  function prepareLookups(lookups, eager = false) {
+    // On the agent's thread before a script's run: find the classes and
+    // objects its earlier runs looked up. A missing one is searched for
+    // again before each run when ``eager`` (manual scripts: a hotkey must
+    // not miss the money), else at most every MISSING_REFRESH.
+    if (isGameThread() || !Array.isArray(lookups) || lookups.length === 0)
+      return false;
+    reflection();
+    for (const lookup of lookups.slice(0, MAX_LOOKUPS)) {
+      try {
+        prepareLookup(lookup, eager);
+      } catch (_error) {
+        // the run finds out (no class, no game)
+      }
+    }
+    return true;
+  }
+
+  function searchAgain(lookup, eager) {
+    // Whether prepareLookup searches for ``lookup`` (else it vouches that it
+    // is still missing)
+    const missing = missingLookups.get(lookupKey(lookup));
+    if (missing === undefined || eager || Date.now() - missing.searched >= MISSING_REFRESH)
+      return true;
+    missing.checked = Date.now();
+    return false;
+  }
+
+  function prepareLookup(lookup, eager) {
+    const [kind, name, named = null] = lookup;
+    // An object of a class not loaded is missing as long as its class
+    if (!searchAgain(['class', name], eager) || (kind !== 'class' && !searchAgain(lookup, eager)))
+      return;
+    if (kind === 'class') {
+      findClass(name);
+    } else if (kind === 'object') {
+      findObject(name, named);
+    } else if (kind === 'objects') {
+      const klass = Number(findClass(name).toString());
+      if (snapshot === null || Date.now() - snapshot.read > SNAPSHOT_FRESH / 4)
+        snapshot = null;
+      searchObjects(klass, null, 0);  // reads the snapshot, gathers the class's objects
+    }
+  }
+
   function searchClass(name) {
+    if (isGameThread())
+      phaseEntry('game_thread_search').count++;
     const s = objects();
     const kinds = new Map();
     // All objects in order: it stops at the first match, sooner than
@@ -2926,6 +3067,13 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
       .some(current => Number(current.toString()) === klass);
   }
 
+  // searched class -> (class -> { name, derives }): whether a class derives
+  // from a searched one, kept across snapshots. Walking the supers of every
+  // class (some tens of thousands) took about 30 ms per searched class after
+  // each new snapshot; the snapshot's name of the class tells a class freed
+  // and its memory given to another one.
+  const derivations = new Map();
+
   function searchObjects(klass, named, limit) {
     return timed('object_search', () => scanObjects(klass, named, limit));
   }
@@ -2934,24 +3082,31 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     // Up to ``limit`` live objects of class ``klass`` (or a subclass) named
     // ``named`` (see isNamed), in the snapshot of the object table.
     const s = objects();
-    const kinds = new Map();
     const classKinds = new Map();
+    let known = derivations.get(klass);
+    if (known === undefined) {
+      known = new Map();
+      derivations.set(klass, known);
+    }
     const derives = k => {
-      let result = kinds.get(k);
-      if (result === undefined) {
-        result = false;
-        try {
-          for (const current of superChain(k)) {
-            if (current === klass) {
-              result = true;
-              break;
-            }
+      // Kept across snapshots while the class at k has the same name
+      const i = s.index.get(k);
+      const name = i === undefined ? -1 : s.name[i];
+      const entry = known.get(k);
+      if (entry !== undefined && name !== -1 && entry.name === name)
+        return entry.derives;
+      let result = false;
+      try {
+        for (const current of superChain(k)) {
+          if (current === klass) {
+            result = true;
+            break;
           }
-        } catch (_error) {
-          // a class freed since the snapshot (a level changed)
         }
-        kinds.set(k, result);
+      } catch (_error) {
+        // a class freed since the snapshot (a level changed)
       }
+      known.set(k, { name, derives: result });
       return result;
     };
     const ownName = named === null ? null : named.substring(named.lastIndexOf('.') + 1);
@@ -2960,6 +3115,8 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     // a script looking for the same class every run checks only those.
     let candidates = s.ofClass.get(klass);
     if (candidates === undefined) {
+      if (isGameThread())
+        phaseEntry('game_thread_search').count++;
       candidates = indexesOfClasses(s, derives);
       s.ofClass.set(klass, candidates);
     }
@@ -2994,13 +3151,18 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     // with ``named`` the one of that name, e.g. findObject("BP_Hero_C",
     // "BP_Hero_C_1"), or of that name in its outer (see outerName). null if none.
     reflection();
+    const lookup = ['object', className, named];
+    noteLookup(lookup);
     const klass = Number(findClass(className).toString());
     const key = `${className}|${named}`;
     const cached = foundObjects.get(key);
     if (cached !== undefined && stillFound(cached, klass, named))
       return cached;
     foundObjects.delete(key);
+    if (trustedMissing(lookup))
+      return null;
     const object = retryFresh(() => searchObjects(klass, named, 1)[0] || null);
+    noteFound(lookup, object !== null);
     if (object !== null)
       foundObjects.set(key, object);
     return object;
@@ -3008,9 +3170,12 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
 
   function findObjects(className, named = null) {
     // All live objects findObject could give, read from the object table anew
+    // unless the snapshot is fresh (prepareLookups read it just before)
     reflection();
+    noteLookup(['objects', className]);
     const klass = Number(findClass(className).toString());
-    snapshot = null;
+    if (snapshot !== null && Date.now() - snapshot.read > SNAPSHOT_FRESH)
+      snapshot = null;
     // (Frida's JavaScript on Windows has no Infinity: it is NaN there.)
     return searchObjects(klass, named, Number.MAX_SAFE_INTEGER);
   }
@@ -3635,6 +3800,9 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     findMethod,
     findObject,
     findObjects,
+    recordLookups,
+    takeLookups,
+    prepareLookups,
     outerName,
     // The inspector's title: an object by its FName
     instanceName: uobjectName,

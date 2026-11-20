@@ -318,6 +318,7 @@ class _FakeScriptWorker:
             script_removed = Signal(int)
             script_failed = Signal(int, str)
             script_ran = Signal(int, object)
+            lookups_learned = Signal(int, object)
             worker_failed = Signal(str)
             inspected = Signal(int, object)
             inspect_failed = Signal(int, str)
@@ -347,6 +348,7 @@ class _FakeScriptWorker:
         self.script_removed = self.signals.script_removed
         self.script_failed = self.signals.script_failed
         self.script_ran = self.signals.script_ran
+        self.lookups_learned = self.signals.lookups_learned
         self.worker_failed = self.signals.worker_failed
         self.inspected = self.signals.inspected
         self.inspect_failed = self.signals.inspect_failed
@@ -569,6 +571,40 @@ def test_scripts_show_disconnected_when_their_session_ends(qt_app, monkeypatch):
         assert restarted is not worker
         assert restarted.requests[-1][0] == "add" and restarted.requests[-1][1].enabled
         assert panel.table.item(0, 2).text() == "Getrennt"  # the other one stays
+    finally:
+        panel.shutdown()
+        panel.deleteLater()
+
+
+def test_the_panel_keeps_what_a_script_looked_up(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from types import SimpleNamespace
+
+    from grembyte.ui.widgets import scripts
+
+    # The agent reports the classes and objects an Unreal script looked up;
+    # the saved script keeps them, so the next session finds them before the
+    # first run (see ScriptSpec.lookups).
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    stored = []
+    repository = SimpleNamespace(
+        list_scripts=lambda _process_id: [],
+        add_script=lambda _process_id, **fields: stored.append(("add", fields)) or 7,
+        update_script=lambda row_id, **fields: stored.append((row_id, fields)))
+    panel = scripts.ScriptPanel(load_translations("en"), repository=repository)
+    try:
+        panel.set_process(4242, process_id=1)
+        script_id = panel.add_script(ScriptSpec("return 1;", label="Tick"))
+        assert stored[0][1]["lookups"] is None
+        worker = panel._worker
+        worker.script_added.emit(script_id)
+        worker.lookups_learned.emit(script_id, [["object", "PlayerController", None]])
+        assert stored[-1] == (7, {"lookups": '[["object", "PlayerController", null]]'})
+        # Pausing hands them to the agent again with the same code
+        panel.table.selectRow(0)
+        panel.btn_toggle.click()
+        assert worker.requests[-1][0] == "update"
+        assert worker.requests[-1][2].lookups == (("object", "PlayerController", None),)
     finally:
         panel.shutdown()
         panel.deleteLater()
