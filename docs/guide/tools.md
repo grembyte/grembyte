@@ -53,7 +53,8 @@ The **Activity** tab shows the activity log: the course of every run, written to
 - the attached process with its details: 32 or 64 bit, native or Wine/Proton with the Proton version, engine, how the gadget was loaded;
 - sessions and agents in the order they started and ended;
 - every call into the game with its duration and outcome (frequent ones summed up);
-- steps inside the game that can make it hang, such as setting the hook that runs scripts on the game thread;
+- steps inside the game that can make it hang, such as setting the hook that runs scripts on the game thread or preparing an Unreal game for scripts;
+- for a call into the game that has not returned after 10 seconds, what each of the game's threads is doing (running, or waiting and where), so a frozen game shows who waits for whom;
 - with **Scripts: measure each run** in the [settings](settings.md), how long each script run took, step by step;
 - clicks in Grembyte, and why a Frida session ended, with Frida's crash report.
 

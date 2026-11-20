@@ -1700,9 +1700,21 @@ def test_the_game_thread_hook_stays_between_script_runs(tmp_path, qt_app, activi
         worker.wait(5000)
         target.close()
     # Setting the hook is in the activity log, step by step, once
-    steps = [entry["event"] for entry in _events(activity_file) if entry.get("pid") == target.pid
-             and entry["event"].startswith("main_gate_")]
-    assert steps == ["main_gate_pausing", "main_gate_attaching", "main_gate_attached"]
+    steps = [(entry["event"], entry.get("step")) for entry in _events(activity_file)
+             if entry.get("pid") == target.pid and entry["event"].startswith("main_gate_")]
+    assert steps == [("main_gate_preparing", "main_thread"), ("main_gate_preparing", "cmodule"),
+                     ("main_gate_pausing", None), ("main_gate_attaching", None),
+                     ("main_gate_attached", None)]
+    # So is the prewarm, each step as it begins; the hook is set within it
+    events = [(entry["event"], entry.get("step")) for entry in _events(activity_file)
+              if entry.get("pid") == target.pid and (entry["event"] == "prewarm_step"
+                                                     or entry["event"].startswith("main_gate_"))]
+    assert [step for event, step in events if event == "prewarm_step"] == [
+        "reflection", "process_event", "main_gate", "objects", "done"]
+    assert events.index(("prewarm_step", "main_gate")) + 1 == events.index(
+        ("main_gate_preparing", "main_thread"))
+    assert events.index(("main_gate_attached", None)) + 1 == events.index(
+        ("prewarm_step", "objects"))
     phases = [entry for entry in _events(activity_file) if entry.get("pid") == target.pid
               and entry["event"] == "script_phases"]
     # With the setting script_timings each run's timings. Right after

@@ -22,6 +22,11 @@ file; failed calls always get an entry of their own. Such a sum is written
 once it is due, when the method fails, or when the agent is unloaded, the
 session ends or detaches: other entries may come before it, ``within_s``
 says how long it covers.
+
+An RPC that has not returned after ``HANG_AFTER_S`` gets an entry
+``threads`` (why ``rpc_hanging``) with what each thread of the game does
+(see ``thread_states``), once per call: a game that froze while the agent
+worked shows who waits for whom, also when it is killed afterwards.
 """
 
 import itertools
@@ -44,6 +49,10 @@ BACKUPS = 4
 REPEAT_WINDOW_S = 2.0
 # Calls of a method written one by one within REPEAT_WINDOW_S before they are summed up
 REPEAT_WRITTEN = 3
+# An RPC running this long gets the game's threads written (once per call)
+HANG_AFTER_S = 10.0
+# How often the watchdog looks for such RPCs
+HANG_CHECK_S = 1.0
 # Environment variables of a Wine game worth knowing (no paths, no user data).
 WINE_VARIABLES = ("SteamAppId", "SteamGameId", "WINEDLLOVERRIDES", "WINEESYNC", "WINEFSYNC",
                   "WINE_NTSYNC", "PROTON_USE_WINED3D", "PROTON_NO_ESYNC", "PROTON_NO_FSYNC")
@@ -61,8 +70,12 @@ _agents = itertools.count(1)
 _pending = {}
 # (agent, method) -> time.monotonic() of the entries last written for it
 _last_written = {}
-# id -> (agent, method, time.monotonic()): RPCs that have not returned yet
+# id -> (agent, method, time.monotonic(), pid or None): RPCs that have not returned yet
 _in_flight = {}
+# ids in _in_flight whose threads were written (see check_hangs)
+_hang_written = set()
+# (thread, threading.Event to stop it) of the watchdog, or None
+_watchdog = None
 _calls = itertools.count(1)
 
 
@@ -95,18 +108,21 @@ def setup(directory=None):
         _handler = handler
         _run = uuid.uuid4().hex[:8]
     record("app_started", **environment())
+    _start_watchdog()
     return directory / ACTIVITY_NAME
 
 
 def teardown():
     """Stop writing (for tests and the end of the run)."""
     global _handler  # pylint: disable=global-statement
+    _stop_watchdog()
     flush()
     with _lock:
         handler, _handler = _handler, None
         _pending.clear()
         _last_written.clear()
         _in_flight.clear()
+        _hang_written.clear()
     if handler is not None:
         _logger.removeHandler(handler)
         handler.close()
@@ -158,11 +174,14 @@ def new_agent():
     return next(_agents)
 
 
-def rpc_started(agent, method):
-    """Note an RPC in flight; returns the handle for ``rpc_ended``."""
+def rpc_started(agent, method, pid=None):
+    """Note an RPC in flight; returns the handle for ``rpc_ended``.
+
+    With ``pid`` (the game's) the threads of the game are written if the call
+    hangs (see ``check_hangs``)."""
     handle = next(_calls)
     with _lock:
-        _in_flight[handle] = (agent, method, time.monotonic())
+        _in_flight[handle] = (agent, method, time.monotonic(), pid)
     return handle
 
 
@@ -171,9 +190,10 @@ def rpc_ended(handle, error=None):
     now = time.monotonic()
     with _lock:
         call = _in_flight.pop(handle, None)
+        _hang_written.discard(handle)
     if _handler is None or call is None:
         return
-    agent, method, began = call
+    agent, method, began, _pid = call
     ms = (now - began) * 1000
     key = (agent, method)
     _flush_due(now)
@@ -204,7 +224,56 @@ def in_flight():
     with _lock:
         calls = sorted(_in_flight.values(), key=lambda call: call[2])
     return [{"agent": agent, "method": method, "seconds": round(now - began, 3)}
-            for agent, method, began in calls]
+            for agent, method, began, _pid in calls]
+
+
+def check_hangs(now=None):
+    """Write the threads of each game with an RPC running ``HANG_AFTER_S`` or longer.
+
+    Once per call; several such calls of one game share one entry, which
+    names them (``rpcs``). The watchdog calls this every ``HANG_CHECK_S``."""
+    now = time.monotonic() if now is None else now
+    by_pid = {}
+    with _lock:
+        if _handler is None:
+            return
+        for handle, (agent, method, began, pid) in sorted(_in_flight.items(),
+                                                           key=lambda item: item[1][2]):
+            if pid is None or handle in _hang_written or now - began < HANG_AFTER_S:
+                continue
+            _hang_written.add(handle)
+            by_pid.setdefault(pid, []).append(
+                {"agent": agent, "method": method, "seconds": round(now - began, 3)})
+    for pid, rpcs in by_pid.items():
+        record_threads(pid, "rpc_hanging", rpcs=rpcs)
+
+
+def _start_watchdog():
+    global _watchdog  # pylint: disable=global-statement
+    stop = threading.Event()
+
+    def watch():
+        while not stop.wait(HANG_CHECK_S):
+            try:
+                check_hangs()
+            except Exception:  # pylint: disable=broad-exception-caught
+                logging.getLogger("grembyte").exception("activity watchdog failed")
+
+    thread = threading.Thread(target=watch, name="activity-watchdog", daemon=True)
+    _watchdog = (thread, stop)
+    thread.start()
+
+
+def _stop_watchdog():
+    global _watchdog  # pylint: disable=global-statement
+    watchdog, _watchdog = _watchdog, None
+    if watchdog is None:
+        return
+    thread, stop = watchdog
+    stop.set()
+    if thread is not threading.current_thread():
+        # A check in progress samples the threads for 0.2 s (thread_states)
+        thread.join(timeout=2.0)
 
 
 def flush(agent=None):

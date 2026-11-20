@@ -124,6 +124,69 @@ def test_rpcs_in_flight_are_named(activity_file):
     assert activity.in_flight() == []
 
 
+def test_a_hanging_rpc_gets_the_game_threads_written_once(activity_file, monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr(activity.time, "monotonic", lambda: clock[0])
+    sampled = []
+
+    def thread_states(pid, *_args, **_kwargs):
+        sampled.append(pid)
+        return [{"tid": pid, "name": "game", "state": "S", "cpu": 0.0, "syscall": 202},
+                {"tid": pid + 1, "name": "render", "state": "R", "cpu": 0.98}]
+
+    monkeypatch.setattr(activity, "thread_states", thread_states)
+    prewarm = activity.rpc_started("scripts#3", "prewarm_scripts", 4242)
+    hooks = activity.rpc_started("hooks#1", "add_hook", 4242)
+    other = activity.rpc_started("trace#4", "stop", 77)
+    no_game = activity.rpc_started("agent#9", "scan")         # no pid: never written
+    clock[0] += activity.HANG_AFTER_S - 0.5
+    activity.check_hangs()
+    assert not sampled                                         # not hanging yet
+    activity.rpc_ended(hooks)                                  # returned in time
+    clock[0] += 1.0
+    activity.check_hangs()
+    activity.check_hangs()                                     # once per call
+    assert sorted(sampled) == [77, 4242]
+    clock[0] += 30.0
+    late = activity.rpc_started("scripts#3", "run_script_now", 4242)
+    clock[0] += activity.HANG_AFTER_S
+    activity.check_hangs()                                     # only the new one
+    for handle in (prewarm, other, no_game, late):
+        activity.rpc_ended(handle, "script has been destroyed")
+    entries = _events(activity_file, "threads")
+    assert [(entry["pid"], entry["why"], [rpc["method"] for rpc in entry["rpcs"]])
+            for entry in entries] == [(4242, "rpc_hanging", ["prewarm_scripts"]),
+                                      (77, "rpc_hanging", ["stop"]),
+                                      (4242, "rpc_hanging", ["run_script_now"])]
+    assert entries[0]["rpcs"][0] == {"agent": "scripts#3", "method": "prewarm_scripts",
+                                     "seconds": activity.HANG_AFTER_S + 0.5}
+    assert entries[0]["running"] == 1 and entries[0]["threads"][0]["syscall"] == 202
+
+
+def test_the_watchdog_writes_hanging_rpcs_by_itself(tmp_path, monkeypatch):
+    monkeypatch.setenv("GREMBYTE_LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(activity, "HANG_AFTER_S", 0.05)
+    monkeypatch.setattr(activity, "HANG_CHECK_S", 0.02)
+    monkeypatch.setattr(activity, "thread_states", lambda pid, *_a, **_k: [
+        {"tid": pid, "name": "game", "state": "S", "cpu": 0.0}])
+    path = activity.setup()
+    try:
+        handle = activity.rpc_started("scripts#1", "prewarm_scripts", os.getpid())
+        waited = threading.Event()
+        while not _events(path, "threads") and not waited.wait(0.01):
+            pass  # the test's timeout ends a watchdog that never writes
+        activity.rpc_ended(handle)
+    finally:
+        activity.teardown()
+    assert activity._watchdog is None  # pylint: disable=protected-access
+    [entry] = _events_after_teardown(path, "threads")
+    assert entry["rpcs"][0]["method"] == "prewarm_scripts" and entry["pid"] == os.getpid()
+
+
+def _events_after_teardown(path, *names):
+    return [entry for entry in activity.read_entries(path) if entry["event"] in names]
+
+
 def test_sessions_know_their_thread(activity_file):
     class Worker:  # pylint: disable=too-few-public-methods
         pid = 42

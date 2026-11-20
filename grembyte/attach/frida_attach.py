@@ -294,23 +294,27 @@ class RecordedScript:
     @property
     def exports_sync(self):
         if self._exports is None:
-            self._exports = RecordedExports(self._script.exports_sync, self.agent)
+            self._exports = RecordedExports(self._script.exports_sync, self.agent,
+                                            self._session.pid)
         return self._exports
 
 
 class RecordedExports:
-    """An agent's RPC exports, timed into the activity log."""
+    """An agent's RPC exports, timed into the activity log; a call that hangs
+    gets the game's threads written (activity.check_hangs)."""
 
-    def __init__(self, exports, agent):
+    def __init__(self, exports, agent, pid=None):
         self._exports = exports
         self._agent = agent
+        self._pid = pid
 
     def __getattr__(self, name):
         function = getattr(self._exports, name)
         agent = self._agent
+        pid = self._pid
 
         def call(*args, **kwargs):
-            handle = activity.rpc_started(agent, name)
+            handle = activity.rpc_started(agent, name, pid)
             try:
                 result = function(*args, **kwargs)
             except Exception as error:

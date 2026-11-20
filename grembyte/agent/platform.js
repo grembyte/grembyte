@@ -163,6 +163,10 @@ function mainThreadGate(addresses, onMain, wake = false) {
   // { request(), clear() }: after request(), ``onMain`` runs each time the
   // main thread enters one of ``addresses`` (with ``wake`` also GetMessage),
   // until clear(). Errors of onMain are logged, never thrown into the game.
+  // The steps before the hooks go to the activity log as they begin
+  // (main_gate_preparing): finding the main thread calls into Windows (Wine)
+  // for each thread, compiling the C code allocates code memory.
+  noteActivity('main_gate_preparing', { step: 'main_thread' });
   const main = mainThreadId();
   const pending = Memory.alloc(4);
   const mainThread = Memory.alloc(8);
@@ -174,6 +178,7 @@ function mainThreadGate(addresses, onMain, wake = false) {
       console.error(`main thread work failed: ${error.stack || error}`);
     }
   }, 'void', []);
+  noteActivity('main_gate_preparing', { step: 'cmodule' });
   const cm = new CModule(MAIN_GATE_SOURCE,
                          { pending, main_thread: mainThread, run_main: runMain });
   const targets = addresses.slice();
