@@ -1,4 +1,4 @@
-"""Grembyte against a build of HermesQuest (test_app/unity), the real Unity Mono runtime.
+"""Grembyte against a build of GrembyteQuest (test_app/unity), the real Unity Mono runtime.
 
 The build is not in the repository (see test_app/unity/README.md); without
 it, or with one older than what a test needs, the tests are skipped. The
@@ -14,10 +14,10 @@ import pytest
 from tests.test_hooks import _wait_for, fixture_qt_app  # pylint: disable=unused-import
 
 _BUILD = Path(__file__).resolve().parent.parent / "test_app" / "unity" / "Build"
-_GAME = (_BUILD / "Windows" / "HermesQuest.exe" if sys.platform == "win32"
-         else _BUILD / "Linux" / "HermesQuest.x86_64")
+_GAME = (_BUILD / "Windows" / "GrembyteQuest.exe" if sys.platform == "win32"
+         else _BUILD / "Linux" / "GrembyteQuest.x86_64")
 
-requires_build = pytest.mark.skipif(not _GAME.exists(), reason=f"no HermesQuest build at {_GAME}")
+requires_build = pytest.mark.skipif(not _GAME.exists(), reason=f"no GrembyteQuest build at {_GAME}")
 
 # The token and Mono's name of a method once Assembly-CSharp is loaded, null
 # while it is not, 'missing' if the class or method is.
@@ -66,7 +66,7 @@ class _Game:
         deadline = time.monotonic() + 30
         while not (log.exists() and log.stat().st_size) and time.monotonic() < deadline:
             if not self.alive():
-                raise AssertionError(f"HermesQuest ended at the start ({self.process.returncode})")
+                raise AssertionError(f"GrembyteQuest ended at the start ({self.process.returncode})")
             time.sleep(0.1)
 
     def identity(self, namespace, class_name, name, params):
@@ -86,9 +86,9 @@ class _Game:
         finally:
             session.detach()
         if found is None:
-            raise AssertionError("HermesQuest did not load Assembly-CSharp")
+            raise AssertionError("GrembyteQuest did not load Assembly-CSharp")
         if found == "missing":
-            pytest.skip(f"the HermesQuest build has no {namespace}.{class_name}:{name}; rebuild it")
+            pytest.skip(f"the GrembyteQuest build has no {namespace}.{class_name}:{name}; rebuild it")
         token, method = found
         return {"image": "Assembly-CSharp", "file": None, "token": token, "method": method}
 
@@ -117,7 +117,7 @@ def test_monitor_leaves_exceptions_thrown_through_the_method_to_the_game(tmp_pat
     worker.monitor_failed.connect(failed.__setitem__)
     worker.calls.connect(lambda events, _dropped, _counts: calls.extend(events))
     try:
-        identity = game.identity("HermesQuest", "Rumors", "Parse", 1)
+        identity = game.identity("GrembyteQuest", "Rumors", "Parse", 1)
         worker.start()
         monitor_id = worker.add_monitor(identity, returns=returns)
         _wait_for(qt_app, lambda: monitor_id in added or monitor_id in failed, timeout=30)

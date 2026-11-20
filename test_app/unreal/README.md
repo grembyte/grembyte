@@ -1,4 +1,4 @@
-# HermesQuest (Unreal) — planned
+# GrembyteQuest (Unreal) — planned
 
 The Unreal counterpart of [the Unity game](../unity/README.md): same map, keys and
 enemies, so the documentation can show the same steps for both engines.
@@ -6,7 +6,7 @@ enemies, so the documentation can show the same steps for both engines.
 Plan:
 
 - UE5 C++ project with the GameplayAbilities plugin.
-- `UHermesAttributeSet` with `FGameplayAttributeData` for Health, MaxHealth, Mana,
+- `UGrembyteAttributeSet` with `FGameplayAttributeData` for Health, MaxHealth, Mana,
   MaxMana, Strength, Dexterity, Intelligence, DamageOutgoingMult and
   DamageIncomingMult, as in shipped GAS games.
 - Damage as a `UGameplayEffect` with an `UGameplayEffectExecutionCalculation`, so

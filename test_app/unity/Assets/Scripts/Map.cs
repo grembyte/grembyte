@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace HermesQuest
+namespace GrembyteQuest
 {
     public class Map
     {

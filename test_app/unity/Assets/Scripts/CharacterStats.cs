@@ -1,4 +1,4 @@
-namespace HermesQuest
+namespace GrembyteQuest
 {
     // The values a memory scan looks for. A class rather than a struct, so the
     // stats sit in their own heap object behind a pointer:

@@ -430,7 +430,7 @@ METHOD_EXAMPLES = {
 // Static methods: ctx.call("Namespace.Class.Method", ...)
 // After the call: return a value to replace the result, nothing to keep it.
 // Before the call: ctx.args.x = …, obj.Field = … change what the method works with.
-// Example for HermesQuest's Combat.CalculateDamage, after the call:
+// Example for GrembyteQuest's Combat.CalculateDamage, after the call:
 // the player deals twice the damage.
 const attacker = ctx.args.attacker;
 if (attacker && attacker.IsPlayer)

@@ -2,7 +2,7 @@ using System;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 
-namespace HermesQuest
+namespace GrembyteQuest
 {
     // Once per second the town hears a rumor, a line "<days>:<text>". Some
     // lines are garbled: Parse throws for them and Tick catches it, as games
