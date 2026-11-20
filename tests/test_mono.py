@@ -1469,6 +1469,19 @@ def test_method_monitor_records_objects_and_inspects_them(tmp_path, qt_app):
         assert int(fields["Damage"]["address"], 16) == base + 0x10
         assert [fields[name]["valueType"] for name in fields] == [
             "float", "int32", None, None, None]  # the enum counts as its base type
+        # What the inspector may change: numbers and enums (with their names)
+        assert fields["Damage"]["edit"] == {"address": fields["Damage"]["address"],
+                                            "valueType": "float"}
+        assert fields["Type"]["edit"]["enumValues"]["2"] == "Frost"
+        assert [fields[name]["edit"] for name in ("Name", "Owner", "Rolls")] == [None] * 3
+        # Written into the game's memory, the value is there when read again
+        from grembyte.ui.widgets.field_value import write_field
+
+        write_field(target.pid, fields["Type"]["edit"], "1")
+        write_field(target.pid, fields["Damage"]["edit"], "99.5")
+        changed = {field["name"]: field for field in inspect(after["target"])["fields"]}
+        assert changed["Type"]["value"]["text"].startswith("1 (")
+        assert changed["Damage"]["value"]["text"] == "99.5"
 
         rolls = inspect(fields["Rolls"]["value"]["target"])
         assert rolls["length"] == 3
