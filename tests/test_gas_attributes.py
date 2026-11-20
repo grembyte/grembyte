@@ -16,7 +16,7 @@ from tests.test_scripts import _FakeScriptWorker, fixture_qt_app  # pylint: disa
 
 
 _STATE = {
-    "owner": "BPC_AlabamaPlayer_C_1", "ownerClass": "ABPC_AlabamaPlayer_C",
+    "owner": "BPC_AlabamaPlayer_C_1", "ownerClass": "BPC_AlabamaPlayer_C",
     "ownerAddress": "0x7ff612340000", "setter": "Library:SetFloatAttributeBase",
     "component": True,
     "sets": [{"name": "AttributeSetCore", "className": "UAlabamaAttributeSetCore",
@@ -70,7 +70,7 @@ def test_window_lists_sets_and_holds_values_by_scripts(qt_app, monkeypatch):
             ["AttributeSetCore", "Might", "4", "5", ""],
             ["AttributeSetCore", "DamageOutgoingMult", "1", "1.4", ""],
             ["AttributeSetCore", "Health", "200", "200", ""]]
-        assert dialog.owner_label.text() == "Spielfigur: BPC_AlabamaPlayer_C_1 (ABPC_AlabamaPlayer_C)"
+        assert dialog.owner_label.text() == "Spielfigur: BPC_AlabamaPlayer_C_1 (BPC_AlabamaPlayer_C)"
         # Effects change these (current differs from base)
         dialog.changed_check.setChecked(True)
         assert table.rowCount() == 2

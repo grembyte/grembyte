@@ -749,6 +749,13 @@ int main(void) {
     Object *blueprint = object(package_class, "/Game/Blueprints/BP_Hero", NULL);
     Object *bp_hero = object(generated_class, "BP_Hero_C", blueprint);
     bp_hero->super = hero;
+#ifdef ANIM_BLUEPRINT
+    /* The hero's Animation Blueprint (Lies of P: BP_CH_PC_Pino_C and
+       ABP_CH_PC_Pino_C): a class named as the hero's with a C++ prefix */
+    Object *anim_blueprint = object(package_class, "/Game/Blueprints/ABP_Hero", NULL);
+    Object *abp_hero = object(generated_class, "ABP_Hero_C", anim_blueprint);
+    abp_hero->super = object_class;
+#endif
     /* Something has a weak pointer to the class: it has a serial number */
     g_uobject_array.objects[0][bp_hero->index].serial = 5;
     g_soft_class = bp_hero;
@@ -1305,7 +1312,7 @@ def test_method_monitor_reads_arguments_from_the_call_frame(tmp_path, qt_app):
         loot = monitor("BP_Hero_C:Loot (AHero*,int32)", objects=True)
         answer, call = one_call(loot, "loot", 2)
         assert answer == (107, 0)
-        assert call["self"]["text"].startswith('ABP_Hero_C "BP_Hero_C_0"@0x')
+        assert call["self"]["text"].startswith('BP_Hero_C "BP_Hero_C_0"@0x')
         target_arg, amount = call["args"]
         assert target_arg["text"] == call["self"]["text"]
         assert amount["text"] == "2"
@@ -1387,10 +1394,10 @@ def test_the_call_dialog_calls_ufunctions_static_and_on_found_objects(tmp_path, 
         assert (name["type"]["engine"], loud["type"]["engine"]) == ("string", "bool")
         result = answer(worker.call_found(rename, "Hero", "", ["Ann", False]))
         assert result["result"] is None
-        assert result["object"]["text"].startswith('ABP_Hero_C "BP_Hero_C_0"@0x')
+        assert result["object"]["text"].startswith('BP_Hero_C "BP_Hero_C_0"@0x')
         assert target.send("renamed", 0) == (4, 0)
         result = answer(worker.call_found(rename, "Hero", "BP_Hero_C_1", ["Bobby", True]))
-        assert result["object"]["text"].startswith('ABP_Hero_C "BP_Hero_C_1"@0x')
+        assert result["object"]["text"].startswith('BP_Hero_C "BP_Hero_C_1"@0x')
         assert target.send("renamed", 0) == (6, 1)
         address = result["object"]["target"]["address"]
         result = answer(worker.call_found(rename, "Hero", address, ["Al", True]))
@@ -1451,7 +1458,7 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app, d
         run = run_on_game_thread(calls)
         assert run["error"] is None, run["error"]
         logged_object = run["logs"][0]
-        assert logged_object["text"].startswith('ABP_Hero_C "BP_Hero_C_0"@0x')
+        assert logged_object["text"].startswith('BP_Hero_C "BP_Hero_C_0"@0x')
         assert logged_object["targets"] == [{
             "address": logged_object["text"].partition("@")[2]}]
         assert run["logs"][1] == "BP_Hero_C_0 75 Attribute"
@@ -1471,7 +1478,7 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app, d
         hero = worker.add_script(ScriptSpec('return ctx.find("BP_Hero_C");'))
         _wait_for(qt_app, lambda: hero in added)
         run = run_on_game_thread(hero)
-        assert run["result"].startswith('ABP_Hero_C "BP_Hero_C_0"@0x')
+        assert run["result"].startswith('BP_Hero_C "BP_Hero_C_0"@0x')
         worker.inspect(run["target"])
         _wait_for(qt_app, lambda: inspected)
         assert inspected[0]["instanceName"] == "BP_Hero_C_0"
@@ -1626,7 +1633,7 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app, d
         _wait_for(qt_app, lambda: chosen in added)
         first = run_on_game_thread(chosen)
         assert first["error"] is None, first["error"]
-        assert first["result"] == '"75+4:BP_Hero_C:ABP_Hero_C=BP_Hero_C"'
+        assert first["result"] == '"75+4:BP_Hero_C:BP_Hero_C=BP_Hero_C"'
         listed, refused = [], []
         worker.options_listed.connect(lambda _request, options: listed.append(options))
         worker.options_failed.connect(lambda _request, message: refused.append(message))
@@ -1639,7 +1646,7 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app, d
         runs.clear()
         worker.run_now(chosen, {"hero": 30, "n": 1})
         _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
-        assert runs[0][1]["result"] == '"30+1:BP_Hero_C:ABP_Hero_C=BP_Hero_C"'
+        assert runs[0][1]["result"] == '"30+1:BP_Hero_C:BP_Hero_C=BP_Hero_C"'
         worker.script_options(chosen, "n")  # no choice
         _wait_for(qt_app, lambda: refused)
         assert "no choice parameter n" in messages.describe(refused[0])
@@ -1814,7 +1821,7 @@ def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app, defi
         assert not failed, failed
         state = listed[0]
         assert state["owner"] == "BP_Hero_C_0" and state["gas"] is True
-        assert state["ownerClass"] == "ABP_Hero_C"
+        assert state["ownerClass"] == "BP_Hero_C"
         assert int(state["ownerAddress"], 16) != 0
         assert state["setter"] == ("HeroAbilityLibrary:"
                                    "SetFloatAttributeBaseFromAbilitySystemComponent")
@@ -1994,7 +2001,7 @@ def test_object_browser_lists_live_objects_by_class(tmp_path, qt_app):
             "PlayerController": (1, "/Script/Engine", "PlayerController"),
             "WidgetTree": (1, "/Script/Engine", None)}
         assert listed["objects"] == 5008
-        assert classes["BP_Hero_C"]["cppName"] == "ABP_Hero_C"
+        assert classes["BP_Hero_C"]["cppName"] == "BP_Hero_C"
         hero = classes["BP_Hero_C"]["klass"]
 
         # A class's objects, named in their outer
@@ -2380,8 +2387,46 @@ def test_a_game_without_the_ability_system_still_names_its_player(tmp_path, qt_a
             state = listed[0]
             assert (state["gas"], state["owner"], state["ownerClass"], state["sets"],
                     state["component"], state["setter"]) == (
-                False, "BP_Hero_C_0", "ABP_Hero_C", [], False, None)
+                False, "BP_Hero_C_0", "BP_Hero_C", [], False, None)
             assert int(state["ownerAddress"], 16) != 0
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+@pytest.mark.parametrize("defines", [(), ("ANIM_BLUEPRINT",)], ids=["alone", "anim-blueprint"])
+def test_blueprint_classes_keep_their_own_names(tmp_path, qt_app, defines):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptSpec, ScriptWorker
+
+    target = _Target(_build(tmp_path, *defines))
+    worker = ScriptWorker(target.pid)
+    added, runs = [], []
+    worker.script_added.connect(added.append)
+    worker.script_ran.connect(lambda script_id, run: runs.append((script_id, run)))
+
+    def run(source):
+        script_id = worker.add_script(ScriptSpec(source))
+        _wait_for(qt_app, lambda: script_id in added)
+        runs.clear()
+        worker.run_now(script_id)
+        _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+        assert runs[0][1]["error"] is None, runs[0][1]["error"]
+        return json.loads(runs[0][1]["result"])
+
+    try:
+        worker.start()
+        # The hero's Blueprint class as the game names it; a C++ class with
+        # its prefix (AHero), found by either name
+        assert run('const hero = ctx.find("BP_Hero_C");'
+                   ' return [hero.className, ctx.findClass("AHero").name,'
+                   ' ctx.findClass("Hero").name].join(" ");') == "BP_Hero_C Hero Hero"
+        # The prefixed name Grembyte showed before: the hero's class, unless
+        # a class of that very name exists (an Animation Blueprint)
+        expected = "ABP_Hero_C" if defines else "BP_Hero_C"
+        assert run('return ctx.findClass("ABP_Hero_C").name;') == expected
     finally:
         worker.requestInterruption()
         worker.wait(5000)

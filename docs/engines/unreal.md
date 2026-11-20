@@ -7,6 +7,15 @@ Grembyte supports Unreal Engine 4.23 and later, 64-bit, natively and under Proto
 - The **method monitor** logs UFunction calls with the object they run on (with its UObject name), arguments and result; the **object inspector** shows the UProperties of objects and structs. Arguments come from the parameters `ProcessEvent` passes, or, when a Blueprint calls a native function, from the bytecode of the call (variables and constants; other arguments show as `?`).
 - **Method hooks** change arguments (from `ProcessEvent`'s parameters, or ref arguments from Blueprint code) and fields before a call, or the result after it. Their scripts can call UFunctions: `obj.call("Function", ...args)` runs it through `UObject::ProcessEvent` on the game thread, and `ctx.find("ClassName")` gives a live object of a class, e.g. the game's cheat manager.
 
+## Class names
+
+Grembyte names a Blueprint class as the game does – `BP_CH_PC_Pino_C`, `WBP_HUD_C` – and a C++ class by its C++ name, with Unreal's prefix: `A` for actors (`ALCharacter`), `U` for other objects (`ULStatList`), `F` for structs (`FVector`). Scripts find a C++ class by either name (`ctx.findClass("LStatList")` or `"ULStatList"`).
+
+Many studios mark their Blueprints by kind: `BP_` for actors, `ABP_` for Animation Blueprints, `WBP_` (Lies of P: `UIW_`) for widgets, `BPC_` for components, `DA_` for data assets; the `_C` at the end marks the class made from the Blueprint. Similar names can therefore be different classes: in Lies of P `BP_CH_PC_Pino_C` is the player character, with the stats, and `ABP_CH_PC_Pino_C` its Animation Blueprint, which computes the character's animation.
+
+!!! note "Scripts from before"
+    Grembyte used to give Blueprint classes a C++ prefix too (`ABP_Hero_C` for `BP_Hero_C`). Scripts using such a name still find the class – unless a class of that very name exists, as Lies of P's Animation Blueprint does: that one wins.
+
 ## Call method
 
 **Call method** runs a UFunction through `ProcessEvent` on the game thread: a static one on its class default object, an instance one (from the catalog or favorites) on a live object of its class – the first one found, or the one whose name or address you type in.
