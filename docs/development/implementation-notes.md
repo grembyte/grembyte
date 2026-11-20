@@ -138,7 +138,7 @@ Found with Dark Souls III (Arxan/GuardIT):
   xmm1 and their parts; `vzeroupper` is allowed) nor memory (`leavesResult`); otherwise
   that method falls back to `onLeave`.
   Test: `test_monitor_leaves_exceptions_thrown_through_the_method_to_the_game` with
-  `Rumors.Parse` in HermesQuest (fails without it: Unity logs the unhandled exception).
+  `Rumors.Parse` in GrembyteQuest (fails without it: Unity logs the unhandled exception).
 
 - **Main thread of a game out of focus (2026-11-12):** Might & Magic X – Legacy (Unity 4.2,
   32-bit, Proton) stops running frames when its window loses focus. Its main thread then

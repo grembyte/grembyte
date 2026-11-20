@@ -1,25 +1,25 @@
-# HermesQuest: scripts
+# GrembyteQuest: scripts
 
 [Scripts](../guide/scripts.md) are JavaScript that Grembyte runs on the game's main thread, by hand or on a timer. They read and change the game's objects through their fields and call its methods – no addresses, no pointer chains. This page builds up from reading one value to scripts with parameters. If JavaScript is new to you, keep [JavaScript in Grembyte](../reference/javascript.md) open beside it.
 
-To create a script: attach to HermesQuest, open the **Scripts** tab, click **New …**, give it a name, choose **When** it runs, and type the code. **Run now** runs the selected script at once; what it logs and returns appears in the log below the scripts.
+To create a script: attach to GrembyteQuest, open the **Scripts** tab, click **New …**, give it a name, choose **When** it runs, and type the code. **Run now** runs the selected script at once; what it logs and returns appears in the log below the scripts.
 
 ## The way in: `GameState.Current`
 
-In a Unity game, `ctx.find("ClassName")` finds Unity objects – GameObjects and components. HermesQuest keeps its state in plain C# objects, which Unity does not know about. Their entry point is a **static field**: `GameState.Current`, the running game. `ctx.static` reads it:
+In a Unity game, `ctx.find("ClassName")` finds Unity objects – GameObjects and components. GrembyteQuest keeps its state in plain C# objects, which Unity does not know about. Their entry point is a **static field**: `GameState.Current`, the running game. `ctx.static` reads it:
 
 ```js
-const game = ctx.static("HermesQuest.GameState.Current");
+const game = ctx.static("GrembyteQuest.GameState.Current");
 ```
 
-`"HermesQuest.GameState.Current"` is namespace, class and field. The result is an object you can walk through like in C#: `game.Player` is the player, `game.Player.Stats` its stats. Because the script asks for `GameState.Current` every time it runs, it always finds the current game – also after "New game", where tracked addresses need a pointer chain.
+`"GrembyteQuest.GameState.Current"` is namespace, class and field. The result is an object you can walk through like in C#: `game.Player` is the player, `game.Player.Stats` its stats. Because the script asks for `GameState.Current` every time it runs, it always finds the current game – also after "New game", where tracked addresses need a pointer chain.
 
 ## 1. Show the character
 
 **When:** Only when run by hand.
 
 ```js
-const game = ctx.static("HermesQuest.GameState.Current");
+const game = ctx.static("GrembyteQuest.GameState.Current");
 const player = game.Player;
 const stats = player.Stats;
 
@@ -43,7 +43,7 @@ return player;
 Writing the fields directly:
 
 ```js
-const stats = ctx.static("HermesQuest.GameState.Current").Player.Stats;
+const stats = ctx.static("GrembyteQuest.GameState.Current").Player.Stats;
 stats.Health = stats.MaxHealth;
 stats.Mana = stats.MaxMana;
 ```
@@ -53,7 +53,7 @@ Assigning to a field (`stats.Health = …`) writes the new value straight into t
 Calling the game's own method:
 
 ```js
-const player = ctx.static("HermesQuest.GameState.Current").Player;
+const player = ctx.static("GrembyteQuest.GameState.Current").Player;
 const healed = player.Heal(1000);
 return `Healed ${healed.toFixed(1)} health`;
 ```
@@ -68,7 +68,7 @@ return `Healed ${healed.toFixed(1)} health`;
 **When:** Repeatedly, every 5 seconds.
 
 ```js
-const game = ctx.static("HermesQuest.GameState.Current");
+const game = ctx.static("GrembyteQuest.GameState.Current");
 if (game === null || game.GameOver)
   return;
 
@@ -90,7 +90,7 @@ The next run starts five seconds after the previous one *ended*, so runs never o
 `Combat.CalculateDamage` multiplies every hit by the attacker's `DamageOutgoingMultiplier` and the target's `DamageIncomingMultiplier`. Setting them on the player is the game's own way to make it stronger – but "New game" creates a new player with both back at 1. A repeating script puts them back:
 
 ```js
-const player = ctx.static("HermesQuest.GameState.Current").Player;
+const player = ctx.static("GrembyteQuest.GameState.Current").Player;
 const wanted = { DamageOutgoingMultiplier: ctx.args.outgoing,
                  DamageIncomingMultiplier: ctx.args.incoming };
 
@@ -114,7 +114,7 @@ The message log of the game shows the multipliers in every hit, e.g. `(base 5 x2
 **When:** Only when run by hand. **Parameter:** a number `amount`, default `100`.
 
 ```js
-const player = ctx.static("HermesQuest.GameState.Current").Player;
+const player = ctx.static("GrembyteQuest.GameState.Current").Player;
 const amount = Math.trunc(ctx.args.amount);
 player.AddGold(amount);
 return `${amount} gold added, now ${player.Stats.Gold}`;
@@ -145,7 +145,7 @@ return [
 The list shows the labels; the script gets the value. The script:
 
 ```js
-const stats = ctx.static("HermesQuest.GameState.Current").Player.Stats;
+const stats = ctx.static("GrembyteQuest.GameState.Current").Player.Stats;
 const name = ctx.args.attribute;          // "Strength", "Dexterity" or "Intelligence"
 const before = stats[name];
 stats[name] = before + Math.trunc(ctx.args.points);
@@ -159,13 +159,13 @@ The options code runs in the game too, so it could also read them from it – fo
 **When:** Only when run by hand.
 
 ```js
-const game = ctx.static("HermesQuest.GameState.Current");
+const game = ctx.static("GrembyteQuest.GameState.Current");
 const player = game.Player;
 const enemy = game.NearestEnemy(player, 8);
 if (enemy === null)
   return "No enemy within 8 steps";
 
-const chance = ctx.call("HermesQuest.Combat:HitChance", player, enemy);
+const chance = ctx.call("GrembyteQuest.Combat:HitChance", player, enemy);
 ctx.log(`${enemy.Name}: ${enemy.Stats.Health} health, hit chance ${Math.round(chance * 100)} %`);
 
 enemy.Stats.Health = 1;
@@ -173,7 +173,7 @@ return enemy;
 ```
 
 - `game.NearestEnemy(player, 8)` calls a method of the game object and passes the player object along; the game returns a `Character` or `null`.
-- `ctx.call("HermesQuest.Combat:HitChance", …)` calls a **static** method – one that belongs to a class, not to an object. The name is written as the catalog shows it: `Namespace.Class:Method`.
+- `ctx.call("GrembyteQuest.Combat:HitChance", …)` calls a **static** method – one that belongs to a class, not to an object. The name is written as the catalog shows it: `Namespace.Class:Method`.
 - `enemy.Stats.Health = 1` leaves the enemy at one health point; the next hit kills it.
 
 ## 8. Remember between runs: `ctx.state`
@@ -181,7 +181,7 @@ return enemy;
 **When:** Repeatedly, every 10 seconds.
 
 ```js
-const gold = ctx.static("HermesQuest.GameState.Current").Player.Stats.Gold;
+const gold = ctx.static("GrembyteQuest.GameState.Current").Player.Stats.Gold;
 
 if (ctx.state.lastGold !== undefined && gold > ctx.state.lastGold)
   ctx.log(`+${gold - ctx.state.lastGold} gold in the last 10 seconds`);
@@ -193,7 +193,7 @@ Variables declared with `const` exist for one run only. `ctx.state` is an object
 
 ## When something goes wrong
 
-- **An error** stops the run and appears in the log with its message, e.g. for a misspelt field: *HermesQuest.CharacterStats has no field Helth*. The script stays and runs again at its next time.
+- **An error** stops the run and appears in the log with its message, e.g. for a misspelt field: *GrembyteQuest.CharacterStats has no field Helth*. The script stays and runs again at its next time.
 - **`null`**: before the game has created its state, or for an enemy that is gone, a field or method returns `null`. Check with `if (x === null)` before using it.
 - **Names are case-sensitive**: `stats.health` is not `stats.Health`. The object inspector (open it from a returned object) shows the exact names.
 - **Long loops freeze the game**: a script runs on the game's main thread, and the game waits until it ends. Keep scripts short and never write a loop that waits for something in the game – use a repeating script instead (its interval must be above 0).

@@ -26,7 +26,7 @@ Each test may take at most 120 seconds (`pytest-timeout`, set in `pyproject.toml
 ## Test targets
 
 - `test_app/dummy_game.c` – the GTK test game of the [tutorial](../getting-started/first-hook.md).
-- `test_app/unity/` – HermesQuest, the Unity game of the [examples](../examples/index.md), for Mono and IL2CPP builds. `tests/test_hermesquest.py` runs against a build in `test_app/unity/Build/` (not in the repository, see `test_app/unity/README.md`) and is skipped without one.
+- `test_app/unity/` – GrembyteQuest, the Unity game of the [examples](../examples/index.md), for Mono and IL2CPP builds. `tests/test_grembytequest.py` runs against a build in `test_app/unity/Build/` (not in the repository, see `test_app/unity/README.md`) and is skipped without one.
 - `test_app/unreal/` – notes on an Unreal test project.
 
 ## Documentation

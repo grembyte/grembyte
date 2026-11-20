@@ -43,6 +43,6 @@ A method hook's script runs before or after the hooked method (**When**). Beside
 
 Objects – `ctx.this`, object arguments, results – are the same [wrappers as in scripts](script-context.md#object-wrappers): fields, properties and methods directly (`target.IsPlayer`, `obj.GetComponentByName("Stats")`). Before the call, assigning a field (`obj.Field = …`) or property (which calls its setter) changes what the method works with.
 
-In Unreal games a hook called from Blueprint bytecode only gets arguments that are simple variables or constants, and only `ref` arguments can be changed. See [Engines](../engines/index.md#method-hooks) for an overview and the [HermesQuest examples](../examples/hermesquest-hooks.md#method-hooks) for method hooks step by step.
+In Unreal games a hook called from Blueprint bytecode only gets arguments that are simple variables or constants, and only `ref` arguments can be changed. See [Engines](../engines/index.md#method-hooks) for an overview and the [GrembyteQuest examples](../examples/grembytequest-hooks.md#method-hooks) for method hooks step by step.
 
 The [Scripts](../guide/scripts.md) tab has a `ctx` of its own, described in the [script context reference](script-context.md).
