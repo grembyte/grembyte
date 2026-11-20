@@ -610,7 +610,13 @@ Snapshots of the game's threads (`/proc/<pid>/task/*`: state, CPU, system call) 
 native trace starts, at `stop`, when a session is cut, and when an RPC has not returned
 after 10 s (`why: rpc_hanging`, with the calls in `rpcs`; once per call, from a watchdog
 thread that checks every second, `check_hangs`). A frozen game is usually killed by hand
-afterwards; the entry is written before that, so it shows who waited for whom. The results
+afterwards; the entry is written before that, so it shows who waited for whom. Also when
+`grembyte-cli` is told to stop (SIGTERM, SIGHUP, SIGINT: Steam's Stop) while the game still
+lives (`why: stop_signal`, once, before the signal is passed on, `Launch.note_stop`): RoboCop
+hung on exit with no call of Grembyte's running, so the watchdog wrote nothing (2026-11-20).
+In all three such runs the window had taken the game over from `grembyte-cli` and given it
+back (agents unloaded and loaded again in the running game); runs without a takeover ended
+normally. The results
 of every trace phase in numbers. From three calls of the same method within 2 s, RPCs are summed up. It can be
 switched off in the settings.
 

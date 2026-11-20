@@ -153,7 +153,7 @@ int main(int argc, char **argv) {
 """
 
 
-def _save_profile(database, binary):
+def _save_profile(database, binary, activity=False):
     # pylint: disable=import-outside-toplevel
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -178,6 +178,10 @@ def _save_profile(database, binary):
     repository.add_hook(process_id, label="Gold", module=binary.name, module_offset=offset,
                         instruction_bytes=code, instruction_text="add dword ptr [rdi], esi",
                         value_type="int32", transform=MultiplyTransform(100))
+    if activity:
+        from grembyte.db.repository.settings import SettingsRepository
+
+        SettingsRepository(sessionmaker(bind=engine)).save({"activity_log": True})
     engine.dispose()
 
 
@@ -220,7 +224,7 @@ def test_the_window_takes_the_game_over_and_gives_it_back(tmp_path):
 
     binary = _build_game(tmp_path)
     database = tmp_path / "grembyte.db"
-    _save_profile(database, binary)
+    _save_profile(database, binary, activity=True)
     folder = tmp_path / "run" / "grembyte"
     lines = []
     with subprocess.Popen(
@@ -260,6 +264,14 @@ def test_the_window_takes_the_game_over_and_gives_it_back(tmp_path):
     assert code == 128 + 15, "".join(lines)
     # grembyte-cli cleans up after itself.
     assert not list(folder.iterdir())
+    # Told to stop, it wrote what the game's threads did, before passing it on
+    from grembyte.core import activity  # pylint: disable=import-outside-toplevel
+
+    entries = activity.read_entries(tmp_path / "logs" / activity.ACTIVITY_NAME)
+    [stop] = [entry for entry in entries if entry.get("why") == "stop_signal"]
+    assert (stop["pid"], stop["signal"], stop["game"], stop["attached"]) == (
+        game_pid, "SIGTERM", binary.name, True)
+    assert stop["threads"] and stop["threads"][0]["tid"] == game_pid
 
 
 def test_scripts_that_run_by_time_or_by_a_hotkey_are_started():
@@ -447,3 +459,26 @@ def test_the_window_link_closes_while_the_window_still_holds_the_game(tmp_path, 
     assert calls == ["release"]
     assert not link.connections
     result["claim"].release()
+
+
+def test_a_stop_signal_writes_the_game_threads_once(monkeypatch):
+    # pylint: disable=import-outside-toplevel,protected-access
+    import signal
+
+    from grembyte import cli
+    from grembyte.core import activity
+
+    written = []
+    monkeypatch.setattr(activity, "enabled", lambda: True)
+    monkeypatch.setattr(activity, "record_threads",
+                        lambda pid, why, **fields: written.append((pid, why, fields)))
+    launch = cli.Launch.__new__(cli.Launch)
+    launch.target, launch.released, launch._attached, launch._stop_noted = None, False, None, False
+    launch.note_stop(signal.SIGTERM)
+    assert not written  # no game found yet
+    launch.target = (os.getpid(), "game", "/usr/bin/game", None)
+    launch.note_stop(signal.SIGINT)
+    launch.note_stop(signal.SIGTERM)  # Steam may send several
+    assert written == [(os.getpid(), "stop_signal",
+                        {"signal": "SIGINT", "game": "game", "attached": False,
+                         "released": False})]
