@@ -356,9 +356,9 @@ def test_unreal_instance_functions_run_on_a_found_object(qt_app, translations, m
                                   "", [50.0, True, None])
     worker.called.emit(2, {"result": None, "outputs": [
         {"name": "Healed", "value": {"text": "35"}}], "object": {
-            "text": 'UBP_CheatManager_C "BP_CheatManager_C_0"@0x7f00'}})
+            "text": 'BP_CheatManager_C "BP_CheatManager_C_0"@0x7f00'}})
     assert dialog.log.toPlainText().endswith(
-        'AlabamaCheatManager:GiveHealth(50.0, true) auf UBP_CheatManager_C '
+        'AlabamaCheatManager:GiveHealth(50.0, true) auf BP_CheatManager_C '
         '"BP_CheatManager_C_0"@0x7f00  → (void); Healed = 35')
 
     # The object typed in goes with the call, and is kept with the arguments.

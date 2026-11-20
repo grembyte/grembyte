@@ -293,6 +293,12 @@ writable data by their shape (pool: `CurrentBlock`, `Blocks[]`, first entries `N
 measures the offsets of UStruct, FField/FProperty and UFunction on objects every game has
 (CoreUObject's `Class`, `Object`, `Vector`, `Transform`, `Object:ExecuteUbergraph`).
 
+- **Class names (2026-11-20):** `cppName` gives a C++ class its prefix (`A`/`U`, structs `F`)
+  but a Blueprint class (its own class is not `Class` but a `BlueprintGeneratedClass` or
+  the Widget's/Animation Blueprint's) its own name. With a prefix, Lies of P's character
+  `BP_CH_PC_Pino_C` showed as `ABP_CH_PC_Pino_C`, the name of its Animation Blueprint.
+  `classNameMatches` still takes the prefixed name (scripts written before), but a class of
+  that very name wins (`searchClass` keeps the prefixed match only as a fallback).
 - Verified in **Avowed** (UE5, Proton Experimental): found in 0.8 s, 260 000 objects read in
   0.4 s. Catalog: 168 package groups, `/Script/Alabama` with 1573 classes and 4831 UFunctions.
   Trace over `/Script/Alabama` + `/Game/Blueprints`: 4935 hooks in 0.65 s, baseline and
@@ -382,6 +388,10 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   attribute sets, base values set through the game's own setter, held by a script. Setter
   discovery supports the standard AbilitySystemComponent/FGameplayAttribute pattern and
   AngelscriptGAS's `TrySetAttributeBaseValue(FName, float)` pattern (Gothic 1 Remake).
+  Games without the Gameplay Ability System have no `AttributeSet` class at all (Lies of P,
+  2026-11-20): the search treats `AttributeSet` and `AbilitySystemComponent` as optional
+  (`optionalClass`) and answers the player with `gas: false`; before, the missing class
+  failed the whole answer, so the window did not even name the player.
 
 - **Call graph from Blueprint bytecode (2026-11-14):** `functionCalls` does not walk the
   bytecode expression by expression: that needs the size of each of about 100 `EExprToken`s,

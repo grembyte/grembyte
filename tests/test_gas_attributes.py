@@ -16,7 +16,7 @@ from tests.test_scripts import _FakeScriptWorker, fixture_qt_app  # pylint: disa
 
 
 _STATE = {
-    "owner": "BPC_AlabamaPlayer_C_1", "ownerClass": "ABPC_AlabamaPlayer_C",
+    "owner": "BPC_AlabamaPlayer_C_1", "ownerClass": "BPC_AlabamaPlayer_C",
     "ownerAddress": "0x7ff612340000", "setter": "Library:SetFloatAttributeBase",
     "component": True,
     "sets": [{"name": "AttributeSetCore", "className": "UAlabamaAttributeSetCore",
@@ -70,7 +70,7 @@ def test_window_lists_sets_and_holds_values_by_scripts(qt_app, monkeypatch):
             ["AttributeSetCore", "Might", "4", "5", ""],
             ["AttributeSetCore", "DamageOutgoingMult", "1", "1.4", ""],
             ["AttributeSetCore", "Health", "200", "200", ""]]
-        assert dialog.owner_label.text() == "Spielfigur: BPC_AlabamaPlayer_C_1 (ABPC_AlabamaPlayer_C)"
+        assert dialog.owner_label.text() == "Spielfigur: BPC_AlabamaPlayer_C_1 (BPC_AlabamaPlayer_C)"
         # Effects change these (current differs from base)
         dialog.changed_check.setChecked(True)
         assert table.rowCount() == 2
@@ -189,3 +189,28 @@ def test_answers_after_the_window_closed_reach_it_no_more(qt_app, monkeypatch):
     finally:
         panel.shutdown()
         panel.deleteLater()
+
+
+def test_window_says_when_the_game_has_no_ability_system(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from grembyte.ui.widgets import scripts
+    from grembyte.ui.widgets.gas_attributes import GasAttributesDialog
+
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    translations = load_translations("de")
+    panel = scripts.ScriptPanel(translations)
+    panel.set_process(4242)
+    dialog = GasAttributesDialog(translations, panel)
+    try:
+        worker = panel._worker
+        # Lies of P: the player is found, the game has no attribute sets at all
+        worker.gas_listed.emit(len(worker.requests), {
+            "gas": False, "owner": "BP_Player_C_0", "ownerClass": "ABP_Player_C",
+            "ownerAddress": "0x7ff612340000", "setter": None, "component": False, "sets": []})
+        assert dialog.owner_label.text() == "Spielfigur: BP_Player_C_0 (ABP_Player_C)"
+        assert dialog.status_label.text() == translations["gas.no_gas"]
+        assert dialog.inspect_button.isEnabled()
+        assert dialog.table.rowCount() == 0
+    finally:
+        dialog.close()
+        panel.close()

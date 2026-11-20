@@ -819,10 +819,15 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     return chain;
   }
 
-  function cppName(klass) {
-    // UE's C++ name of a class: AActor for actors, UObject for the rest.
-    if (klass === 0)
-      return '?';
+  function isNativeClass(klass) {
+    // Whether ``klass`` is a C++ class: its own class is Class. A Blueprint's
+    // class is a BlueprintGeneratedClass (or the Widget's, the Animation
+    // Blueprint's ...).
+    return Number(ptr(klass).add(OBJECT_CLASS).readPointer().toString()) === ue.layout.classClass;
+  }
+
+  function prefixedName(klass) {
+    // The name with UE's C++ prefix: AActor for actors, UObject for the rest
     let prefix = prefixes.get(klass);
     if (prefix === undefined) {
       prefix = 'U';
@@ -835,6 +840,17 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
       prefixes.set(klass, prefix);
     }
     return prefix + nameOfAddress(klass);
+  }
+
+  function cppName(klass) {
+    // The name Grembyte shows for a class: a C++ class's C++ name (AActor,
+    // ULStatList), a Blueprint's own name (BP_Hero_C). A prefix on a
+    // Blueprint's name made another class's name: Lies of P's character
+    // BP_CH_PC_Pino_C became ABP_CH_PC_Pino_C, the name of its Animation
+    // Blueprint (2026-11-20).
+    if (klass === 0)
+      return '?';
+    return isNativeClass(klass) ? prefixedName(klass) : nameOfAddress(klass);
   }
 
   function pointerField(field, offset) {
@@ -2771,9 +2787,14 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
   }
 
   function classNameMatches(klass, name) {
-    // By its name (BP_Player_C) or C++ name (ABP_Player_C, UAlabamaCheatManager)
-    const own = nameOfAddress(Number(klass.toString()));
-    return sameName(own, name) || sameName(cppName(Number(klass.toString())), name);
+    // 2: by its name (BP_Player_C, AlabamaCheatManager) or a C++ class's C++
+    // name (UAlabamaCheatManager); 1: a Blueprint's by the prefixed name
+    // Grembyte showed before (ABP_Player_C), for scripts written then;
+    // 0: not at all. A class of that very name wins over a prefixed one.
+    const address = Number(klass.toString());
+    if (sameName(nameOfAddress(address), name) || sameName(cppName(address), name))
+      return 2;
+    return sameName(prefixedName(address), name) ? 1 : 0;
   }
 
   const classesByName = new Map();
@@ -2972,16 +2993,22 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     const kinds = new Map();
     // All objects in order: it stops at the first match, sooner than
     // gathering every class object (some 30 000) through byClass.
+    let prefixed = null;
     for (let i = 0; i < s.address.length; i++) {
       if (s.outer[i] === 0 || !isClass(s, s.klass[i], kinds))
         continue;
       const klass = ptr(s.address[i]);
-      if (classNameMatches(klass, name)) {
+      const match = classNameMatches(klass, name);
+      if (match === 2) {
         classesByName.set(name, klass);
         return klass;
       }
+      if (match === 1 && prefixed === null)
+        prefixed = klass;
     }
-    return null;
+    if (prefixed !== null)
+      classesByName.set(name, prefixed);
+    return prefixed;
   }
 
   function retryFresh(search) {
@@ -3620,9 +3647,23 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     return !value.isNull() && isObject(value) ? value : NULL;
   }
 
+  function optionalClass(name) {
+    // findClass(name), or null if the game has no such class (a game
+    // without the Gameplay Ability System has no AttributeSet)
+    try {
+      return findClass(name);
+    } catch (error) {
+      if (String(error.message).includes('grembyte:error.unreal.no_class:'))
+        return null;
+      throw error;
+    }
+  }
+
   function searchPlayerParts() {
     // The attribute sets and the ability system component of the first local
-    // player: owned by its pawn or player state.
+    // player: owned by its pawn or player state. ``gas`` false: the game has
+    // no AttributeSet class at all (no Gameplay Ability System); the pawn is
+    // found all the same, its values are its fields.
     const controller = findObject('PlayerController');
     if (controller === null)
       return null;
@@ -3634,15 +3675,19 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
       .equals(owner));
     // One read of the object table for both (findObjects reads it anew)
     snapshot = null;
-    const all = name => searchObjects(Number(findClass(name).toString()), null,
-                                      Number.MAX_SAFE_INTEGER);
+    const all = name => {
+      const klass = optionalClass(name);
+      return klass === null ? []
+        : searchObjects(Number(klass.toString()), null, Number.MAX_SAFE_INTEGER);
+    };
+    const gas = optionalClass('AttributeSet') !== null;
     const sets = all('AttributeSet').filter(owned);
     const components = all('AbilitySystemComponent').filter(owned);
     // The component of the owner with the sets
     const asc = components.find(component => sets.some(set =>
       set.add(OBJECT_OUTER).readPointer().equals(component.add(OBJECT_OUTER).readPointer())))
       || components[0] || NULL;
-    return { pawn, owners, sets, asc };
+    return { pawn, owners, sets, asc, gas };
   }
 
   function currentPlayerParts() {
@@ -3670,17 +3715,19 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
   }
 
   function gasAttributes() {
-    // { owner, ownerClass, ownerAddress, setter, component, sets: [{ name,
+    // { owner, ownerClass, ownerAddress, gas, setter, component, sets: [{ name,
     // className, attributes: [{ name, base, current }] }] } of the player, or
     // null without one (e.g. in the menu). Games without GAS keep the
     // player's values in fields of the pawn: the window opens it in the
-    // object inspector by ownerAddress.
+    // object inspector by ownerAddress. ``gas`` false: the game has no
+    // Gameplay Ability System at all (Lies of P).
     reflection();
     const parts = currentPlayerParts();
     if (parts === null)
       return null;
-    const setter = findAttributeSetter();
+    const setter = parts.gas ? findAttributeSetter() : null;
     return {
+      gas: parts.gas,
       owner: fieldName(parts.pawn.add(OBJECT_NAME)),
       ownerClass: layout(parts.pawn.add(OBJECT_CLASS).readPointer()).name,
       ownerAddress: parts.pawn.toString(),

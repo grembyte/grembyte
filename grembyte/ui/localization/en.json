@@ -1645,6 +1645,7 @@
   "gas.owner": "Player: {owner} ({cls})",
   "gas.no_setter": "The game has no function to set an attribute's base value: values can be read only.",
   "gas.no_component": "The player has no ability system component: values can be read only.",
+  "gas.no_gas": "The game does not use the Gameplay Ability System: it has no attribute sets. Its values are probably fields of the player or of its components: \"Inspect player\" shows them, the field catalog finds them by name.",
   "gas.no_sets": "The player has no attribute sets: the game does not keep its values with the Gameplay Ability System. They may be fields of the player: \"Inspect player\" shows them.",
   "gas.failed": "Attributes not read: {message}",
   "gas.held": "{count} attribute(s) held (see the Scripts tab)",

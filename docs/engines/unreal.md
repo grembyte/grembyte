@@ -7,6 +7,15 @@ Grembyte supports Unreal Engine 4.23 and later, 64-bit, natively and under Proto
 - The **method monitor** logs UFunction calls with the object they run on (with its UObject name), arguments and result; the **object inspector** shows the UProperties of objects and structs. Arguments come from the parameters `ProcessEvent` passes, or, when a Blueprint calls a native function, from the bytecode of the call (variables and constants; other arguments show as `?`).
 - **Method hooks** change arguments (from `ProcessEvent`'s parameters, or ref arguments from Blueprint code) and fields before a call, or the result after it. Their scripts can call UFunctions: `obj.call("Function", ...args)` runs it through `UObject::ProcessEvent` on the game thread, and `ctx.find("ClassName")` gives a live object of a class, e.g. the game's cheat manager.
 
+## Class names
+
+Grembyte names a Blueprint class as the game does – `BP_CH_PC_Pino_C`, `WBP_HUD_C` – and a C++ class by its C++ name, with Unreal's prefix: `A` for actors (`ALCharacter`), `U` for other objects (`ULStatList`), `F` for structs (`FVector`). Scripts find a C++ class by either name (`ctx.findClass("LStatList")` or `"ULStatList"`).
+
+Many studios mark their Blueprints by kind: `BP_` for actors, `ABP_` for Animation Blueprints, `WBP_` (Lies of P: `UIW_`) for widgets, `BPC_` for components, `DA_` for data assets; the `_C` at the end marks the class made from the Blueprint. Similar names can therefore be different classes: in Lies of P `BP_CH_PC_Pino_C` is the player character, with the stats, and `ABP_CH_PC_Pino_C` its Animation Blueprint, which computes the character's animation.
+
+!!! note "Scripts from before"
+    Grembyte used to give Blueprint classes a C++ prefix too (`ABP_Hero_C` for `BP_Hero_C`). Scripts using such a name still find the class – unless a class of that very name exists, as Lies of P's Animation Blueprint does: that one wins.
+
 ## Call method
 
 **Call method** runs a UFunction through `ProcessEvent` on the game thread: a static one on its class default object, an instance one (from the catalog or favorites) on a live object of its class – the first one found, or the one whose name or address you type in.
@@ -63,6 +72,10 @@ Games built on Unreal's Gameplay Ability System keep values such as health, stre
     Not every Unreal game keeps its values with GAS, even when the plugin is loaded: Queen's Domain, for one, keeps health, level and potions in plain fields of the player character. The table then stays empty and the window says:
 
     > The player has no attribute sets: the game does not keep its values with the Gameplay Ability System. They may be fields of the player: "Inspect player" shows them.
+
+    Other games have no Gameplay Ability System at all, Lies of P for one. The window still names the player and says so:
+
+    > The game does not use the Gameplay Ability System: it has no attribute sets. Its values are probably fields of the player or of its components: "Inspect player" shows them, the field catalog finds them by name.
 
     The line below the table names the player and its class. **Inspect player** opens the player's object in the [object inspector](index.md#object-inspector); its filter finds a field such as `Health` among hundreds, which can then be read, changed or put on the address list.
 

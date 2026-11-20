@@ -675,16 +675,21 @@ class CatalogDialog(QDialog):
         else:
             worker = CatalogWorker(self.pid, assemblies, engine=self.engine,
                                    selection=self.selection(), fresh=fresh, kind=kind)
-        # What a worker finds goes to its kind, also once the other kind is shown
-        worker.assemblies_found.connect(
-            lambda assemblies: self._on_assemblies_found(kind, assemblies))
-        worker.assembly_cached.connect(reading.cached.add)
-        worker.assembly_loaded.connect(
-            lambda assembly, entries: self._on_assembly_loaded(kind, assembly, entries))
-        worker.assembly_failed.connect(
-            lambda assembly, message: self._on_assembly_failed(kind, assembly, message))
-        worker.catalog_failed.connect(lambda message: self._on_failed(kind, message))
-        worker.finished.connect(lambda: self._on_worker_finished(kind, worker))
+        # What a worker finds goes to its kind, also once the other kind is
+        # shown. The worker outlives a closed window (keep_until_finished):
+        # connected so that its answers stop once the window is deleted
+        # (lambdas are not disconnected then, bound methods would be).
+        for signal, slot in (
+                (worker.assemblies_found,
+                 lambda assemblies: self._on_assemblies_found(kind, assemblies)),
+                (worker.assembly_cached, reading.cached.add),
+                (worker.assembly_loaded,
+                 lambda assembly, entries: self._on_assembly_loaded(kind, assembly, entries)),
+                (worker.assembly_failed,
+                 lambda assembly, message: self._on_assembly_failed(kind, assembly, message)),
+                (worker.catalog_failed, lambda message: self._on_failed(kind, message)),
+                (worker.finished, lambda: self._on_worker_finished(kind, worker))):
+            connect_while_alive(signal, self, slot)
         self._worker = worker
         keep_until_finished(worker)
         self.reload_button.setEnabled(False)
