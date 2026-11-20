@@ -39,6 +39,7 @@ from grembyte.ui.widgets.trace import (
     RowFilterBar,
     TraceRowModel,
     TraceSequenceModel,
+    selected_keys,
     trace_table,
 )
 from grembyte.ui.workers import keep_until_finished
@@ -83,8 +84,8 @@ class NativeTraceDialog(QDialog):
 
     # address (int) to show in the memory viewer
     memory_requested = Signal(object)
-    # NativeFunction whose calls to monitor
-    monitor_requested = Signal(object)
+    # The NativeFunctions whose calls to monitor (a list)
+    monitor_requested = Signal(list)
 
     def __init__(self, translations, pid, parent=None, favorites=None):
         super().__init__(parent)
@@ -101,6 +102,8 @@ class NativeTraceDialog(QDialog):
         self._state = _LOADING
         self._recording = None
         self._selected = None
+        # The table last clicked in: its selected rows are what Monitor acts on
+        self._active_view = None
         self._positions = {}
         self.setWindowTitle(translations["native_trace.title"])
         self.resize(1100, 760)
@@ -251,7 +254,15 @@ class NativeTraceDialog(QDialog):
                            self.translations)
         view.doubleClicked.connect(
             lambda index: index.column() != FAVORITE_COLUMN and self._request_memory())
+        view.selectionModel().selectionChanged.connect(
+            lambda _selected, _deselected: self._on_view_selection(view))
         return view
+
+    def _on_view_selection(self, view):
+        # Rows selected in a table (also with Ctrl+A) make it the one the buttons act on
+        if view.selectionModel().hasSelection():
+            self._active_view = view
+        self._show_selection()
 
     def _set_state(self, state):
         self._state = state
@@ -433,6 +444,7 @@ class NativeTraceDialog(QDialog):
         if row is None:
             return
         self._selected = row.method
+        self._active_view = self.rows_view
         self._show_selection()
         position = self._positions.get(row.method)
         if position is not None:
@@ -443,31 +455,52 @@ class NativeTraceDialog(QDialog):
         call = self.sequence_model.item_at(current.row()) if current.isValid() else None
         if call is not None:
             self._selected = call.method
+            self._active_view = self.sequence_view
             self._show_selection()
 
     def selected_function(self):
         """The NativeFunction chosen in either table, or None."""
         return self.functions[self._selected] if self._selected is not None else None
 
+    def selected_functions(self):
+        """The NativeFunctions of the rows selected in the table last clicked in
+        (several with Ctrl or Shift), else the one chosen; each once."""
+        if self._active_view is self.rows_view:
+            keys = selected_keys(self.rows_view, self.row_model)
+        elif self._active_view is self.sequence_view:
+            keys = selected_keys(self.sequence_view, self.sequence_model)
+        else:
+            keys = []
+        if not keys and self._selected is not None:
+            keys = [self._selected]
+        return [self.functions[key] for key in keys]
+
     def _show_selection(self):
-        function = self.selected_function()
-        self.monitor_button.setEnabled(function is not None)
-        self.memory_button.setEnabled(function is not None)
-        self.copy_button.setEnabled(function is not None)
-        self.selection_label.setText(function.signature if function is not None else "")
+        functions = self.selected_functions()
+        # Memory and the address are for one function at a time
+        self.monitor_button.setEnabled(bool(functions))
+        self.memory_button.setEnabled(len(functions) == 1)
+        self.copy_button.setEnabled(len(functions) == 1)
+        if len(functions) > 1:
+            self.selection_label.setText(
+                self.translations["trace.selected_count"].format(count=len(functions)))
+        else:
+            self.selection_label.setText(functions[0].signature if functions else "")
 
     def _request_monitor(self):
-        function = self.selected_function()
-        if function is not None:
-            self.monitor_requested.emit(function)
+        functions = self.selected_functions()
+        if functions:
+            self.monitor_requested.emit(functions)
 
     def _request_memory(self):
-        function = self.selected_function()
+        functions = self.selected_functions()
+        function = functions[0] if len(functions) == 1 else None
         if function is not None:
             self.memory_requested.emit(function.address)
 
     def _copy_address(self):
-        function = self.selected_function()
+        functions = self.selected_functions()
+        function = functions[0] if len(functions) == 1 else None
         if function is not None:
             QGuiApplication.clipboard().setText(f"0x{function.address:x}")
 

@@ -1202,6 +1202,20 @@ def test_catalog_dialog_searches_methods(tmp_path, qt_app, translations):
         _wait_for(qt_app, lambda: dialog._worker is None)
         assert "Zwischenspeicher" not in dialog.status_label.text()
 
+        # Several methods go to the monitor together; the other buttons take one
+        monitored = []
+        dialog.monitor_requested.connect(monitored.extend)
+        dialog.view.selectRow(0)
+        dialog.view.setCurrentIndex(dialog.model.index(2, 1))  # current, not selected
+        dialog.view.selectAll()
+        assert dialog.details_label.text() == "9 Methoden ausgewählt"
+        assert dialog.monitor_button.isEnabled()
+        assert not any(button.isEnabled() for button in (
+            dialog.hook_button, dialog.call_button, dialog.calls_button, dialog.copy_button))
+        dialog.monitor_button.click()
+        assert len(monitored) == 9 and monitored[0] == dialog.model.method_at(0)
+        dialog.view.clearSelection()
+
         dialog.search_input.setText("loot TAKE")
         dialog._apply_filter()
         assert dialog.model.rowCount() == 1
@@ -2020,6 +2034,14 @@ def test_inspector_evaluates_properties(tmp_path, qt_app, translations):
         _wait_for(qt_app, lambda: inspector.properties_table.rowCount() == 5)
         assert inspector.properties_table.item(0, 0).text() == "IsPartyMember"
         assert inspector.properties_table.cellWidget(0, 3).text().endswith("auswerten</a>")
+        # The getters can be searched by name or type, like the fields
+        inspector.property_filter.setText("party")
+        assert [row for row in range(5)
+                if not inspector.properties_table.isRowHidden(row)] == [0]
+        inspector.property_filter.setText("GAMEOBJECT")
+        assert not inspector.properties_table.isRowHidden(3)
+        inspector.property_filter.clear()
+        assert not any(inspector.properties_table.isRowHidden(row) for row in range(5))
 
         inspector.properties_table.cellWidget(0, 3).linkActivated.emit("#")
         time.sleep(0.2)
@@ -2645,7 +2667,7 @@ def test_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, translati
     target = _MonoTarget(_build(tmp_path))
     dialog = TraceDialog(translations, target.pid)
     monitored, hooked = [], []
-    dialog.monitor_requested.connect(monitored.append)
+    dialog.monitor_requested.connect(monitored.extend)
     dialog.hook_requested.connect(hooked.append)
 
     def record(button, *commands):
@@ -2684,6 +2706,13 @@ def test_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, translati
         dialog.hook_button.click()
         assert [method.signature for method in monitored + hooked] == [
             "Game.Inventory:AddGold (int&,int)"] * 2
+        # Several rows go to the monitor together; a hook is for one method only
+        monitored.clear()
+        dialog.rows_view.selectAll()  # Ctrl+A in the other table than before
+        assert dialog.selection_label.text() == "2 ausgewählt"
+        assert dialog.monitor_button.isEnabled() and not dialog.hook_button.isEnabled()
+        dialog.monitor_button.click()
+        assert sorted(method.name for method in monitored) == ["AddGold", "Update"]
 
         dialog.trace_button.click()
         _wait_for(qt_app, lambda: dialog.trace_button.text() == translations["trace.start"]

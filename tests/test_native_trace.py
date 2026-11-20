@@ -316,6 +316,15 @@ def test_native_trace_window_shows_what_the_scenario_called(tmp_path, qt_app, tr
         assert dialog.selection_label.text() == function.signature
         dialog.memory_button.click()
         assert shown == [function.address]
+        # Several functions go to the monitor together; memory and copy take one
+        monitored = []
+        dialog.monitor_requested.connect(monitored.extend)
+        dialog.rows_view.selectAll()
+        assert dialog.selection_label.text() == "2 ausgewählt"
+        assert dialog.monitor_button.isEnabled()
+        assert not dialog.memory_button.isEnabled() and not dialog.copy_button.isEnabled()
+        dialog.monitor_button.click()
+        assert sorted(function.label for function in monitored) == ["buy_item", "spend_gold"]
 
         dialog.trace_button.click()
         _wait_for(qt_app, lambda: dialog._state == 1)  # idle

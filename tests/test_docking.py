@@ -74,6 +74,57 @@ def test_dialogs_dock_as_tabs_and_float_again(window, translations, qt_app):
     assert host.dialogs() == [] and not host.isVisible()
 
 
+def test_a_docking_area_keeps_its_size(window, translations, qt_app):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QMainWindow, QWidget
+
+    from grembyte.ui import window_state
+    from grembyte.ui.widgets.docking import BOTTOM, RIGHT, DockManager
+
+    window.setCentralWidget(QWidget())  # as the main window's: the docks share the width
+    window.resize(1400, 900)
+    qt_app.processEvents()
+    manager = window.dock_manager
+    gold = _dialog(translations, "Gold", window)
+    manager.add(gold, "pointer_scan", RIGHT, dock=True)
+    host = manager.host(RIGHT)
+    qt_app.processEvents()
+    window.resizeDocks([host], [520], Qt.Orientation.Horizontal)  # the user drags the edge
+    qt_app.processEvents()
+    assert host.width() == 520
+
+    # The last dialog leaves: the area hides and keeps its width for the next one
+    gold.pin_button.click()
+    assert host.isHidden()
+    assert window_state.settings().value("dock_sizes/right", type=int) == 520
+    mana = _dialog(translations, "Mana", window)
+    manager.add(mana, "pointer_scan", RIGHT, dock=True)
+    qt_app.processEvents()
+    assert host.width() == 520
+
+    # The main window closing keeps it too, and a new main window gives it back
+    window.resizeDocks([host], [430], Qt.Orientation.Horizontal)
+    qt_app.processEvents()
+    window.close()
+    assert window_state.settings().value("dock_sizes/right", type=int) == 430
+    assert window_state.settings().value("dock_sizes/bottom", 0, type=int) == 0  # never shown
+
+    second = QMainWindow()
+    second.setCentralWidget(QWidget())
+    second.dock_manager = DockManager(second)
+    second.resize(1400, 900)
+    second.show()
+    qt_app.processEvents()
+    log = _dialog(translations, "Log", second)
+    second.dock_manager.add(log, "log", RIGHT, dock=True)
+    qt_app.processEvents()
+    try:
+        assert second.dock_manager.host(RIGHT).width() == 430
+        assert second.dock_manager.host(BOTTOM).isHidden()
+    finally:
+        second.close()
+
+
 def test_tab_and_dock_close_buttons_close_the_dialogs(window, translations):
     from grembyte.ui.widgets.docking import BOTTOM
 

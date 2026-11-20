@@ -14,6 +14,7 @@ Windows of their own cannot be kept beside the main window on every desktop (Way
 - **At the bottom**, where wide tables have room: trace, native trace, method monitor, native function monitor, log.
 - Each side holds its windows as tabs. The ✕ on a tab, or a middle click, closes the window. A docked object inspector shows the object's name in its tab (else its class); the full title is in the tooltip.
 - Grembyte remembers per kind of window whether the last one was docked: the next opens the same way. An object opened from a docked inspector opens as a tab beside it.
+- Each side keeps the size you dragged it to, also after a restart of Grembyte.
 - When the game ends or another program is chosen, the tools close, docked or not. The log and the [notes](notes.md) stay, and so does the [pointer scan](pointer-scan.md#finding-a-chain): it is meant to find the value again after a restart.
 
 

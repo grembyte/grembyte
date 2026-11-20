@@ -218,7 +218,7 @@ class TraceSequenceModel(_TableModel):
 
 def trace_table(model, stretch_column, sortable=False, favorites=None, source="",
                 translations=None):
-    """A table of trace results: whole rows, one at a time.
+    """A table of trace results: whole rows, several with Ctrl or Shift.
 
     ``sortable``: a click on a column header sorts by it; until then the
     rows keep the model's order. ``favorites``: the FavoriteStore the star
@@ -229,7 +229,7 @@ def trace_table(model, stretch_column, sortable=False, favorites=None, source=""
     view = QTableView()
     view.setModel(model)
     view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-    view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+    view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
     view.setWordWrap(False)
     view.verticalHeader().setVisible(False)
     header = view.horizontalHeader()
@@ -245,6 +245,16 @@ def trace_table(model, stretch_column, sortable=False, favorites=None, source=""
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         view.setSortingEnabled(True)
     return view
+
+
+def selected_keys(view, model):
+    """The ``method`` keys of the rows selected in ``view``, each once, top down."""
+    keys = []
+    for row in sorted({index.row() for index in view.selectionModel().selectedRows()}):
+        item = model.item_at(row)
+        if item is not None and item.method not in keys:
+            keys.append(item.method)
+    return keys
 
 
 class RowFilterBar(QWidget):
@@ -299,8 +309,8 @@ class TraceDialog(QDialog):
 
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
-    # CatalogMethod to log the calls of, or to create a method hook for
-    monitor_requested = Signal(object)
+    # The CatalogMethods to log the calls of (a list), the one to create a method hook for
+    monitor_requested = Signal(list)
     hook_requested = Signal(object)
 
     def __init__(self, translations, pid, parent=None, engine=None, filter_repository=None,
@@ -325,6 +335,8 @@ class TraceDialog(QDialog):
         self._state = _IDLE
         self._recording = None
         self._selected = None
+        # The table last clicked in: its selected rows are what the buttons act on
+        self._active_view = None
         self.setWindowTitle(self._title())
         self.resize(1100, 720)
         self._build_ui()
@@ -482,7 +494,15 @@ class TraceDialog(QDialog):
                            self.translations)
         view.doubleClicked.connect(
             lambda index: index.column() != FAVORITE_COLUMN and self._request_monitor())
+        view.selectionModel().selectionChanged.connect(
+            lambda _selected, _deselected: self._on_view_selection(view))
         return view
+
+    def _on_view_selection(self, view):
+        # Rows selected in a table (also with Ctrl+A) make it the one the buttons act on
+        if view.selectionModel().hasSelection():
+            self._active_view = view
+        self._show_selection()
 
     def _set_state(self, state):
         self._state = state
@@ -721,6 +741,7 @@ class TraceDialog(QDialog):
         if row is None:
             return
         self._selected = row.method
+        self._active_view = self.rows_view
         self._show_selection()
         if row.first is not None:
             # Its first call in the sequence
@@ -731,29 +752,48 @@ class TraceDialog(QDialog):
         call = self.sequence_model.item_at(current.row()) if current.isValid() else None
         if call is not None:
             self._selected = call.method
+            self._active_view = self.sequence_view
             self._show_selection()
 
     def selected_method(self):
         """The CatalogMethod chosen in either table, or None."""
         return self.methods[self._selected] if self._selected is not None else None
 
+    def selected_methods(self):
+        """The CatalogMethods of the rows selected in the table last clicked in
+        (several with Ctrl or Shift), else the one chosen; each once."""
+        if self._active_view is self.rows_view:
+            keys = selected_keys(self.rows_view, self.row_model)
+        elif self._active_view is self.sequence_view:
+            keys = selected_keys(self.sequence_view, self.sequence_model)
+        else:
+            keys = []
+        if not keys and self._selected is not None:
+            keys = [self._selected]
+        return [self.methods[key] for key in keys]
+
     def _show_selection(self):
-        method = self.selected_method()
-        self.monitor_button.setEnabled(method is not None
+        methods = self.selected_methods()
+        # A hook is made for one method at a time
+        self.monitor_button.setEnabled(bool(methods)
                                        and self.engine.supports(engine_base.MONITOR))
-        self.hook_button.setEnabled(method is not None
+        self.hook_button.setEnabled(len(methods) == 1
                                     and self.engine.supports(engine_base.METHOD_HOOKS))
-        self.selection_label.setText(method.signature if method is not None else "")
+        if len(methods) > 1:
+            self.selection_label.setText(
+                self.translations["trace.selected_count"].format(count=len(methods)))
+        else:
+            self.selection_label.setText(methods[0].signature if methods else "")
 
     def _request_monitor(self):
-        method = self.selected_method()
-        if method is not None and self.engine.supports(engine_base.MONITOR):
-            self.monitor_requested.emit(method)
+        methods = self.selected_methods()
+        if methods and self.engine.supports(engine_base.MONITOR):
+            self.monitor_requested.emit(methods)
 
     def _request_hook(self):
-        method = self.selected_method()
-        if method is not None and self.engine.supports(engine_base.METHOD_HOOKS):
-            self.hook_requested.emit(method)
+        methods = self.selected_methods()
+        if len(methods) == 1 and self.engine.supports(engine_base.METHOD_HOOKS):
+            self.hook_requested.emit(methods[0])
 
     def closeEvent(self, event):  # pylint: disable=invalid-name
         # Removing thousands of interceptors takes a moment; do not block the

@@ -12,6 +12,11 @@ dragging out, which Wayland does not support well).
 dialogs: their area and whether the last one was docked, which the next one
 of that kind follows (kept in the settings under ``docking/<kind>``). Code
 far from the main window finds it with ``find_dock_manager``.
+
+Each area keeps its size (the width of ``RIGHT``, the height of ``BOTTOM``)
+under ``dock_sizes/<area>``: written when its last dialog leaves it and when
+the main window closes, given back when it shows again. Without that an
+area took the size its first dialog asked for, every time.
 """
 
 import shiboken6  # pylint: disable=import-error,no-name-in-module
@@ -114,6 +119,7 @@ class DockHost(QDockWidget):
     def __init__(self, window, area=RIGHT):
         super().__init__(window)
         self.setObjectName(f"dock_{area}")
+        self.area = area
         place, allowed = _AREAS[area]
         self.setAllowedAreas(allowed)
         # The tabs name the dialogs and close them: no title bar above them
@@ -166,8 +172,26 @@ class DockHost(QDockWidget):
         dialog.show()
         self.tabs.setCurrentWidget(dialog)
         self._show_title()
+        appearing = self.isHidden()
         self.show()
         self.raise_()
+        if appearing:
+            self.restore_size()
+
+    def _orientation(self):
+        return Qt.Orientation.Horizontal if self.area == RIGHT else Qt.Orientation.Vertical
+
+    def remember_size(self):
+        """Keep the area's size (RIGHT: width, BOTTOM: height) while it shows."""
+        if self.isVisible():
+            size = self.width() if self.area == RIGHT else self.height()
+            window_state.settings().setValue(f"dock_sizes/{self.area}", size)
+
+    def restore_size(self):
+        """Give the area the size it had when it last hid (or the main window closed)."""
+        size = window_state.settings().value(f"dock_sizes/{self.area}", 0, type=int)
+        if size > 0:
+            self._window.resizeDocks([self], [size], self._orientation())
 
     def unpin(self, dialog):
         """Give ``dialog`` a window of its own again."""
@@ -199,6 +223,8 @@ class DockHost(QDockWidget):
             except (RuntimeError, TypeError):
                 pass
         setattr(dialog, _OWNER_SLOT, None)
+        if self.tabs.count() == 1:
+            self.remember_size()  # before the last tab goes and the area hides
         self.tabs.removeTab(index)
         if self.tabs.count() == 0:
             self.hide()
@@ -259,6 +285,14 @@ class DockManager(QObject):
         super().__init__(window)
         self._window = window
         self._hosts = {}
+        # The main window closing: each area keeps its size (DockHost.remember_size)
+        window.installEventFilter(self)
+
+    def eventFilter(self, watched, event):  # pylint: disable=invalid-name
+        if watched is self._window and event.type() == QEvent.Type.Close:
+            for host in self._hosts.values():
+                host.remember_size()
+        return False
 
     def host(self, area):
         """The DockHost of ``area`` (RIGHT or BOTTOM), created on first use."""
