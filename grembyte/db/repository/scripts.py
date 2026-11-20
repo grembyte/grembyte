@@ -21,32 +21,35 @@ class ScriptRepository:
             ))
 
     def add_script(self, process_id, *, label, source, mode, seconds, enabled=True,
-                   params=None, hotkey=None):
+                   params=None, hotkey=None, lookups=None):
         # pylint: disable=too-many-arguments
         """Save a script and return its id."""
         with self._sessions() as session:
             script = GameScript(process_id=process_id, label=label, source=source, mode=mode,
                                 seconds=seconds, enabled=enabled, params=params,
-                                hotkey=hotkey or None)
+                                hotkey=hotkey or None, lookups=lookups or None)
             session.add(script)
             session.commit()
             return script.id
 
     def update_script(self, script_id, *, label=None, source=None, mode=None, seconds=None,
-                      enabled=None, params=None, last_args=None, hotkey=None):
+                      enabled=None, params=None, last_args=None, hotkey=None, lookups=None):
         # pylint: disable=too-many-arguments
         """Change the given fields of a saved script; ``None`` keeps a field
-        (``params=""`` removes the parameters, ``hotkey=""`` the hotkey)."""
+        (``params=""`` removes the parameters, ``hotkey=""`` the hotkey).
+        New code drops the lookups learned from the old (unless given)."""
         with self._sessions() as session:
             script = session.get(GameScript, script_id)
             if script is None:
                 return
+            if source is not None and source != script.source and lookups is None:
+                lookups = ""
             for name, value in (("label", label), ("source", source), ("mode", mode),
                                 ("seconds", seconds), ("enabled", enabled)):
                 if value is not None:
                     setattr(script, name, value)
             for name, value in (("params", params), ("last_args", last_args),
-                                ("hotkey", hotkey)):
+                                ("hotkey", hotkey), ("lookups", lookups)):
                 if value is not None:
                     setattr(script, name, value or None)
             session.commit()

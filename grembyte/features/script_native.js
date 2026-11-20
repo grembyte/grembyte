@@ -42,10 +42,11 @@ const nativeMain = {
   probing: false
 };
 
-function onGameThread(work) {
+function onGameThread(work, renew = true) {
   // A promise of work()'s result, computed on the game thread: through the
-  // engine adapter, or natively without one.
-  return engine.refresh() ? engine.onMainThread(work) : nativeOnMainThread(work);
+  // engine adapter, or natively without one. ``renew``: see onMainThread in
+  // the Unreal adapter (script runs prepare their lookups instead).
+  return engine.refresh() ? engine.onMainThread(work, renew) : nativeOnMainThread(work);
 }
 
 function nativeOnMainThread(work) {

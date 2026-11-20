@@ -22,8 +22,9 @@ The body gets one ``ctx`` object:
 
     ctx.find("ClassName")   a live object of that class or a subclass
                             (Unreal, Unity), e.g. ctx.find("AlabamaCheatManager");
-                            Unreal: searched for once (tens of ms on the
-                            game thread), then only checked while it lives
+                            Unreal: searched for once, then only checked
+                            while it lives; later runs search on the
+                            agent's thread before the run (see lookups)
     ctx.find("ClassName", "ObjectName")   the one of that name, e.g.
                             ctx.find("UnityEngine.GameObject", "Player(Clone)")
                             or ctx.find("BP_Hero_C", "BP_Hero_C_1"); Unreal
@@ -195,6 +196,26 @@ def params_from_json(text):
     return tuple(ScriptParam.from_json(data) for data in json.loads(text)) if text else ()
 
 
+def lookups_to_json(lookups):
+    """The lookups an Unreal script learned (see ScriptSpec.lookups) as the
+    database keeps them: JSON text, or None without any."""
+    return json.dumps([list(lookup) for lookup in lookups]) if lookups else None
+
+
+def lookups_from_json(text):
+    """The lookups of a saved script (see lookups_to_json); broken text gives none,
+    since they are only learned and found again."""
+    try:
+        data = json.loads(text) if text else []
+    except ValueError:
+        return ()
+    if not isinstance(data, list):
+        return ()
+    return tuple(tuple(lookup) for lookup in data
+                 if isinstance(lookup, list) and len(lookup) >= 2
+                 and all(item is None or isinstance(item, str) for item in lookup))
+
+
 def choice_matches(value, text):
     """Whether a choice's option ``value`` is the one saved as ``text``."""
     if isinstance(value, bool):
@@ -240,6 +261,13 @@ class ScriptSpec:
     ``hotkey`` runs a manual script with its parameters' defaults, or pauses
     and resumes a repeating one (``Ctrl+Shift+G``, see grembyte.core.hotkeys;
     "" for none; a script that runs once has none).
+
+    ``lookups`` are the classes and objects an Unreal script looked up in
+    earlier runs (``("class", name)``, ``("object", class, name or None)``,
+    ``("objects", class)``): the agent finds them before a run on its own
+    thread, so the game thread need not search the object table (see
+    prepareLookups in the Unreal agent). The agent learns them by itself
+    (``lookups_learned``); Grembyte keeps them with the saved script.
     """
 
     source: str
@@ -249,6 +277,7 @@ class ScriptSpec:
     label: str = ""
     params: tuple = field(default_factory=tuple)
     hotkey: str = ""
+    lookups: tuple = field(default_factory=tuple)
 
     def __post_init__(self):
         if self.mode not in MODES:
@@ -259,6 +288,7 @@ class ScriptSpec:
             raise messages.LocalizedValueError("error.scripts.repeat_minimum",
                                               seconds=MIN_REPEAT_SECONDS)
         self.params = tuple(self.params)
+        self.lookups = tuple(tuple(lookup) for lookup in self.lookups)
         self.hotkey = (hotkeys.normalized(self.hotkey) if self.mode in HOTKEY_MODES else "")
         names = [param.name for param in self.params]
         for name in names:
@@ -279,6 +309,7 @@ class ScriptSpec:
             "args": self.default_args(),
             "options": {param.name: param.options for param in self.params
                         if param.kind == "choice"},
+            "lookups": [list(lookup) for lookup in self.lookups],
         }
 
 
@@ -286,7 +317,8 @@ def spec_from_saved(saved):
     """The ScriptSpec of a saved script (a GameScript row); raises ValueError,
     KeyError or TypeError for one that is broken."""
     return ScriptSpec(saved.source, saved.mode, saved.seconds, saved.enabled, saved.label,
-                      params_from_json(saved.params), saved.hotkey or "")
+                      params_from_json(saved.params), saved.hotkey or "",
+                      lookups_from_json(saved.lookups))
 
 
 def _browse_options(filter_text, internal):
@@ -317,6 +349,8 @@ class ScriptWorker(QThread):
     script_failed = Signal(int, str)
     # script id, {time, runs, result, target?, logs, error}
     script_ran = Signal(int, object)
+    # script id, all its lookups (lists) after a run added some (see ScriptSpec.lookups)
+    lookups_learned = Signal(int, object)
     # As MethodMonitorWorker's, for the object inspector (see grembyte.ui.widgets.inspection)
     inspected = Signal(int, object)
     inspect_failed = Signal(int, str)
@@ -596,6 +630,8 @@ class ScriptWorker(QThread):
             self._ready.set()
         elif kind == "script-run":
             self.script_ran.emit(payload.get("scriptId", 0), payload)
+            if isinstance(payload.get("lookups"), list):
+                self.lookups_learned.emit(payload.get("scriptId", 0), payload["lookups"])
         elif kind == "unreal-offsets":
             _store_offsets(payload)
 

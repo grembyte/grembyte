@@ -13,7 +13,8 @@ class GameScript(Base):  # pylint: disable=too-few-public-methods
 
     ``mode`` and ``seconds`` say when it runs (see grembyte.features.scripts);
     ``params`` are its parameters (JSON, see params_to_json), ``last_args``
-    the values they were last run with (JSON, by name).
+    the values they were last run with (JSON, by name), ``lookups`` the
+    classes and objects an Unreal script looked up (JSON, see ScriptSpec.lookups).
     """
 
     __tablename__ = "game_scripts"
@@ -30,6 +31,7 @@ class GameScript(Base):  # pylint: disable=too-few-public-methods
     params = Column(Text, nullable=True)
     last_args = Column(Text, nullable=True)
     hotkey = Column(String, nullable=True)  # e.g. "Ctrl+Shift+G", see grembyte.core.hotkeys
+    lookups = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     process = relationship("Process", back_populates="scripts")

@@ -37,8 +37,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from grembyte.core import hotkeys, messages, settings, sounds
 from grembyte.features.scripts import (
-    HOTKEY_MODES, MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker, params_to_json,
-    spec_from_saved)
+    HOTKEY_MODES, MIN_REPEAT_SECONDS, MODES, ScriptSpec, ScriptWorker, lookups_to_json,
+    params_to_json, spec_from_saved)
 from grembyte.platform.keyboard import open_reader
 from grembyte.hooks.syntax import BODY
 from grembyte.ui.widgets.code_editor import CodeEditor
@@ -506,6 +506,8 @@ class ScriptPanel(QGroupBox):
         worker.script_failed.connect(
             lambda script_id, message: self._on_failed(worker, script_id, message))
         worker.script_ran.connect(lambda script_id, run: self._on_ran(worker, script_id, run))
+        worker.lookups_learned.connect(
+            lambda script_id, lookups: self._on_lookups_learned(worker, script_id, lookups))
         worker.worker_failed.connect(lambda message: self._on_worker_failed(worker, message))
         worker.finished.connect(lambda: self._on_worker_finished(worker))
         self.inspections = Inspections(self.translations, worker, self.window(),
@@ -526,7 +528,8 @@ class ScriptPanel(QGroupBox):
             saved_id = self._store(self._repository.add_script, self._process_id,
                                    label=spec.label, source=spec.source, mode=spec.mode,
                                    seconds=spec.seconds, enabled=spec.enabled,
-                                   params=params_to_json(spec.params), hotkey=spec.hotkey)
+                                   params=params_to_json(spec.params), hotkey=spec.hotkey,
+                                   lookups=lookups_to_json(spec.lookups))
         script_id = self._ensure_worker().add_script(spec)
         self._scripts[script_id] = {"spec": spec, "saved_id": saved_id, "status": "starting",
                                     "runs": 0, "last": "", "last_args": last_args or {},
@@ -576,6 +579,8 @@ class ScriptPanel(QGroupBox):
         state = self._scripts[script_id]
         if state["spec"].params != spec.params:
             state["options"] = {}  # their code may have changed
+        if spec.source == state["spec"].source and not spec.lookups:
+            spec = dataclasses.replace(spec, lookups=state["spec"].lookups)
         state["spec"] = spec
         if state["saved_id"] is not None:
             self._store(self._repository.update_script, state["saved_id"], label=spec.label,
@@ -736,6 +741,17 @@ class ScriptPanel(QGroupBox):
         self._sound_hotkey_run(script_id, error=message or True)
         self._set_status(script_id, "failed", message)
         self.status_label.setText(self.translations["scripts.failed"].format(message=message))
+
+    def _on_lookups_learned(self, worker, script_id, lookups):
+        # Kept with the saved script: the next session finds them before the
+        # first run (see ScriptSpec.lookups)
+        state = self._scripts.get(script_id)
+        if worker is not self._worker or state is None:
+            return
+        state["spec"] = dataclasses.replace(state["spec"], lookups=tuple(map(tuple, lookups)))
+        if state["saved_id"] is not None:
+            self._store(self._repository.update_script, state["saved_id"],
+                        lookups=lookups_to_json(state["spec"].lookups) or "")
 
     def _on_ran(self, worker, script_id, run):
         state = self._scripts.get(script_id)

@@ -1720,7 +1720,10 @@ def test_the_game_thread_hook_stays_between_script_runs(tmp_path, qt_app, activi
     first = phases[0]
     assert first["find_class_count"] == 1 and first["signature_count"] == 1
     assert not any(f"{phase}_count" in first for phase in ("name_pool", "snapshot", "main_gate"))
+    # Later runs only prepare what the first looked up, on the agent's thread
     assert all(not any(key.endswith("_count") for key in entry) for entry in phases[1:])
+    assert "prepare_ms" not in first
+    assert all(0 <= entry["prepare_ms"] <= entry["wait_ms"] for entry in phases[1:])
     assert all(entry["total_ms"] >= entry["game_thread_ms"] and not entry["failed"]
                and isinstance(entry["run"], str) for entry in phases)
 
@@ -2194,4 +2197,78 @@ def test_an_object_of_another_class_now_is_not_found(tmp_path, qt_app):
     finally:
         worker.requestInterruption()
         worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_scripts_find_what_they_looked_up_before_the_game_thread_runs_them(
+        tmp_path, qt_app, activity_file):
+    # pylint: disable=import-outside-toplevel,too-many-locals
+    from grembyte.core import settings
+    from grembyte.features.scripts import ScriptSpec, ScriptWorker
+
+    # A search on the game thread reads the object table: RoboCop stalled
+    # 130-260 ms about once a minute (2026-11-20). The agent learns what a
+    # script looks up and finds it on its own thread before the next run; a
+    # saved script hands that in, so even its first run in a new session
+    # does not search on the game thread. Missing objects are trusted
+    # missing there, and ctx.forEach takes the snapshot read just before.
+    source = ('let heroes = 0;'
+              ' ctx.forEach("BP_Hero_C", () => { heroes++; });'
+              ' return `${ctx.find("BP_Hero_C", "BP_Hero_C_1").Health}'
+              ' ${ctx.find("BP_Hero_C", "Nobody")} ${heroes}`;')
+    target = _Target(_build(tmp_path))
+    settings.apply({"script_timings": True})
+    learned = []
+
+    def session(spec):
+        worker = ScriptWorker(target.pid)
+        added, failed, runs = [], {}, []
+        worker.script_added.connect(added.append)
+        worker.script_failed.connect(failed.__setitem__)
+        worker.script_ran.connect(lambda script_id, run: runs.append(run))
+        worker.lookups_learned.connect(lambda script_id, lookups: learned.append(lookups))
+        try:
+            worker.start()
+            script = worker.add_script(spec)
+            _wait_for(qt_app, lambda: script in added or script in failed)
+            assert not failed
+            results = []
+            for _ in range(2):
+                runs.clear()
+                worker.run_now(script)
+                _wait_for(qt_app, lambda: target.send("tick", 0) and runs)
+                assert runs[0]["error"] is None, runs[0]["error"]
+                results.append(runs[0]["result"])
+            return results
+        finally:
+            worker.requestInterruption()
+            worker.wait(5000)
+
+    def phases():
+        return [entry for entry in _events(activity_file) if entry.get("pid") == target.pid
+                and entry["event"] == "script_phases"]
+
+    on_game_thread = ("game_thread_search_count", "game_thread_snapshot_count")
+    try:
+        first = session(ScriptSpec(source))
+        # Learned once, after the first run; the second added nothing
+        assert len(learned) == 1
+        assert sorted(map(tuple, learned[0])) == [
+            ("class", "BP_Hero_C"), ("object", "BP_Hero_C", "BP_Hero_C_1"),
+            ("object", "BP_Hero_C", "Nobody"), ("objects", "BP_Hero_C")]
+        assert first[0] == first[1] and first[0].endswith(' null 3"')
+        one, two = phases()
+        assert any(key in one for key in on_game_thread) and "prepare_ms" not in one
+        assert not any(key in two for key in on_game_thread), two
+        assert two["prepare_ms"] <= two["wait_ms"]
+
+        # A new session with the saved lookups: no search on the game thread at all
+        second = session(ScriptSpec(source, lookups=tuple(map(tuple, learned[0]))))
+        assert second == first and len(learned) == 1
+        for entry in phases()[2:]:
+            assert not any(key in entry for key in on_game_thread), entry
+            assert entry["prepare_ms"] >= 0
+    finally:
+        settings.apply({"script_timings": False})
         target.close()

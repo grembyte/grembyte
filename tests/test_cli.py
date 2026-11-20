@@ -292,13 +292,15 @@ def test_grembyte_cli_runs_manual_scripts_by_their_hotkeys(monkeypatch, capsys):
         script_added = Signal(int)
         script_failed = Signal(int, str)
         script_ran = Signal(int, object)
+        lookups_learned = Signal(int, object)
 
     class FakeWorker:
         ids = itertools.count(1)
 
         def __init__(self, _pid, language="en"):
             self.signals = Signals()
-            for name in ("worker_failed", "script_added", "script_failed", "script_ran"):
+            for name in ("worker_failed", "script_added", "script_failed", "script_ran",
+                         "lookups_learned"):
                 setattr(self, name, getattr(self.signals, name))
             self.runs = []
             self.updates = []
@@ -332,7 +334,8 @@ def test_grembyte_cli_runs_manual_scripts_by_their_hotkeys(monkeypatch, capsys):
 
     def row(row_id, label, mode, hotkey=None, enabled=True):
         return SimpleNamespace(id=row_id, label=label, source="return 1;", mode=mode,
-                               seconds=5.0, enabled=enabled, params=None, hotkey=hotkey)
+                               seconds=5.0, enabled=enabled, params=None, hotkey=hotkey,
+                               lookups=None)
 
     rows = [row(1, "Gold", "manual", "Ctrl+G"), row(2, "Heal", "manual"),
             row(3, "Paused", "manual", "F9", enabled=False), row(4, "Tick", "repeat"),
@@ -391,6 +394,10 @@ def test_grembyte_cli_runs_manual_scripts_by_their_hotkeys(monkeypatch, capsys):
         game.hotkeys.poll()
         worker.script_ran.emit(1, {"result": "Gold +1000", "error": None})
         assert len(played) == 5
+        # What a script looked up is kept with its saved row (by the row's id)
+        worker.lookups_learned.emit(4, [["class", "PlayerController"]])
+        assert stored[-1] == (5, {"lookups": '[["class", "PlayerController"]]'})
+        assert game.specs[4].lookups == (("class", "PlayerController"),)
     finally:
         app_settings.reset()
         game.stop()

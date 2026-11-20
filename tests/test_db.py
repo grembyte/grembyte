@@ -603,7 +603,8 @@ def test_scripts_are_saved_changed_and_deleted_per_process(tmp_path):
     # pylint: disable=import-outside-toplevel
     from grembyte.db.repository.scripts import ScriptRepository
     from grembyte.features.scripts import (
-        ScriptParam, ScriptSpec, params_from_json, params_to_json)
+        ScriptParam, ScriptSpec, lookups_from_json, lookups_to_json, params_from_json,
+        params_to_json, spec_from_saved)
 
     engine = create_engine(f"sqlite:///{tmp_path / 'grembyte.db'}")
     Base.metadata.create_all(engine)
@@ -623,7 +624,8 @@ def test_scripts_are_saved_changed_and_deleted_per_process(tmp_path):
             "Heal", "ctx.log(1);", "repeat", 30, False)
         spec = ScriptSpec(saved.source, saved.mode, saved.seconds, saved.enabled, saved.label)
         assert spec.to_agent(3) == {"id": 3, "source": "ctx.log(1);", "mode": "repeat",
-                                    "seconds": 30, "enabled": False, "args": {}, "options": {}}
+                                    "seconds": 30, "enabled": False, "args": {}, "options": {},
+                                    "lookups": []}
         assert saved.params is None and saved.last_args is None
 
         # Parameters and the values of the last run are kept as JSON; empty
@@ -640,6 +642,26 @@ def test_scripts_are_saved_changed_and_deleted_per_process(tmp_path):
         assert spec.to_agent(3)["options"] == {"item": 'return ["ItFo_Apple"];'}
         scripts.update_script(heal, params="")
         assert scripts.list_scripts(game)[0].params is None
+
+        # What an Unreal script looked up is kept, handed to the agent, and
+        # dropped with new code (it is learned anew); broken text gives none.
+        lookups = (("class", "PlayerController"), ("object", "PlayerController", None),
+                   ("objects", "BP_Hero_C"))
+        scripts.update_script(heal, lookups=lookups_to_json(lookups))
+        [saved] = scripts.list_scripts(game)
+        assert spec_from_saved(saved).lookups == lookups
+        assert spec_from_saved(saved).to_agent(3)["lookups"] == [
+            ["class", "PlayerController"], ["object", "PlayerController", None],
+            ["objects", "BP_Hero_C"]]
+        scripts.update_script(heal, source="ctx.log(1);", enabled=True)  # same code
+        assert spec_from_saved(scripts.list_scripts(game)[0]).lookups == lookups
+        scripts.update_script(heal, source="ctx.log(2);")
+        assert scripts.list_scripts(game)[0].lookups is None
+        assert lookups_from_json("{") == () and lookups_from_json('[["class"], 3]') == ()
+        copy = scripts.add_script(game, label="Copy", source="x", mode="manual", seconds=0,
+                                  lookups=lookups_to_json(lookups))
+        assert lookups_from_json(scripts.list_scripts(game)[1].lookups) == lookups
+        scripts.delete_script(copy)
 
         scripts.delete_script(heal)
         assert scripts.list_scripts(game) == []
