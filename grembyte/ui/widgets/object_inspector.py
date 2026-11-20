@@ -285,7 +285,7 @@ class ObjectInspectorDialog(QDialog):
         self.properties_section = InspectorSection(
             self.translations, self.translations["inspector.properties"],
             self.translations["inspector.properties_tooltip"], self._build_properties_table(),
-            controls=[self.evaluate_button], key="getters")
+            controls=[self.property_filter, self.evaluate_button], key="getters")
         self.methods_section = InspectorSection(
             self.translations, self.translations["inspector.methods"],
             self.translations["inspector.methods_tooltip"], self._build_methods_table(),
@@ -344,6 +344,10 @@ class ObjectInspectorDialog(QDialog):
         return self.table
 
     def _build_properties_table(self):
+        self.property_filter = QLineEdit()
+        self.property_filter.setPlaceholderText(self.translations["inspector.getter_filter"])
+        self.property_filter.setClearButtonEnabled(True)
+        self.property_filter.textChanged.connect(lambda _text: self._filter_properties())
         self.evaluate_button = QPushButton(self.translations["inspector.evaluate_all"])
         set_button_icon(self.evaluate_button, "calculate")
         self.evaluate_button.setToolTip(self.translations["inspector.properties_tooltip"])
@@ -639,6 +643,7 @@ class ObjectInspectorDialog(QDialog):
                 link.setToolTip(self.translations["inspector.set_tooltip"])
                 self.properties_table.setCellWidget(row, _P_SET, link)
         self.evaluate_button.setEnabled(bool(properties) and self._can_evaluate())
+        self._filter_properties()
 
     def _property_names(self):
         return [self.properties_table.item(row, _P_NAME).text()
@@ -765,6 +770,14 @@ class ObjectInspectorDialog(QDialog):
             name, kind = (self.table.item(row, column) for column in (_FIELD, _TYPE))
             text = f"{name.text() if name else ''} {kind.text() if kind else ''}".lower()
             self.table.setRowHidden(row, not all(word in text for word in words))
+
+    def _filter_properties(self):
+        """Show the getters whose name or type contains every word of the search."""
+        words = self.property_filter.text().lower().split()
+        for row in range(self.properties_table.rowCount()):
+            name, kind = (self.properties_table.item(row, column) for column in (_P_NAME, _P_TYPE))
+            text = f"{name.text() if name else ''} {kind.text() if kind else ''}".lower()
+            self.properties_table.setRowHidden(row, not all(word in text for word in words))
 
     def _filter_methods(self):
         """Show the methods matching the search, of the own class unless base classes are on."""

@@ -1889,7 +1889,7 @@ class MainWindow(QMainWindow):
                                     engine=self._engine, favorites=self._favorite_store,
                                     assembly_selection=self._assembly_selection)
             catalog.finished.connect(lambda _result: setattr(self, "_catalog", None))
-            catalog.monitor_requested.connect(self._monitor_method)
+            catalog.monitor_requested.connect(self._monitor_methods)
             catalog.hook_requested.connect(self._hook_method)
             catalog.call_requested.connect(self._call_method)
             catalog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -1907,7 +1907,7 @@ class MainWindow(QMainWindow):
         catalog = CatalogDialog(self.translations, None, parent=self,
                                 engine=engine_by_id(game.engine), favorites=self._favorite_store,
                                 game=game)
-        catalog.monitor_requested.connect(self._monitor_method)
+        catalog.monitor_requested.connect(self._monitor_methods)
         catalog.hook_requested.connect(self._hook_method)
         catalog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         catalog.show()
@@ -2003,7 +2003,7 @@ class MainWindow(QMainWindow):
                                 favorites=self._favorite_store,
                                 assembly_selection=self._assembly_selection)
             trace.finished.connect(lambda _result: setattr(self, "_trace_dialog", None))
-            trace.monitor_requested.connect(self._monitor_method)
+            trace.monitor_requested.connect(self._monitor_methods)
             if self.hook_panel is not None:
                 trace.hook_requested.connect(self.hook_panel.create_method_hook)
             trace.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -2024,7 +2024,7 @@ class MainWindow(QMainWindow):
                                       favorites=self._favorite_store)
             trace.finished.connect(lambda _result: setattr(self, "_native_trace_dialog", None))
             trace.memory_requested.connect(self._open_memory_viewer)
-            trace.monitor_requested.connect(self._monitor_native_function)
+            trace.monitor_requested.connect(self._monitor_native_functions)
             trace.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._native_trace_dialog = trace
             self.dock_manager.add(trace, "native_trace", BOTTOM)
@@ -2126,7 +2126,8 @@ class MainWindow(QMainWindow):
     def _monitor_methods(self, methods):
         """Log the calls of several C# methods in one monitor."""
         for method in methods:
-            self._monitor_method(method)
+            if not self._monitor_method(method):
+                break  # no process, or the engine cannot: said once
 
     def _monitor_native_function(self, function=None):
         """Log the calls of a native function (a NativeFunction of the native trace).
@@ -2189,16 +2190,20 @@ class MainWindow(QMainWindow):
         graph.show()
 
     def _monitor_method(self, method):
-        """Log the calls of a C# method chosen in the catalog."""
+        """Log the calls of a C# method chosen in the catalog.
+
+        False without a process or if the engine cannot monitor; True
+        otherwise, also when the type arguments of a generic method were
+        not given (the next of several methods may still be monitored)."""
         if self._current_pid is None:
-            return
+            return False
         if not self._engine_can(method, engine_base.MONITOR, self.translations["catalog.monitor"]):
-            return
+            return False
         parameters = generic_parameters(method)
         if parameters:
             method = self._ask_type_arguments(method, parameters)
             if method is None:
-                return
+                return True
         monitor = self._method_monitor
         if monitor is None:
             monitor = MethodMonitorDialog(self.translations, self._current_pid, parent=self)
@@ -2211,6 +2216,7 @@ class MainWindow(QMainWindow):
         else:
             self.dock_manager.show(monitor)
         monitor.add_method(method)
+        return True
 
     def _call_method(self, method):
         """Call a method chosen in the catalog or the favorites: a static one, or

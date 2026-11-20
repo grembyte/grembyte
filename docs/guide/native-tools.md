@@ -20,7 +20,7 @@ The game runs noticeably slower while it is followed. The native trace can be [d
   <figcaption>Candidates after a baseline and a scenario, with how often each ran.</figcaption>
 </figure>
 
-Candidates can be marked with ★ as [favorites](../engines/index.md#favorites) or handed to the monitor. A function found this way can be called from a [script](scripts.md#scripts-in-native-games) through `ctx.native`. The [code explorer](code-explorer.md) shows what it does and who calls it.
+Candidates can be marked with ★ as [favorites](../engines/index.md#favorites) or handed to the monitor, several at once when you select them with Ctrl or Shift. A function found this way can be called from a [script](scripts.md#scripts-in-native-games) through `ctx.native`. The [code explorer](code-explorer.md) shows what it does and who calls it.
 
 !!! warning
     Stalker rewrites the code of the traced threads while it runs. Grembyte asks before it starts, since this can slow down or, rarely, crash a game. Under [Wine and Proton](../wine-proton.md) the native trace is experimental and will probably make the game freeze or crash.

@@ -27,7 +27,7 @@ The engine pages describe the details: [Unity (Mono)](unity-mono.md), [Unity (IL
 
 ## Catalog
 
-**View → Catalog …** lists the game's classes and methods, grouped by assembly (Unity) or package (Unreal), with a filter. Methods carry their signature, e.g. `Ns.Class:Method (int,single)`. From a method the context menu leads to the monitor, a method hook, the call dialog, the call graph or a favorite (★).
+**View → Catalog …** lists the game's classes and methods, grouped by assembly (Unity) or package (Unreal), with a filter. Methods carry their signature, e.g. `Ns.Class:Method (int,single)`. From a method the context menu leads to the monitor, a method hook, the call dialog, the call graph or a favorite (★). Select several methods with Ctrl or Shift to hand them to the monitor together with **Monitor**; the other buttons act on one method.
 
 <figure markdown="span">
   ![Catalog](../assets/screenshots/catalog-dark.webp#only-dark)
@@ -54,7 +54,7 @@ A catalog read once is cached; **View → Catalog (offline) …** opens it witho
 3. **Record baseline** for a few seconds while nothing special happens in the game, then **Stop baseline**.
 4. **Record scenario** while you trigger the action, e.g. spend gold, then **Stop scenario**.
 5. The table lists the methods with their calls, calls per second, the rate in the baseline and a verdict: *new*, *2.5× as often* or *like baseline*. **Notable methods only** keeps those that did not run in the baseline or ran clearly more often. Below, the call sequence shows the scenario's calls in order, with thread and caller, without the methods of the baseline.
-6. **Monitor** (or a double click) hands the selected method to the [method monitor](#method-monitor). **Remove hooks** ends the trace.
+6. **Monitor** (or a double click) hands the selected methods to the [method monitor](#method-monitor): select several with Ctrl or Shift, in the table or in the call sequence. **Create hook …** takes one method. **Remove hooks** ends the trace.
 
 The filters above the table narrow the results: by name, and by number of calls – `3` exactly three, `2-10` a range, `>5`, `%3` multiples of three, several separated by commas. Trigger the action three times in the scenario, and `%3` finds the methods that ran once for each.
 
@@ -101,7 +101,7 @@ Methods and functions found in the catalog, a trace or the [native trace](../gui
 The object inspector shows the fields of an object – for Unity also static fields and properties, for Unreal the UProperties of objects and structs – evaluated on the game's main thread. Open it from an object in the monitor, a script result or the [object browser](../guide/object-browser.md). The filter above the fields keeps those whose name or type contains every word typed, e.g. `health` among the hundreds of fields of an Unreal player character.
 
 - **Fields**: their current values; **open** shows an object field in an inspector of its own. **Live** reads them again twice a second. **Add to address list** in a number field's context menu puts it on the [tracked addresses](../guide/addresses.md), to watch, change or freeze it there.
-- **Getter methods – called in the game**: the object's properties (C# properties such as `IsPartyMember`) and, for GameObjects, its components. Their value is not necessarily stored in a field, so they are called in the game: **evaluate** one, or **Evaluate all**. A property with a setter can be changed with **set …**, which runs the setter on the game's main thread.
+- **Getter methods – called in the game**: the object's properties (C# properties such as `IsPartyMember`) and, for GameObjects, its components. Their value is not necessarily stored in a field, so they are called in the game: **evaluate** one, or **Evaluate all**. The filter above them keeps the getters whose name or type contains every word typed, like the one for the fields. A property with a setter can be changed with **set …**, which runs the setter on the game's main thread.
 - **Methods – called in the game**: the object's instance methods (Unreal: its UFunctions). **call …** asks for the arguments and runs the method on this object. **Base classes** adds the inherited methods, often hundreds for Unity components. In Unity Mono this is how instance methods are called; [Call method](#call-method) runs static ones.
 - The arrow in a section's header folds it; inspectors remember which sections are folded.
 - **References** (Unity Mono and Unreal) opens the object's [reference graph](../guide/reference-graph.md): which objects hold it, and which hold those, back to a static field or a module's global data – or, switched over, which objects it points to.

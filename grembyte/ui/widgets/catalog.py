@@ -230,8 +230,8 @@ class CatalogDialog(QDialog):
 
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
 
-    # CatalogMethod to log the calls of (double click or "Monitor")
-    monitor_requested = Signal(object)
+    # The CatalogMethods to log the calls of, a list (double click or "Monitor")
+    monitor_requested = Signal(list)
     # static CatalogMethod to call ("Call …")
     call_requested = Signal(object)
     # CatalogMethod to create a method hook for
@@ -300,7 +300,8 @@ class CatalogDialog(QDialog):
         self.view = QTableView()
         self.view.setModel(self.model)
         self.view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Several rows (Ctrl, Shift) go to the monitor together
+        self.view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.view.setWordWrap(False)
         self.view.verticalHeader().setVisible(False)
         header = self.view.horizontalHeader()
@@ -320,10 +321,13 @@ class CatalogDialog(QDialog):
         self.view.setSortingEnabled(True)
         resizable_columns(self.view)
         copy_menu(self.view, self.translations)
-        self.view.selectionModel().currentRowChanged.connect(self._show_details)
+        self.view.selectionModel().currentRowChanged.connect(
+            lambda _current, _previous: self._show_details())
+        self.view.selectionModel().selectionChanged.connect(
+            lambda _selected, _deselected: self._show_details())
         self.view.doubleClicked.connect(
             lambda index: index.column() != FAVORITE_COLUMN and self._request_monitor())
-        self.model.modelReset.connect(lambda: self._show_details(QModelIndex()))
+        self.model.modelReset.connect(self._show_details)
         layout.addWidget(self.view, 1)
 
         details = QHBoxLayout()
@@ -513,21 +517,39 @@ class CatalogDialog(QDialog):
             )
         self.status_label.setText(text)
 
-    def selected_method(self):
-        index = self.view.currentIndex()
-        return self.model.method_at(index.row()) if index.isValid() else None
+    def selected_methods(self):
+        """The methods of the selected rows, top down (several with Ctrl or
+        Shift), else the one of the current row."""
+        rows = sorted({index.row() for index in self.view.selectionModel().selectedRows()})
+        methods = [method for method in map(self.model.method_at, rows) if method is not None]
+        if not methods:
+            index = self.view.currentIndex()
+            method = self.model.method_at(index.row()) if index.isValid() else None
+            methods = [method] if method is not None else []
+        return methods
 
-    def _show_details(self, current, _previous=None):
-        method = self.model.method_at(current.row()) if current.isValid() else None
+    def selected_method(self):
+        """The method chosen, or None when there is none or several are selected."""
+        methods = self.selected_methods()
+        return methods[0] if len(methods) == 1 else None
+
+    def _show_details(self):
+        methods = self.selected_methods()
+        # Only the monitor takes several methods at once
+        self.monitor_button.setEnabled(
+            bool(methods) and self._can_run(methods[0], engine_base.MONITOR))
+        method = methods[0] if len(methods) == 1 else None
         self.copy_button.setEnabled(method is not None)
         self.calls_button.setEnabled(method is not None
                                      and self.engine.supports(engine_base.CALL_GRAPH))
-        self.monitor_button.setEnabled(method is not None
-                                       and self._can_run(method, engine_base.MONITOR))
         self.hook_button.setEnabled(method is not None
                         and self._can_run(method, engine_base.METHOD_HOOKS))
         self.call_button.setEnabled(method is not None
                                     and self._can_run(method, call_capability(method)))
+        if len(methods) > 1:
+            self.details_label.setText(
+                self.translations["catalog.selected_count"].format(count=len(methods)))
+            return
         if method is None:
             self.details_label.setText("")
             return
@@ -545,9 +567,9 @@ class CatalogDialog(QDialog):
         return self.game is None and self.engine.supports(capability)
 
     def _request_monitor(self):
-        method = self.selected_method()
-        if method is not None and self._can_run(method, engine_base.MONITOR):
-            self.monitor_requested.emit(method)
+        methods = self.selected_methods()
+        if methods and self._can_run(methods[0], engine_base.MONITOR):
+            self.monitor_requested.emit(methods)
 
     def _request_hook(self):
         method = self.selected_method()
@@ -566,7 +588,7 @@ class CatalogDialog(QDialog):
             return
         graph = CallGraphDialog(self.translations, self.pid, method, parent=self,
                                 engine=self.engine, selection=self.selection(), game=self.game)
-        graph.monitor_requested.connect(self.monitor_requested.emit)
+        graph.monitor_requested.connect(lambda method: self.monitor_requested.emit([method]))
         graph.show()
 
     def _copy_signature(self):
