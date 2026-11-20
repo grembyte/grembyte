@@ -284,6 +284,7 @@ class GasAttributesDialog(QDialog):
             owner=state.get("owner", "?"), cls=state.get("ownerClass", "?")))
         # Without sets there is nothing to set: that one is said, not the setter
         problem = ("gas.no_player" if state is None
+                   else "gas.no_gas" if state.get("gas") is False
                    else "gas.no_sets" if not state.get("sets")
                    else "gas.no_setter" if not state.get("setter")
                    else "gas.no_component" if not state.get("component") else None)

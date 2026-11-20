@@ -3620,9 +3620,23 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     return !value.isNull() && isObject(value) ? value : NULL;
   }
 
+  function optionalClass(name) {
+    // findClass(name), or null if the game has no such class (a game
+    // without the Gameplay Ability System has no AttributeSet)
+    try {
+      return findClass(name);
+    } catch (error) {
+      if (String(error.message).includes('grembyte:error.unreal.no_class:'))
+        return null;
+      throw error;
+    }
+  }
+
   function searchPlayerParts() {
     // The attribute sets and the ability system component of the first local
-    // player: owned by its pawn or player state.
+    // player: owned by its pawn or player state. ``gas`` false: the game has
+    // no AttributeSet class at all (no Gameplay Ability System); the pawn is
+    // found all the same, its values are its fields.
     const controller = findObject('PlayerController');
     if (controller === null)
       return null;
@@ -3634,15 +3648,19 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
       .equals(owner));
     // One read of the object table for both (findObjects reads it anew)
     snapshot = null;
-    const all = name => searchObjects(Number(findClass(name).toString()), null,
-                                      Number.MAX_SAFE_INTEGER);
+    const all = name => {
+      const klass = optionalClass(name);
+      return klass === null ? []
+        : searchObjects(Number(klass.toString()), null, Number.MAX_SAFE_INTEGER);
+    };
+    const gas = optionalClass('AttributeSet') !== null;
     const sets = all('AttributeSet').filter(owned);
     const components = all('AbilitySystemComponent').filter(owned);
     // The component of the owner with the sets
     const asc = components.find(component => sets.some(set =>
       set.add(OBJECT_OUTER).readPointer().equals(component.add(OBJECT_OUTER).readPointer())))
       || components[0] || NULL;
-    return { pawn, owners, sets, asc };
+    return { pawn, owners, sets, asc, gas };
   }
 
   function currentPlayerParts() {
@@ -3670,17 +3688,19 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
   }
 
   function gasAttributes() {
-    // { owner, ownerClass, ownerAddress, setter, component, sets: [{ name,
+    // { owner, ownerClass, ownerAddress, gas, setter, component, sets: [{ name,
     // className, attributes: [{ name, base, current }] }] } of the player, or
     // null without one (e.g. in the menu). Games without GAS keep the
     // player's values in fields of the pawn: the window opens it in the
-    // object inspector by ownerAddress.
+    // object inspector by ownerAddress. ``gas`` false: the game has no
+    // Gameplay Ability System at all (Lies of P).
     reflection();
     const parts = currentPlayerParts();
     if (parts === null)
       return null;
-    const setter = findAttributeSetter();
+    const setter = parts.gas ? findAttributeSetter() : null;
     return {
+      gas: parts.gas,
       owner: fieldName(parts.pawn.add(OBJECT_NAME)),
       ownerClass: layout(parts.pawn.add(OBJECT_CLASS).readPointer()).name,
       ownerAddress: parts.pawn.toString(),

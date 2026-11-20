@@ -64,6 +64,10 @@ Games built on Unreal's Gameplay Ability System keep values such as health, stre
 
     > The player has no attribute sets: the game does not keep its values with the Gameplay Ability System. They may be fields of the player: "Inspect player" shows them.
 
+    Other games have no Gameplay Ability System at all, Lies of P for one. The window still names the player and says so:
+
+    > The game does not use the Gameplay Ability System: it has no attribute sets. Its values are probably fields of the player or of its components: "Inspect player" shows them, the field catalog finds them by name.
+
     The line below the table names the player and its class. **Inspect player** opens the player's object in the [object inspector](index.md#object-inspector); its filter finds a field such as `Health` among hundreds, which can then be read, changed or put on the address list.
 
 <figure markdown="span">

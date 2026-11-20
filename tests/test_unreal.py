@@ -886,9 +886,17 @@ int main(void) {
     property(gameplay_attribute, str_property, "AttributeName", 16, 0, 0, NULL);
     property(gameplay_attribute, field_class("FieldPathProperty"), "Attribute", 32, 16, 0, NULL);
     property(gameplay_attribute, object_property, "AttributeOwner", 8, 48, 0, struct_class);
+#ifdef NO_GAS
+    /* A game without the Gameplay Ability System (Lies of P): no class of
+       these names, its own stat classes instead */
+    Object *attribute_set = object(class_class, "StatSet", abilities);
+    attribute_set->super = object_class;
+    Object *component_class = object(class_class, "StatComponent", abilities);
+#else
     Object *attribute_set = object(class_class, "AttributeSet", abilities);
     attribute_set->super = object_class;
     Object *component_class = object(class_class, "AbilitySystemComponent", abilities);
+#endif
     component_class->super = object_class;
     Object *hero_set_class = object(class_class, "HeroAttributeSet", game);
 #ifdef ANGELSCRIPT_GAS
@@ -1805,7 +1813,7 @@ def test_gas_attributes_are_read_and_set_through_the_game(tmp_path, qt_app, defi
         _wait_for(qt_app, lambda: listed or failed)
         assert not failed, failed
         state = listed[0]
-        assert state["owner"] == "BP_Hero_C_0"
+        assert state["owner"] == "BP_Hero_C_0" and state["gas"] is True
         assert state["ownerClass"] == "ABP_Hero_C"
         assert int(state["ownerAddress"], 16) != 0
         assert state["setter"] == ("HeroAbilityLibrary:"
@@ -2346,6 +2354,34 @@ def test_scripts_name_the_values_of_unreal_enums(tmp_path, qt_app):
         assert again["result"] == "2"
         missing = run('return ctx.enum("ENope");')
         assert "error.unreal.no_enum:{\"name\":\"ENope\"}" in missing["error"]
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_a_game_without_the_ability_system_still_names_its_player(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptWorker
+
+    target = _Target(_build(tmp_path, "NO_GAS"))
+    worker = ScriptWorker(target.pid)
+    listed, failed = [], []
+    worker.gas_listed.connect(lambda _request, state: listed.append(state))
+    worker.gas_failed.connect(lambda _request, message: failed.append(message))
+    try:
+        worker.start()
+        for _ in range(2):  # the player's parts found anew, then kept
+            listed.clear()
+            worker.gas_attributes()
+            _wait_for(qt_app, lambda: listed or failed)
+            assert not failed, failed
+            state = listed[0]
+            assert (state["gas"], state["owner"], state["ownerClass"], state["sets"],
+                    state["component"], state["setter"]) == (
+                False, "BP_Hero_C_0", "ABP_Hero_C", [], False, None)
+            assert int(state["ownerAddress"], 16) != 0
     finally:
         worker.requestInterruption()
         worker.wait(5000)

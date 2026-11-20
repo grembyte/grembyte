@@ -1,5 +1,6 @@
 """The offline catalog: games read before, shown from the catalog cache."""
 
+import sys
 import time
 
 from grembyte.engines.registry import engine_by_id
@@ -189,3 +190,35 @@ def test_catalog_search_finds_parameter_and_return_types():
     assert matches(["type:*attribute", "cheat"], preset)  # the return type, with the class
     assert not matches(["eprimaryattribute"], purchase)  # plain words: class and name
     assert not matches(["type:purchase"], purchase)
+
+
+def test_a_closed_catalog_gets_no_answers_of_its_worker(monkeypatch, qt_app, translations):
+    # pylint: disable=import-outside-toplevel,protected-access,unused-argument
+    import shiboken6
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from grembyte.features.catalog import CatalogMethod
+    from grembyte.ui.widgets import catalog as catalog_widget
+
+    _remember(monkeypatch)
+    game = games.known_games()[0]
+    monkeypatch.setattr(catalog_widget, "CachedCatalogWorker", type(
+        "IdleWorker", (catalog_widget.CachedCatalogWorker,), {"start": lambda self: None}))
+    dialog = catalog_widget.CatalogDialog(translations, None, engine=engine_by_id("mono"),
+                                          game=game)
+    worker = dialog._worker
+    dialog.close()
+    dialog.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert not shiboken6.isValid(dialog)
+    # The worker reads on (it outlives the window): its answers reach nothing.
+    # PySide hands an error in a slot to sys.excepthook (Grembyte counts them there).
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda *exc_info: errors.append(exc_info[1]))
+    worker.assemblies_found.emit([{"name": "Assembly-CSharp"}])
+    worker.assembly_loaded.emit("Assembly-CSharp", [CatalogMethod(
+        "Assembly-CSharp", "Game.Loot", "Take", "(int&,int)", "System.Void", True,
+        0x06000001, "Game.Loot:Take (int&,int)")])
+    worker.assembly_failed.emit("Plugins", "gone")
+    worker.catalog_failed.emit("gone")
+    worker.finished.emit()
+    assert not errors, errors
