@@ -1,7 +1,8 @@
-"""Catalog of the classes and methods a game's managed runtime has loaded.
+"""Catalog of the classes, methods and fields a game's managed runtime has loaded.
 
 A short Frida session asks the engine adapter (see grembyte/engines) for the
-loaded assemblies and, assembly by assembly, for their classes and methods.
+loaded assemblies and, assembly by assembly, for their classes and methods
+(``METHODS``) or the fields each class declares (``FIELDS``).
 Reading a class may make the runtime load it, so framework assemblies (for
 Mono: mscorlib, System, UnityEngine, ...) are only read when asked for: they
 are large and rarely what one looks for.
@@ -22,6 +23,9 @@ from grembyte.agent.source import load_agent_source
 from grembyte.features import catalog_cache, games
 from grembyte.features.assemblies import chosen_assemblies
 
+
+# What a catalog lists
+METHODS, FIELDS = "methods", "fields"
 
 # Also the call graph's agent (see grembyte.features.call_graph)
 AGENT_SOURCE = ENGINE_AGENT_SOURCE + load_agent_source(__file__)
@@ -163,6 +167,41 @@ def catalog_methods(assembly, classes, engine="mono"):
     return result
 
 
+@dataclass(frozen=True)
+class CatalogField:
+    """One field of the field catalog: one a class declares, not inherited."""
+
+    assembly: str
+    class_name: str
+    name: str
+    type_name: str
+    offset: int
+    static: bool
+    # For a static field: 'data' (in the class's static data), 'const' (only
+    # in the metadata) or 'thread' (one per thread); '' for instance fields
+    storage: str = ""
+    engine: str = "mono"
+
+    @property
+    def signature(self):
+        """``Namespace.Class.Field``, e.g. for scripts."""
+        return f"{self.class_name}.{self.name}"
+
+
+def catalog_fields(assembly, classes, engine="mono"):
+    """Turn the agent's ``fields`` answer for ``assembly`` into CatalogFields."""
+    return [CatalogField(assembly, class_name, name, type_name, offset, bool(static),
+                         storage or "", engine)
+            for class_name, entries in classes
+            for name, type_name, offset, static, storage in entries]
+
+
+def _catalog_entries(kind, assembly, classes, engine):
+    if kind == FIELDS:
+        return catalog_fields(assembly, classes, engine)
+    return catalog_methods(assembly, classes, engine)
+
+
 class CatalogWorker(QThread):
     """Read the catalog of a process.
 
@@ -175,11 +214,12 @@ class CatalogWorker(QThread):
 
     An assembly read before in the same build comes from the catalog cache
     (see grembyte.features.catalog_cache), announced by ``assembly_cached``
-    before its ``assembly_loaded``; ``fresh`` reads every one anew.
+    before its ``assembly_loaded``; ``fresh`` reads every one anew. ``kind``
+    is METHODS (CatalogMethods) or FIELDS (CatalogFields).
     """
 
     assemblies_found = Signal(object)
-    # assembly name, its methods (CatalogMethod)
+    # assembly name, its methods (CatalogMethod) or fields (CatalogField)
     assembly_loaded = Signal(str, object)
     # assembly name: its methods come from the cache
     assembly_cached = Signal(str)
@@ -188,10 +228,11 @@ class CatalogWorker(QThread):
     catalog_failed = Signal(str)
 
     def __init__(self, pid, assemblies=None, parent=None, engine=None, selection=(),
-                 fresh=False):
+                 fresh=False, kind=METHODS):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.pid = pid
+        self.kind = kind
         self.assemblies = assemblies
         self.selection = frozenset(selection)
         self.fresh = fresh
@@ -223,7 +264,7 @@ class CatalogWorker(QThread):
                 try:
                     classes = self._classes(api, name, mvids.get(name))
                     self.assembly_loaded.emit(
-                        name, catalog_methods(name, classes, self.engine.id))
+                        name, _catalog_entries(self.kind, name, classes, self.engine.id))
                 except frida.RPCException as error:
                     self.assembly_failed.emit(name, messages.describe(error))
         except FRIDA_ERRORS + (frida.RPCException, OSError, RuntimeError) as error:
@@ -242,9 +283,15 @@ class CatalogWorker(QThread):
                     logs.cleanup_failed(error)
 
     def _classes(self, api, name, mvid):
-        """The agent's ``classes`` answer for ``name``, from the cache if it has it."""
-        classes, cached = catalog_cache.read_classes(
-            self.engine.id, name, mvid, lambda: api.classes(name), self.fresh)
+        """The agent's ``classes`` (or ``fields``) answer for ``name``, from the
+        cache if it has it."""
+        if self.kind == FIELDS:
+            classes, cached = catalog_cache.read_cached(
+                self.engine.id, name, mvid, lambda: api.fields(name), self.fresh,
+                kind=catalog_cache.FIELDS)
+        else:
+            classes, cached = catalog_cache.read_classes(
+                self.engine.id, name, mvid, lambda: api.classes(name), self.fresh)
         if cached:
             self.assembly_cached.emit(name)
         return classes
@@ -312,8 +359,10 @@ class CachedCatalogWorker(QThread):
 
     NOT_CACHED = "not cached"
 
-    def __init__(self, game, assemblies=None, parent=None, engine=None):
+    def __init__(self, game, assemblies=None, parent=None, engine=None, kind=METHODS):
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
+        self.kind = kind
         self.game = game
         self.assemblies = assemblies
         self.engine = engine
@@ -328,10 +377,13 @@ class CachedCatalogWorker(QThread):
         for name in names:
             if self.isInterruptionRequested():
                 break
-            classes = catalog_cache.load(self.engine.id, name, mvids.get(name))
+            classes = catalog_cache.load(
+                self.engine.id, name, mvids.get(name),
+                kind=catalog_cache.FIELDS if self.kind == FIELDS else catalog_cache.CLASSES)
             if classes is None:
                 self.assembly_failed.emit(name, self.NOT_CACHED)
                 continue
             self.assembly_cached.emit(name)
-            self.assembly_loaded.emit(name, catalog_methods(name, classes, self.engine.id))
+            self.assembly_loaded.emit(
+                name, _catalog_entries(self.kind, name, classes, self.engine.id))
 

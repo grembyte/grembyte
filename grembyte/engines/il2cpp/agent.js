@@ -162,8 +162,9 @@ const il2cpp = (() => {
     return found;
   }
 
-  function eachClass(image, visit) {
-    // visit(klass, [method, ...]) for every class of an image
+  function eachClass(image, visit, withMethods = true) {
+    // visit(klass, [method, ...]) for every class of an image (no methods
+    // without ``withMethods``)
     const iterator = Memory.alloc(Process.pointerSize);
     for (let i = 0, n = api.classCount(image).toNumber(); i < n; i++) {
       const klass = api.imageClass(image, i);
@@ -171,7 +172,7 @@ const il2cpp = (() => {
         continue;
       const methods = [];
       iterator.writePointer(NULL);
-      for (;;) {
+      while (withMethods) {
         const method = api.classMethods(klass, iterator);
         if (method.isNull())
           break;
@@ -585,6 +586,34 @@ const il2cpp = (() => {
     eachClass(found.image, (klass, methods) => {
       result.push([classNameOf(klass)[0], methods.map(method => methodEntry(method, implFlags))]);
     });
+    return result;
+  }
+
+  function fields(assembly) {
+    // [[class name, [[name, type, offset, static, storage], ...]], ...] as
+    // Mono's field catalog: the fields each class declares
+    requireRuntime();
+    const o = objectsApi();
+    const found = imageNamed(assembly);
+    const iterator = Memory.alloc(Process.pointerSize);
+    const result = [];
+    eachClass(found.image, klass => {
+      const entries = [];
+      iterator.writePointer(NULL);
+      for (let field = o.classFields(klass, iterator); !field.isNull();
+        field = o.classFields(klass, iterator)) {
+        const flags = o.fieldFlags(field);
+        const isStatic = (flags & FIELD_STATIC) !== 0;
+        const offset = o.fieldOffset(field).toNumber();
+        const storage = !isStatic ? '' : (flags & FIELD_LITERAL) !== 0 ? 'const'
+          : (offset >>> 0) === THREAD_STATIC ? 'thread' : 'data';
+        entries.push([text(o.fieldName(field)),
+                      ownedText(api.typeName(o.fieldType(field))) || '?', offset, isStatic,
+                      storage]);
+      }
+      if (entries.length > 0)
+        result.push([classNameOf(klass)[0], entries]);
+    }, false);
     return result;
   }
 
@@ -1244,6 +1273,7 @@ const il2cpp = (() => {
     resolve,
     assemblies,
     classes,
+    fields,
     methodsByToken,
     nativeSymbols,
     // Ahead-of-time code: nothing hangs, nothing to compile or undo.

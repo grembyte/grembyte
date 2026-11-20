@@ -2284,3 +2284,31 @@ def test_scripts_find_what_they_looked_up_before_the_game_thread_runs_them(
     finally:
         settings.apply({"script_timings": False})
         target.close()
+
+
+@requires_target
+def test_field_catalog_lists_the_uproperties_each_class_declares(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.catalog import FIELDS, CatalogWorker
+
+    target = _Target(_build(tmp_path))
+    try:
+        worker = CatalogWorker(target.pid, kind=FIELDS)
+        loaded = {}
+        worker.assembly_loaded.connect(loaded.__setitem__)
+        _run(qt_app, worker, worker.assemblies_found)
+        fields = {f"{field.class_name}.{field.name}": field
+                  for entries in loaded.values() for field in entries}
+        # The packages read are the catalog's; the Blueprint declares no UProperty
+        assert sorted(loaded) == ["/Game/Blueprints", "/Script/FakeGame"]
+        assert not loaded["/Game/Blueprints"]
+        assert [(key, field.type_name, field.offset) for key, field in sorted(fields.items())
+                if key.startswith(("Hero.Health", "Hero.Focus", "Hero.Stats",
+                                   "HeroAttributeSet.Might"))] == [
+            ("Hero.Focus", "EPrimaryAttribute", 116), ("Hero.Health", "int32", 112),
+            ("Hero.Stats", "TMap<int32, float>", 288),
+            ("HeroAttributeSet.Might", "FGameplayAttributeData", 48)]
+        assert len(fields) == 14
+        assert all(field.engine == "unreal" and not field.static for field in fields.values())
+    finally:
+        target.close()

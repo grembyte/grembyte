@@ -249,13 +249,15 @@ The adapter layer is described in the [architecture](docs/development/architectu
 
 ### Data type explorer (Mono/IL2CPP and Unreal)
 
-The catalog lists methods; the types behind them are only seen one at a time, as an
-argument in **Call method** or an object in the inspector. A type explorer would browse all
-types the adapters know, searchable like the catalog:
+The catalog lists methods and, switched to **Fields**, the fields each class declares with
+type and offset; the types themselves are only seen one at a time, as an argument in
+**Call method** or an object in the inspector. A type explorer would browse all types the
+adapters know, searchable like the catalog:
 
-- **Classes and structs:** fields with type and offset (inherited ones marked), base class
+- **Classes and structs:** all fields of a type at once (inherited ones marked), base class
   and derived classes, the methods (linking to the catalog). Static fields with their current
-  value and the address of their class's static data (as the pointer scan's chain bases).
+  value and the address of their class's static data (as the pointer scan's chain bases);
+  the field catalog could offer the same for a static field (value, change, address list).
 - **Enums:** names and values, the base type, `[Flags]` shown as such. The adapters already
   read them for **Call method** (Mono from the constants' metadata, Unreal from `UEnum`).
 - **Unreal:** `UClass`, `UScriptStruct` and `UEnum` from reflection, with property flags

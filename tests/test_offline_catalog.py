@@ -58,6 +58,32 @@ def test_cached_worker_reads_the_catalog_without_a_process(monkeypatch):
     assert failed == {"Plugins": CachedCatalogWorker.NOT_CACHED}
 
 
+def test_the_field_catalog_comes_from_its_own_cache_offline(monkeypatch):
+    from grembyte.features.catalog import FIELDS, CatalogField
+
+    _remember(monkeypatch)
+    fields = [["Game.Loot", [["Gold", "System.Int32", 16, False, ""],
+                             ["Total", "System.Int32", 0, True, "data"]]]]
+    catalog_cache.store("mono", "Assembly-CSharp", "game-mvid", fields,
+                        kind=catalog_cache.FIELDS)
+    game = games.known_games()[0]
+    worker = CachedCatalogWorker(game, engine=engine_by_id("mono"), kind=FIELDS)
+    loaded, failed = {}, {}
+    worker.assembly_loaded.connect(loaded.__setitem__)
+    worker.assembly_failed.connect(failed.__setitem__)
+    worker.run()
+    assert loaded == {"Assembly-CSharp": [
+        CatalogField("Assembly-CSharp", "Game.Loot", "Gold", "System.Int32", 16, False),
+        CatalogField("Assembly-CSharp", "Game.Loot", "Total", "System.Int32", 0, True, "data")]}
+    assert loaded["Assembly-CSharp"][0].signature == "Game.Loot.Gold"
+    # The methods' cache is another file: without it the methods are not cached
+    methods = CachedCatalogWorker(game, engine=engine_by_id("mono"))
+    missing = {}
+    methods.assembly_failed.connect(missing.__setitem__)
+    methods.run()
+    assert missing["Assembly-CSharp"] == CachedCatalogWorker.NOT_CACHED
+
+
 def test_offline_catalog_dialog(monkeypatch, qt_app, translations):
     # pylint: disable=import-outside-toplevel,protected-access,unused-argument
     from grembyte.ui.widgets.catalog import CatalogDialog

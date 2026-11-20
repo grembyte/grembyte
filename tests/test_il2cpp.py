@@ -682,3 +682,30 @@ def test_method_hooks_change_arguments_fields_and_results(tmp_path, qt_app):
         worker.requestInterruption()
         worker.wait(5000)
         target.close()
+
+
+@requires_target
+def test_field_catalog_lists_the_fields_each_class_declares(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.catalog import FIELDS, CatalogWorker
+
+    target = _Target(_build(tmp_path))
+    try:
+        worker = CatalogWorker(target.pid, kind=FIELDS)
+        loaded = {}
+        worker.assembly_loaded.connect(loaded.__setitem__)
+        _run(qt_app, worker, worker.assemblies_found)
+        assert sorted(loaded) == ["Assembly-CSharp"]
+        fields = {f"{field.class_name}.{field.name}": field
+                  for field in loaded["Assembly-CSharp"]}
+        assert sorted((key, field.type_name, field.offset, field.static, field.storage)
+                      for key, field in fields.items()) == [
+            ("Game.Hero.Gold", "System.Int32", 16, False, ""),
+            ("Game.Hero.Instances", "System.Int32", 0, True, "data"),
+            ("Game.Hero.Name", "System.String", 24, False, ""),
+            ("Game.Vec.x", "System.Double", 16, False, ""),
+            ("Game.Vec.y", "System.Double", 24, False, ""),
+            ("Game.Vec.z", "System.Double", 32, False, "")]
+        assert all(field.engine == "il2cpp" for field in fields.values())
+    finally:
+        target.close()

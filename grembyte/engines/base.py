@@ -40,7 +40,9 @@ Naming (``NAMING``), safe in exception handlers on game threads:
     code for such an identity.
 
 Catalog (``CATALOG``): ``assemblies()`` (with the MVID the catalog cache
-keys them by), ``classes(assembly)`` (with the methods' ECMA-335 flags). For the
+keys them by), ``classes(assembly)`` (with the methods' ECMA-335 flags) and
+``fields(assembly)`` (the fields each class declares: name, type, offset,
+static, storage). For the
 call graph (``CALL_GRAPH``): ``methodBodies(assembly, tokens)`` (their IL code, see
 grembyte.features.call_graph) and ``resolveTokens(assembly, tokens)`` (the
 methods tokens in that code name); Unreal, without IL, has

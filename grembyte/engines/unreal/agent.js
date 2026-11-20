@@ -1078,6 +1078,31 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     return result;
   }
 
+  function fields(assembly) {
+    // [[class name, [[name, type, offset, static, storage], ...]], ...] as
+    // Mono's field catalog: the UProperties each class of a package group
+    // declares (not the inherited ones). UProperties are never static.
+    const group = groupNamed(assembly);  // reads the reflection first
+    const L = ue.layout;
+    const result = [];
+    for (const klass of group.classes) {
+      const entries = [];
+      try {
+        for (let field = ptr(klass.address).add(L.childProperties).readPointer();
+          !field.isNull(); field = field.add(L.fieldNext).readPointer()) {
+          const count = field.add(L.arrayDim).readS32();
+          entries.push([fieldName(field.add(L.fieldName)) + (count > 1 ? `[${count}]` : ''),
+                        propertyType(field), field.add(L.offset).readS32(), false, '']);
+        }
+      } catch (_error) {
+        continue;  // freed meanwhile (a Blueprint unloaded)
+      }
+      if (entries.length > 0)
+        result.push([klass.name, entries]);
+    }
+    return result;
+  }
+
   function nativeSymbols() {
     // [[address, 'Class::execName'], ...] of the native UFunctions' exec
     // thunks, for the code explorer. Blueprint functions share the script
@@ -3779,6 +3804,7 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     resolve,
     assemblies,
     classes,
+    fields,
     methodsByToken,
     nativeSymbols,
     functionCalls,
