@@ -189,3 +189,28 @@ def test_answers_after_the_window_closed_reach_it_no_more(qt_app, monkeypatch):
     finally:
         panel.shutdown()
         panel.deleteLater()
+
+
+def test_window_says_when_the_game_has_no_ability_system(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from grembyte.ui.widgets import scripts
+    from grembyte.ui.widgets.gas_attributes import GasAttributesDialog
+
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    translations = load_translations("de")
+    panel = scripts.ScriptPanel(translations)
+    panel.set_process(4242)
+    dialog = GasAttributesDialog(translations, panel)
+    try:
+        worker = panel._worker
+        # Lies of P: the player is found, the game has no attribute sets at all
+        worker.gas_listed.emit(len(worker.requests), {
+            "gas": False, "owner": "BP_Player_C_0", "ownerClass": "ABP_Player_C",
+            "ownerAddress": "0x7ff612340000", "setter": None, "component": False, "sets": []})
+        assert dialog.owner_label.text() == "Spielfigur: BP_Player_C_0 (ABP_Player_C)"
+        assert dialog.status_label.text() == translations["gas.no_gas"]
+        assert dialog.inspect_button.isEnabled()
+        assert dialog.table.rowCount() == 0
+    finally:
+        dialog.close()
+        panel.close()

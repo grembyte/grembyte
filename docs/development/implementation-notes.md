@@ -382,6 +382,10 @@ measures the offsets of UStruct, FField/FProperty and UFunction on objects every
   attribute sets, base values set through the game's own setter, held by a script. Setter
   discovery supports the standard AbilitySystemComponent/FGameplayAttribute pattern and
   AngelscriptGAS's `TrySetAttributeBaseValue(FName, float)` pattern (Gothic 1 Remake).
+  Games without the Gameplay Ability System have no `AttributeSet` class at all (Lies of P,
+  2026-11-20): the search treats `AttributeSet` and `AbilitySystemComponent` as optional
+  (`optionalClass`) and answers the player with `gas: false`; before, the missing class
+  failed the whole answer, so the window did not even name the player.
 
 - **Call graph from Blueprint bytecode (2026-11-14):** `functionCalls` does not walk the
   bytecode expression by expression: that needs the size of each of about 100 `EExprToken`s,

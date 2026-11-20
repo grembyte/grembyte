@@ -1645,6 +1645,7 @@
   "gas.owner": "Spielfigur: {owner} ({cls})",
   "gas.no_setter": "Das Spiel hat keine Funktion zum Setzen von Basiswerten: Die Werte lassen sich nur lesen.",
   "gas.no_component": "Die Spielfigur hat keine Ability-System-Komponente: Die Werte lassen sich nur lesen.",
+  "gas.no_gas": "Das Spiel nutzt das Gameplay Ability System nicht: Es hat keine Attribut-Sets. Seine Werte sind wahrscheinlich Felder der Spielfigur oder ihrer Komponenten: „Spielfigur inspizieren“ zeigt sie, der Feld-Katalog findet sie über den Namen.",
   "gas.no_sets": "Die Spielfigur hat keine Attribut-Sets: Das Spiel führt seine Werte nicht im Gameplay Ability System. Sie können Felder der Spielfigur sein: „Spielfigur inspizieren“ zeigt sie.",
   "gas.failed": "Attribute nicht gelesen: {message}",
   "gas.held": "{count} Attribut(e) festgehalten (siehe Skripte-Tab)",
