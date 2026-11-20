@@ -372,6 +372,9 @@ class ScriptWorker(QThread):
     # request id, the classes with live objects (see browse_classes)
     classes_browsed = Signal(int, object)
     browse_failed = Signal(int, str)
+    # request id, the static fields of one class (see static_fields)
+    statics_read = Signal(int, object)
+    statics_failed = Signal(int, str)
     # request id, the objects of one class (see browse_instances)
     instances_browsed = Signal(int, object)
     instances_failed = Signal(int, str)
@@ -478,6 +481,19 @@ class ScriptWorker(QThread):
         """
         request_id = next(self._requests)
         self._commands.put(("browse_classes", request_id, _browse_options(filter_text, internal)))
+        return request_id
+
+    def static_fields(self, class_name):
+        """Read the static fields ``class_name`` declares (Mono, IL2CPP; the
+        field catalog); expect statics_read or statics_failed.
+
+        The answer is ``[{name, type, storage, value, address, valueType,
+        edit}]``, as an object's fields in ``inspect``: ``address`` and
+        ``edit`` only for fields kept in the class's static data
+        (``storage`` 'data'), not for constants and thread statics.
+        """
+        request_id = next(self._requests)
+        self._commands.put(("static_fields", request_id, class_name))
         return request_id
 
     def browse_instances(self, klass, filter_text="", internal=False):
@@ -605,6 +621,7 @@ class ScriptWorker(QThread):
         "options": ("script_options", "options_listed", "options_failed"),
         "browse_classes": ("browse_classes", "classes_browsed", "browse_failed"),
         "browse_instances": ("browse_instances", "instances_browsed", "instances_failed"),
+        "static_fields": ("static_fields", "statics_read", "statics_failed"),
         "resolve_references": ("resolve_references", "references_resolved",
                                "references_failed"),
     }

@@ -3279,3 +3279,39 @@ def test_object_browser_keeps_as_many_objects_as_the_setting_says(tmp_path, qt_a
         worker.requestInterruption()
         worker.wait(5000)
         target.close()
+
+
+@requires_target
+def test_static_fields_of_a_class_are_read_and_changed(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptWorker
+    from grembyte.ui.widgets.field_value import write_field
+
+    target = _MonoTarget(_build(tmp_path))
+    worker = ScriptWorker(target.pid)
+    answers, failed = [], []
+    worker.statics_read.connect(lambda _request, answer: answers.append(answer))
+    worker.statics_failed.connect(lambda _request, message: failed.append(message))
+
+    def statics(class_name):
+        answers.clear()
+        failed.clear()
+        worker.static_fields(class_name)
+        _wait_for(qt_app, lambda: answers or failed)
+        return answers[0] if answers else failed[0]
+
+    try:
+        worker.start()
+        # The class's own static fields only, read from its static data
+        [instances] = statics("Game.Combat")
+        assert (instances["name"], instances["type"], instances["storage"],
+                instances["value"]["text"], instances["valueType"]) == (
+            "Instances", "System.Int32", "data", "7", "int32")
+        assert instances["edit"] == {"address": instances["address"], "valueType": "int32"}
+        write_field(target.pid, instances["edit"], "9")
+        assert statics("Game.Combat")[0]["value"]["text"] == "9"
+        assert "Game.Nowhere" in statics("Game.Nowhere")  # no such class
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()

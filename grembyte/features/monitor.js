@@ -983,6 +983,36 @@ function inspect(target) {
   return engine.onRuntimeThread(() => contents(target));
 }
 
+function staticFields(className) {
+  // [{ name, type, storage, value, address, valueType, edit }] of the static
+  // fields ``className`` declares (Mono, IL2CPP), for the field catalog:
+  // read like an object's static fields in contents(). Constants and thread
+  // statics have no address and no value.
+  return engine.onRuntimeThread(() => {
+    const klass = engine.findClass(className);
+    let data = null;
+    let unreadable = null;
+    try {
+      data = engine.staticData(klass);
+    } catch (error) {
+      unreadable = { text: `? (${error.message})` };
+    }
+    return engine.layout(klass).fields
+      .filter(field => field.static && field.owner.equals(klass))
+      .map(field => {
+        const at = field.storage === 'data' && data !== null ? data.add(field.offset) : null;
+        return {
+          name: field.name, type: field.type.name, storage: field.storage,
+          value: at === null ? (field.storage === 'data' && unreadable) || { text: '' }
+            : safely(() => readValue(field.type, at)),
+          address: at === null ? null : at.toString(),
+          valueType: at === null ? null : valueTypeName(field.type),
+          edit: editOf(field.type, at)
+        };
+      });
+  });
+}
+
 function frameText(address) {
   const module = Process.findModuleByAddress(address);
   if (module !== null)
@@ -2822,6 +2852,7 @@ rpc.exports = {
   addMonitor,
   removeMonitor,
   inspect,
+  staticFields,
   fullText,
   evaluate,
   describeCall,

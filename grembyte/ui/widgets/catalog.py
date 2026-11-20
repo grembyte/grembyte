@@ -1,6 +1,7 @@
 """Searchable catalog of the methods and fields of a game's classes (Unity, Unreal)."""
 
 import re
+import time
 from datetime import datetime
 from functools import lru_cache
 
@@ -41,9 +42,11 @@ from grembyte.ui.widgets.favorites import (
     FavoriteColumn,
     set_up_favorite_column,
 )
+from grembyte.core import messages
+from grembyte.ui.widgets.field_value import FieldValueDialog, write_field
 from grembyte.ui.widgets.icons import set_button_icon
 from grembyte.ui.widgets.table import copy_menu, resizable_columns
-from grembyte.ui.workers import keep_until_finished
+from grembyte.ui.workers import connect_while_alive, keep_until_finished
 
 
 _FAVORITE, _CLASS, _METHOD, _RETURN, _STATIC, _ASSEMBLY = range(6)
@@ -64,6 +67,8 @@ _FIELD_COLUMNS = (
     "catalog.column_offset",
     "catalog.column_assembly",
 )
+# A static field's value shown is read anew when selected again after this long.
+STATIC_AGE_S = 2.0
 # Typing pauses this long before the catalog is filtered.
 FILTER_DELAY_MS = 200
 
@@ -332,6 +337,10 @@ class CatalogDialog(QDialog):
     A switch shows the fields instead (``set_kind(FIELDS)``): those each class
     declares, read the same way (assemblies, cache, search) the first time
     they are shown. Methods and fields keep what was read of each.
+
+    With ``panel`` (the scripts tab, whose worker reads the game) a static
+    field shows its value, can be changed and put on the address list
+    (Mono, IL2CPP; Unreal has no static fields).
     """
 
     # pylint: disable=too-many-instance-attributes,attribute-defined-outside-init
@@ -344,11 +353,23 @@ class CatalogDialog(QDialog):
     hook_requested = Signal(object)
     # A class name: show its live objects in the object browser
     objects_requested = Signal(str)
+    # {"address": int, "value_type": str, "label": str} of a static field to
+    # put on the address list (as the object inspector's)
+    address_requested = Signal(object)
 
     def __init__(self, translations, pid, parent=None, engine=None, favorites=None,
-                 assembly_selection=None, game=None):
+                 assembly_selection=None, game=None, panel=None):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
+        # Static fields: read through the scripts tab's worker (see _statics_worker)
+        self._panel = panel
+        self._statics_worker = None
+        self._statics_relays = []
+        # request id -> class name; class name -> {field name: entry} once read
+        self._statics_requests = {}
+        self.statics = {}
+        # class name -> time.monotonic() of its statics' reading
+        self._statics_read = {}
         self.setModal(False)
         self.translations = translations
         self.pid = pid
@@ -568,6 +589,19 @@ class CatalogDialog(QDialog):
         self.objects_button.setEnabled(False)
         self.objects_button.clicked.connect(self._request_objects)
         row.addWidget(self.objects_button)
+        self.edit_static_button = QPushButton(self.translations["catalog.edit_static"])
+        set_button_icon(self.edit_static_button, "edit")
+        self.edit_static_button.setToolTip(self.translations["catalog.edit_static_tooltip"])
+        self.edit_static_button.setEnabled(False)
+        self.edit_static_button.clicked.connect(self.edit_static)
+        row.addWidget(self.edit_static_button)
+        self.static_address_button = QPushButton(self.translations["catalog.static_address"])
+        set_button_icon(self.static_address_button, "playlist_add")
+        self.static_address_button.setToolTip(
+            self.translations["catalog.static_address_tooltip"])
+        self.static_address_button.setEnabled(False)
+        self.static_address_button.clicked.connect(self.add_static_address)
+        row.addWidget(self.static_address_button)
         self.copy_field_button = QPushButton(self.translations["catalog.copy_field"])
         set_button_icon(self.copy_field_button, "content_copy")
         self.copy_field_button.setToolTip(self.translations["catalog.copy_field_tooltip"])
@@ -851,6 +885,9 @@ class CatalogDialog(QDialog):
         self.objects_button.setEnabled(
             field is not None and self.game is None
             and self.engine.supports(engine_base.OBJECT_BROWSER))
+        entry = self._static_entry(field)
+        self.edit_static_button.setEnabled(bool(entry and entry.get("edit")))
+        self.static_address_button.setEnabled(bool(entry and entry.get("valueType")))
         if field is None:
             self.details_label.setText("")
             return
@@ -860,10 +897,113 @@ class CatalogDialog(QDialog):
                                           field.storage, "catalog.static")]
         else:
             kind = self.translations["catalog.instance_field"]
-        self.details_label.setText(self.translations["catalog.field_details"].format(
+        text = self.translations["catalog.field_details"].format(
             signature=csharp_name(field.signature, field.engine),
             type=csharp_name(field.type_name, field.engine), kind=kind,
-            offset=f"0x{field.offset:x}", assembly=field.assembly))
+            offset=f"0x{field.offset:x}", assembly=field.assembly)
+        if entry is not None:
+            text += "  ·  " + self.translations["catalog.static_value"].format(
+                value=entry["value"].get("text", ""))
+            read = self._statics_read.get(field.class_name, 0.0)
+            if time.monotonic() - read > STATIC_AGE_S:
+                self._read_statics(field.class_name)  # the old value stays until then
+        elif self._reads_statics(field):
+            text += "  ·  " + self.translations["catalog.static_reading"]
+            self._read_statics(field.class_name)
+        self.details_label.setText(text)
+
+    # --- Static fields -----------------------------------------------------------
+    def _reads_statics(self, field):
+        """Whether the value of ``field`` can be read: a static field in the
+        class's static data, of a running game whose scripts tab is there."""
+        return (field is not None and field.static and field.storage == "data"
+                and self.game is None and self._panel is not None)
+
+    def _static_entry(self, field):
+        """What was read of the static ``field`` (see ScriptWorker.static_fields), or None."""
+        if not self._reads_statics(field):
+            return None
+        return self.statics.get(field.class_name, {}).get(field.name)
+
+    def _statics_worker_now(self):
+        """The scripts tab's worker, its answers connected; None when detached."""
+        worker = self._panel.worker()
+        if worker is not None and worker is not self._statics_worker:
+            self._statics_worker = worker
+            for relay in self._statics_relays:
+                relay.deleteLater()
+            # The worker outlives this window: its answers stop reaching it
+            # once it is deleted
+            self._statics_relays = [
+                connect_while_alive(worker.statics_read, self, self._on_statics),
+                connect_while_alive(worker.statics_failed, self, self._on_statics_failed)]
+            self._statics_requests.clear()
+        return worker
+
+    def _read_statics(self, class_name):
+        if class_name in self._statics_requests.values():
+            return  # asked already
+        worker = self._statics_worker_now()
+        if worker is not None:
+            self._statics_requests[worker.static_fields(class_name)] = class_name
+
+    def read_statics(self, class_name):
+        """Read the static fields of ``class_name`` anew (e.g. after a change)."""
+        self.statics.pop(class_name, None)
+        self._read_statics(class_name)
+
+    def _on_statics(self, request, entries):
+        class_name = self._statics_requests.pop(request, None)
+        if class_name is None:
+            return
+        self.statics[class_name] = {entry["name"]: entry for entry in entries}
+        self._statics_read[class_name] = time.monotonic()
+        if self.kind == FIELDS:
+            self._show_field_details()
+
+    def _on_statics_failed(self, request, message):
+        class_name = self._statics_requests.pop(request, None)
+        if class_name is None:
+            return
+        # Shown as each field's value, and not asked again until reselected
+        self.statics[class_name] = {
+            field.name: {"name": field.name, "value": {"text": f"? ({message})"}}
+            for field in self.models[FIELDS].methods if field.class_name == class_name}
+        self._statics_read[class_name] = time.monotonic()
+        if self.kind == FIELDS:
+            self._show_field_details()
+
+    def edit_static(self):
+        """Ask for a new value of the selected static field and write it into the game."""
+        field = self.selected_field()
+        entry = self._static_entry(field)
+        if entry is None or not entry.get("edit"):
+            return
+        dialog = FieldValueDialog(self.translations, csharp_name(field.signature, field.engine),
+                                  csharp_name(field.type_name, field.engine),
+                                  entry["value"].get("text", ""), entry["edit"], self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            write_field(self.pid, entry["edit"], dialog.value())
+        except (OSError, ValueError) as error:
+            self.status_label.setText(self.translations["inspector.write_failed"].format(
+                field=field.signature, message=messages.describe(error)))
+            return
+        self.read_statics(field.class_name)
+        self._show_field_details()
+
+    def add_static_address(self):
+        """Put the selected static field on the address list."""
+        field = self.selected_field()
+        entry = self._static_entry(field)
+        if entry is None or not entry.get("valueType"):
+            return
+        label = f"{csharp_name(field.class_name, field.engine).rsplit('.', 1)[-1]}.{field.name}"
+        self.address_requested.emit({"address": int(entry["address"], 16),
+                                     "value_type": entry["valueType"], "label": label})
+        self.status_label.setText(self.translations["inspector.address_added"].format(
+            label=label, address=f"0x{int(entry['address'], 16):X}", type=entry["valueType"]))
 
     def _request_objects(self):
         """Show the live objects of the selected field's class in the object browser."""

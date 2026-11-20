@@ -116,3 +116,68 @@ def test_a_live_inspector_changes_fields_a_recorded_one_does_not(qt_app, transla
     finally:
         dialog.close()
         recorded.close()
+
+
+def test_the_field_catalog_reads_changes_and_lists_static_fields(qt_app, translations,
+                                                                 monkeypatch):
+    # pylint: disable=protected-access,too-many-locals
+    from PySide6.QtWidgets import QDialog
+
+    from grembyte.engines.registry import engine_by_id
+    from grembyte.features.catalog import FIELDS, CatalogField
+    from grembyte.ui.widgets import catalog as catalog_widget
+    from grembyte.ui.widgets import field_value
+    from tests.test_scripts import _FakeScriptWorker
+
+    worker = _FakeScriptWorker(os.getpid())
+
+    class Panel:  # pylint: disable=too-few-public-methods
+        def worker(self):
+            return worker
+
+    monkeypatch.setattr(catalog_widget, "CatalogWorker", type(
+        "IdleCatalogWorker", (catalog_widget.CatalogWorker,), {"start": lambda self: None}))
+    buffer, address = _buffer([7, 0, 0, 0])
+    dialog = catalog_widget.CatalogDialog(translations, os.getpid(),
+                                          engine=engine_by_id("mono"), panel=Panel())
+    added = []
+    dialog.address_requested.connect(added.append)
+    try:
+        dialog.set_kind(FIELDS)
+        dialog._on_assembly_loaded(FIELDS, "Assembly-CSharp", [
+            CatalogField("Assembly-CSharp", "Game.Combat", "Health", "System.Int32", 16, False),
+            CatalogField("Assembly-CSharp", "Game.Combat", "Instances", "System.Int32", 0, True,
+                         "data"),
+            CatalogField("Assembly-CSharp", "Game.Combat", "Max", "System.Int32", 0, True,
+                         "const")])
+        dialog.field_view.selectRow(0)  # an instance field: nothing to read
+        assert worker.requests == [] and not dialog.edit_static_button.isEnabled()
+        dialog.field_view.selectRow(2)  # a constant: no value in memory
+        assert worker.requests == []
+        dialog.field_view.selectRow(1)
+        assert worker.requests == [("static_fields", "Game.Combat")]
+        assert dialog.details_label.text().endswith("Wert wird gelesen …")
+        worker.statics_read.emit(1, [
+            {"name": "Instances", "type": "System.Int32", "storage": "data",
+             "value": {"text": "7"}, "address": hex(address), "valueType": "int32",
+             "edit": {"address": hex(address), "valueType": "int32"}},
+            {"name": "Max", "type": "System.Int32", "storage": "const", "value": {"text": ""},
+             "address": None, "valueType": None, "edit": None}])
+        assert dialog.details_label.text().endswith("Wert 7")
+        assert dialog.edit_static_button.isEnabled() and dialog.static_address_button.isEnabled()
+
+        dialog.static_address_button.click()
+        assert added == [{"address": address, "value_type": "int32",
+                          "label": "Combat.Instances"}]
+        monkeypatch.setattr(field_value.FieldValueDialog, "exec",
+                            lambda self: QDialog.DialogCode.Accepted)
+        monkeypatch.setattr(field_value.FieldValueDialog, "value", lambda self: "42")
+        dialog.edit_static_button.click()
+        assert int.from_bytes(buffer.raw[:4], "little") == 42
+        assert worker.requests[-1] == ("static_fields", "Game.Combat")  # read anew
+        assert dialog.details_label.text().endswith("Wert wird gelesen …")
+        worker.statics_failed.emit(len(worker.requests), "class not found")
+        assert dialog.details_label.text().endswith("Wert ? (class not found)")
+        assert not dialog.edit_static_button.isEnabled()
+    finally:
+        dialog.close()

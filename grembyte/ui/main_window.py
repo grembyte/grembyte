@@ -1887,12 +1887,14 @@ class MainWindow(QMainWindow):
         if catalog is None:
             catalog = CatalogDialog(self.translations, self._current_pid, parent=self,
                                     engine=self._engine, favorites=self._favorite_store,
-                                    assembly_selection=self._assembly_selection)
+                                    assembly_selection=self._assembly_selection,
+                                    panel=self.script_panel)
             catalog.finished.connect(lambda _result: setattr(self, "_catalog", None))
             catalog.monitor_requested.connect(self._monitor_methods)
             catalog.hook_requested.connect(self._hook_method)
             catalog.call_requested.connect(self._call_method)
             catalog.objects_requested.connect(self._show_objects_of_class)
+            catalog.address_requested.connect(self._add_inspected_address)
             catalog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self._catalog = catalog
         catalog.show()

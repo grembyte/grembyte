@@ -256,8 +256,8 @@ adapters know, searchable like the catalog:
 
 - **Classes and structs:** all fields of a type at once (inherited ones marked), base class
   and derived classes, the methods (linking to the catalog). Static fields with their current
-  value and the address of their class's static data (as the pointer scan's chain bases);
-  the field catalog could offer the same for a static field (value, change, address list).
+  value and the address of their class's static data (as the pointer scan's chain bases),
+  all at once (the field catalog shows them one at a time, with change and address list).
 - **Enums:** names and values, the base type, `[Flags]` shown as such. The adapters already
   read them for **Call method** (Mono from the constants' metadata, Unreal from `UEnum`).
 - **Unreal:** `UClass`, `UScriptStruct` and `UEnum` from reflection, with property flags
