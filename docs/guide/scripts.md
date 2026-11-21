@@ -1,6 +1,6 @@
 # Scripts
 
-Scripts are JavaScript function bodies that run on the game's main thread and can call its methods: give the player health every few seconds, set an attribute after loading, or run a cheat function by hand. They live in the **Scripts** tab next to **Hooks**, are stored per program and restored when that program is attached. **New …** and **Edit** open the script editor with the code, the schedule and the parameters.
+Scripts are JavaScript function bodies that run on the game's main thread and can call its methods: give the player health every few seconds, set an attribute after loading, or run a cheat function by hand. They live in the **Scripts** tab next to **Hooks**, are stored per program and restored when that program is attached. **New …** and **Edit** open the [script editor](#the-script-editor) with the code, the schedule and the parameters.
 
 <figure markdown="span">
   ![Scripts tab](../assets/screenshots/scripts-tab-dark.webp#only-dark)
@@ -11,6 +11,12 @@ Scripts are JavaScript function bodies that run on the game's main thread and ca
 **Run now** runs the selected script at once (asking for its parameters), **Pause** and **Resume** stop and restart its schedule, and **Remove** deletes it. The context menu also has **Create copy**. Below the table the script log shows what scripts write with `ctx.log` and what they return; **Inspect** behind a returned object opens it in the [object inspector](../engines/index.md#object-inspector), and **Clear** empties the log.
 
 Scripts reach game objects and methods through the engine adapters of [Unity and Unreal games](../engines/index.md). In a game without an adapter – a native game with an engine of its own – they work on machine code instead: see [Scripts in native games](#scripts-in-native-games).
+
+## The script editor
+
+The editor does not block the rest of Grembyte: while it is open you can look things up in the [object inspector](../engines/index.md#object-inspector), the [object browser](object-browser.md) or your [notes](notes.md). **Pin to main window** docks it at the bottom of the main window, so those tools fit beside it at the side (see [Docking windows](tools.md#docking-windows)). One script is open at a time: **Edit** on another one closes the editor first, and the editor asks before it discards changes that are not saved. The method hook editor works the same way.
+
+**Save** puts the code into the running script. If the game ended meanwhile, the script is saved for the next time the game is attached; if Grembyte is attached to another game by now, the editor refuses to save and stays open, so nothing typed is lost.
 
 ## When a script runs
 
