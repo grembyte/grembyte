@@ -253,19 +253,15 @@ fields and method results. Class names inside `ctx.find("…")` and `ctx.forEach
 (Unity; shared with the field catalog's cache) and the members of a static field's type
 after it. Tooltips over these strings (`classInfo`): the class, its base classes and, in
 Unreal games, its live objects, or that there is no such class; a static field's type and
-value now. The members are read live from the attached game (`classMembers`
-in `grembyte/features/monitor.js`, metadata only) once per class, not from the catalog: the
-catalog cache knows no base classes, and the field catalog exists only for builds it was
-read for. Open, about one day:
+value now. Signature while typing (overloads, the current parameter in bold), the script's
+own variables with their type (also as a tooltip), JavaScript strings, numbers and Unreal
+arrays with their elements and callback parameters. Open:
 
-- **Signature while typing:** after `GetUseItem_SpecifiedLine(` a tooltip shows
-  `(int32 SlotIndex, bool FirstLine)` with the current parameter marked. The members already
-  carry their parameters, so little work is left.
 - **Parameter names of Unreal method hooks from the catalog:** the Unreal catalog has no
   names, so `ctx.args.` is empty until such a hook is installed.
-- Limits: a heuristic, not a JavaScript parser. Arrays, array methods (`.find(…)`), generic
-  types and values from functions of the script are not followed; then nothing is offered,
-  never something wrong.
+- Limits: a heuristic, not a JavaScript parser. Unity's arrays and generic types, values
+  from functions of the script and scopes (a callback's parameter is offered everywhere) are
+  not followed; then nothing is offered, never something wrong.
 - Not planned: a language server (tsserver) with type declarations generated from the game.
   It would need Node and a bridge to the Qt editor, for many times the effort.
 

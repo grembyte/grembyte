@@ -11,6 +11,7 @@ the members of ``ctx``, Frida's API and the keywords while typing (see
 grembyte.ui.widgets.code_completion); Ctrl+Space opens it by hand.
 """
 
+import html
 import re
 
 from PySide6.QtCore import QEvent, QRect, QSize, Qt  # pylint: disable=import-error,no-name-in-module
@@ -18,6 +19,7 @@ from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
     QColor,
     QFont,
     QFontDatabase,
+    QFontInfo,
     QFontMetricsF,
     QPainter,
     QStandardItem,
@@ -30,6 +32,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QAbstractItemView,
     QApplication,
     QHeaderView,
+    QLabel,
     QPlainTextEdit,
     QToolTip,
     QTreeView,
@@ -38,6 +41,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 
 from grembyte.ui import window_state
 from grembyte.ui.widgets import code_completion
+from grembyte.ui.widgets.icons import theme_color
 
 INDENT = "  "
 # Font size of the code in pixels: the application stylesheet's for inputs, and the bounds of zooming
@@ -47,6 +51,9 @@ MAX_FONT_SIZE = 32
 _FONT_SIZE_KEY = "codeEditor/fontSize"
 _WHEEL_STEP = 120  # angleDelta of one notch of a mouse wheel
 _POPUP_ROWS = 12
+# The completion list's descriptions: their size against the code's, and opacity
+_DESCRIPTION_SCALE = 0.9
+_DESCRIPTION_ALPHA = 0.8
 _POPUP_MIN_WIDTH = 320
 _BLOCK_COMMENT = 1
 _TEMPLATE_STRING = 2
@@ -511,6 +518,8 @@ class CodeEditor(QPlainTextEdit):
         self._waiting_at = None  # the cursor position completions wait for the game at
         self._tooltip_at = None  # (position, global position) a tooltip waits for the game at
         self.completion_popup = None
+        self.signature_hint = None
+        self._signature_waits = False  # the hint waits for the game's members
         self.show_font_size(code_font_size())
 
     # ------------------------------------------------------------------
@@ -599,12 +608,16 @@ class CodeEditor(QPlainTextEdit):
         self._completion = (translations, context, engine)
         if self.completion_popup is None:
             self.completion_popup = CompletionPopup(self)
+            self.signature_hint = SignatureHint(self)
+            self.cursorPositionChanged.connect(self._cursor_moved)
 
     def _members_changed(self):
         """The game answered: show what was waiting for it at the cursor, or
         under the mouse."""
         if self._waiting_at is not None and self._waiting_at == self.textCursor().position():
             self.show_completions(typed=False)
+        if self._signature_waits:
+            self.update_signature(force=True)
         if self._tooltip_at is not None and QToolTip.isVisible():
             self.show_string_tooltip(*self._tooltip_at)
 
@@ -637,14 +650,21 @@ class CodeEditor(QPlainTextEdit):
         if column >= len(line) or not self.cursorRect(cursor).adjusted(-8, -2, 8, 2).contains(
                 position):
             return None
-        found = code_completion.string_at(line, column)
         previous = block.previous()
         state = max(previous.userState(), 0) if previous.isValid() else 0
-        if found is None or highlight_javascript_tokens(line, state)[column] != "string":
-            return None  # in a comment, or not such a string
+        token = highlight_javascript_tokens(line, state)[column]
         translations, _context, engine = self._completion
         self._scope.pending = False
-        return code_completion.tooltip(found[0], found[1], self._scope, translations, engine)
+        if token == "string":
+            found = code_completion.string_at(line, column)
+            return None if found is None else code_completion.tooltip(
+                found[0], found[1], self._scope, translations, engine)
+        named = code_completion.identifier_at(line, column) if token == "text" else None
+        if named is None or line[:named[1]].rstrip().endswith("."):
+            return None  # a comment, a keyword, or a member (player.Name)
+        # The code up to the end of this line: a declaration on it counts
+        source = self.toPlainText()[:block.position() + len(line)]
+        return code_completion.variable_tooltip(named[0], source, self._scope, translations)
 
     def completion_entries(self):
         """``(prefix, entries)`` at the cursor (see code_completion.completions)."""
@@ -708,6 +728,39 @@ class CodeEditor(QPlainTextEdit):
                 cursor.movePosition(QTextCursor.MoveOperation.Left)
         cursor.endEditBlock()
         self.setTextCursor(cursor)
+        if entry.params:
+            self.update_signature(force=True)  # inside its parentheses now
+
+    # ------------------------------------------------------------------
+    # Signature while typing
+    # ------------------------------------------------------------------
+    def signature_at_cursor(self):
+        """``(signatures, index)`` of the call typed at the cursor (see
+        code_completion.signature_help), or None."""
+        if self._completion is None:
+            return None
+        _translations, context, engine = self._completion
+        source = self.toPlainText()[:self.textCursor().position()]
+        return code_completion.signature_help(source, context, engine, self._scope)
+
+    def update_signature(self, force=False):
+        """Show, update or hide the signature of the call at the cursor. The
+        hint opens with ``force`` (after "(" or ","), else it is only kept up
+        to date while open."""
+        hint = self.signature_hint
+        if hint is None or (not force and not hint.isVisible()):
+            return
+        found = self.signature_at_cursor()
+        self._signature_waits = self._scope is not None and self._scope.pending
+        if found is None:
+            hint.hide()
+            return
+        signatures, index = found
+        hint.show_signatures(signatures, index, self._completion[0])
+
+    def _cursor_moved(self):
+        if self.signature_hint is not None and self.signature_hint.isVisible():
+            self.update_signature()
 
     def _popup_key(self, event):
         """Handle a key for the open popup; whether it took it."""
@@ -731,9 +784,25 @@ class CodeEditor(QPlainTextEdit):
             return False
         return True
 
+    def _hint_key(self, event):
+        """Escape closes the signature hint; Ctrl+Shift+Space opens it."""
+        hint = self.signature_hint
+        if hint is None:
+            return False
+        if event.key() == Qt.Key.Key_Escape and hint.isVisible():
+            hint.hide()
+            return True
+        control_shift = (Qt.KeyboardModifier.ControlModifier
+                         | Qt.KeyboardModifier.ShiftModifier)
+        if event.key() == Qt.Key.Key_Space and event.modifiers() & control_shift == control_shift:
+            self.update_signature(force=True)
+            return True
+        return False
+
     def focusOutEvent(self, event):  # pylint: disable=invalid-name
         if self.completion_popup is not None:
             self.completion_popup.hide()
+            self.signature_hint.hide()
         super().focusOutEvent(event)
 
     def mousePressEvent(self, event):  # pylint: disable=invalid-name
@@ -768,7 +837,7 @@ class CodeEditor(QPlainTextEdit):
         event.accept()
 
     def keyPressEvent(self, event):  # pylint: disable=invalid-name
-        if self._popup_key(event):
+        if self._popup_key(event) or self._hint_key(event):
             return
         popup = self.completion_popup
         if (popup is not None and event.key() == Qt.Key.Key_Space
@@ -789,6 +858,8 @@ class CodeEditor(QPlainTextEdit):
             elif event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Home,
                                  Qt.Key.Key_End):
                 popup.hide()
+            # A call's arguments begin or go on: show its signature
+            self.update_signature(force=bool(text) and text[-1] in "(,")
 
     def _edit_key(self, event):
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -894,17 +965,29 @@ class CompletionPopup(QTreeView):
         ``position``, the first one selected."""
         model = self.model()
         model.clear()
-        muted = QColor(_CODE_COLORS["muted"])
-        code_font = self.editor.font()  # names as in the code, descriptions as text
+        # Names bold in the code's font; descriptions quieter: in the text font,
+        # a little smaller and paler. Sized from the code, not the interface
+        # font, which scaling may make larger; both centred in the row.
+        name_font = QFont(self.editor.font())
+        name_font.setBold(True)
+        code_size = QFontInfo(self.editor.font()).pixelSize()
+        text_font = QFont(self.font())
+        text_font.setPixelSize(max(MIN_FONT_SIZE, round(code_size * _DESCRIPTION_SCALE)))
+        quiet = QColor(_CODE_COLORS["muted"])
+        quiet.setAlphaF(_DESCRIPTION_ALPHA)
+        centred = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         for entry in entries:
             text = code_completion.description(entry, translations)
             name = QStandardItem(entry.label)
             name.setData(entry, Qt.ItemDataRole.UserRole)
             # A long signature may be cut short in the list
             name.setToolTip(f"{entry.label}\n{text}")
-            name.setFont(code_font)
+            name.setFont(name_font)
+            name.setTextAlignment(centred)
             detail = QStandardItem(text)
-            detail.setForeground(muted)
+            detail.setFont(text_font)
+            detail.setForeground(quiet)
+            detail.setTextAlignment(centred)
             detail.setToolTip(text)
             model.appendRow([name, detail])
         self.setCurrentIndex(model.index(0, 0))
@@ -954,6 +1037,70 @@ class CompletionPopup(QTreeView):
         entry = index.siblingAtColumn(0).data(Qt.ItemDataRole.UserRole)
         if entry is not None:
             self.editor.insert_completion(entry)
+
+
+class SignatureHint(QLabel):
+    """The signature of the call whose arguments are typed, above the
+    CodeEditor's cursor: each overload on a line of its own with the current
+    parameter in bold, the return type, and the description of a fixed one.
+    A window that takes no focus, like CompletionPopup; a child of the editor."""
+
+    MAX_LINES = 8
+
+    def __init__(self, editor):
+        super().__init__(editor)
+        self.editor = editor
+        self.setWindowFlags(Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setMargin(4)
+
+    def show_signatures(self, signatures, index, translations):
+        """Show ``signatures`` (code_completion.Signature) with argument
+        ``index`` marked, above the editor's cursor."""
+        self.setStyleSheet(
+            f"QLabel {{ background: {theme_color('surface')}; color: {theme_color('text')};"
+            f" border: 1px solid {theme_color('border')}; }}")
+        self.setFont(self.editor.font())
+        # Overloads that take as many arguments first
+        ordered = sorted(signatures, key=lambda signature: len(signature.params) <= index
+                         and not _variadic(signature.params))
+        lines = [self._line(signature, index) for signature in ordered[:self.MAX_LINES]]
+        entry = ordered[0].entry
+        if entry is not None:
+            muted = theme_color("muted")
+            lines.append(f'<span style="color:{muted}">'
+                         f"{html.escape(code_completion.description(entry, translations))}</span>")
+        self.setText("<br>".join(lines))
+        # The stylesheet's font applies when polished: size it after that
+        self.ensurePolished()
+        self.resize(self.sizeHint())
+        rect = self.editor.cursorRect()
+        top = self.editor.viewport().mapToGlobal(rect.topLeft())
+        screen = self.editor.screen().availableGeometry()
+        x = max(screen.left(), min(top.x(), screen.right() + 1 - self.width()))
+        y = top.y() - self.height() - 2
+        if y < screen.top():  # below the line instead
+            y = self.editor.viewport().mapToGlobal(rect.bottomLeft()).y() + 2
+        self.move(x, y)
+        self.show()
+        self.raise_()
+
+    @staticmethod
+    def _line(signature, index):
+        params = list(signature.params)
+        current = index if index < len(params) else (
+            len(params) - 1 if _variadic(params) else None)
+        shown = [f"<b>{html.escape(param)}</b>" if number == current else html.escape(param)
+                 for number, param in enumerate(params)]
+        returns = f" → {html.escape(signature.returns)}" if signature.returns else ""
+        return f"{html.escape(signature.name)}({', '.join(shown)}){returns}"
+
+
+def _variadic(params):
+    """Whether the last parameter takes any number of arguments (``...args``)."""
+    return bool(params) and params[-1].lstrip("[").startswith("...")
 
 
 class _LineNumberArea(QWidget):

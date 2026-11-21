@@ -1448,6 +1448,10 @@ def test_class_members_follow_unreal_types(tmp_path, qt_app):
         assert hero is not None and "Health" in {field["name"] for field in hero["fields"]}
         assert "Rename" in {method["name"] for method in hero["methods"]}
         assert members("ANothing*") is None
+        # A struct (the element of a TArray<FVector>, a field's FVector)
+        vector = members("FVector")
+        assert vector is not None and vector["name"] == "FVector"
+        assert {"X", "Y", "Z"} <= {field["name"] for field in vector["fields"]}
 
         # The classes ctx.find finds: those with live objects
         names = []
