@@ -8,15 +8,16 @@ It is deliberately built like a real game: the values live in heap objects behin
 
 | System | Download |
 | --- | --- |
-| Linux (native, x86-64) | [GrembyteQuest-RPG-Linux](https://github.com/grembyte/grembyte/releases/download/v0.7.0-alpha/GrembyteQuest-RPG-Linux) |
-| Windows, or Linux under Wine/Proton | [GrembyteQuest-RPG-Windows.zip](https://github.com/grembyte/grembyte/releases/download/v0.7.0-alpha/GrembyteQuest-RPG-Windows.zip) |
+| Linux (native, x86-64) | [GrembyteQuest-RPG-Linux.tar.gz](https://github.com/grembyte/grembyte/releases/download/v0.7.1-alpha/GrembyteQuest-RPG-Linux.tar.gz) |
+| Windows, or Linux under Wine/Proton | [GrembyteQuest-RPG-Windows.zip](https://github.com/grembyte/grembyte/releases/download/v0.7.1-alpha/GrembyteQuest-RPG-Windows.zip) |
 
-Both are zip archives with the game folder in them. The Linux file has no `.zip` extension, but unpacks the same way.
+Both hold the game folder: the Linux build as a tar archive, which keeps the game's files executable, the Windows build as a zip archive.
 
 === "Linux"
 
     ```bash
-    unzip GrembyteQuest-RPG-Linux -d GrembyteQuest
+    mkdir GrembyteQuest
+    tar -xzf GrembyteQuest-RPG-Linux.tar.gz -C GrembyteQuest
     ./GrembyteQuest/Linux/GrembyteQuest.x86_64
     ```
 
