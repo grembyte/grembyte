@@ -14,7 +14,7 @@ grembyte.ui.widgets.code_completion); Ctrl+Space opens it by hand.
 import html
 import re
 
-from PySide6.QtCore import QEvent, QRect, QSize, Qt  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
     QColor,
     QFont,
@@ -1156,7 +1156,14 @@ class SignatureHint(QLabel):
     """The signature of the call whose arguments are typed, above the
     CodeEditor's cursor: each overload on a line of its own with the current
     parameter in bold, the return type, and the description of a fixed one.
-    A window that takes no focus, like CompletionPopup; a child of the editor."""
+    A window that takes no focus, like CompletionPopup; a child of the editor.
+
+    It is never wider than the editor: a long signature wraps after the
+    commas between its parameters (never inside one, ``int32 Chip lvl 1``),
+    the lines after the first indented, so its start stays in view."""
+
+    # The smallest width it wraps to, in pixels, in a very narrow editor
+    MIN_WIDTH = 320
 
     MAX_LINES = 8
 
@@ -1179,20 +1186,34 @@ class SignatureHint(QLabel):
         # Overloads that take as many arguments first
         ordered = sorted(signatures, key=lambda signature: len(signature.params) <= index
                          and not _variadic(signature.params))
-        lines = [self._line(signature, index) for signature in ordered[:self.MAX_LINES]]
+        # Wrapped lines indented by four characters (a hanging indent)
+        indent = round(QFontMetricsF(self.editor.font()).horizontalAdvance("    "))
+        lines = [f'<p style="margin:0; margin-left:{indent}px; text-indent:-{indent}px">'
+                 f"{self._line(signature, index)}</p>"
+                 for signature in ordered[:self.MAX_LINES]]
         entry = ordered[0].entry
         if entry is not None:
             muted = theme_color("muted")
-            lines.append(f'<span style="color:{muted}">'
-                         f"{html.escape(code_completion.description(entry, translations))}</span>")
-        self.setText("<br>".join(lines))
+            lines.append(f'<p style="margin:0; color:{muted}">'
+                         f"{html.escape(code_completion.description(entry, translations))}</p>")
+        self.setText("".join(lines))
         # The stylesheet's font applies when polished: size it after that
         self.ensurePolished()
-        self.resize(self.sizeHint())
-        rect = self.editor.cursorRect()
-        top = self.editor.viewport().mapToGlobal(rect.topLeft())
+        viewport = self.editor.viewport()
+        area = QRect(viewport.mapToGlobal(QPoint(0, 0)), viewport.size())
         screen = self.editor.screen().availableGeometry()
-        x = max(screen.left(), min(top.x(), screen.right() + 1 - self.width()))
+        widest = max(self.MIN_WIDTH, min(area.width(), screen.width()))
+        self.setWordWrap(False)
+        width = min(self.sizeHint().width(), widest)
+        self.setWordWrap(True)
+        frame = self.sizeHint().height() - self.heightForWidth(self.sizeHint().width())
+        self.resize(width, self.heightForWidth(width) + max(frame, 0))
+        rect = self.editor.cursorRect()
+        top = viewport.mapToGlobal(rect.topLeft())
+        # Over the editor if it fits there, else on the screen
+        left = area.left() if width <= area.width() else screen.left()
+        right = area.right() if width <= area.width() else screen.right()
+        x = max(left, min(top.x(), right + 1 - width))
         y = top.y() - self.height() - 2
         if y < screen.top():  # below the line instead
             y = self.editor.viewport().mapToGlobal(rect.bottomLeft()).y() + 2
@@ -1205,10 +1226,17 @@ class SignatureHint(QLabel):
         params = list(signature.params)
         current = index if index < len(params) else (
             len(params) - 1 if _variadic(params) else None)
-        shown = [f"<b>{html.escape(param)}</b>" if number == current else html.escape(param)
-                 for number, param in enumerate(params)]
-        returns = f" → {html.escape(signature.returns)}" if signature.returns else ""
+        # A line may break only after the commas between parameters
+        shown = [_unbroken(param) for param in params]
+        if current is not None:
+            shown[current] = f"<b>{shown[current]}</b>"
+        returns = f"&nbsp;→&nbsp;{_unbroken(signature.returns)}" if signature.returns else ""
         return f"{html.escape(signature.name)}({', '.join(shown)}){returns}"
+
+
+def _unbroken(text):
+    """``text`` escaped for rich text, its spaces kept from breaking a line."""
+    return html.escape(text).replace(" ", "&nbsp;")
 
 
 def _variadic(params):

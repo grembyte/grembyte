@@ -1235,3 +1235,28 @@ def test_ctrl_click_in_the_script_editor_opens_the_inspector(qt_app, monkeypatch
     finally:
         panel.shutdown()
         panel.deleteLater()
+
+
+def test_a_long_signature_wraps_within_the_editor(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from grembyte.ui.widgets.code_completion import Signature
+
+    editor = _editor_at_end("gs.AddItemsXPMoneyChips(", engine="unreal")
+    editor.resize(700, 300)
+    params = ("int32 XP", "int32 Money", "int32 Scraps", "int32 ElectronicParts",
+              "int32 Explosive", "int32 Chemicals", "int32 Fabrics", "int32 EnergyCell",
+              "int32 Chip lvl 1", "int32 Chip lvl 2", "int32 Chip lvl 3")
+    hint = editor.signature_hint
+    hint.show_signatures([Signature("AddItemsXPMoneyChips", params, "void")], 8,
+                         load_translations("en"))
+    viewport = editor.viewport()
+    left = viewport.mapToGlobal(viewport.rect().topLeft()).x()
+    # Not wider than the editor, its start in view; several lines
+    assert hint.width() <= viewport.width() and hint.x() >= left
+    assert hint.height() > 2 * hint.fontMetrics().height()
+    # Lines break only between parameters: the one being typed stays whole
+    assert "<b>int32&nbsp;Chip&nbsp;lvl&nbsp;1</b>" in hint.text()
+    # A short one keeps its natural width on one line
+    hint.show_signatures([Signature("f", ("int a",), "void")], 0, load_translations("en"))
+    assert hint.width() < viewport.width() // 2
+    editor.close()

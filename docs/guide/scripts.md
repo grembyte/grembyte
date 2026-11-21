@@ -35,7 +35,9 @@ While **Ctrl** is held, the lookups in the code under the mouse show as links; *
 - the strings in `ctx.find("Class", "Name")` – the class or the object's name – and, in Unity games, in `ctx.static("Namespace.Class.Field")`;
 - a variable that holds such a lookup, also read on through fields and properties (`const stats = health.m_stats;`), `.field("…")`, `.get("…")` and `[0]`, and through other such variables – wherever the variable is used.
 
-Only lookups are links, so a click changes nothing in the game: a variable whose value calls a method of the game (`health.GetHealth()`), uses `ctx.args` or `ctx.state`, is assigned more than once or is a loop's or callback's parameter is none. A property still runs its getter, as in the inspector. When the lookup gives no object – nothing found, a number, a text – or fails, a note at the mouse says so. It works while the script's game is attached, in Unity and Unreal games, in the script editor (not yet in the method hook editor).
+Only lookups are links, so a click changes nothing in the game: a variable whose value calls a method of the game (`health.GetHealth()`), uses `ctx.args` or `ctx.state`, is assigned more than once or is a loop's or callback's parameter is none. A property still runs its getter, as in the inspector. When the lookup gives no object – nothing found, a number, a text – or fails, a note at the mouse says so. It works while the script's game is attached, in Unity and Unreal games, in the script editor.
+
+The method hook editor has no Ctrl+click, and none is planned: a method hook changes what goes into a call (its arguments) or what comes out (its result), and those exist only while the method is called – there is nothing to look up beforehand. To look at the objects a method gets and returns, the [method monitor](../engines/index.md#method-monitor) records its calls and opens their objects in the inspector.
 
 ## When a script runs
 

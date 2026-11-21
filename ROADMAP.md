@@ -257,7 +257,8 @@ after it; the static methods inside `ctx.call("…")` (Unity and Unreal; shared 
 catalog's cache), with their overloads as signature and tooltip and their result's members
 after it; a script's parameters after `ctx.args.`. Ctrl+click on a lookup in a script's code
 (`ctx.find`/`ctx.static` strings, variables holding a lookup without method calls) opens the
-object in the inspector (`inspectExpression`); open: the method hook editor. Tooltips over these strings (`classInfo`): the class, its base classes and, in
+object in the inspector (`inspectExpression`); not planned for method hooks, whose code works
+on a call's arguments and result, which exist only during the call. Tooltips over these strings (`classInfo`): the class, its base classes and, in
 Unreal games, its live objects, or that there is no such class; a static field's type and
 value now. Signature while typing (overloads, the current parameter in bold), the script's
 own variables with their type (also as a tooltip), JavaScript strings, numbers and Unreal
