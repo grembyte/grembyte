@@ -99,6 +99,14 @@ class Studio:
 
     def close(self):
         """Close every window the scenes opened."""
+        # pylint: disable=import-outside-toplevel
+        from grembyte.ui.widgets.editor_window import EditorDialog
+
+        # A scene's editors hold demo data, not changes to keep: closing them
+        # must not ask whether to discard them
+        for widget in QApplication.allWidgets():
+            if isinstance(widget, EditorDialog):
+                widget.mark_saved()
         for widget in reversed(self._extra):
             if isinstance(widget, QWidget):
                 widget.close()

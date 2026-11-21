@@ -2147,5 +2147,15 @@
   "completion.kind_native": "ctx.native",
   "completion.kind_gas": "ctx.gas",
   "completion.kind_unknown": "type not known",
-  "completion.variable_typed": "Variable of this script: {type}"
+  "completion.variable_typed": "Variable of this script: {type}",
+  "editor.discard_title": "Discard changes?",
+  "editor.discard_text": "The editor has changes that are not saved. Discard them?",
+  "scripts.editor_tab": "Script",
+  "scripts.editor_other_game": "Grembyte is attached to another game now. Save this script while its game is attached.",
+  "scripts.editor_no_game": "No game is attached: start the game to save this script.",
+  "scripts.editor_saved_for_later": "The script was saved; it runs the next time the game is attached.",
+  "hooks.editor_tab": "Method hook",
+  "hooks.editor_other_game": "Grembyte is attached to another game now. Save this hook while its game is attached.",
+  "hooks.editor_no_game": "No game is attached: start the game to save this hook.",
+  "hooks.editor_saved_for_later": "The hook was saved; it is installed the next time the game is attached."
 }

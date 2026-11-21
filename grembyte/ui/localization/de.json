@@ -2147,5 +2147,15 @@
   "completion.kind_native": "ctx.native",
   "completion.kind_gas": "ctx.gas",
   "completion.kind_unknown": "Typ nicht bekannt",
-  "completion.variable_typed": "Variable dieses Skripts: {type}"
+  "completion.variable_typed": "Variable dieses Skripts: {type}",
+  "editor.discard_title": "Änderungen verwerfen?",
+  "editor.discard_text": "Der Editor hat Änderungen, die nicht gespeichert sind. Verwerfen?",
+  "scripts.editor_tab": "Skript",
+  "scripts.editor_other_game": "Grembyte ist jetzt an ein anderes Spiel angehängt. Speichere dieses Skript, während sein Spiel angehängt ist.",
+  "scripts.editor_no_game": "Kein Spiel angehängt: Starte das Spiel, um dieses Skript zu speichern.",
+  "scripts.editor_saved_for_later": "Das Skript wurde gespeichert; es läuft, sobald das Spiel wieder angehängt ist.",
+  "hooks.editor_tab": "Methoden-Hook",
+  "hooks.editor_other_game": "Grembyte ist jetzt an ein anderes Spiel angehängt. Speichere diesen Hook, während sein Spiel angehängt ist.",
+  "hooks.editor_no_game": "Kein Spiel angehängt: Starte das Spiel, um diesen Hook zu speichern.",
+  "hooks.editor_saved_for_later": "Der Hook wurde gespeichert; er wird installiert, sobald das Spiel wieder angehängt ist."
 }

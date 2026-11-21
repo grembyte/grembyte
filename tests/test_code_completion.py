@@ -295,6 +295,7 @@ def test_a_method_hooks_code_completes_for_the_engine(qt_app):
         names = _ctx_names(editor)
         assert {"phase", "static", "find"} <= names
         assert not {"isPlaying", "old"} & names
+    dialog.mark_saved()  # what was typed here is not to be kept
     dialog.close()
 
 

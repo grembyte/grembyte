@@ -44,7 +44,8 @@ from grembyte.hooks.syntax import BODY
 from grembyte.ui.widgets.code_completion import SCRIPT
 from grembyte.ui.widgets.code_editor import CodeEditor
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
-from grembyte.ui.widgets.docking import close_dialog
+from grembyte.ui.widgets.editor_window import EditorDialog
+from grembyte.ui.widgets.docking import BOTTOM, close_dialog, find_dock_manager
 from grembyte.ui.widgets.icons import material_icon, set_button_icon, theme_color
 from grembyte.ui.widgets.inspection import Inspections
 from grembyte.ui.widgets.labels import DocsHint, WrappedLabel
@@ -92,14 +93,26 @@ def timing_text(translations, spec):
     return f"{text}, {spec.hotkey}" if spec.hotkey else text
 
 
-class ScriptDialog(QDialog):
-    """Create or edit a script: description, when it runs, its code and parameters."""
+class ScriptDialog(EditorDialog):
+    """Create or edit a script: description, when it runs, its code and parameters.
 
-    def __init__(self, translations, parent=None, spec=None, engine=None, members=None):
+    Not modal: the object inspector, the notes and the object browser stay
+    usable while it is open, and it docks in the main window (see
+    grembyte.ui.widgets.editor_window). ``save_check`` may refuse saving.
+    """
+
+    # pylint: disable=too-many-instance-attributes
+
+    def __init__(self, translations, parent=None, spec=None, engine=None, members=None,
+                 save_check=None):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.translations = translations
         self.spec = None
+        # What the script panel saves it to (see ScriptPanel._open_editor)
+        self.process_id = None
+        self.saved_id = None
+        self.script_id = None
         self.setWindowTitle(translations["scripts.dialog_edit" if spec else "scripts.dialog_new"])
         self.resize(700, 600)
         layout = QVBoxLayout(self)
@@ -155,9 +168,13 @@ class ScriptDialog(QDialog):
         self.error_label = WrappedLabel("")
         self.error_label.setStyleSheet(f"color:{theme_color('danger')};")
         layout.addWidget(self.error_label)
-        layout.addLayout(dialog_button_row(translations, "button.save" if spec
-                                           else "scripts.create", self._accept, self.reject))
+        buttons = dialog_button_row(translations, "button.save" if spec else "scripts.create",
+                                    self._accept, self.reject)
+        layout.addLayout(buttons)
         self._enabled = spec.enabled if spec else True
+        self.setup_editor(translations, (spec.label if spec else "")
+                          or translations["scripts.editor_tab"], save_check)
+        buttons.insertWidget(0, self.pin_button)
 
     def _update_seconds(self):
         mode = self.mode_combo.currentData()
@@ -197,12 +214,17 @@ class ScriptDialog(QDialog):
             self.error_label.setText(messages.describe(error))
             return
         try:
-            self.spec = ScriptSpec(source, mode, seconds, self._enabled,
-                                   self.label_edit.text().strip(), params, hotkey)
+            spec = ScriptSpec(source, mode, seconds, self._enabled,
+                              self.label_edit.text().strip(), params, hotkey)
         except ValueError as error:
             self.tabs.setCurrentIndex(1)
             self.error_label.setText(messages.describe(error))
             return
+        refused = self.refused()
+        if refused is not None:
+            self.error_label.setText(refused)
+            return
+        self.spec = spec
         self.accept()
 
 
@@ -234,6 +256,8 @@ class ScriptPanel(QGroupBox):
         # () -> the attached game's engine for the code's completion (see
         # grembyte.ui.widgets.code_completion), None while it is not known
         self._engine = engine or (lambda: None)
+        # The open script editor (one at a time, see _open_editor), or None
+        self.editor = None
         # The game's classes for the completion, read through the worker
         self.members = MemberLookup(
             lambda: self._ensure_worker() if self._pid is not None else None, self)
@@ -561,23 +585,104 @@ class ScriptPanel(QGroupBox):
     def _new_script(self):
         if self._pid is None:
             return
-        dialog = ScriptDialog(self.translations, self, engine=self._engine(),
-                              members=self.members)
-        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.spec is not None:
-            self.add_script(dialog.spec)
+        self._open_editor(None)
 
     def _edit_selected(self):
         script_id = self._selected_id()
-        state = self._scripts.get(script_id)
-        if state is None:
-            return
-        dialog = ScriptDialog(self.translations, self, state["spec"], engine=self._engine(),
-                              members=self.members)
-        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.spec is None:
-            return
-        if script_id not in self._scripts:  # the game exited meanwhile
-            return
-        self._replace_spec(script_id, dialog.spec)
+        if script_id in self._scripts:
+            self._open_editor(script_id)
+
+    # ------------------------------------------------------------------
+    # The script editor: one at a time, not modal (see editor_window)
+    # ------------------------------------------------------------------
+    def _open_editor(self, script_id):
+        """Open the editor for script ``script_id`` (None: a new one). An
+        editor open for another script closes first, asking about changes
+        not saved; one open for this script comes to the front."""
+        state = self._scripts.get(script_id) if script_id is not None else None
+        saved_id = state["saved_id"] if state is not None else None
+        editor = self.editor
+        if editor is not None:
+            same = (editor.script_id == script_id
+                    or (saved_id is not None and editor.saved_id == saved_id))
+            if same and editor.process_id == self._process_id:
+                self._show_editor(editor)
+                return editor
+            close_dialog(editor)
+            if self.editor is not None:  # the user kept its changes
+                self._show_editor(self.editor)
+                return None
+        dialog = ScriptDialog(self.translations, self, state["spec"] if state else None,
+                              engine=self._engine(), members=self.members,
+                              save_check=self._editor_refusal)
+        dialog.process_id = self._process_id
+        dialog.saved_id = saved_id
+        dialog.script_id = script_id
+        dialog.finished.connect(lambda result: self._editor_finished(dialog, result))
+        self.editor = dialog
+        manager = find_dock_manager(self)
+        if manager is not None:
+            # Below the main window: the inspector, the notes and the object
+            # browser keep the right side
+            manager.add(dialog, "script_editor", BOTTOM)
+        else:
+            dialog.show()
+        return dialog
+
+    def _show_editor(self, editor):
+        manager = find_dock_manager(self)
+        if manager is not None:
+            manager.show(editor)
+        else:
+            editor.show()
+            editor.raise_()
+
+    def _editor_refusal(self, editor):
+        """Why ``editor`` cannot save now, or None: Grembyte is attached to
+        another game than the script's, or to none and nothing can keep it."""
+        if self._process_id is not None and editor.process_id not in (None, self._process_id):
+            return self.translations["scripts.editor_other_game"]
+        if self._running_script(editor) is not None or editor.saved_id is not None:
+            return None
+        if self._pid is None and (self._repository is None or editor.process_id is None):
+            return self.translations["scripts.editor_no_game"]
+        return None
+
+    def _running_script(self, editor):
+        """The script id the editor's script runs under now, or None."""
+        if editor.saved_id is not None:
+            return next((script_id for script_id, state in self._scripts.items()
+                         if state["saved_id"] == editor.saved_id), None)
+        return editor.script_id if editor.script_id in self._scripts else None
+
+    def _editor_finished(self, editor, result):
+        if self.editor is editor:
+            self.editor = None
+        if result == QDialog.DialogCode.Accepted and editor.spec is not None:
+            self._save_from_editor(editor, editor.spec)
+        editor.deleteLater()
+
+    def _save_from_editor(self, editor, spec):
+        """Save what ``editor`` holds: into the running script, else (the
+        game exited meanwhile) into the database for its next start, else as
+        a new script."""
+        running = self._running_script(editor)
+        if running is not None:
+            self._replace_spec(running, spec)
+        elif editor.saved_id is not None:
+            self._store(self._repository.update_script, editor.saved_id, label=spec.label,
+                        source=spec.source, mode=spec.mode, seconds=spec.seconds,
+                        enabled=spec.enabled, params=params_to_json(spec.params) or "",
+                        hotkey=spec.hotkey)
+            self.status_label.setText(self.translations["scripts.editor_saved_for_later"])
+        elif self._pid is not None:
+            self.add_script(spec)
+        elif self._repository is not None and editor.process_id is not None:
+            self._store(self._repository.add_script, editor.process_id, label=spec.label,
+                        source=spec.source, mode=spec.mode, seconds=spec.seconds,
+                        enabled=spec.enabled, params=params_to_json(spec.params),
+                        hotkey=spec.hotkey, lookups=lookups_to_json(spec.lookups))
+            self.status_label.setText(self.translations["scripts.editor_saved_for_later"])
 
     def _copy_selected(self):
         script_id = self._selected_id()

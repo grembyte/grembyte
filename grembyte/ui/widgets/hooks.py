@@ -43,7 +43,8 @@ from grembyte.ui.widgets.code_completion import hook_context
 from grembyte.ui.widgets.member_lookup import MemberLookup
 from grembyte.ui.widgets.code_editor import CodeEditor
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
-from grembyte.ui.widgets.docking import close_dialog
+from grembyte.ui.widgets.editor_window import EditorDialog
+from grembyte.ui.widgets.docking import BOTTOM, close_dialog, find_dock_manager
 from grembyte.ui.widgets.hook_debug import HookDebugWindow
 from grembyte.ui.widgets.icons import set_button_icon, theme_color
 from grembyte.ui.widgets.inspection import Inspections
@@ -179,7 +180,7 @@ class TransformForm(QWidget):
         return TemplateTransform(self.definition, **values)
 
 
-class HookDialog(QDialog):
+class HookDialog(EditorDialog):
     # Dialogs expose their result through attributes after exec().
     # pylint: disable=too-few-public-methods,too-many-instance-attributes
     """Choose a hook template and its parameters for a write or method hook.
@@ -197,10 +198,17 @@ class HookDialog(QDialog):
 
     def __init__(self, translations, address, value_type, site,
                  transform=None, label="", templates=None, pointer=None, method=None,
-                 phase="after", breakpoint=False, parent=None, engine=None, members=None):
+                 phase="after", breakpoint=False, parent=None, engine=None, members=None,
+                 save_check=None):
         # pylint: disable=too-many-arguments,redefined-builtin
         super().__init__(parent)
         self.translations = translations
+        # What the hook panel saves a method hook to (see HookPanel._open_method_editor)
+        self.process_id = None
+        self.saved_id = None
+        self.hook_id = None
+        self.method_entry = None
+        self.save_check = save_check
         # For the completion of code parameters: the game's engine and classes
         self.engine = engine
         self.members = members
@@ -336,12 +344,20 @@ class HookDialog(QDialog):
         self.error_label.setStyleSheet(f"color: {theme_color('danger')};")
         layout.addWidget(self.error_label)
 
-        layout.addLayout(dialog_button_row(
+        buttons = dialog_button_row(
             self.translations,
             "hooks.apply" if self._editing else "hooks.create",
             self._accept,
             self.reject,
-        ))
+        )
+        layout.addLayout(buttons)
+        # A method hook's editor stays open beside the rest and docks (see
+        # HookPanel._open_method_editor); a value hook's is shown modal
+        self.setup_editor(self.translations,
+                          label or (method_name(self.method) if self.method else "")
+                          or self.translations["hooks.editor_tab"], self.save_check)
+        if self.method is not None:
+            buttons.insertWidget(0, self.pin_button)
 
     def template_state(self):
         """Return how the hook's copy relates to its template.
@@ -423,6 +439,10 @@ class HookDialog(QDialog):
             self.caller_depth = 0
         elif not self._editing:
             self.caller_depth = self.caller_depth_input.value()
+        refused = self.refused()
+        if refused is not None:
+            self.error_label.setText(refused)
+            return
         self.accept()
 
 
@@ -491,6 +511,8 @@ class HookPanel(QGroupBox):
         # () -> the attached game's engine for the completion of code
         # parameters (see grembyte.ui.widgets.code_completion)
         self.engine = engine or (lambda: None)
+        # The open method hook editor (one at a time, see _open_method_editor)
+        self.method_editor = None
         # The game's classes for the completion of method hooks' code
         self.members = MemberLookup(
             lambda: self._ensure_method_worker() if self._pid is not None else None, self)
@@ -823,20 +845,105 @@ class HookPanel(QGroupBox):
         return hook_id
 
     def create_method_hook(self, method):
-        """Ask for a manipulation of a C# method (a CatalogMethod) and hook it."""
+        """Open the editor for a manipulation of a C# method (a CatalogMethod);
+        saving it hooks the method. Returns the editor, or None."""
         if self._pid is None:
             return None
-        dialog = HookDialog(
-            self.translations, "", "", "", templates=self.templates(),
-            method=method.display_signature, parent=self, engine=self.engine(),
-            members=self.members,
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        return self._open_method_editor(method=method)
+
+    # ------------------------------------------------------------------
+    # The method hook editor: one at a time, not modal (see editor_window)
+    # ------------------------------------------------------------------
+    def _open_method_editor(self, method=None, hook_id=None):
+        """Open the editor of the method hook ``hook_id``, or of a new one on
+        ``method``. One open for another hook closes first, asking about
+        changes not saved; one open for this hook comes to the front."""
+        state = self._hooks.get(hook_id) if hook_id is not None else None
+        saved_id = state["saved_id"] if state is not None else None
+        editor = self.method_editor
+        if editor is not None:
+            if hook_id is not None:
+                same = editor.hook_id == hook_id or (
+                    saved_id is not None and editor.saved_id == saved_id)
+            else:
+                same = (editor.hook_id is None and editor.method_entry is not None
+                        and editor.method_entry.identity() == method.identity())
+            if same and editor.process_id == self._process_id:
+                self._show_method_editor(editor)
+                return editor
+            close_dialog(editor)
+            if self.method_editor is not None:  # the user kept its changes
+                self._show_method_editor(self.method_editor)
+                return None
+        if state is not None:
+            spec = state["spec"]
+            dialog = HookDialog(
+                self.translations, "", "", "", transform=spec.transform, label=spec.label,
+                templates=self.templates(),
+                method=state.get("display_signature", spec.signature), phase=spec.phase,
+                parent=self, engine=self.engine(), members=self.members,
+                save_check=self._method_editor_refusal)
+        else:
+            dialog = HookDialog(
+                self.translations, "", "", "", templates=self.templates(),
+                method=method.display_signature, parent=self, engine=self.engine(),
+                members=self.members, save_check=self._method_editor_refusal)
+        dialog.process_id = self._process_id
+        dialog.saved_id = saved_id
+        dialog.hook_id = hook_id
+        dialog.method_entry = method
+        dialog.finished.connect(lambda result: self._method_editor_finished(dialog, result))
+        self.method_editor = dialog
+        manager = find_dock_manager(self)
+        if manager is not None:
+            manager.add(dialog, "method_hook_editor", BOTTOM)
+        else:
+            dialog.show()
+        return dialog
+
+    def _show_method_editor(self, editor):
+        manager = find_dock_manager(self)
+        if manager is not None:
+            manager.show(editor)
+        else:
+            editor.show()
+            editor.raise_()
+
+    def _method_editor_refusal(self, editor):
+        """Why ``editor`` cannot save now, or None: Grembyte is attached to
+        another game than the hook's, or to none and nothing can keep it."""
+        if self._process_id is not None and editor.process_id not in (None, self._process_id):
+            return self.translations["hooks.editor_other_game"]
+        if editor.saved_id is not None or editor.hook_id in self._hooks:
             return None
-        spec = MethodHookSpec(method.identity(), dialog.transform,
-                              label=dialog.label or method_name(method.signature),
-                              phase=dialog.phase)
-        return self.add_method_hook(spec)
+        if self._pid is None and (self._repository is None or editor.process_id is None):
+            return self.translations["hooks.editor_no_game"]
+        return None
+
+    def _method_editor_finished(self, editor, result):
+        if self.method_editor is editor:
+            self.method_editor = None
+        if result == QDialog.DialogCode.Accepted and editor.transform is not None:
+            if editor.method_entry is not None and editor.hook_id is None:
+                self._save_new_method_hook(editor)
+            else:
+                self._save_method_hook(editor)
+        editor.deleteLater()
+
+    def _save_new_method_hook(self, editor):
+        """Hook the method of a new hook's editor; without the game (it
+        exited meanwhile) keep it for the next start."""
+        method = editor.method_entry
+        spec = MethodHookSpec(method.identity(), editor.transform,
+                              label=editor.label or method_name(method.signature),
+                              phase=editor.phase)
+        if self._pid is not None:
+            self.add_method_hook(spec)
+        elif self._repository is not None and editor.process_id is not None:
+            self._store(self._repository.add_method_hook, editor.process_id, label=spec.label,
+                        managed=spec.identity, transform=spec.transform, enabled=spec.enabled,
+                        phase=spec.phase)
+            self.status_label.setText(self.translations["hooks.editor_saved_for_later"])
 
     def add_method_hook(self, spec, saved_id=None):
         """Install a method hook (MethodHookSpec); saved once it is installed."""
@@ -923,21 +1030,26 @@ class HookPanel(QGroupBox):
         if self._is_current(worker) and hook_id in self._hooks:
             self._set_status(hook_id, "disconnected", self.translations["hooks.method_ended"])
 
-    def _edit_method_hook(self, hook_id, state):
-        spec = state["spec"]
-        dialog = HookDialog(
-            self.translations, "", "", "", transform=spec.transform, label=spec.label,
-            templates=self.templates(),
-            method=state.get("display_signature", spec.signature), phase=spec.phase, parent=self,
-            engine=self.engine(), members=self.members,
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        if state["saved_id"] is not None:
-            self._store(self._repository.update_method_hook, state["saved_id"],
+    def _edit_method_hook(self, hook_id, _state):
+        self._open_method_editor(hook_id=hook_id)
+
+    def _save_method_hook(self, dialog):
+        """Save an edited method hook: into the database, and into the hook
+        if it is still installed (the game may have exited meanwhile)."""
+        if dialog.saved_id is not None:
+            self._store(self._repository.update_method_hook, dialog.saved_id,
                         label=dialog.label, transform=dialog.transform, phase=dialog.phase)
-        if not self._still_installed(hook_id, state):
+        hook_id = dialog.hook_id
+        if dialog.saved_id is not None:
+            # The hook of the same saved one, also after the game restarted
+            hook_id = next((other for other, state in self._hooks.items()
+                            if state.get("saved_id") == dialog.saved_id), hook_id)
+        state = self._hooks.get(hook_id)
+        if state is None or not self._still_installed(hook_id, state):
+            if dialog.saved_id is not None and state is None:
+                self.status_label.setText(self.translations["hooks.editor_saved_for_later"])
             return
+        spec = state["spec"]
         state["spec"] = dataclasses.replace(
             spec, transform=dialog.transform, label=dialog.label, phase=dialog.phase)
         self._method_worker.set_transform(hook_id, dialog.transform)

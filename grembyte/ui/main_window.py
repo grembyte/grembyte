@@ -3362,6 +3362,13 @@ class MainWindow(QMainWindow):
         if a0 is None:
             return
 
+        # An open script or method hook editor with changes not saved asks first
+        for editor in (getattr(self.script_panel, "editor", None),
+                       getattr(self.hook_panel, "method_editor", None)):
+            if editor is not None and not editor.confirm_discard():
+                a0.ignore()
+                return
+
         self._refresh_timer.stop()
         self._process_timer.stop()
         worker = self._scan_worker
