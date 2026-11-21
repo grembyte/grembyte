@@ -103,6 +103,9 @@ class ScriptDialog(EditorDialog):
 
     # pylint: disable=too-many-instance-attributes
 
+    # Ctrl+click on a lookup of the code: (code_completion.Link, global position)
+    inspect_requested = Signal(object, object)
+
     def __init__(self, translations, parent=None, spec=None, engine=None, members=None,
                  save_check=None):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -153,6 +156,7 @@ class ScriptDialog(EditorDialog):
         self.code_edit = CodeEditor(spec.source if spec else EXAMPLE)
         self.code_edit.setMinimumHeight(200)
         self.code_edit.set_completion(translations, SCRIPT, engine, members)
+        self.code_edit.set_link_handler(self._link_clicked)
         code_layout.addWidget(self.code_edit, 1)
         self.syntax_hint = SyntaxHint(translations, self.code_edit, BODY)
         code_layout.addWidget(self.syntax_hint)
@@ -163,6 +167,11 @@ class ScriptDialog(EditorDialog):
         self.param_editor = ParamEditor(translations, spec.params if spec else (),
                                         engine=engine, members=members)
         self.tabs.addTab(self.param_editor, translations["scripts.params"])
+        # The parameters are offered after ctx.args. in the code, also the
+        # ones added or renamed before saving
+        # (a method, not a lambda: Qt disconnects it when the dialog goes)
+        self.param_editor.changed.connect(self._update_args)
+        self._update_args()
         layout.addWidget(self.tabs, 1)
 
         self.error_label = WrappedLabel("")
@@ -175,6 +184,12 @@ class ScriptDialog(EditorDialog):
         self.setup_editor(translations, (spec.label if spec else "")
                           or translations["scripts.editor_tab"], save_check)
         buttons.insertWidget(0, self.pin_button)
+
+    def _link_clicked(self, link, position):
+        self.inspect_requested.emit(link, position)
+
+    def _update_args(self):
+        self.code_edit.set_args(self.param_editor.arg_types())
 
     def _update_seconds(self):
         mode = self.mode_combo.currentData()
@@ -258,6 +273,8 @@ class ScriptPanel(QGroupBox):
         self._engine = engine or (lambda: None)
         # The open script editor (one at a time, see _open_editor), or None
         self.editor = None
+        # Ctrl+clicks in its code waiting for the game: request id -> (name, position)
+        self._link_requests = {}
         # The game's classes for the completion, read through the worker
         self.members = MemberLookup(
             lambda: self._ensure_worker() if self._pid is not None else None, self)
@@ -556,6 +573,10 @@ class ScriptPanel(QGroupBox):
             lambda script_id, lookups: self._on_lookups_learned(worker, script_id, lookups))
         worker.worker_failed.connect(lambda message: self._on_worker_failed(worker, message))
         worker.finished.connect(lambda: self._on_worker_finished(worker))
+        worker.expression_inspected.connect(
+            lambda request, answer: self._on_link_inspected(worker, request, answer, None))
+        worker.expression_failed.connect(
+            lambda request, message: self._on_link_inspected(worker, request, None, message))
         self.inspections = Inspections(self.translations, worker, self.window(),
                                        time=lambda: datetime.now().strftime("%H:%M:%S"))
         self.inspections.address_requested.connect(self.address_requested.emit)
@@ -632,6 +653,7 @@ class ScriptPanel(QGroupBox):
         dialog.saved_id = saved_id
         dialog.script_id = script_id
         dialog.finished.connect(lambda result: self._editor_finished(dialog, result))
+        dialog.inspect_requested.connect(self._inspect_link)
         self.editor = dialog
         manager = find_dock_manager(self)
         if manager is not None:
@@ -641,6 +663,35 @@ class ScriptPanel(QGroupBox):
         else:
             dialog.show()
         return dialog
+
+    def _inspect_link(self, link, position):
+        """Ctrl+click on a lookup in the editor's code: evaluate it in the
+        game and open what it gives in the object inspector (see
+        code_completion.inspect_link)."""
+        editor = self.editor
+        if editor is None:
+            return
+        if self._pid is None or editor.process_id not in (None, self._process_id):
+            editor.code_edit.show_link_message(
+                self.translations["scripts.inspect_link_no_game"], position)
+            return
+        request = self._ensure_worker().inspect_expression(link.expression)
+        self._link_requests[request] = (link.name, position)
+
+    def _on_link_inspected(self, worker, request, answer, message):
+        found = self._link_requests.pop(request, None)
+        if found is None or worker is not self._worker:
+            return
+        name, position = found
+        target = (answer or {}).get("target")
+        if target and self.inspections is not None:
+            self.inspections.inspect(target, name=name)
+            return
+        if message is None:
+            message = self.translations["scripts.inspect_link_no_object"].format(
+                name=name, value=(answer or {}).get("text", ""))
+        if self.editor is not None:
+            self.editor.code_edit.show_link_message(message, position)
 
     def _show_editor(self, editor, dock=None):
         manager = find_dock_manager(self)

@@ -3378,6 +3378,16 @@ def test_class_members_for_the_completion(tmp_path, qt_app):
         assert statics["Game.Combat.Instances"] == "System.Int32"
         assert not any(name.startswith(("System.", "UnityEngine.")) for name in statics)
 
+        # The static methods ctx.call calls: the game's, with their return types
+        names.clear()
+        worker.static_method_names()
+        _wait_for(qt_app, lambda: names or failed)
+        assert not failed
+        methods = {name: (params, returns) for name, params, returns in names[0]}
+        assert methods["Game.Combat:get_Count"] == ("", "System.Int32")
+        assert "Game.Combat:RollDamage" not in methods  # an instance method
+        assert not any(name.startswith(("System.", "UnityEngine.")) for name in methods)
+
         # What a tooltip shows of a class: its base classes, no object count
         infos = []
         worker.info_read.connect(lambda _request, answer: infos.append(answer))

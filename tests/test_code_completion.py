@@ -942,3 +942,296 @@ def test_cached_unreal_methods_without_names_still_load():
     # A new method hook's ctx.args from that signature
     assert code_completion.method_parameters(after.display_signature) == (
         "Hero", {"NewName": "FString", "bLoud": "bool"})
+
+
+# --- ctx.call ---------------------------------------------------------------------------
+
+_STATIC_METHODS = [
+    ["Game.Combat:RollDamage", "System.Int32 min, System.Int32 max", "System.Single"],
+    ["Game.Combat:RollDamage", "System.Int32 max", "System.Single"],
+    ["Game.Combat:get_Count", "", "System.Int32"],
+    ["GameState:GetPlayer", "", "CharacterStats"],
+]
+
+
+class _CallLookup(_StaticLookup):
+    """Static methods besides class names, static fields and _MEMBERS."""
+
+    def static_methods(self):
+        return _STATIC_METHODS
+
+
+def test_static_methods_inside_ctx_call():
+    scope = code_completion.Scope(_CallLookup())
+    prefix, names = _scoped('ctx.call("roll', scope, SCRIPT, "mono")
+    # One entry per overload; matched anywhere in the name
+    assert prefix == "roll" and names == ["Game.Combat:RollDamage"] * 2
+    _prefix, entries = completions('ctx.call("Game.', 'ctx.call("Game.', 0, SCRIPT, "unreal",
+                                   scope)
+    assert [entry.label for entry in entries][:2] == [
+        "Game.Combat:get_Count()", "Game.Combat:RollDamage(System.Int32 min, System.Int32 max)"]
+    assert code_completion.description(entries[0], load_translations("de")) == \
+        "Statische Methode → System.Int32"
+    assert "GameState:GetPlayer" in _scoped("ctx.call('", scope, SCRIPT, "il2cpp")[1]
+    # Also in a method hook; not in a native game, not after the method's name
+    assert _scoped('ctx.call("GetP', scope)[1] == ["GameState:GetPlayer"]
+    assert _scoped('ctx.call("', scope, SCRIPT, NATIVE)[1] == []
+    assert "ctx" in _scoped('ctx.call("Game.Combat:get_Count", ', scope, SCRIPT)[1]
+
+
+def test_what_ctx_call_returns_and_its_signature():
+    scope = code_completion.Scope(_CallLookup())
+    # The return type comes from the class's members (as ctx.static's field type)
+    assert _scoped('ctx.call("CharacterStats:GetHealth").', scope, SCRIPT)[1][0] == "m_current"
+    assert _scoped('const h = ctx.call("CharacterStats.GetHealth ()");\nh.', scope,
+                   SCRIPT)[1][0] == "m_current"
+    assert _scoped('ctx.call("CharacterStats:Nope").', scope, SCRIPT)[1] == []
+    # The arguments after the name: the method's parameters, per overload
+    assert _signature('ctx.call("Game.Combat:RollDamage", 1, ', scope) == ([
+        ("ctx.call", ('"Game.Combat:RollDamage"', "System.Int32 min", "System.Int32 max"),
+         "System.Single"),
+        ("ctx.call", ('"Game.Combat:RollDamage"', "System.Int32 max"), "System.Single")], 2)
+    # A dot or a parameter list in the name, other case: the same method
+    assert _signature('ctx.call("game.combat.rolldamage (int,int)", ', scope)[0][0][2] == \
+        "System.Single"
+    # The name itself, or an unknown method: ctx.call's own signature
+    assert _signature('ctx.call("Game.', scope)[0][0][0] == "call"
+    assert _signature('ctx.call("Nowhere:Thing", ', scope)[0][0][0] == "call"
+
+
+def test_the_tooltip_of_a_method_in_ctx_call():
+    translations = load_translations("en")
+    scope = code_completion.Scope(_CallLookup())
+    line = 'ctx.call("GameState:GetPlayer");'
+    assert code_completion.string_at(line, line.index("Get")) == ("call", "GameState:GetPlayer")
+    assert code_completion.tooltip("call", "Game.Combat:RollDamage", scope, translations,
+                                   "mono") == (
+        "Game.Combat:RollDamage(System.Int32 min, System.Int32 max) → System.Single\n"
+        "Game.Combat:RollDamage(System.Int32 max) → System.Single")
+    assert code_completion.tooltip("call", "Game.Combat:Nope", scope, translations,
+                                   "mono") == "The game has no static method Game.Combat:Nope"
+    assert code_completion.tooltip("call", "GameState:GetPlayer", scope, translations,
+                                   NATIVE) is None
+    # Without a game nothing is known: no tooltip; while reading it says so
+    assert code_completion.tooltip("call", "A:B", code_completion.Scope(), translations) is None
+    reading = code_completion.Scope(_NameLookup(code_completion.PENDING))
+    reading.lookup.static_methods = lambda: code_completion.PENDING
+    assert code_completion.tooltip("call", "A:B", reading, translations) == \
+        "Reading from the game …"
+
+
+def test_choosing_a_static_method_goes_on_to_its_arguments(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtTest import QTest  # pylint: disable=import-error,no-name-in-module
+
+    editor = _editor_at_end("", engine="mono")
+    editor.set_completion(load_translations("en"), SCRIPT, "mono", _CallLookup())
+    _typed(editor, 'ctx.call("Roll')
+    assert editor.completion_popup.current_entry().name == "Game.Combat:RollDamage"
+    QTest.keyClick(editor, Qt.Key.Key_Return)
+    assert editor.toPlainText() == 'ctx.call("Game.Combat:RollDamage", '
+    assert editor.signature_hint.isVisible()
+    # Without parameters only the string is closed
+    editor.setPlainText("")
+    _typed(editor, 'ctx.call("get_C')
+    QTest.keyClick(editor, Qt.Key.Key_Return)
+    assert editor.toPlainText() == 'ctx.call("Game.Combat:get_Count"'
+    editor.close()
+
+
+def test_the_member_lookup_reads_the_static_methods_once(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PySide6.QtCore import QObject, Signal  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.ui.widgets.member_lookup import MemberLookup
+
+    class Worker(QObject):
+        members_read = members_failed = Signal(int, object)
+        names_read = Signal(int, object)
+        names_failed = Signal(int, str)
+        info_read = statics_read = Signal(int, object)
+        info_failed = statics_failed = Signal(int, str)
+        asked = 0
+
+        def static_method_names(self):
+            self.asked += 1
+            return 5
+
+    worker = Worker()
+    lookup = MemberLookup(lambda: worker)
+    assert lookup.static_methods() is code_completion.PENDING
+    assert lookup.static_methods() is code_completion.PENDING and worker.asked == 1
+    worker.names_read.emit(5, _STATIC_METHODS)
+    assert lookup.static_methods() == _STATIC_METHODS and worker.asked == 1
+    assert MemberLookup(lambda: None).static_methods() is None  # no game
+
+
+def test_a_scripts_parameters_after_ctx_args(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from grembyte.features.scripts import ScriptParam, ScriptSpec
+    from grembyte.ui.widgets.scripts import ScriptDialog
+
+    spec = ScriptSpec("return 1;", "manual", 0.0, True, "Give item", (
+        ScriptParam("item", "Item", "choice", "", "return [1];"),
+        ScriptParam("count", "Count", "number", "5"),
+        ScriptParam("notify", "Note it", "bool", "true")))
+    dialog = ScriptDialog(load_translations("en"), spec=spec, engine="mono")
+    editor = dialog.code_edit
+
+    def offered(source):
+        _prefix, entries = completions(source, source.split("\n")[-1], 0, SCRIPT, "mono",
+                                      editor._scope)  # pylint: disable=protected-access
+        return [(entry.name, dict(entry.values).get("type")) for entry in entries]
+
+    assert offered("ctx.args.") == [("item", "choice"), ("count", "number"),
+                                    ("notify", "boolean")]
+    # A number parameter is a JavaScript number, a text one a string
+    assert "toFixed" in [name for name, _type in offered("ctx.args.count.")]
+    # Added and renamed in the table before saving: offered at once
+    dialog.param_editor.btn_add.click()
+    dialog.param_editor.table.item(0, 0).setText("itemName")
+    assert [name for name, _type in offered("ctx.args.")] == [
+        "itemName", "count", "notify", "param1"]
+    dialog.param_editor.table.selectRow(3)
+    dialog.param_editor.btn_remove.click()
+    assert "param1" not in [name for name, _type in offered("ctx.args.")]
+    dialog.mark_saved()
+    dialog.close()
+    dialog.deleteLater()
+
+
+# --- Ctrl+click -------------------------------------------------------------------------
+
+_LINK_SOURCE = """\
+const health = ctx.find("Health", "Companion_Eder(Clone)_0");
+const stats = health.m_stats;
+const first = ctx.static("GameState.s_instance").Party[0].field("m_name");
+let count = 1;
+count = 2;
+const total = health.GetHealth();
+const amount = ctx.args.amount;
+for (const item of health.items) { item; }
+// ctx.find("InComment")
+"""
+
+
+def _link(line_number, text, token="text", engine="mono", occurrence=0):
+    line = _LINK_SOURCE.split("\n")[line_number]
+    column = line.index(text)
+    for _ in range(occurrence):
+        column = line.index(text, column + 1)
+    source = "\n".join(_LINK_SOURCE.split("\n")[:line_number + 1])
+    return code_completion.inspect_link(line, column, token, source, engine)
+
+
+def test_the_lookups_ctrl_click_inspects():
+    # The strings of ctx.find: the class or the object's name, the whole call evaluated
+    link = _link(0, "Health", "string")
+    assert link.expression == 'ctx.find("Health", "Companion_Eder(Clone)_0")'
+    assert link.name == "Companion_Eder(Clone)_0" and (link.start, link.end) == (24, 32)
+    assert _link(0, "Companion", "string").start == 34
+    # A variable: its lookup, with the variables it uses put in
+    assert _link(0, "health").expression == link.expression
+    stats = _link(1, "stats")
+    assert stats.expression == '(ctx.find("Health", "Companion_Eder(Clone)_0")).m_stats'
+    assert stats.name == "stats" and (stats.start, stats.end) == (6, 11)
+    assert _link(1, "health").name == "health"  # used, not declared, on this line
+    first = _link(2, "first")
+    assert first.expression == 'ctx.static("GameState.s_instance").Party[0].field("m_name")'
+    # ctx.static is for Unity games; nothing in games without an adapter
+    assert _link(2, "first", engine="unreal") is None
+    assert _link(0, "Health", "string", engine=NATIVE) is None
+    # Not: assigned twice, a method call, ctx.args, a loop's variable, a member, a comment
+    assert _link(4, "count") is None
+    assert _link(5, "total") is None
+    assert _link(6, "amount") is None
+    assert _link(7, "item", occurrence=1) is None
+    assert _link(1, "m_stats") is None
+    assert _link(8, "InComment", "comment") is None
+
+
+def test_ctrl_shows_links_and_ctrl_click_opens_them(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from PySide6.QtCore import QPoint, Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtTest import QTest  # pylint: disable=import-error,no-name-in-module
+
+    editor = _editor_at_end(_LINK_SOURCE, engine="mono")
+    editor.resize(900, 400)
+    editor.moveCursor(editor.textCursor().MoveOperation.Start)  # every line in view
+    clicked = []
+    editor.set_link_handler(lambda link, position: clicked.append(link))
+    block = editor.document().findBlockByNumber(1)
+    cursor = editor.textCursor()
+    cursor.setPosition(block.position() + 8)  # in "stats"
+    point = editor.cursorRect(cursor).center()
+    assert editor.link_at(point)[1].name == "stats"
+    # Ctrl held: underlined in the link colour, a pointing hand
+    editor._update_link(point, held=True)
+    [selection] = editor.extraSelections()
+    assert selection.format.fontUnderline() and selection.cursor.selectedText() == "stats"
+    assert editor.viewport().cursor().shape() == Qt.CursorShape.PointingHandCursor
+    QTest.keyRelease(editor, Qt.Key.Key_Control)
+    assert editor.extraSelections() == [] and editor._link is None
+    # A plain click moves the cursor; Ctrl+click calls the handler and keeps it
+    QTest.mouseClick(editor.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                     point)
+    assert clicked == []
+    before = editor.textCursor().position()
+    QTest.mouseClick(editor.viewport(), Qt.MouseButton.LeftButton,
+                     Qt.KeyboardModifier.ControlModifier, point)
+    assert [link.name for link in clicked] == ["stats"]
+    assert editor.textCursor().position() == before
+    # Without a handler nothing is a link
+    editor.set_link_handler(None)
+    assert editor.link_at(point) is None
+    assert editor.link_at(QPoint(5000, 5)) is None
+    editor.close()
+
+
+def test_ctrl_click_in_the_script_editor_opens_the_inspector(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from PySide6.QtCore import QPoint  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.features.scripts import ScriptSpec
+    from grembyte.ui.widgets import scripts
+    from tests.test_scripts import _FakeScriptWorker
+
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    panel = scripts.ScriptPanel(load_translations("en"))
+    messages = []
+    try:
+        panel.set_process(4242)
+        script_id = panel.add_script(ScriptSpec(_LINK_SOURCE, label="Eder"))
+        editor = panel._open_editor(script_id)
+        monkeypatch.setattr(editor.code_edit, "show_link_message",
+                            lambda text, _position: messages.append(text))
+        inspected = []
+        monkeypatch.setattr(panel.inspections, "inspect",
+                            lambda target, name="": inspected.append((target, name)))
+        worker = panel._worker
+
+        link = _link(1, "stats")
+        editor.code_edit._link_handler(link, QPoint(1, 1))
+        assert worker.requests[-1] == ("inspect_expression", link.expression)
+        request = len(worker.requests)
+        worker.expression_inspected.emit(request, {"text": "CharacterStats@0x10",
+                                                   "target": {"address": "0x10"}})
+        assert inspected == [({"address": "0x10"}, "stats")] and messages == []
+        # Found nothing, or a failure: said where the click was
+        editor.code_edit._link_handler(link, QPoint(1, 1))
+        worker.expression_inspected.emit(len(worker.requests), {"text": "null"})
+        assert messages == ["stats is no object of the game now: null"]
+        editor.code_edit._link_handler(link, QPoint(1, 1))
+        worker.expression_failed.emit(len(worker.requests), "no class Health")
+        assert messages[-1] == "no class Health"
+        # The game gone: nothing is asked
+        count = len(worker.requests)
+        panel.set_process(None)
+        editor.code_edit._link_handler(link, QPoint(1, 1))
+        assert len(worker.requests) == count and "attached" in messages[-1]
+        editor.mark_saved()
+        editor.close()
+    finally:
+        panel.shutdown()
+        panel.deleteLater()

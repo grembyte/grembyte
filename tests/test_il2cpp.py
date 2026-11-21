@@ -746,6 +746,14 @@ def test_class_members_for_the_completion(tmp_path, qt_app):
         _wait_for(qt_app, lambda: names or failed)
         assert not failed, failed
         assert "Game.Hero.Instances" in dict(names[0])
+
+        # The static methods ctx.call calls
+        names.clear()
+        worker.static_method_names()
+        _wait_for(qt_app, lambda: names or failed)
+        assert not failed, failed
+        methods = {name: returns for name, _params, returns in names[0]}
+        assert "Game.Hero:get_Count" in methods
     finally:
         worker.requestInterruption()
         worker.wait(5000)

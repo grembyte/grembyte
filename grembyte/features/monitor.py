@@ -135,6 +135,51 @@ def static_field_names(api):
     return result
 
 
+def static_method_names(api):
+    """``[[name, parameters, return type], ...]`` of the static methods
+    ctx.call calls, for the completion of code: ``Namespace.Class:Method``
+    (Unreal: ``Class:Function``) of the methods the game's assemblies declare
+    (not the framework's), without compiler-made, nested and generic
+    classes; the parameters as ``int amount, single scale`` (types only
+    where the names are not known). ``api`` is the agent's
+    ``exports_sync``. The methods come from the method catalog's cache, else
+    from the game, and are cached then (see grembyte.features.catalog_cache).
+    Empty in games without an engine adapter."""
+    # pylint: disable=import-outside-toplevel
+    from grembyte.engines.registry import engine_by_id
+    from grembyte.features.catalog import catalog_methods, split_type_arguments
+
+    sources = api.static_method_sources()
+    engine = engine_by_id(sources["engine"]) if sources["engine"] else None
+    if engine is None:
+        return []
+    found = sources["assemblies"]
+    mvids = {assembly["name"]: assembly.get("mvid") for assembly in found}
+    result, seen = [], set()
+    for name in chosen_assemblies([assembly["name"] for assembly in found], (), engine):
+        try:
+            classes, _cached = catalog_cache.read_classes(
+                engine.id, name, mvids.get(name),
+                lambda assembly=name: api.assembly_classes(assembly))
+        except frida.RPCException as error:
+            logs.log.info("static methods of %s not read: %s", name, error)
+            continue
+        for method in catalog_methods(name, classes, engine.id):
+            if (not method.static or any(mark in method.class_name for mark in "/<`")
+                    or method.name.startswith(("<", ".", "op_"))):
+                continue
+            types = split_type_arguments(method.parameters.strip().removeprefix("(")
+                                         .removesuffix(")"))
+            names = method.argument_names
+            params = ", ".join(f"{kind} {names[index]}" if index < len(names) else kind
+                               for index, kind in enumerate(types))
+            row = (f"{method.class_name}:{method.name}", params, method.return_type)
+            if row not in seen:
+                seen.add(row)
+                result.append(list(row))
+    return result
+
+
 class MethodMonitorWorker(QThread):
     """Keep a Frida session open and log the calls of monitored C# methods.
 

@@ -342,6 +342,8 @@ class _FakeScriptWorker:
             references_failed = Signal(int, str)
             statics_read = Signal(int, object)
             statics_failed = Signal(int, str)
+            expression_inspected = Signal(int, object)
+            expression_failed = Signal(int, str)
             finished = Signal()
 
         self.signals = Signals()
@@ -374,6 +376,8 @@ class _FakeScriptWorker:
         self.references_failed = self.signals.references_failed
         self.statics_read = self.signals.statics_read
         self.statics_failed = self.signals.statics_failed
+        self.expression_inspected = self.signals.expression_inspected
+        self.expression_failed = self.signals.expression_failed
         self.finished = self.signals.finished
         self.requests = []
 
@@ -414,6 +418,10 @@ class _FakeScriptWorker:
 
     def inspect(self, target):
         self.requests.append(("inspect", target))
+        return len(self.requests)
+
+    def inspect_expression(self, expression):
+        self.requests.append(("inspect_expression", expression))
         return len(self.requests)
 
     def gas_attributes(self):

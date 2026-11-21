@@ -253,7 +253,11 @@ fields and method results. Class names inside `ctx.find("…")` and `ctx.forEach
 (`classNames`: Unreal's classes with live objects, Unity's classes deriving from
 `UnityEngine.Object`), the static fields of the game's assemblies inside `ctx.static("…")`
 (Unity; shared with the field catalog's cache) and the members of a static field's type
-after it. Tooltips over these strings (`classInfo`): the class, its base classes and, in
+after it; the static methods inside `ctx.call("…")` (Unity and Unreal; shared with the method
+catalog's cache), with their overloads as signature and tooltip and their result's members
+after it; a script's parameters after `ctx.args.`. Ctrl+click on a lookup in a script's code
+(`ctx.find`/`ctx.static` strings, variables holding a lookup without method calls) opens the
+object in the inspector (`inspectExpression`); open: the method hook editor. Tooltips over these strings (`classInfo`): the class, its base classes and, in
 Unreal games, its live objects, or that there is no such class; a static field's type and
 value now. Signature while typing (overloads, the current parameter in bold), the script's
 own variables with their type (also as a tooltip), JavaScript strings, numbers and Unreal

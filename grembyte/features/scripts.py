@@ -113,7 +113,8 @@ from grembyte.core import hotkeys, logs, messages, settings
 from grembyte.core import sessions
 from grembyte.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
 from grembyte.features import catalog_cache
-from grembyte.features.monitor import build_agent_source, static_field_names
+from grembyte.features.monitor import (
+    build_agent_source, static_field_names, static_method_names)
 
 
 MODES = ("once", "repeat", "manual")
@@ -360,6 +361,9 @@ class ScriptWorker(QThread):
     inspected = Signal(int, object)
     inspect_failed = Signal(int, str)
     evaluated = Signal(int, object)
+    # What an expression of the code gives (Ctrl+click, see inspect_expression)
+    expression_inspected = Signal(int, object)
+    expression_failed = Signal(int, str)
     evaluate_failed = Signal(int, str)
     methods_listed = Signal(int, object)
     methods_failed = Signal(int, str)
@@ -479,12 +483,29 @@ class ScriptWorker(QThread):
         self._commands.put(("class_info", request_id, class_name))
         return request_id
 
+    def inspect_expression(self, expression):
+        """Evaluate a lookup of a script's code on the game thread, e.g.
+        ``ctx.find("Health", "Eder").m_stats`` (Ctrl+click in the editor, see
+        code_completion.inspect_link); expect expression_inspected with
+        ``{text, target?}`` as a script's result, or expression_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("inspect_expression", request_id, expression))
+        return request_id
+
     def static_field_names(self):
         """Read the static fields ctx.static can read (see
         grembyte.features.monitor.static_field_names); expect names_read or
         names_failed."""
         request_id = next(self._requests)
         self._commands.put(("static_names", request_id, None))
+        return request_id
+
+    def static_method_names(self):
+        """Read the static methods ctx.call can call, for the completion of
+        code (see grembyte.features.monitor.static_method_names); expect
+        names_read or names_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("method_names", request_id, None))
         return request_id
 
     def describe_method(self, method):
@@ -650,6 +671,11 @@ class ScriptWorker(QThread):
                     self.names_read.emit(script_id, static_field_names(api))
                 except (frida.RPCException, OSError) as error:
                     self.names_failed.emit(script_id, messages.describe(error))
+            elif action == "method_names":
+                try:
+                    self.names_read.emit(script_id, static_method_names(api))
+                except (frida.RPCException, OSError) as error:
+                    self.names_failed.emit(script_id, messages.describe(error))
             elif action in self._REQUESTS:
                 self._answer(api, action, script_id, argument)
                 return
@@ -664,6 +690,8 @@ class ScriptWorker(QThread):
     _REQUESTS = {
         "inspect": ("inspect", "inspected", "inspect_failed"),
         "evaluate": ("evaluate", "evaluated", "evaluate_failed"),
+        "inspect_expression": ("inspect_expression", "expression_inspected",
+                               "expression_failed"),
         "methods": ("list_methods", "methods_listed", "methods_failed"),
         "members": ("class_members", "members_read", "members_failed"),
         "class_names": ("class_names", "names_read", "names_failed"),

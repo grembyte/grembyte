@@ -1465,6 +1465,16 @@ def test_class_members_follow_unreal_types(tmp_path, qt_app):
         assert {"BP_Hero_C", "PlayerController"} <= set(names[0])
         assert names[0] == sorted(names[0])
 
+        # The static UFunctions ctx.call calls, with their parameters' names
+        names.clear()
+        worker.static_method_names()
+        _wait_for(qt_app, lambda: names or failed)
+        assert not failed
+        methods = {name: (params, returns) for name, params, returns in names[0]}
+        assert methods["Hero:AddGold"][1] == "int32"
+        assert methods["Hero:AddGold"][0].startswith("int32 ")
+        assert "Hero:Tick" not in methods and "Hero:Rename" not in methods  # instance ones
+
         # What a tooltip shows: base classes and the live objects with subclasses
         infos = []
         worker.info_read.connect(lambda _request, answer: infos.append(answer))
@@ -1563,6 +1573,21 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app, d
         assert inspected[0]["instanceName"] == "BP_Hero_C_0"
         assert [(field["name"], field["value"]["text"]) for field in inspected[0]["fields"]
                 if field["name"] == "Health"] == [("Health", "75")]
+
+        # Ctrl+click in the editor: a lookup evaluated on the game thread, an
+        # object with a target as a script's result, a number without one
+        looked_up = []
+        worker.expression_inspected.connect(lambda _request, answer: looked_up.append(answer))
+        worker.expression_failed.connect(lambda _request, message: looked_up.append(message))
+        for expression in ('ctx.find("BP_Hero_C")', '(ctx.find("BP_Hero_C")).Health',
+                           'ctx.find("BP_Hero_C", "Nobody")', 'ctx.find("ANothing")'):
+            worker.inspect_expression(expression)
+        _wait_for(qt_app, lambda: target.send("tick", 0) and len(looked_up) == 4)
+        hero_found, health, nobody, no_class = looked_up
+        assert hero_found["target"] == run["target"]
+        assert health == {"text": "75"}
+        assert nobody == {"text": "null"}
+        assert "ANothing" in no_class  # the game's message, shown at the click
 
         # TArray, TMap and TSet open in the inspector: an entry per row, a
         # TMap's named by its key; numbers have an address for the address list.

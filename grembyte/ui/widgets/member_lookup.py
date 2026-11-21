@@ -38,8 +38,9 @@ class MemberLookup(QObject):
         # request id -> type name
         self._requests = {}
         # Lists read once ("classes": the class names ctx.find finds,
-        # "statics": [name, type] of the fields ctx.static reads): kind ->
-        # list or PENDING, and request id -> kind
+        # "statics": [name, type] of the fields ctx.static reads, "methods":
+        # [name, parameters, return type] of the methods ctx.call calls):
+        # kind -> list or PENDING, and request id -> kind
         self._lists = {}
         self._list_requests = {}
         # What tooltips show, read again after a while (values and objects
@@ -100,6 +101,12 @@ class MemberLookup(QObject):
         (``Namespace.Class.Field``), PENDING or None (see class_names)."""
         return self._list("statics")
 
+    def static_methods(self):
+        """``[name, parameters, return type]`` of the static methods ctx.call
+        can call (``Namespace.Class:Method``), PENDING or None (see
+        class_names)."""
+        return self._list("methods")
+
     def _list(self, kind):
         if kind in self._lists:
             return self._lists[kind]
@@ -107,7 +114,8 @@ class MemberLookup(QObject):
         if worker is None:
             return None
         self._lists[kind] = PENDING
-        ask = worker.class_names if kind == "classes" else worker.static_field_names
+        ask = getattr(worker, {"classes": "class_names", "statics": "static_field_names",
+                               "methods": "static_method_names"}[kind])
         self._list_requests[ask()] = kind
         return PENDING
 
