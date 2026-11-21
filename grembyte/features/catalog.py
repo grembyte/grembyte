@@ -153,12 +153,12 @@ def catalog_methods(assembly, classes, engine="mono"):
     for class_name, methods in classes:
         for entry in methods:
             name, parameters, return_type, static, token, signature, *metadata = entry
-            # Mono and IL2CPP add parameter names after the trace flags; older
-            # cache entries and other engines have no such field.
+            # The adapters add parameter names after the trace flags; older
+            # cache entries have no such field (Unreal's until the catalog is
+            # read again: the cache's format stayed the same).
             argument_names = (
                 tuple(metadata[-1])
-                if engine in ("mono", "il2cpp") and len(metadata) >= 3
-                and isinstance(metadata[-1], list) else ()
+                if len(metadata) >= 3 and isinstance(metadata[-1], list) else ()
             )
             result.append(CatalogMethod(
                 assembly, class_name, name, parameters, return_type, bool(static), token,
