@@ -1752,6 +1752,7 @@
   "error.monitor.is_playing_unreal_only": "ctx.isPlaying() gibt es nur in Unreal-Spielen",
   "error.monitor.struct_replace": "Ein Struct ({type}) kann nicht ersetzt werden",
   "error.monitor.argument_type": "Das Argument {name} muss ein {type} sein",
+  "error.monitor.argument_mismatch": "Das Argument {name} erwartet {type}, nicht {value}",
   "error.monitor.not_qualified": "„{name}“ ist kein Klasse.Methode oder Klasse:Methode",
   "error.monitor.find_name": "ctx.find: Der Objektname muss ein String sein",
   "error.monitor.for_each_function": "ctx.forEach: Das zweite Argument muss eine Funktion sein",

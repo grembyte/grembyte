@@ -39,6 +39,8 @@ Objects of the game – from `ctx.find`, `ctx.forEach`, `ctx.static` and method 
 | Unity: a component of a GameObject (or of a component's GameObject) by class name, or `null` | `attacker.component("CharacterStats")` |
 | Call a method by name, read a field or a property by name | `player.call("Heal", 10)`, `player.field("Gold")`, `player.get("IsDead")` |
 
+Arguments must suit their parameters: a `bool` takes `true` or `false`, numbers take numbers, strings (`FString`, `FName`, `FText`, `string`) a text or `null`, objects a wrapper or `null`. Anything else stops the call before it reaches the game, e.g. `argument SlotIndex expects int32, not true` for `GetUseItem_SpecifiedLine(true, 0)` instead of `(0, true)`. The parameters' order and types are in the catalog and in **Call method**.
+
 The wrapper's own names come first: `name`, `className`, `address`, `field`, `get`, `call` and `component`. If the game has a field or method of one of these names, use `.field("name")`, `.get("name")` or `.call("name", …)`.
 
 A wrapper returned from the script is shown as the result and can be opened in the object inspector.
