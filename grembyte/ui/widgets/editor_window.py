@@ -3,8 +3,8 @@
 The script editor and the method hook editor were modal dialogs: while one
 was open, the object inspector, the notes and the object browser could not
 be used. ``EditorDialog`` is a QDialog that is shown with ``show()`` (not
-``exec()``) and docks in the main window with its ``pin_button`` (see
-grembyte.ui.widgets.docking). It knows whether it has changes that are not
+``exec()``) and moves to the main window's Editor tab with its
+``pin_button`` (``EDITOR`` in grembyte.ui.widgets.docking). It knows whether it has changes that are not
 saved – a snapshot of its input fields, taken when it opens and when it is
 saved – and asks before closing then (Cancel, Escape, its tab's close
 button, the window's).
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 )
 
 from grembyte.ui.widgets.docking import TAB_TITLE, PinButton, close_dialog
+from grembyte.ui.widgets.icons import material_icon
 
 
 def input_snapshot(widget):
@@ -51,6 +52,16 @@ def input_snapshot(widget):
     return tuple(values)
 
 
+def add_editor_place_actions(menu, translations, edit, enabled=True):
+    """Add "Edit in a window" and "Edit in the Editor tab" to ``menu``:
+    ``edit(dock)`` opens the editor there this once (see DockManager.place);
+    the plain Edit opens it where the pin button put the last one."""
+    for icon, key, dock in (("call_made", "editor.open_window", False),
+                            ("push_pin", "editor.open_page", True)):
+        menu.addAction(material_icon(icon), translations[key],
+                       lambda *_checked, dock=dock: edit(dock)).setEnabled(enabled)
+
+
 class EditorDialog(QDialog):
     """A dialog that edits a script or a hook and stays open beside the rest."""
 
@@ -68,7 +79,8 @@ class EditorDialog(QDialog):
         a short title for its tab, and take the snapshot it is compared to."""
         self._translations = translations
         self.save_check = save_check
-        self.pin_button = PinButton(translations)
+        # It moves the editor to the main window's Editor tab (docking.EDITOR)
+        self.pin_button = PinButton(translations, "editor.pin_tooltip")
         self.setProperty(TAB_TITLE, tab_title)
         self.mark_saved()
 

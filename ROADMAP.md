@@ -175,8 +175,10 @@ JavaScript:
 Done (see [docking windows](docs/guide/tools.md#docking-windows)): two docking areas in the
 main window, right and bottom, with the dialogs as tabs; pointer scan, object inspector,
 object browser, write watch, memory viewer, GAS attributes, the traces, the monitors and the
-log can be docked. Open: the catalog and the code explorer (large windows with their own
-navigation; maybe at the bottom), several memory viewers side by side.
+log can be docked. The script and method hook editors open in an **Editor** tab beside the
+tracked addresses, hooks and scripts, with the window's width, while the tools stay docked at
+the side. Open: the catalog and the code explorer (large windows with their own navigation;
+maybe at the bottom), several memory viewers side by side.
 
 ### 10. Notes per game: follow-ups
 
@@ -263,26 +265,6 @@ parameters' names too (catalogs cached before have none until **Reload**).
   not followed; then nothing is offered, never something wrong.
 - Not planned: a language server (tsserver) with type declarations generated from the game.
   It would need Node and a bridge to the Qt editor, for many times the effort.
-
-### 14. Developer mode: a central code view
-
-The script editor and the method hook editor no longer block the rest: they open beside it
-and dock below the main window (`grembyte/ui/widgets/editor_window.py`), one script and one
-method hook at a time, and ask before discarding changes. A step further is a mode of the
-main window for writing code, next to the monitoring view it has now:
-
-- **Two views:** *Monitoring* as today (addresses, hooks, scripts as tables) and
-  *Development*: a list of the game's scripts and method hooks on the left, editor tabs in
-  the middle (several documents, marked when not saved, Ctrl+S, run), the log and results
-  below; the object inspector, the notes and the object browser dock beside it as they do now.
-- **Several open documents** need more than the one-at-a-time rule of the editors: which tab
-  a script opens in, what happens to open tabs when the game exits or another one is
-  attached, and which tabs are open again at the next start (per game).
-- **Creating hooks** from the catalog, a trace or the method monitor keeps the quick dialogs,
-  but they could create the hook paused, as a shell, and open it in the development view.
-- **Not in it:** the template editor, which is quick and needs little from elsewhere.
-- Builds on the editors as they are now: their form and code would move into pages both the
-  dialogs and the tabs use. About five to seven days.
 
 ### Recommendation
 
