@@ -815,6 +815,12 @@ class HookPanel(QGroupBox):
         self._update_debug_hooks()
         self._restore_saved_hooks()
 
+    def close_saved_editor(self):
+        """The game ended or another one was attached: close the method hook
+        editor if it holds nothing unsaved (see EditorDialog.close_if_saved)."""
+        if self.method_editor is not None:
+            self.method_editor.close_if_saved()
+
     def add_hook(self, spec, site, saved_id=None):
         """Install a hook described by ``spec`` in the current process.
 

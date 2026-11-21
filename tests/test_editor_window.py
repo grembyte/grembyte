@@ -180,3 +180,77 @@ def test_the_method_hook_editor_is_not_modal(qt_app, monkeypatch):
         assert "next time" in panel.status_label.text()
     finally:
         panel.deleteLater()
+
+
+def test_a_script_editor_without_changes_closes_with_the_game(qt_app, monkeypatch):
+    # pylint: disable=unused-argument,protected-access
+    stored = []
+    panel = _panel(monkeypatch, stored)
+    try:
+        script_id = panel.add_script(ScriptSpec("return 1;", label="One"))
+        asked = _answer(monkeypatch, "Cancel")
+        editor = panel._open_editor(script_id)
+        panel.set_process(None)
+        panel.close_saved_editor()  # the game ended: nothing to keep
+        assert asked == [] and not editor.isVisible() and panel.editor is None
+
+        # With changes: it stays open, without asking
+        panel.set_process(4242, process_id=1)
+        script_id = panel.add_script(ScriptSpec("return 1;", label="One"))
+        editor = panel._open_editor(script_id)
+        editor.code_edit.setPlainText("return 2;")
+        panel.set_process(None)
+        panel.close_saved_editor()
+        assert asked == [] and editor.isVisible() and panel.editor is editor
+        editor.mark_saved()
+        editor.close()
+    finally:
+        panel.shutdown()
+        panel.deleteLater()
+
+
+def test_a_method_hook_editor_without_changes_closes_with_the_game(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from grembyte.features.catalog import CatalogMethod
+    from grembyte.hooks.transforms import example_templates
+    from grembyte.ui.widgets.hooks import HookPanel
+
+    repository = SimpleNamespace(
+        list_hooks=lambda _process_id: [], list_method_hooks=lambda _process_id: [],
+        list_templates=lambda: [])
+    panel = HookPanel(load_translations("en"), repository=repository)
+    monkeypatch.setattr(panel, "templates", lambda: list(example_templates().values()))
+    panel._pid, panel._process_id = 4242, 1
+    method = CatalogMethod("Assembly-CSharp", "Game.Player", "Heal", "(single)", "System.Single",
+                           False, 0x06000001, "Game.Player:Heal (single)",
+                           argument_names=("amount",))
+    try:
+        asked = _answer(monkeypatch, "Cancel")
+        editor = panel.create_method_hook(method)
+        panel.close_saved_editor()
+        assert asked == [] and not editor.isVisible() and panel.method_editor is None
+
+        editor = panel.create_method_hook(method)
+        editor.label_input.setText("Changed")
+        panel.close_saved_editor()
+        assert asked == [] and editor.isVisible() and panel.method_editor is editor
+        editor.mark_saved()
+        editor.close()
+    finally:
+        panel.deleteLater()
+
+
+def test_the_main_window_closes_saved_editors_when_the_game_ends(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from grembyte.ui import main_window
+
+    window = main_window.MainWindow("en")
+    try:
+        closed = []
+        for panel in (window.script_panel, window.hook_panel):
+            monkeypatch.setattr(panel, "close_saved_editor",
+                                lambda p=panel: closed.append(p))
+        window._detach_process()
+        assert closed == [window.script_panel, window.hook_panel]
+    finally:
+        window.close()

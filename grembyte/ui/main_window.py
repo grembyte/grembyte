@@ -2284,6 +2284,13 @@ class MainWindow(QMainWindow):
                 self.translations["monitor.type_arguments_count"].format(
                     count=len(parameters), parameters=", ".join(parameters)))
 
+    def _close_saved_editors(self):
+        """The game ended or another one was attached: the script and method
+        hook editors close unless they hold changes not saved yet."""
+        for panel in (self.script_panel, self.hook_panel):
+            if panel is not None:
+                panel.close_saved_editor()
+
     def _close_process_tools(self):
         """Close the windows that only make sense with the game running (process
         gone or switched), docked or not: catalog, traces, monitors, object
@@ -2726,6 +2733,7 @@ class MainWindow(QMainWindow):
                 self._stop_write_monitor()
                 self._stop_freeze_worker()
                 self._close_process_tools()
+                self._close_saved_editors()
                 self._engine = None
                 self._switch_pointer_dialogs(dlg.selected_pid, process_id)
                 # Wine/Proton cannot take Frida; native processes prefer it.
@@ -2960,6 +2968,7 @@ class MainWindow(QMainWindow):
         if self.script_panel is not None:
             self.script_panel.set_process(None)
         self._close_process_tools()
+        self._close_saved_editors()
         self._release_cli_claim()
 
         self._current_pid = None

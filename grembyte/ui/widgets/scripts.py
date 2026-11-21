@@ -483,6 +483,12 @@ class ScriptPanel(QGroupBox):
         self._restore_saved_scripts()
         self._update_hotkeys()
 
+    def close_saved_editor(self):
+        """The game ended or another one was attached: close the script
+        editor if it holds nothing unsaved (see EditorDialog.close_if_saved)."""
+        if self.editor is not None:
+            self.editor.close_if_saved()
+
     def shutdown(self):
         """Stop the worker; the game keeps nothing of the scripts. The object
         inspectors opened from its results close: their objects are gone."""

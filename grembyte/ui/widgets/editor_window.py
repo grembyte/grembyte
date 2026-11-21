@@ -11,7 +11,9 @@ button, the window's).
 
 A subclass calls ``setup_editor`` once its fields are built and ``accept``
 when saving; ``save_check``, if given, may refuse that with a text shown in
-the editor (another game attached …), so nothing typed is lost.
+the editor (another game attached …), so nothing typed is lost. When the
+game ends or another one is attached, ``close_if_saved`` closes an editor
+without unsaved changes; one with changes stays open.
 """
 
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
@@ -26,7 +28,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QTableWidget,
 )
 
-from grembyte.ui.widgets.docking import TAB_TITLE, PinButton
+from grembyte.ui.widgets.docking import TAB_TITLE, PinButton, close_dialog
 
 
 def input_snapshot(widget):
@@ -98,6 +100,15 @@ class EditorDialog(QDialog):
             QMessageBox.StandardButton.Cancel)
         self._discard_confirmed = answer == QMessageBox.StandardButton.Discard
         return self._discard_confirmed
+
+    def close_if_saved(self):
+        """Close the editor when it holds nothing unsaved (the game ended or
+        another one was attached); returns whether it closed. One with changes
+        stays open, so nothing typed is lost."""
+        if self.is_dirty():
+            return False
+        close_dialog(self)
+        return True
 
     def accept(self):  # pylint: disable=missing-function-docstring
         self.mark_saved()
