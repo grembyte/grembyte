@@ -15,6 +15,15 @@ What was learned while building the features: how they work inside, what broke i
   `CONTEXT` in `pauseThreads`. That is fixed and checked in a 32-bit process. The hook
   engine only handles x64 code (`installSite`), so the watch and hooks take ptrace for 32-bit
   games; Mono features always go through the gadget.
+- **CModule names in 32-bit Windows code (2026-11-21):** TinyCC decorates a `stdcall` function
+  there: `watch_pauses` is `_watch_pauses@4` in the CModule's symbols, while `cdecl` ones
+  (`claim_resume`, `on_enter`) keep their names. The pause watchdog's thread function is
+  `stdcall` (`CreateThread` calls it so), so `startPauseWatch` threw "expected a pointer" and
+  every script run in Might & Magic X – Legacy failed while setting up the main-thread gate. It
+  looks the name up in both forms now and pauses without a watchdog if neither is there. A
+  test script that let the watchdog object be collected ended the game: the CModule was freed
+  while the thread ran in it; the cleanup callback now holds the CModule and disposes it only
+  once the thread has ended.
 - **Gadget through the Windows helper:** `grembyte/attach/inject/inject.c`, built
   with `build.sh` (MinGW or zig) as `grembyte-inject-x86_64.exe` or `-x86.exe` into
   `build/inject/` (not in git; `helper_path` runs `build.sh` once if they are missing), loads the gadget
