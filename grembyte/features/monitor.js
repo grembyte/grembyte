@@ -1058,6 +1058,16 @@ async function staticFieldSources() {
   return { engine: engine.id, assemblies: await engine.assemblies() };
 }
 
+async function staticMethodSources() {
+  // { engine, assemblies } for the completion of ctx.call: the loaded
+  // assemblies (Unreal: package groups, see the adapters' assemblies) whose
+  // static methods grembyte/features/monitor.py reads (assemblyClasses) or
+  // takes from the method catalog's cache; none in games without an adapter.
+  if (!engine.refresh() || !['mono', 'il2cpp', 'unreal'].includes(engine.id))
+    return { engine: null, assemblies: [] };
+  return { engine: engine.id, assemblies: await engine.assemblies() };
+}
+
 function classNames() {
   // The names of the classes ctx.find and ctx.forEach can find (see the
   // adapters' findableClasses), for the completion of code fields.
@@ -3006,6 +3016,16 @@ const scriptGas = {
   }
 };
 
+function inspectExpression(expression) {
+  // Ctrl+click in a script's code: what a lookup gives now (ctx.find(…),
+  // ctx.static(…) and fields read from them), as { text, target? } like a
+  // script's result, run on the game thread. The editor sends only
+  // expressions without calls of game methods (see code_completion.inspect_link).
+  const fn = compileScript(`return (${expression});`);
+  const ctx = scriptContext({ id: null, state: {}, runs: 0 }, [], {});
+  return onGameThread(() => scriptResult(fn(ctx)));
+}
+
 function scriptResult(value) {
   // What a script returned: { text, target? } (target: an object or struct
   // the inspector can open). Read on the game thread, where Unity may be
@@ -3052,6 +3072,9 @@ rpc.exports = {
   staticFieldSources,
   // The fields each class of an assembly declares, as the field catalog reads them
   assemblyFields: assembly => engine.fields(assembly),
+  staticMethodSources,
+  // The methods of each class of an assembly, as the method catalog reads them
+  assemblyClasses: assembly => engine.classes(assembly),
   describeMethod,
   callOn,
   addMethodHook,
@@ -3093,6 +3116,7 @@ rpc.exports = {
   reflectionBuild: () => (engine.refresh() && engine.id === 'unreal'
     ? engine.reflectionBuild() : null),
   useStoredOffsets: offsets => engine.id === 'unreal' && engine.useStoredOffsets(offsets),
+  inspectExpression,
   runScriptNow: (id, args) => runScript(requireScript(id), args === undefined ? null : args),
   scriptOptions,
   dispose() {

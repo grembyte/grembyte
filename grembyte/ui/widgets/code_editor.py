@@ -25,6 +25,8 @@ from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
     QStandardItem,
     QStandardItemModel,
     QSyntaxHighlighter,
+    QCursor,
+    QPalette,
     QTextCharFormat,
     QTextCursor,
 )
@@ -34,6 +36,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QHeaderView,
     QLabel,
     QPlainTextEdit,
+    QTextEdit,
     QToolTip,
     QTreeView,
     QWidget,
@@ -520,6 +523,10 @@ class CodeEditor(QPlainTextEdit):
         self.completion_popup = None
         self.signature_hint = None
         self._signature_waits = False  # the hint waits for the game's members
+        # Ctrl+click (see set_link_handler): handler(link, global position)
+        # and the code_completion.Link shown underlined while Ctrl is held
+        self._link_handler = None
+        self._link = None
         self.show_font_size(code_font_size())
 
     # ------------------------------------------------------------------
@@ -611,6 +618,12 @@ class CodeEditor(QPlainTextEdit):
             self.signature_hint = SignatureHint(self)
             self.cursorPositionChanged.connect(self._cursor_moved)
 
+    def set_args(self, args):
+        """Offer ``args`` (name -> type) after ``ctx.args.``: a script's
+        parameters, which change while the script is edited."""
+        if self._scope is not None:
+            self._scope.args = dict(args)
+
     def _members_changed(self):
         """The game answered: show what was waiting for it at the cursor, or
         under the mouse."""
@@ -622,6 +635,8 @@ class CodeEditor(QPlainTextEdit):
             self.show_string_tooltip(*self._tooltip_at)
 
     def viewportEvent(self, event):  # pylint: disable=invalid-name
+        if event.type() == QEvent.Type.Leave:
+            self._show_link(None)
         if event.type() == QEvent.Type.ToolTip and self._completion is not None:
             self.show_string_tooltip(event.pos(), event.globalPos())
             return True
@@ -641,18 +656,27 @@ class CodeEditor(QPlainTextEdit):
         QToolTip.showText(global_position, text, self.viewport())
         return text
 
-    def _string_tooltip(self, position):
+    def _code_at(self, position):
+        """``(block, column, token)`` of the character at ``position`` in the
+        viewport (token: the highlighter's, "string", "text" …), or None past
+        the end of a line."""
         cursor = self.cursorForPosition(position)
         block = cursor.block()
         column = cursor.positionInBlock()
         line = block.text()
-        # Only over the string itself, not past the end of the line
         if column >= len(line) or not self.cursorRect(cursor).adjusted(-8, -2, 8, 2).contains(
                 position):
             return None
         previous = block.previous()
         state = max(previous.userState(), 0) if previous.isValid() else 0
-        token = highlight_javascript_tokens(line, state)[column]
+        return block, column, highlight_javascript_tokens(line, state)[column]
+
+    def _string_tooltip(self, position):
+        found = self._code_at(position)
+        if found is None:
+            return None  # only over the string itself, not past the end of the line
+        block, column, token = found
+        line = block.text()
         translations, _context, engine = self._completion
         self._scope.pending = False
         if token == "string":
@@ -720,7 +744,15 @@ class CodeEditor(QPlainTextEdit):
         if argument is not None:
             # A class name: the string is closed after it unless it already is
             quote = argument[1]
-            cursor.insertText(entry.name + ("" if following == quote else quote))
+            cursor.insertText(entry.name)
+            if following == quote:
+                cursor.movePosition(QTextCursor.MoveOperation.Right)
+            else:
+                cursor.insertText(quote)
+            if argument[2] == "call" and entry.params and self.document().characterAt(
+                    cursor.position()) != ",":
+                # ctx.call of a method taking arguments: on to the first
+                cursor.insertText(", ")
         else:
             method = entry.params is not None and following != "("
             cursor.insertText(entry.name + ("()" if method else ""))
@@ -803,12 +835,89 @@ class CodeEditor(QPlainTextEdit):
         if self.completion_popup is not None:
             self.completion_popup.hide()
             self.signature_hint.hide()
+        self._show_link(None)
         super().focusOutEvent(event)
 
     def mousePressEvent(self, event):  # pylint: disable=invalid-name
         if self.completion_popup is not None:
             self.completion_popup.hide()
+        if (event.button() == Qt.MouseButton.LeftButton
+                and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                and self._link_handler is not None):
+            found = self.link_at(event.position().toPoint())
+            if found is not None:
+                self._show_link(None)
+                self._link_handler(found[1], event.globalPosition().toPoint())
+                return
         super().mousePressEvent(event)
+
+    # ------------------------------------------------------------------
+    # Ctrl+click: objects of the game in the object inspector
+    # ------------------------------------------------------------------
+    def set_link_handler(self, handler):
+        """Make lookups of the code clickable (see code_completion.inspect_link):
+        while Ctrl is held they show as links, and Ctrl+click calls
+        ``handler(link, global position)``."""
+        self._link_handler = handler
+        self.viewport().setMouseTracking(handler is not None)
+
+    def link_at(self, position):
+        """``(position of its line in the document, code_completion.Link)``
+        at ``position`` in the viewport, or None."""
+        if self._link_handler is None or self._completion is None:
+            return None
+        found = self._code_at(position)
+        if found is None:
+            return None
+        block, column, token = found
+        line = block.text()
+        source = self.toPlainText()[:block.position() + len(line)]
+        link = code_completion.inspect_link(line, column, token, source, self._completion[2])
+        return None if link is None else (block.position(), link)
+
+    def _update_link(self, position=None, held=None):
+        """Show the link under the mouse while Ctrl is held, else none."""
+        if held is None:
+            held = bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier)
+        if position is None:
+            position = self.viewport().mapFromGlobal(QCursor.pos())
+        self._show_link(self.link_at(position) if held else None)
+
+    def _show_link(self, found):
+        """Underline ``found`` (``(block position, Link)``) in the link colour
+        with a pointing hand, or nothing for None."""
+        if found == self._link:
+            return
+        self._link = found
+        selections = []
+        if found is not None:
+            offset, link = found
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = QTextCursor(self.document())
+            selection.cursor.setPosition(offset + link.start)
+            selection.cursor.setPosition(offset + link.end, QTextCursor.MoveMode.KeepAnchor)
+            selection.format.setFontUnderline(True)
+            selection.format.setForeground(self.palette().color(QPalette.ColorRole.Link))
+            selections.append(selection)
+        self.setExtraSelections(selections)
+        self.viewport().setCursor(Qt.CursorShape.PointingHandCursor if found is not None
+                                  else Qt.CursorShape.IBeamCursor)
+
+    def show_link_message(self, text, global_position):
+        """Say at ``global_position`` why a Ctrl+click opened nothing."""
+        QToolTip.showText(global_position, text, self.viewport())
+
+    def mouseMoveEvent(self, event):  # pylint: disable=invalid-name
+        if self._link_handler is not None:
+            self._update_link(event.position().toPoint(), bool(
+                event.modifiers() & Qt.KeyboardModifier.ControlModifier))
+        super().mouseMoveEvent(event)
+
+    def keyReleaseEvent(self, event):  # pylint: disable=invalid-name
+        if event.key() == Qt.Key.Key_Control and self._link_handler is not None:
+            self._show_link(None)
+        super().keyReleaseEvent(event)
+
 
     def show_font_size(self, size):
         """Show the code at ``size`` pixels.
@@ -837,6 +946,10 @@ class CodeEditor(QPlainTextEdit):
         event.accept()
 
     def keyPressEvent(self, event):  # pylint: disable=invalid-name
+        if event.key() == Qt.Key.Key_Control and self._link_handler is not None:
+            self._update_link(held=True)  # the links show while it is held
+        elif self._link is not None:
+            self._show_link(None)  # typing: the text moves under the link
         if self._popup_key(event) or self._hint_key(event):
             return
         popup = self.completion_popup

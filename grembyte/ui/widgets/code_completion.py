@@ -413,12 +413,19 @@ PENDING = object()
 MISSING = object()
 # Types whose values are no wrappers: numbers, texts, enums of Unreal
 _PLAIN_TYPES = frozenset({
-    "bool", "boolean", "byte", "sbyte", "char", "short", "ushort", "int", "uint", "long",
+    "bool", "boolean", "choice", "byte", "sbyte", "char", "short", "ushort", "int", "uint", "long",
     "ulong", "single", "float", "double", "decimal", "string", "object", "void",
     "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
     "intptr", "uintptr", "fstring", "fname", "ftext", "?",
 })
 _STRING_ARGUMENT = re.compile(r"""\s*(["'`])([^"'`$]+)\1\s*(?:,|$)""")
+
+
+# The type ctx.args.<name> has for a script parameter of each kind (see
+# ScriptParam): a JavaScript text, number or boolean; a choice's value is
+# whatever its options give
+SCRIPT_PARAM_TYPES = {"text": "string", "number": "number", "bool": "boolean",
+                      "choice": "choice"}
 
 
 def class_type(type_name):
@@ -529,6 +536,11 @@ class Scope:
         not known."""
         return self._list("static_fields")
 
+    def static_methods(self):
+        """``[name, parameters, return type]`` of the static methods ctx.call
+        calls, () while not known."""
+        return self._list("static_methods")
+
     def answer(self, kind, name):
         """What the lookup's ``kind`` (class_info, static_value) gives for
         ``name``: a dict, MISSING, PENDING, or None without a game."""
@@ -544,23 +556,23 @@ class Scope:
         return found or ()
 
 
-# The name a ctx.find("…", ctx.forEach("…" or ctx.static("…" is typed with:
-# the function, the quote and the text typed so far in the string
+# The name a ctx.find("…", ctx.forEach("…", ctx.static("…" or ctx.call("…" is
+# typed with: the function, the quote and the text typed so far in the string
 _STRING_ARGUMENT_AT_END = re.compile(
-    r"""\bctx\s*\.\s*(find|forEach|static)\s*\(\s*(["'`])([^"'`\\$]*)$""")
+    r"""\bctx\s*\.\s*(find|forEach|static|call)\s*\(\s*(["'`])([^"'`\\$]*)$""")
 MAX_NAMES = 200
 
 
 def string_argument(line):
     """``(typed, quote, function)`` if ``line`` ends inside the first
-    argument of ctx.find, ctx.forEach or ctx.static (a class or a static
-    field's name), else None."""
+    argument of ctx.find, ctx.forEach, ctx.static or ctx.call (a class, a
+    static field's or a static method's name), else None."""
     match = _STRING_ARGUMENT_AT_END.search(line)
     return None if match is None else (match.group(3), match.group(2), match.group(1))
 
 
 _STRING_ARGUMENT_IN_LINE = re.compile(
-    r"""\bctx\s*\.\s*(find|forEach|static)\s*\(\s*(["'`])([^"'`\\$]*)\2""")
+    r"""\bctx\s*\.\s*(find|forEach|static|call)\s*\(\s*(["'`])([^"'`\\$]*)\2""")
 
 
 def string_at(line, column):
@@ -581,6 +593,8 @@ def tooltip(function, text, scope, translations, engine=None):
     allowed = _UNITY if function == "static" else _ENGINES
     if not text.strip() or (engine is not None and engine not in allowed):
         return None
+    if function == "call":
+        return _call_tooltip(text, scope, translations)
     kind = "static_value" if function == "static" else "class_info"
     found = scope.answer(kind, text)
     if found is PENDING:
@@ -599,6 +613,32 @@ def tooltip(function, text, scope, translations, engine=None):
     if found.get("objects") is not None:
         lines.append(translations["completion.tooltip_objects"].format(count=found["objects"]))
     return "\n".join(lines)
+
+
+def static_method_overloads(text, scope):
+    """``[(name, parameters, return type), ...]`` of the static method
+    ``text`` names as ctx.call takes it (``Ns.Class:Method``, also with a
+    dot or a parameter list after it), from the list of static methods;
+    case does not matter, as in the game."""
+    name = re.sub(r"\s*\(.*\)\s*$", "", text.strip())
+    if ":" not in name:
+        owner, dot, method = name.rpartition(".")
+        name = f"{owner}:{method}" if dot else name
+    wanted = name.lower()
+    return [tuple(entry) for entry in scope.static_methods() if entry[0].lower() == wanted]
+
+
+def _call_tooltip(text, scope, translations):
+    """The tooltip of the method named in ctx.call("…"): its overloads with
+    parameters and return type; None while nothing is known (no game)."""
+    overloads = static_method_overloads(text, scope)
+    if scope.pending:
+        return translations["completion.tooltip_reading"]
+    if overloads:
+        return "\n".join(f"{name}({params}) → {returns}" for name, params, returns in overloads)
+    if not scope.static_methods():
+        return None
+    return translations["completion.tooltip_no_static_method"].format(name=text)
 
 
 def _static_tooltip(text, found, scope, translations):
@@ -624,6 +664,8 @@ def matches(entry, typed):
 def _name_entries(typed, function, scope):
     """The class names (ctx.find, ctx.forEach) or static fields (ctx.static)
     containing ``typed``, those starting with it first, at most MAX_NAMES."""
+    if function == "call":
+        return _method_entries(typed, scope)
     if function == "static":
         named = [(name, type_name) for name, type_name in scope.static_fields()]
     else:
@@ -636,6 +678,17 @@ def _name_entries(typed, function, scope):
         else Completion(name, "completion.member.static", values=(("type", type_name),),
                         anywhere=True)
         for name, type_name in found[:MAX_NAMES])
+
+
+def _method_entries(typed, scope):
+    """The static methods (ctx.call) whose names contain ``typed``, those
+    starting with it first, at most MAX_NAMES; one entry per overload."""
+    wanted = typed.lower()
+    found = [entry for entry in scope.static_methods() if wanted in entry[0].lower()]
+    found.sort(key=lambda entry: (not entry[0].lower().startswith(wanted), entry[0].lower()))
+    return tuple(Completion(name, "completion.static_method", params, values=(("type", returns),),
+                            anywhere=True)
+                 for name, params, returns in found[:MAX_NAMES])
 
 
 def method_parameters(signature):
@@ -671,7 +724,7 @@ def _class_kind(type_name):
 
 _STRING_TYPES = frozenset({"string", "system.string", "fstring", "fname", "ftext"})
 _NUMBER_TYPES = frozenset({
-    "byte", "sbyte", "short", "ushort", "int", "uint", "long", "ulong", "single", "float",
+    "number", "byte", "sbyte", "short", "ushort", "int", "uint", "long", "ulong", "single", "float",
     "double", "decimal", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32",
     "uint64", "system.byte", "system.sbyte", "system.int16", "system.uint16", "system.int32",
     "system.uint32", "system.int64", "system.uint64", "system.single", "system.double",
@@ -781,6 +834,16 @@ def _ctx_step(member, called, arguments, scope):
         owner, _dot, field = named.group(2).replace(":", ".").rpartition(".")
         members = scope.members(owner) if owner else None
         return None if members is None else value_kind(members.member_type(field, False))
+    if member == "call" and called:
+        # ctx.call("Ns.Class:Method"): what the method returns
+        named = _STRING_ARGUMENT.match(arguments or "")
+        if named is None:
+            return None
+        name = re.sub(r"\s*\(.*\)\s*$", "", named.group(2))
+        split = name.rfind(":") if ":" in name else name.rfind(".")
+        members = scope.members(name[:split]) if split > 0 else None
+        return None if members is None else value_kind(
+            members.member_type(name[split + 1:], True))
     if member == "args" and not called and scope.args:
         return "args"
     return _STEPS.get(("ctx", member, called))
@@ -1051,8 +1114,23 @@ def signature_help(source, context=SCRIPT, engine=None, scope=None):
     if parts is None or parts[2]:
         return None  # not a name before "(", or a call's result called
     owner, member, _called, _arguments = parts
-    signatures = _signatures(owner, member, source[:opened], context, engine, scope)
+    signatures = None
+    if member == "call" and index > 0 and classify(owner, source[:opened], scope=scope) == "ctx":
+        signatures = _call_signatures(source[opened + 1:], scope)
+    if not signatures:
+        signatures = _signatures(owner, member, source[:opened], context, engine, scope)
     return (tuple(signatures), index) if signatures else None
+
+
+def _call_signatures(arguments, scope):
+    """The overloads of the static method ctx.call names first in
+    ``arguments`` (the text after its "("), as Signatures of ctx.call: the
+    name, then the method's parameters; [] if not known."""
+    named = _STRING_ARGUMENT.match(arguments)
+    if named is None:
+        return []
+    return [Signature("ctx.call", (f'"{name}"',) + split_params(params), returns)
+            for name, params, returns in static_method_overloads(named.group(2), scope)]
 
 
 def _signatures(owner, member, source, context, engine, scope):
@@ -1116,3 +1194,102 @@ def variable_tooltip(name, source, scope, translations):
         return translations["completion.tooltip_reading"]
     return translations["completion.tooltip_variable"].format(
         name=name, type=_kind_text(kind, translations))
+
+
+# --- Ctrl+click: what can be inspected ----------------------------------------------
+#
+# A string in ctx.find("…") or ctx.static("…"), or a variable holding a
+# lookup, opens the object it gives in the object inspector. That runs code
+# in the game, so only lookups qualify: ctx.find and ctx.static with string
+# arguments, then fields and properties read from them (a property runs its
+# getter, as the inspector's does) – no method calls, no ctx.args or ctx.state,
+# nothing the script computes. A variable assigned more than once is left out:
+# which value it holds at a line is not known.
+
+_LOOKUP_CALL = re.compile(
+    r"""\bctx\s*\.\s*(find|static)\s*\(\s*(["'`])([^"'`\\$]*)\2"""
+    r"""(?:\s*,\s*(["'`])([^"'`\\$]*)\4)?\s*\)""")
+_LOOKUP_STEP = re.compile(
+    r"""\s*\??\.\s*(?:(?:field|get)\s*\(\s*(["'`])([^"'`\\$]+)\1\s*\)|([A-Za-z_$][\w$]*)(?!\s*\())"""
+    r"""|\s*\[\s*(\d+)\s*\]""")
+_MAX_LINK_DEPTH = 8
+
+
+@dataclasses.dataclass(frozen=True)
+class Link:
+    """A place of the code that Ctrl+click inspects: columns ``start`` to
+    ``end`` of its line, the ``expression`` the game evaluates and the
+    ``name`` the inspector is titled with."""
+
+    start: int
+    end: int
+    expression: str
+    name: str
+
+
+def _lookup_allowed(function, engine):
+    allowed = _UNITY if function == "static" else _ENGINES
+    return engine is None or engine in allowed
+
+
+def inspect_link(line, column, token, source, engine=None):
+    """The Link at ``column`` of ``line`` (``token``: its highlighter token,
+    "string" or "text"), or None; ``source`` is the code up to the end of the
+    line, where variables are looked up. See the comment above."""
+    if token == "string":
+        for match in _LOOKUP_CALL.finditer(line):
+            function = match.group(1)
+            for quote, text in ((2, 3), (4, 5)):
+                if match.group(quote) is None:
+                    continue
+                start, end = match.start(quote), match.end(text) + 1
+                if start <= column < end and _lookup_allowed(function, engine):
+                    return Link(start, end, match.group(0),
+                                match.group(5) or match.group(3))
+        return None
+    if token != "text":
+        return None
+    named = identifier_at(line, column)
+    if named is None or line[:named[1]].rstrip().endswith("."):
+        return None
+    name, start = named
+    found = _lookup_expression(name, source, 0)
+    if found is None or not all(_lookup_allowed(function, engine) for function in found[1]):
+        return None
+    return Link(start, start + len(name), found[0], name)
+
+
+def _lookup_expression(name, source, depth):
+    """``(expression, functions)`` of the lookup the variable ``name`` holds,
+    with the variables it uses put in, and the ctx functions it calls; None
+    if it holds anything else (see the comment above)."""
+    if depth > _MAX_LINK_DEPTH or name in ("ctx", "this"):
+        return None
+    escaped = re.escape(name)
+    declarations = list(re.finditer(rf"\b(?:const|let|var)\s+{escaped}\s*=\s*([^;\n]+)", source))
+    assignments = re.findall(rf"(?<![\w$.]){escaped}\s*(?:[-+*/%&|^]|\*\*|<<|>>>?|\?\?)?=(?!=)",
+                             source)
+    if len(declarations) != 1 or len(assignments) != 1:
+        return None
+    return _lookup_chain(declarations[0].group(1).strip(), source, depth)
+
+
+def _lookup_chain(text, source, depth):
+    call = _LOOKUP_CALL.match(text)
+    if call is not None:
+        expression, functions, rest = call.group(0), [call.group(1)], text[call.end():]
+    else:
+        head = re.match(r"[A-Za-z_$][\w$]*", text)
+        if head is None:
+            return None
+        found = _lookup_expression(head.group(), source, depth + 1)
+        if found is None:
+            return None
+        expression, functions, rest = f"({found[0]})", list(found[1]), text[head.end():]
+    while rest.strip():
+        step = _LOOKUP_STEP.match(rest)
+        if step is None:
+            return None
+        expression += step.group(0).strip()
+        rest = rest[step.end():]
+    return expression, functions

@@ -75,7 +75,8 @@ from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-na
 
 from grembyte.core import logs, messages
 from grembyte.core import sessions
-from grembyte.features.monitor import build_agent_source, static_field_names
+from grembyte.features.monitor import (
+    build_agent_source, static_field_names, static_method_names)
 from grembyte.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
 from grembyte.hooks.engine import HookWorker
 from grembyte.hooks.transforms import ValueTransform
@@ -255,6 +256,14 @@ class MethodHookWorker(QThread):
         self._commands.put(("static_names", request_id, None))
         return request_id
 
+    def static_method_names(self):
+        """Read the static methods ctx.call can call, for the completion of
+        code (see grembyte.features.monitor.static_method_names); expect
+        names_read or names_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("method_names", request_id, None))
+        return request_id
+
     def describe_method(self, method):
         """Read the parameters of an Inspector method entry."""
         request_id = next(self._requests)
@@ -371,6 +380,11 @@ class MethodHookWorker(QThread):
             elif action == "static_names":
                 try:
                     self.names_read.emit(hook_id, static_field_names(api))
+                except (frida.RPCException, OSError) as error:
+                    self.names_failed.emit(hook_id, messages.describe(error))
+            elif action == "method_names":
+                try:
+                    self.names_read.emit(hook_id, static_method_names(api))
                 except (frida.RPCException, OSError) as error:
                     self.names_failed.emit(hook_id, messages.describe(error))
             elif action == "class_names":

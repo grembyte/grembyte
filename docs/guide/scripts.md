@@ -28,6 +28,15 @@ The editor does not block the rest of Grembyte: while it is open you can look th
 
 **Save** puts the code into the running script. If the game ended meanwhile, the script is saved for the next time the game is attached; if Grembyte is attached to another game by now, the editor refuses to save and stays open, so nothing typed is lost. When the game ends or another one is attached, an editor whose content is saved closes by itself; one with changes stays open.
 
+### Objects of the code in the inspector
+
+While **Ctrl** is held, the lookups in the code under the mouse show as links; **Ctrl+click** opens the object they give now in the [object inspector](../engines/index.md#object-inspector), next to the editor if it is docked. Grembyte evaluates the lookup on the game's main thread, as a script runs:
+
+- the strings in `ctx.find("Class", "Name")` – the class or the object's name – and, in Unity games, in `ctx.static("Namespace.Class.Field")`;
+- a variable that holds such a lookup, also read on through fields and properties (`const stats = health.m_stats;`), `.field("…")`, `.get("…")` and `[0]`, and through other such variables – wherever the variable is used.
+
+Only lookups are links, so a click changes nothing in the game: a variable whose value calls a method of the game (`health.GetHealth()`), uses `ctx.args` or `ctx.state`, is assigned more than once or is a loop's or callback's parameter is none. A property still runs its getter, as in the inspector. When the lookup gives no object – nothing found, a number, a text – or fails, a note at the mouse says so. It works while the script's game is attached, in Unity and Unreal games, in the script editor (not yet in the method hook editor).
+
 ## When a script runs
 
 | Mode | Runs |

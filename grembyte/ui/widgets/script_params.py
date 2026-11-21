@@ -7,7 +7,7 @@ session (``options_cache``) and shows them in a combo box that filters by
 any part of a choice's text.
 """
 
-from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import Qt, Signal  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
     QAbstractItemView,
     QCheckBox,
@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 from grembyte.core import messages
 from grembyte.features.scripts import PARAM_KINDS, ScriptParam, choice_matches
 from grembyte.hooks.syntax import BODY
-from grembyte.ui.widgets.code_completion import SCRIPT
+from grembyte.ui.widgets.code_completion import SCRIPT, SCRIPT_PARAM_TYPES
 from grembyte.ui.widgets.code_editor import CodeEditor
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
 from grembyte.ui.widgets.icons import set_button_icon, theme_color
@@ -50,6 +50,8 @@ class ParamEditor(QWidget):
 
     _COLUMNS = ("scripts.param_name", "scripts.param_label", "scripts.param_kind",
                 "scripts.param_default")
+    # A parameter was added, removed, renamed or got another type
+    changed = Signal()
 
     def __init__(self, translations, params=(), parent=None, engine=None, members=None):
         # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -73,6 +75,7 @@ class ParamEditor(QWidget):
             header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setMinimumHeight(60)
         self.table.itemSelectionChanged.connect(self._show_options)
+        self.table.itemChanged.connect(self._item_changed)
         layout.addWidget(self.table, 1)
 
         buttons = QHBoxLayout()
@@ -102,6 +105,9 @@ class ParamEditor(QWidget):
             self.table.selectRow(0)
         self._show_options()
 
+    def _item_changed(self, *_args):
+        self.changed.emit()
+
     def _free_name(self):
         names = {self._cell(row, 0) for row in range(self.table.rowCount())}
         return next(f"param{n}" for n in range(1, len(names) + 2) if f"param{n}" not in names)
@@ -124,10 +130,12 @@ class ParamEditor(QWidget):
             kind.addItem(self.translations[f"scripts.param_kind_{name}"], name)
         kind.setCurrentIndex(PARAM_KINDS.index(param.kind))
         kind.currentIndexChanged.connect(self._show_options)
+        kind.currentIndexChanged.connect(self._item_changed)
         self.table.setCellWidget(row, 2, kind)
         self.table.setItem(row, 3, QTableWidgetItem(param.default))
         self._options.append(param.options)
         self.table.selectRow(row)
+        self.changed.emit()
 
     def _remove_selected(self):
         row = self._selected_row()
@@ -137,6 +145,7 @@ class ParamEditor(QWidget):
         self.table.removeRow(row)
         del self._options[row]
         self._show_options()
+        self.changed.emit()
 
     def _selected_row(self):
         model = self.table.selectionModel()
@@ -162,6 +171,17 @@ class ParamEditor(QWidget):
         else:
             self.options_label.setText(self.translations["scripts.param_options_none"])
             self.options_edit.setPlainText("")
+
+    def arg_types(self):
+        """``{name: type}`` of the parameters as ctx.args has them, for the
+        completion of code (see code_completion.SCRIPT_PARAM_TYPES); rows
+        without a usable name are left out, nothing is checked."""
+        types = {}
+        for row in range(self.table.rowCount()):
+            name = self._cell(row, 0).strip()
+            if name.isidentifier():
+                types[name] = SCRIPT_PARAM_TYPES[self._kind(row)]
+        return types
 
     def params(self):
         """The parameters as ScriptParams; raises LocalizedValueError (or a
