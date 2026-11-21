@@ -19,11 +19,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  # Two jobs, as in GitHub's Pages template: deploy-pages right after the
+  # upload in the same job sometimes found no artifact yet ("Found 0
+  # artifact(s)"); a job of its own starts once the upload is listed.
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -34,5 +34,13 @@ jobs:
       - uses: actions/upload-pages-artifact@v4
         with:
           path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4
