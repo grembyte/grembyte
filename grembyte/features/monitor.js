@@ -1698,9 +1698,71 @@ function pointerOf(type, value) {
   return ptr(value);
 }
 
+const INTEGER_KINDS = new Set([T.I1, T.U1, T.I2, T.U2, T.I4, T.U4]);
+
+function checkArgument(param, value) {
+  // A script's argument must suit its parameter: written as it comes, true
+  // became an int32 of 1 and a number a bool, so swapped arguments called the
+  // game with other values and no error (Lies of P, GetUseItem_SpecifiedLine).
+  if ((param.out || param.type.byref) && (value === null || value === undefined))
+    return;  // an output (Unreal) or out/ref argument (Mono, IL2CPP) left empty
+  if (!argumentFits(param.type, value))
+    throw grembyteError('error.monitor.argument_mismatch',
+        { name: param.name, type: param.type.name, value: argumentText(value) });
+}
+
+function argumentFits(type, value) {
+  const isNumber = typeof value === 'number' && Number.isFinite(value);
+  switch (type.engine) {
+    case undefined:
+      break;
+    case 'bool':
+      return typeof value === 'boolean';
+    case 'string':
+    case 'name':
+    case 'text':
+      return value === null || value === undefined || typeof value === 'string';
+    default:
+      return true;  // the adapter refuses what it cannot pass
+  }
+  const kind = type.kind;
+  if (kind === T.BOOLEAN)
+    return typeof value === 'boolean';
+  if (kind === T.CHAR)
+    return (typeof value === 'string' && value.length === 1) || isNumber;
+  if (INTEGER_KINDS.has(kind) || kind === T.R4 || kind === T.R8)
+    return isNumber;
+  if (kind === T.I8 || kind === T.U8)  // beyond 2**53 as { integer: text } (integerText)
+    return isNumber || (value !== null && typeof value === 'object'
+                        && typeof value.integer === 'string');
+  if (kind === T.STRING)
+    return value === null || value === undefined || typeof value === 'string';
+  if (kind === T.VALUETYPE)
+    return true;  // checked where it is copied
+  if (kind === T.I || kind === T.U)
+    return value === null || isNumber || value instanceof NativePointer
+      || value instanceof ManagedObject;
+  // objects: a wrapper, an address, null, or (Mono, IL2CPP) a string
+  return typeof value !== 'boolean' && value !== undefined;
+}
+
+function argumentText(value) {
+  if (value === undefined)
+    return 'undefined';
+  if (value instanceof ManagedObject) {
+    try {
+      return value.className;
+    } catch (_error) {
+      return 'object';
+    }
+  }
+  return displayText(value);
+}
+
 function invokeMethod(method, self, args) {
   // Call game code with JavaScript arguments: { result, exception }.
   const signature = engine.signatureOf(method);
+  signature.params.forEach((param, i) => checkArgument(param, args[i]));
   if (signature.parms)
     return invokeWithParms(method, signature, self, args);
   const params = Memory.alloc(Process.pointerSize * Math.max(args.length, 1));

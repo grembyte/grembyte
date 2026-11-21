@@ -1466,6 +1466,21 @@ def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app, d
         assert run["result"] == "107"
         assert target.send("renamed", 0) == (4, 1)  # "Bob" and its terminating 0
 
+        # Arguments that do not suit their parameters stop the call instead of
+        # reaching the game as other values (swapped: true as a number).
+        def refusal(code):
+            script_id = worker.add_script(ScriptSpec(code))
+            _wait_for(qt_app, lambda: script_id in added)
+            return run_on_game_thread(script_id)["error"]
+
+        assert target.send("renamed", 0) == (4, 1)
+        swapped = refusal('ctx.find("BP_Hero_C").call("Rename", true, "Bob");')
+        assert 'error.monitor.argument_mismatch:{"name":"NewName","type":"FString",' \
+               '"value":"true"}' in swapped
+        assert "bLoud" in refusal('ctx.find("BP_Hero_C").Rename("Bob", 1);')
+        assert "Amount" in refusal('return ctx.call("Hero.AddGold", "7");')
+        assert target.send("renamed", 0) == (4, 1)  # nothing was called
+
         language_script = worker.add_script(ScriptSpec("return ctx.lang;"))
         _wait_for(qt_app, lambda: language_script in added)
         run = run_on_game_thread(language_script)
