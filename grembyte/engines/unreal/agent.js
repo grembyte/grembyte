@@ -1061,11 +1061,13 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
 
   function methodEntry(klass, fn) {
     // [name, parameters, return type, static, token, full signature, flags,
-    // implementation flags] as the Mono adapter has them; flags only say
-    // which functions have no code (METHOD_ABSTRACT).
+    // implementation flags, parameter names] as the Mono adapter has them;
+    // flags only say which functions have no code (METHOD_ABSTRACT). Cache
+    // entries read before the names were added end with the flags.
     const params = parameters(fn.address);
     const ret = params.find(param => param.ret);
-    const types = params.filter(param => !param.ret)
+    const passed = params.filter(param => !param.ret);
+    const types = passed
       .map(param => `${param.type}${param.out || param.ref ? '&' : ''}`).join(',');
     const info = functionInfo(fn.address);
     const codeless = info.code.isNull() || (info.flags & FUNC_DELEGATE) !== 0
@@ -1073,7 +1075,8 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     return [
       fn.name, `(${types})`, ret === undefined ? 'void' : ret.type,
       (info.flags & FUNC_STATIC) !== 0, token(klass, fn),
-      `${klass.name}:${fn.name} (${types})`, codeless ? METHOD_ABSTRACT : 0, 0
+      `${klass.name}:${fn.name} (${types})`, codeless ? METHOD_ABSTRACT : 0, 0,
+      passed.map(param => param.name)
     ];
   }
 

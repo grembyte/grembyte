@@ -1118,6 +1118,9 @@ def test_catalog_lists_packages_classes_and_ufunctions(tmp_path, qt_app, defines
              "Hero:Equip (TSoftClassPtr<AHero>)"),
         ]
         assert all(method.engine == "unreal" for method in hero.values())
+        # With the parameters' names, as Mono's (for ctx.args of a new method hook)
+        assert hero["Rename"].argument_names == ("NewName", "bLoud")
+        assert hero["Rename"].display_signature == "Hero:Rename (FString NewName,bool bLoud)"
         [loot] = loaded["/Game/Blueprints"]
         assert loot.signature == "BP_Hero_C:Loot (AHero*,int32)"
         # Tokens hash the names: the same in every run of the game.

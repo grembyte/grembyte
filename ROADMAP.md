@@ -255,10 +255,9 @@ after it. Tooltips over these strings (`classInfo`): the class, its base classes
 Unreal games, its live objects, or that there is no such class; a static field's type and
 value now. Signature while typing (overloads, the current parameter in bold), the script's
 own variables with their type (also as a tooltip), JavaScript strings, numbers and Unreal
-arrays with their elements and callback parameters. Open:
+arrays with their elements and callback parameters; the Unreal catalog keeps the
+parameters' names too (catalogs cached before have none until **Reload**).
 
-- **Parameter names of Unreal method hooks from the catalog:** the Unreal catalog has no
-  names, so `ctx.args.` is empty until such a hook is installed.
 - Limits: a heuristic, not a JavaScript parser. Unity's arrays and generic types, values
   from functions of the script and scopes (a callback's parameter is offered everywhere) are
   not followed; then nothing is offered, never something wrong.

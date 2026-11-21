@@ -926,3 +926,18 @@ def test_names_are_bold_and_descriptions_quieter(qt_app):
     for item in (name, detail):
         assert item.textAlignment() & Qt.AlignmentFlag.AlignVCenter
     editor.close()
+
+
+def test_cached_unreal_methods_without_names_still_load():
+    # Entries cached before the Unreal adapter added the names end with the flags
+    from grembyte.features.catalog import catalog_methods  # pylint: disable=import-outside-toplevel
+
+    old = ["Rename", "(FString,bool)", "void", False, 7, "Hero:Rename (FString,bool)", 0, 0]
+    new = old + [["NewName", "bLoud"]]
+    [before], [after] = (catalog_methods("/Script/Game", [["Hero", [entry]]], "unreal")
+                         for entry in (old, new))
+    assert before.argument_names == () and before.display_signature == before.signature
+    assert after.display_signature == "Hero:Rename (FString NewName,bool bLoud)"
+    # A new method hook's ctx.args from that signature
+    assert code_completion.method_parameters(after.display_signature) == (
+        "Hero", {"NewName": "FString", "bLoud": "bool"})
