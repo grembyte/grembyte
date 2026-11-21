@@ -237,6 +237,38 @@ PC; Game Mode runs each game under the compositor gamescope with its own XWaylan
   and MinGW for the Wine helper are there, and `kernel.yama.ptrace_scope`.
 - Then a section for the Deck in the docs (installing, Steam Input for hotkeys).
 
+### 13. Code completion in the code fields
+
+The code fields (`grembyte/ui/widgets/code_editor.py`: scripts, hooks, templates, script
+parameters) have syntax highlighting, a syntax hint, line numbers and a completion
+(`grembyte/ui/widgets/code_completion.py`): the members of `ctx` for scripts, value hooks
+and method hooks, limited to the attached game's engine; the names of object wrappers,
+`ctx.native` and `ctx.gas`; Frida's pointer methods along chains like
+`.address.add(0x17d0).readPointer()`, `Memory`, `Process` and `Module`; the JavaScript
+keywords. A method hook's arguments after `ctx.args.`, and the fields, properties and methods
+of game classes after `ctx.find("…").`, an argument or `ctx.this`, on through the types of
+fields and method results. Class names inside `ctx.find("…")` and `ctx.forEach("…")`
+(`classNames`: Unreal's classes with live objects, Unity's classes deriving from
+`UnityEngine.Object`), the static fields of the game's assemblies inside `ctx.static("…")`
+(Unity; shared with the field catalog's cache) and the members of a static field's type
+after it. Tooltips over these strings (`classInfo`): the class, its base classes and, in
+Unreal games, its live objects, or that there is no such class; a static field's type and
+value now. The members are read live from the attached game (`classMembers`
+in `grembyte/features/monitor.js`, metadata only) once per class, not from the catalog: the
+catalog cache knows no base classes, and the field catalog exists only for builds it was
+read for. Open, about one day:
+
+- **Signature while typing:** after `GetUseItem_SpecifiedLine(` a tooltip shows
+  `(int32 SlotIndex, bool FirstLine)` with the current parameter marked. The members already
+  carry their parameters, so little work is left.
+- **Parameter names of Unreal method hooks from the catalog:** the Unreal catalog has no
+  names, so `ctx.args.` is empty until such a hook is installed.
+- Limits: a heuristic, not a JavaScript parser. Arrays, array methods (`.find(…)`), generic
+  types and values from functions of the script are not followed; then nothing is offered,
+  never something wrong.
+- Not planned: a language server (tsserver) with type declarations generated from the game.
+  It would need Node and a bridge to the Qt editor, for many times the effort.
+
 ### Recommendation
 
 The **code explorer and pseudocode** list above comes next, starting with names without PDB.

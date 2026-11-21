@@ -75,7 +75,7 @@ from PySide6.QtCore import QThread, Signal  # pylint: disable=import-error,no-na
 
 from grembyte.core import logs, messages
 from grembyte.core import sessions
-from grembyte.features.monitor import build_agent_source
+from grembyte.features.monitor import build_agent_source, static_field_names
 from grembyte.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
 from grembyte.hooks.engine import HookWorker
 from grembyte.hooks.transforms import ValueTransform
@@ -145,6 +145,18 @@ class MethodHookWorker(QThread):
     evaluate_failed = Signal(int, str)
     methods_listed = Signal(int, object)
     methods_failed = Signal(int, str)
+    # request id, a class's members or None (see class_members)
+    members_read = Signal(int, object)
+    members_failed = Signal(int, str)
+    # request id, the names of the classes ctx.find finds (see class_names)
+    names_read = Signal(int, object)
+    names_failed = Signal(int, str)
+    # request id, a class's base classes and objects or None (see class_info)
+    info_read = Signal(int, object)
+    info_failed = Signal(int, str)
+    # request id, the static fields of one class (see static_fields)
+    statics_read = Signal(int, object)
+    statics_failed = Signal(int, str)
     call_described = Signal(int, object)
     called = Signal(int, object)
     call_failed = Signal(int, str)
@@ -207,6 +219,40 @@ class MethodHookWorker(QThread):
         """List the Inspector's callable instance methods."""
         request_id = next(self._requests)
         self._commands.put(("methods", request_id, target))
+        return request_id
+
+    def class_members(self, class_name):
+        """Read the fields, properties and methods of a class for the
+        completion of code (see ScriptWorker.class_members)."""
+        request_id = next(self._requests)
+        self._commands.put(("members", request_id, class_name))
+        return request_id
+
+    def class_names(self):
+        """Read the names of the classes ctx.find can find, for the
+        completion of code (see ScriptWorker.class_names)."""
+        request_id = next(self._requests)
+        self._commands.put(("class_names", request_id, None))
+        return request_id
+
+    def class_info(self, class_name):
+        """What a tooltip shows of a class (see ScriptWorker.class_info)."""
+        request_id = next(self._requests)
+        self._commands.put(("class_info", request_id, class_name))
+        return request_id
+
+    def static_fields(self, class_name):
+        """Read the static fields a class declares with their values (see
+        ScriptWorker.static_fields); expect statics_read or statics_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("static_fields", request_id, class_name))
+        return request_id
+
+    def static_field_names(self):
+        """Read the static fields ctx.static can read, for the completion of
+        code (see ScriptWorker.static_field_names)."""
+        request_id = next(self._requests)
+        self._commands.put(("static_names", request_id, None))
         return request_id
 
     def describe_method(self, method):
@@ -313,6 +359,30 @@ class MethodHookWorker(QThread):
                     self.methods_listed.emit(hook_id, api.list_methods(argument))
                 except frida.RPCException as error:
                     self.methods_failed.emit(hook_id, messages.describe(error))
+            elif action in ("class_info", "static_fields"):
+                call, answered, failed = {
+                    "class_info": (api.class_info, self.info_read, self.info_failed),
+                    "static_fields": (api.static_fields, self.statics_read,
+                                      self.statics_failed)}[action]
+                try:
+                    answered.emit(hook_id, call(argument))
+                except frida.RPCException as error:
+                    failed.emit(hook_id, messages.describe(error))
+            elif action == "static_names":
+                try:
+                    self.names_read.emit(hook_id, static_field_names(api))
+                except (frida.RPCException, OSError) as error:
+                    self.names_failed.emit(hook_id, messages.describe(error))
+            elif action == "class_names":
+                try:
+                    self.names_read.emit(hook_id, api.class_names())
+                except frida.RPCException as error:
+                    self.names_failed.emit(hook_id, messages.describe(error))
+            elif action == "members":
+                try:
+                    self.members_read.emit(hook_id, api.class_members(argument))
+                except frida.RPCException as error:
+                    self.members_failed.emit(hook_id, messages.describe(error))
             elif action == "describe_method":
                 try:
                     self.call_described.emit(hook_id, api.describe_method(argument))

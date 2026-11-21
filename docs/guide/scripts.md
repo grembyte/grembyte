@@ -55,6 +55,8 @@ A choice parameter gets its options from a short JavaScript function evaluated i
 
 The script's `ctx` gives access to the game; all fields are in the [script context reference](../reference/script-context.md). Objects of the game are [wrappers](../reference/script-context.md#object-wrappers): read and write their fields and properties and call their methods as in C# (`player.Heal(10)`). A returned object is shown as the result and can be opened in the object inspector.
 
+While you type, the code field offers the fields of `ctx` that the attached game's engine has, Frida's pointer methods and the JavaScript keywords; **Ctrl+Space** opens the list by hand. See [completion](../reference/javascript.md#completion).
+
 ```js title="Heal the player by 10 health (GrembyteQuest, Unity Mono)"
 const player = ctx.static("GrembyteQuest.GameState.Current").Player;
 return `Healed ${player.Heal(10).toFixed(1)} health`;

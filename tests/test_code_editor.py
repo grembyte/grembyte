@@ -370,3 +370,22 @@ def _press_with(editor, key, modifiers):
     from PySide6.QtGui import QKeyEvent  # pylint: disable=import-error,no-name-in-module
 
     editor.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, key, modifiers))
+
+
+def test_line_numbers_take_room_left_of_the_code(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from grembyte.ui.widgets.code_editor import CodeEditor
+
+    editor = CodeEditor("a\nb")
+    editor.resize(400, 200)
+    editor.show()
+    qt_app.processEvents()
+    two_digits = editor.line_number_width()
+    assert editor.line_numbers.width() == two_digits
+    assert editor.viewport().geometry().left() >= two_digits
+    editor.setPlainText("\n".join(["x"] * 1200))
+    qt_app.processEvents()
+    assert editor.line_number_width() > two_digits  # four digits now
+    assert editor.viewport().geometry().left() >= editor.line_number_width()
+    assert not editor.line_numbers.grab().isNull()  # paints without errors
+    editor.close()

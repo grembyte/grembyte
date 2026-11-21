@@ -11,7 +11,30 @@ Grembyte uses JavaScript wherever you tell it *what* to do with a value or with 
 | [Script](../examples/grembytequest-scripts.md) | the **body** of a function | by hand or on a timer, on the game's main thread | `ctx.static`, `ctx.find`, `ctx.call`, `ctx.args`, `ctx.state`, `ctx.log` | shown as the script's result |
 | Options of a choice parameter | the **body** of a function | when the run dialog asks for them | the same `ctx` as scripts | the list of options |
 
-The code fields of all four use a fixed-width font. **Tab** and **Shift+Tab** indent and outdent the selected lines; **Ctrl+mouse wheel**, **Ctrl+Plus** and **Ctrl+Minus** make the code larger or smaller in every code field at once, **Ctrl+0** returns to the normal size. Grembyte remembers the size.
+The code fields of all four use a fixed-width font and show line numbers on the left. **Tab** and **Shift+Tab** indent and outdent the selected lines; **Ctrl+mouse wheel**, **Ctrl+Plus** and **Ctrl+Minus** make the code larger or smaller in every code field at once, **Ctrl+0** returns to the normal size. Grembyte remembers the size.
+
+### Completion
+
+While you type, a list offers what fits at the cursor, each entry with a short description:
+
+- after `ctx.` the fields of that code field's `ctx`: a script's, a value hook's or a method hook's (in the template editor the one of the chosen **Hook kind**). Only what the attached game's engine has is listed: `ctx.isPlaying()` only in Unreal games, `ctx.static` only in Unity games, in a game without an engine adapter only `ctx.native`, `ctx.args`, `ctx.log` and the like. Without an attached game, and in templates, which belong to no game, every field of the hook kind is listed;
+- after `ctx.native.`, `ctx.gas.` and an object from `ctx.find(…)`, `ctx.object(…)` or `ctx.this` their own names (`scan`, `className`, `field` …);
+- in a method hook, after `ctx.args.` the method's arguments with their types;
+- inside the quotes of `ctx.find("…")` and `ctx.forEach("…")` the names of the classes they can find: in Unreal games the classes that have live objects, in Unity games the classes of the game's assemblies that derive from `UnityEngine.Object` (GameObjects, components, ScriptableObjects). The list opens right after the quote and matches any part of a name, so `Player` also finds `BP_PlayerCharacter_C`; choosing a name closes the string. Grembyte reads the names once per attached game – in Unreal games, classes that only get objects later (after a level change) appear after attaching again;
+- inside the quotes of `ctx.static("…")` (Unity games) the static fields of the game's assemblies as `Namespace.Class.Field`, with their type – not those of the framework (`System.*`, `UnityEngine.*`) and no constants. Like class names, they match any part of the name (`player` finds `GameState.s_playerCharacter`). They come from the cache of the [field catalog](../engines/index.md#catalog) (**Methods | Fields** in the catalog) when it was read for the game's build, else Grembyte reads them once and keeps them there;
+- the fields, properties and methods of the game's classes, inherited ones too, where the class is known: after `ctx.find("CharacterStats").`, after `ctx.static("GameState.s_playerCharacter").`, after an argument (`ctx.args.attacker.`), after a method hook's `ctx.this.`, and on through the types of fields, properties and method results (`ctx.args.attacker.m_stats.GetHealth().`), also with `.field("…")`, `.call("…")` and `.component("…")`. Grembyte reads them from the attached game the first time a class is needed – metadata only, no game code runs – and keeps them while the game stays attached; the list appears as soon as the answer is there. Without an attached game only the fixed names are offered;
+- Frida's API in every game: the methods of a pointer after `.address`, `ptr(…)`, `.add(…)` or `.readPointer()`, so a chain like `ctx.find("BP_PlayerCharacter_C").address.add(0x17d0).readPointer()` is completed step by step, and the members of `Memory`, `Process` and `Module`;
+- a variable assigned from one of these with `const`, `let` or `var`;
+- from two letters on, the JavaScript keywords and Frida's global names (`ptr`, `NativePointer`, `hexdump` …).
+
+**Up** and **Down** choose an entry, **Enter** or **Tab** inserts it, **Escape** closes the list; **Ctrl+Space** opens it without typing. A method is inserted with its parentheses, the cursor between them if it takes arguments. Numbers, texts, Unreal enums, arrays (`TArray`, `List<…>`) and values whose class is not known are not followed: where Grembyte cannot tell what an expression is (`list.find(…).`, or `player.Stats.` when `player` came from no known class), the list stays closed rather than offering something wrong. A method hook made from the Unreal catalog has no parameter names until it is installed, so `ctx.args.` offers nothing there at first.
+
+Resting the mouse on the string of a `ctx.find("…")`, `ctx.forEach("…")` or `ctx.static("…")` shows a tooltip from the attached game:
+
+- for `ctx.find` and `ctx.forEach` the class and its base classes, in Unreal games also how many live objects it has (subclasses included), or that the game has no class of that name – a typo shows before the script runs;
+- for `ctx.static` (Unity games) the field's type and its value now, read from memory without running game code, or that there is no such static field. Without an attached game only the type is shown.
+
+A value is read again when the mouse comes back after a moment; the tooltip says *Reading from the game …* until the answer is there.
 
 All of them get one object, `ctx` (for *context*), through which they reach everything else. The [hook context](hook-context.md) and [script context](script-context.md) references list its fields.
 

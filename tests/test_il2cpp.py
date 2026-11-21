@@ -712,6 +712,47 @@ def test_field_catalog_lists_the_fields_each_class_declares(tmp_path, qt_app):
 
 
 @requires_target
+def test_class_members_for_the_completion(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptWorker
+
+    target = _Target(_build(tmp_path))
+    worker = ScriptWorker(target.pid)
+    answers, failed = [], []
+    worker.members_read.connect(lambda _request, answer: answers.append(answer))
+    worker.members_failed.connect(lambda _request, message: failed.append(message))
+    try:
+        worker.start()
+        worker.class_members("Game.Hero")
+        _wait_for(qt_app, lambda: answers or failed)
+        assert not failed, failed
+        hero = answers[0]
+        assert hero["name"] == "Game.Hero"
+        assert "Instances" in {field["name"] for field in hero["fields"]}
+        assert hero["methods"]
+
+        names = []
+        worker.names_read.connect(lambda _request, answer: names.append(answer))
+        worker.names_failed.connect(lambda _request, message: failed.append(message))
+        worker.class_names()
+        _wait_for(qt_app, lambda: names or failed)
+        assert not failed, failed
+        assert isinstance(names[0], list)
+        assert "Game.Hero" not in names[0]  # a plain C# class, no UnityEngine.Object
+
+        # The static fields ctx.static reads
+        names.clear()
+        worker.static_field_names()
+        _wait_for(qt_app, lambda: names or failed)
+        assert not failed, failed
+        assert "Game.Hero.Instances" in dict(names[0])
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
 def test_static_fields_of_a_class_are_read(tmp_path, qt_app):
     # pylint: disable=import-outside-toplevel
     from grembyte.features.scripts import ScriptWorker

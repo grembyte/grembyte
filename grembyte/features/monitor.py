@@ -88,6 +88,8 @@ from grembyte.core import sessions
 from grembyte.engines.registry import ENGINE_AGENT_SOURCE
 from grembyte.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
 from grembyte.agent.source import load_agent_source
+from grembyte.features import catalog_cache
+from grembyte.features.assemblies import chosen_assemblies
 
 
 _AGENT_SOURCE = (ENGINE_AGENT_SOURCE + load_agent_source(__file__, "script_memory.js")
@@ -97,6 +99,40 @@ _AGENT_SOURCE = (ENGINE_AGENT_SOURCE + load_agent_source(__file__, "script_memor
 
 def build_agent_source(language="en"):
     return f"const GREMBYTE_LANGUAGE = {json.dumps(language)};\n" + _AGENT_SOURCE
+
+
+def static_field_names(api):
+    """``[[name, type], ...]`` of the static fields ctx.static reads, for the
+    completion of code: ``Namespace.Class.Field`` of the fields the game's
+    assemblies declare (not the framework's), without constants, nested and
+    generic classes. ``api`` is the agent's ``exports_sync``. The fields come
+    from the field catalog's cache, else from the game, and are cached then
+    (see grembyte.features.catalog_cache). Empty in games without ctx.static."""
+    # pylint: disable=import-outside-toplevel
+    from grembyte.engines.registry import engine_by_id
+
+    sources = api.static_field_sources()
+    engine = engine_by_id(sources["engine"]) if sources["engine"] else None
+    if engine is None:
+        return []
+    found = sources["assemblies"]
+    mvids = {assembly["name"]: assembly.get("mvid") for assembly in found}
+    result = []
+    for name in chosen_assemblies([assembly["name"] for assembly in found], (), engine):
+        try:
+            classes, _cached = catalog_cache.read_cached(
+                engine.id, name, mvids.get(name),
+                lambda assembly=name: api.assembly_fields(assembly), kind=catalog_cache.FIELDS)
+        except frida.RPCException as error:
+            logs.log.info("static fields of %s not read: %s", name, error)
+            continue
+        for class_name, entries in classes:
+            if any(mark in class_name for mark in "/<`"):
+                continue
+            for field_name, type_name, _offset, static, storage in entries:
+                if static and storage != "const" and not field_name.startswith("<"):
+                    result.append([f"{class_name}.{field_name}", type_name])
+    return result
 
 
 class MethodMonitorWorker(QThread):

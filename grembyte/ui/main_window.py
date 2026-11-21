@@ -105,6 +105,7 @@ from grembyte.ui.widgets.reference_graph import ReferenceGraphDialog
 from grembyte.ui.widgets.game_export import GameExportDialog, GameImportDialog
 from grembyte.ui.widgets.game_notes import GameNotesDialog
 from grembyte.ui.widgets.hooks import HookDialog, HookPanel
+from grembyte.ui.widgets.code_completion import NATIVE
 from grembyte.ui.widgets.scripts import ScriptPanel
 from grembyte.ui.widgets.memory_view import MemoryViewerDialog
 from grembyte.ui.widgets.settings_dialog import SettingsDialog
@@ -1101,8 +1102,8 @@ class MainWindow(QMainWindow):
             signal.connect(self._on_address_count_changed)
 
         self.hook_panel = HookPanel(
-            self.translations, self, repository=self._hook_repository
-        )
+            self.translations, self, repository=self._hook_repository,
+            engine=self._completion_engine)
         self.hook_panel.set_backend(self._watch_backend)
         self.hook_panel.setTitle("")
         self.hook_panel.setObjectName("tab_page")
@@ -1119,8 +1120,8 @@ class MainWindow(QMainWindow):
         self.bottom_tabs.addTab(self.hook_panel, self.translations["hooks.title"])
 
         self.script_panel = ScriptPanel(
-            self.translations, self, repository=self._script_repository, language=self.language
-        )
+            self.translations, self, repository=self._script_repository, language=self.language,
+            engine=self._completion_engine)
         self.script_panel.setTitle("")
         self.script_panel.setObjectName("tab_page")
         self.script_panel.count_changed.connect(self._on_script_count_changed)
@@ -1795,6 +1796,15 @@ class MainWindow(QMainWindow):
         if chains:
             self._refresh_timer.start()
         return len(chains)
+
+    def _completion_engine(self):
+        """The engine the code fields complete ``ctx`` for: the adapter's id,
+        NATIVE in a game without one, None while nothing is attached."""
+        if self._current_pid is None:
+            return None
+        # _update_catalog_button records the detection; here it is only read
+        engine = self._engine or detect_engine(self._current_pid)
+        return NATIVE if engine is None else engine.id
 
     def _update_catalog_button(self):
         """Enable the catalog and the trace for games whose engine grembyte supports."""

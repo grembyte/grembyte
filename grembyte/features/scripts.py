@@ -113,7 +113,7 @@ from grembyte.core import hotkeys, logs, messages, settings
 from grembyte.core import sessions
 from grembyte.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
 from grembyte.features import catalog_cache
-from grembyte.features.monitor import build_agent_source
+from grembyte.features.monitor import build_agent_source, static_field_names
 
 
 MODES = ("once", "repeat", "manual")
@@ -363,6 +363,15 @@ class ScriptWorker(QThread):
     evaluate_failed = Signal(int, str)
     methods_listed = Signal(int, object)
     methods_failed = Signal(int, str)
+    # request id, a class's members or None (see class_members)
+    members_read = Signal(int, object)
+    members_failed = Signal(int, str)
+    # request id, the names of the classes ctx.find finds (see class_names)
+    names_read = Signal(int, object)
+    names_failed = Signal(int, str)
+    # request id, a class's base classes and objects or None (see class_info)
+    info_read = Signal(int, object)
+    info_failed = Signal(int, str)
     call_described = Signal(int, object)
     called = Signal(int, object)
     call_failed = Signal(int, str)
@@ -443,6 +452,39 @@ class ScriptWorker(QThread):
         """List the instance methods of an object (see MethodMonitorWorker)."""
         request_id = next(self._requests)
         self._commands.put(("methods", request_id, target))
+        return request_id
+
+    def class_members(self, class_name):
+        """Read the fields, properties and methods of a class, inherited ones
+        too, for the completion of code; expect members_read (None: no such
+        class) or members_failed. Metadata only, no game code runs."""
+        request_id = next(self._requests)
+        self._commands.put(("members", request_id, class_name))
+        return request_id
+
+    def class_names(self):
+        """Read the names of the classes ctx.find and ctx.forEach can find
+        (Unity: those deriving from UnityEngine.Object; Unreal: those with
+        live objects), for the completion of code; expect names_read or
+        names_failed. Metadata and the object table only."""
+        request_id = next(self._requests)
+        self._commands.put(("class_names", request_id, ()))
+        return request_id
+
+    def class_info(self, class_name):
+        """Read what a tooltip shows of the class ctx.find looks up by
+        ``class_name``: its base classes and (Unreal) its live objects; expect
+        info_read (None: no such class) or info_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("class_info", request_id, class_name))
+        return request_id
+
+    def static_field_names(self):
+        """Read the static fields ctx.static can read (see
+        grembyte.features.monitor.static_field_names); expect names_read or
+        names_failed."""
+        request_id = next(self._requests)
+        self._commands.put(("static_names", request_id, None))
         return request_id
 
     def describe_method(self, method):
@@ -603,6 +645,11 @@ class ScriptWorker(QThread):
                 api.run_script_now(script_id, argument)
             elif action == "timings":
                 api.set_script_timings(argument)
+            elif action == "static_names":
+                try:
+                    self.names_read.emit(script_id, static_field_names(api))
+                except (frida.RPCException, OSError) as error:
+                    self.names_failed.emit(script_id, messages.describe(error))
             elif action in self._REQUESTS:
                 self._answer(api, action, script_id, argument)
                 return
@@ -618,6 +665,9 @@ class ScriptWorker(QThread):
         "inspect": ("inspect", "inspected", "inspect_failed"),
         "evaluate": ("evaluate", "evaluated", "evaluate_failed"),
         "methods": ("list_methods", "methods_listed", "methods_failed"),
+        "members": ("class_members", "members_read", "members_failed"),
+        "class_names": ("class_names", "names_read", "names_failed"),
+        "class_info": ("class_info", "info_read", "info_failed"),
         "describe_method": ("describe_method", "call_described", "call_failed"),
         "call_on": ("call_on", "called", "call_failed"),
         "text": ("full_text", "text_fetched", "text_failed"),
