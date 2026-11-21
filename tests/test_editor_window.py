@@ -254,3 +254,89 @@ def test_the_main_window_closes_saved_editors_when_the_game_ends(qt_app, monkeyp
         assert closed == [window.script_panel, window.hook_panel]
     finally:
         window.close()
+
+
+def test_editors_open_in_the_editor_tab_of_the_main_window(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from grembyte.ui import main_window
+    from grembyte.ui.widgets import scripts
+    from grembyte.ui.widgets.docking import DockManager
+
+    monkeypatch.setattr(scripts, "ScriptWorker", _FakeScriptWorker)
+    window = main_window.MainWindow("en")
+    window.show()
+    try:
+        panel, page, tabs = window.script_panel, window.editor_page, window.bottom_tabs
+        window._set_scan_area_visible(True)
+        assert not page.is_shown()  # no editor: no Editor tab
+        panel.set_process(4242)
+        first = panel.add_script(ScriptSpec("return 1;", label="One"))
+        second = panel.add_script(ScriptSpec("return 2;", label="Two"))
+
+        # Pinned: in the Editor tab, in front; the scan area folds away
+        editor = panel._open_editor(first)
+        assert editor.isWindow()  # nothing remembered: a window of its own
+        editor.pin_button.click()
+        assert DockManager.remembered("script_editor")
+        assert page.holds(editor) and page.is_shown() and tabs.currentWidget() is page
+        assert window._scan_area.isHidden() and not window.btn_scan_area.isVisible()
+        tabs.setCurrentWidget(panel)  # another tab: the scan area is back
+        assert window._scan_area.isVisible()
+
+        # This once in a window, and back in the tab; the pin button's choice stays
+        assert panel._open_editor(first, dock=False) is editor and editor.isWindow()
+        assert not page.is_shown() and DockManager.remembered("script_editor")
+        assert panel._open_editor(first, dock=True) is editor and page.holds(editor)
+
+        # Closing the last editor hides the tab and gives the scan area back
+        close_dialog = page.tabs.tabCloseRequested.emit
+        close_dialog(page.tabs.indexOf(editor))
+        assert panel.editor is None and not page.is_shown()
+        assert window._scan_area.isVisible() and window.btn_scan_area.isVisible()
+
+        # The next one follows the pin button: in the tab, unless asked otherwise
+        editor = panel._open_editor(second)
+        assert page.holds(editor)
+        editor.close()
+        editor = panel._open_editor(second, dock=False)
+        assert editor.isWindow() and not page.is_shown()
+        editor.close()
+    finally:
+        window.script_panel.shutdown()
+        window.close()
+
+
+def test_the_context_menus_open_the_editor_in_a_window_or_the_tab(qt_app, monkeypatch):
+    # pylint: disable=import-outside-toplevel,unused-argument,protected-access
+    from PySide6.QtWidgets import QMenu  # pylint: disable=import-error,no-name-in-module
+
+    from grembyte.ui.widgets.editor_window import add_editor_place_actions
+
+    translations = load_translations("de")
+    asked = []
+    menu = QMenu()
+    add_editor_place_actions(menu, translations, asked.append)
+    labels = [action.text() for action in menu.actions()]
+    assert labels == ["In eigenem Fenster bearbeiten", "Im Editor-Tab bearbeiten"]
+    for action in menu.actions():
+        action.trigger()  # triggered(checked) must not reach edit as dock
+    assert asked == [False, True]
+
+    # The method hook menu has Edit and both places; a value hook's has none
+    from grembyte.ui.widgets.hooks import HookPanel
+
+    panel = HookPanel(translations)
+    try:
+        panel._hooks[1] = {"spec": SimpleNamespace(identity="x"), "kind": "method",
+                           "status": "active"}
+        labels = [action.text() for action in panel.context_menu(1).actions()]
+        assert labels[:3] == ["Bearbeiten", "In eigenem Fenster bearbeiten",
+                              "Im Editor-Tab bearbeiten"]
+        edits = []
+        monkeypatch.setattr(panel, "_edit_selected", lambda dock=None: edits.append(dock))
+        panel.btn_edit.setEnabled(True)  # as with the hook selected in a running game
+        for action in panel.context_menu(1).actions()[:3]:
+            action.trigger()
+        assert edits == [None, False, True]
+    finally:
+        panel.deleteLater()

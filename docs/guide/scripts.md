@@ -14,9 +14,19 @@ Scripts reach game objects and methods through the engine adapters of [Unity and
 
 ## The script editor
 
-The editor does not block the rest of Grembyte: while it is open you can look things up in the [object inspector](../engines/index.md#object-inspector), the [object browser](object-browser.md) or your [notes](notes.md). **Pin to main window** docks it at the bottom of the main window, so those tools fit beside it at the side (see [Docking windows](tools.md#docking-windows)). One script is open at a time: **Edit** on another one closes the editor first, and the editor asks before it discards changes that are not saved. The method hook editor works the same way.
+The editor does not block the rest of Grembyte: while it is open you can look things up in the [object inspector](../engines/index.md#object-inspector), the [object browser](object-browser.md) or your [notes](notes.md). **Pin to main window** moves it into the **Editor** tab beside **Tracked addresses**, **Hooks** and **Scripts**: there it has the window's width, the scan area folds away while the tab is in front, and the tools [docked at the side](tools.md#docking-windows) stay beside it. **Detach** gives it a window of its own again. The tab shows only while an editor is in it.
 
-**Save** puts the code into the running script. If the game ended meanwhile, the script is saved for the next time the game is attached; if Grembyte is attached to another game by now, the editor refuses to save and stays open, so nothing typed is lost.
+<figure markdown="span">
+  ![Script editor in the Editor tab](../assets/screenshots/script-editor-tab-dark.webp#only-dark)
+  ![Script editor in the Editor tab](../assets/screenshots/script-editor-tab-light.webp#only-light)
+  <figcaption>A script in the Editor tab, the object inspector of the component it changes docked beside it.</figcaption>
+</figure>
+
+- **Edit** opens the editor where the last one was: in the Editor tab or in a window. The context menu of a script also offers **Edit in a window** and **Edit in the Editor tab**, for this once.
+- One script is open at a time: **Edit** on another one closes the editor first, and the editor asks before it discards changes that are not saved.
+- The method hook editor works the same way, with the same entries in the context menu of a method hook. It can be open beside a script's: the Editor tab holds both as tabs.
+
+**Save** puts the code into the running script. If the game ended meanwhile, the script is saved for the next time the game is attached; if Grembyte is attached to another game by now, the editor refuses to save and stays open, so nothing typed is lost. When the game ends or another one is attached, an editor whose content is saved closes by itself; one with changes stays open.
 
 ## When a script runs
 

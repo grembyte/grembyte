@@ -43,10 +43,10 @@ from grembyte.ui.widgets.code_completion import hook_context
 from grembyte.ui.widgets.member_lookup import MemberLookup
 from grembyte.ui.widgets.code_editor import CodeEditor
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
-from grembyte.ui.widgets.editor_window import EditorDialog
-from grembyte.ui.widgets.docking import BOTTOM, close_dialog, find_dock_manager
+from grembyte.ui.widgets.editor_window import EditorDialog, add_editor_place_actions
+from grembyte.ui.widgets.docking import EDITOR, close_dialog, find_dock_manager
 from grembyte.ui.widgets.hook_debug import HookDebugWindow
-from grembyte.ui.widgets.icons import set_button_icon, theme_color
+from grembyte.ui.widgets.icons import material_icon, set_button_icon, theme_color
 from grembyte.ui.widgets.inspection import Inspections
 from grembyte.ui.widgets.spin_boxes import SpinBox
 from grembyte.ui.widgets.syntax_hint import SyntaxHint
@@ -542,7 +542,7 @@ class HookPanel(QGroupBox):
         controls = QHBoxLayout()
         self.btn_edit = QPushButton(self.translations["hooks.edit"])
         set_button_icon(self.btn_edit, "edit")
-        self.btn_edit.clicked.connect(self._edit_selected)
+        self.btn_edit.clicked.connect(lambda: self._edit_selected())
         self.btn_toggle = QPushButton(self.translations["hooks.pause"])
         set_button_icon(self.btn_toggle, "pause")
         self.btn_toggle.clicked.connect(self._toggle_selected)
@@ -587,7 +587,7 @@ class HookPanel(QGroupBox):
             header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
             resizable_columns(self.table)
         self.table.itemSelectionChanged.connect(self._update_buttons)
-        self.table.doubleClicked.connect(self._edit_selected)
+        self.table.doubleClicked.connect(lambda _index: self._edit_selected())
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
 
@@ -708,6 +708,13 @@ class HookPanel(QGroupBox):
                 else self.translations["hooks.menu_last_address"].format(address=f"0x{last:X}")
             )
         menu = QMenu(self)
+        if method:
+            # The method hook editor: where the last one was, or this once elsewhere
+            menu.addAction(material_icon("edit"), self.translations["hooks.edit"],
+                           lambda: self._edit_selected()).setEnabled(self.btn_edit.isEnabled())
+            add_editor_place_actions(menu, self.translations, self._edit_selected,
+                                     self.btn_edit.isEnabled())
+            menu.addSeparator()
         # Same labels as in the address list
         for key, reads in (("address_table.watch", False), ("address_table.watch_access", True)):
             action = menu.addAction(
@@ -860,10 +867,12 @@ class HookPanel(QGroupBox):
     # ------------------------------------------------------------------
     # The method hook editor: one at a time, not modal (see editor_window)
     # ------------------------------------------------------------------
-    def _open_method_editor(self, method=None, hook_id=None):
+    def _open_method_editor(self, method=None, hook_id=None, dock=None):
         """Open the editor of the method hook ``hook_id``, or of a new one on
         ``method``. One open for another hook closes first, asking about
-        changes not saved; one open for this hook comes to the front."""
+        changes not saved; one open for this hook comes to the front.
+        ``dock``: in the Editor tab (True) or a window (False) this once;
+        None: where the pin button put the last one."""
         state = self._hooks.get(hook_id) if hook_id is not None else None
         saved_id = state["saved_id"] if state is not None else None
         editor = self.method_editor
@@ -875,7 +884,7 @@ class HookPanel(QGroupBox):
                 same = (editor.hook_id is None and editor.method_entry is not None
                         and editor.method_entry.identity() == method.identity())
             if same and editor.process_id == self._process_id:
-                self._show_method_editor(editor)
+                self._show_method_editor(editor, dock)
                 return editor
             close_dialog(editor)
             if self.method_editor is not None:  # the user kept its changes
@@ -902,14 +911,16 @@ class HookPanel(QGroupBox):
         self.method_editor = dialog
         manager = find_dock_manager(self)
         if manager is not None:
-            manager.add(dialog, "method_hook_editor", BOTTOM)
+            manager.add(dialog, "method_hook_editor", EDITOR, dock=dock)
         else:
             dialog.show()
         return dialog
 
-    def _show_method_editor(self, editor):
+    def _show_method_editor(self, editor, dock=None):
         manager = find_dock_manager(self)
-        if manager is not None:
+        if manager is not None and dock is not None:
+            manager.place(editor, EDITOR, dock)
+        elif manager is not None:
             manager.show(editor)
         else:
             editor.show()
@@ -1036,8 +1047,8 @@ class HookPanel(QGroupBox):
         if self._is_current(worker) and hook_id in self._hooks:
             self._set_status(hook_id, "disconnected", self.translations["hooks.method_ended"])
 
-    def _edit_method_hook(self, hook_id, _state):
-        self._open_method_editor(hook_id=hook_id)
+    def _edit_method_hook(self, hook_id, _state, dock=None):
+        self._open_method_editor(hook_id=hook_id, dock=dock)
 
     def _save_method_hook(self, dialog):
         """Save an edited method hook: into the database, and into the hook
@@ -1741,7 +1752,9 @@ class HookPanel(QGroupBox):
         self.count_changed.emit(len(self._hooks))
         self._update_debug_hooks()
 
-    def _edit_selected(self):
+    def _edit_selected(self, dock=None):
+        """Edit the selected hook; a method hook's editor opens in the Editor
+        tab (``dock`` True), in a window (False) or where the last was (None)."""
         hook_id = self._selected_hook_id()
         state = self._hooks.get(hook_id)
         if state is None or state["status"] not in {
@@ -1750,7 +1763,7 @@ class HookPanel(QGroupBox):
             return
         spec = state["spec"]
         if state.get("kind") == "method":
-            self._edit_method_hook(hook_id, state)
+            self._edit_method_hook(hook_id, state, dock)
             return
         site_item = self.table.item(self._row_of(hook_id), 2)
         dialog = HookDialog(

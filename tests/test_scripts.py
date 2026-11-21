@@ -533,7 +533,8 @@ def test_context_menu_creates_a_localized_script_copy(qt_app, monkeypatch, langu
 
         menu = FakeMenu.instances[-1]
         assert [action.label for action in menu.actions] == [
-            translations["scripts.edit"], translations["scripts.run"],
+            translations["scripts.edit"], translations["editor.open_window"],
+            translations["editor.open_page"], translations["scripts.run"],
             translations["scripts.pause"], translations["scripts.copy"],
         ]
         menu.actions[-1].callback()

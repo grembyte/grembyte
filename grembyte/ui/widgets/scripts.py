@@ -44,8 +44,8 @@ from grembyte.hooks.syntax import BODY
 from grembyte.ui.widgets.code_completion import SCRIPT
 from grembyte.ui.widgets.code_editor import CodeEditor
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
-from grembyte.ui.widgets.editor_window import EditorDialog
-from grembyte.ui.widgets.docking import BOTTOM, close_dialog, find_dock_manager
+from grembyte.ui.widgets.editor_window import EditorDialog, add_editor_place_actions
+from grembyte.ui.widgets.docking import EDITOR, close_dialog, find_dock_manager
 from grembyte.ui.widgets.icons import material_icon, set_button_icon, theme_color
 from grembyte.ui.widgets.inspection import Inspections
 from grembyte.ui.widgets.labels import DocsHint, WrappedLabel
@@ -293,7 +293,7 @@ class ScriptPanel(QGroupBox):
         self.btn_new.clicked.connect(self._new_script)
         self.btn_edit = QPushButton(self.translations["scripts.edit"])
         set_button_icon(self.btn_edit, "edit")
-        self.btn_edit.clicked.connect(self._edit_selected)
+        self.btn_edit.clicked.connect(lambda: self._edit_selected())
         self.btn_run = QPushButton(self.translations["scripts.run"])
         set_button_icon(self.btn_run, "play_circle")
         self.btn_run.setToolTip(self.translations["scripts.run_tooltip"])
@@ -372,6 +372,9 @@ class ScriptPanel(QGroupBox):
                              (self.btn_toggle, "play_arrow" if paused else "pause")):
             menu.addAction(material_icon(icon), button.text(), button.click).setEnabled(
                 button.isEnabled())
+            if button is self.btn_edit:
+                add_editor_place_actions(menu, self.translations, self._edit_selected,
+                                         button.isEnabled())
         menu.addAction(material_icon("content_copy"), self.translations["scripts.copy"],
                    self._copy_selected).setEnabled(state is not None)
         add_delete_action(menu, self.table, self.translations, self._remove_selected)
@@ -593,18 +596,22 @@ class ScriptPanel(QGroupBox):
             return
         self._open_editor(None)
 
-    def _edit_selected(self):
+    def _edit_selected(self, dock=None):
+        """Edit the selected script; ``dock``: in the Editor tab (True), in a
+        window (False), or where the last editor was (None)."""
         script_id = self._selected_id()
         if script_id in self._scripts:
-            self._open_editor(script_id)
+            self._open_editor(script_id, dock)
 
     # ------------------------------------------------------------------
     # The script editor: one at a time, not modal (see editor_window)
     # ------------------------------------------------------------------
-    def _open_editor(self, script_id):
+    def _open_editor(self, script_id, dock=None):
         """Open the editor for script ``script_id`` (None: a new one). An
         editor open for another script closes first, asking about changes
-        not saved; one open for this script comes to the front."""
+        not saved; one open for this script comes to the front. ``dock``
+        puts it in the Editor tab (True) or a window (False) this once;
+        None: where the pin button put the last one."""
         state = self._scripts.get(script_id) if script_id is not None else None
         saved_id = state["saved_id"] if state is not None else None
         editor = self.editor
@@ -612,7 +619,7 @@ class ScriptPanel(QGroupBox):
             same = (editor.script_id == script_id
                     or (saved_id is not None and editor.saved_id == saved_id))
             if same and editor.process_id == self._process_id:
-                self._show_editor(editor)
+                self._show_editor(editor, dock)
                 return editor
             close_dialog(editor)
             if self.editor is not None:  # the user kept its changes
@@ -628,16 +635,18 @@ class ScriptPanel(QGroupBox):
         self.editor = dialog
         manager = find_dock_manager(self)
         if manager is not None:
-            # Below the main window: the inspector, the notes and the object
-            # browser keep the right side
-            manager.add(dialog, "script_editor", BOTTOM)
+            # In the main window's Editor tab: the inspector, the notes and
+            # the object browser keep the right side
+            manager.add(dialog, "script_editor", EDITOR, dock=dock)
         else:
             dialog.show()
         return dialog
 
-    def _show_editor(self, editor):
+    def _show_editor(self, editor, dock=None):
         manager = find_dock_manager(self)
-        if manager is not None:
+        if manager is not None and dock is not None:
+            manager.place(editor, EDITOR, dock)
+        elif manager is not None:
             manager.show(editor)
         else:
             editor.show()

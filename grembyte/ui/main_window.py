@@ -122,7 +122,7 @@ from grembyte.ui.widgets.native_monitor import NativeMonitorDialog
 from grembyte.ui.widgets.native_trace import NativeTraceDialog
 from grembyte.ui.widgets.trace import TraceDialog
 from grembyte.ui.widgets.pointer_scan import PointerScanDialog
-from grembyte.ui.widgets.docking import BOTTOM, RIGHT, DockManager, close_dialog
+from grembyte.ui.widgets.docking import BOTTOM, RIGHT, DockManager, PageHost, close_dialog
 from grembyte.ui.widgets.templates import TemplateDialog
 from grembyte.ui.widgets.write_watch import WriteWatchDialog
 
@@ -580,6 +580,10 @@ class MainWindow(QMainWindow):
         self.hook_panel = None
         self.script_panel = None
         self.bottom_tabs = None
+        # The Editor tab beside them, holding the script and method hook
+        # editors (see docking.PageHost); shown only while it holds one
+        self.editor_page = None
+        self._scan_area_wanted = True
         self._address_box = None
         self.lbl_backend = None
 
@@ -1127,6 +1131,11 @@ class MainWindow(QMainWindow):
         self.script_panel.count_changed.connect(self._on_script_count_changed)
         self.script_panel.address_requested.connect(self._add_inspected_address)
         self.bottom_tabs.addTab(self.script_panel, self.translations["scripts.title"])
+        self.editor_page = PageHost(self, self.bottom_tabs, self.translations["editor.page"])
+        self.dock_manager.register(self.editor_page)
+        # The editors have the window's height: the scan area folds away
+        # while the Editor tab is in front
+        self.bottom_tabs.currentChanged.connect(lambda _index: self._show_scan_area())
         return self.bottom_tabs
 
     def _on_script_count_changed(self, count):
@@ -1141,7 +1150,8 @@ class MainWindow(QMainWindow):
 
     def _set_scan_area_visible(self, visible):
         """Show or fold away the scan results and value search; remembered."""
-        self._scan_area.setVisible(visible)
+        self._scan_area_wanted = visible
+        self._show_scan_area()
         self.act_scan_area.blockSignals(True)
         self.act_scan_area.setChecked(visible)
         self.act_scan_area.blockSignals(False)
@@ -1150,6 +1160,15 @@ class MainWindow(QMainWindow):
         set_button_icon(self.btn_scan_area, "expand_less" if visible else "expand_more")
         self.btn_scan_area.setToolTip(self.translations["scan_area.tooltip"])
         self._settings.setValue("scan_area_visible", visible)
+
+    def _show_scan_area(self):
+        """The scan area shows as chosen, except while the Editor tab is in
+        front: then it folds away, with its button, until another tab is."""
+        editing = (self.editor_page is not None
+                   and self.bottom_tabs.currentWidget() is self.editor_page)
+        self._scan_area.setVisible(self._scan_area_wanted and not editing)
+        self.btn_scan_area.setVisible(not editing)
+        self.act_scan_area.setEnabled(not editing)
 
     def _on_address_count_changed(self, *_args):
         """Show the number of tracked addresses in the tab title."""

@@ -13,6 +13,12 @@ dialogs: their area and whether the last one was docked, which the next one
 of that kind follows (kept in the settings under ``docking/<kind>``). Code
 far from the main window finds it with ``find_dock_manager``.
 
+A third area, ``EDITOR``, is not a dock but a page among the main window's
+tabs (tracked addresses, hooks, scripts): a ``PageHost`` the main window
+registers with ``DockManager.register``. The script and method hook editors
+go there, to have the window's width, while the tools stay docked at the
+side. The tab shows only while it holds an editor.
+
 Each area keeps its size (the width of ``RIGHT``, the height of ``BOTTOM``)
 under ``dock_sizes/<area>``: written when its last dialog leaves it and when
 the main window closes, given back when it shows again. Without that an
@@ -26,6 +32,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
     QDockWidget,
     QPushButton,
     QTabWidget,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -34,6 +41,7 @@ from grembyte.ui.widgets.icons import set_button_icon
 
 RIGHT = "right"
 BOTTOM = "bottom"
+EDITOR = "editor"
 _AREAS = {
     RIGHT: (Qt.DockWidgetArea.RightDockWidgetArea,
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea),
@@ -108,23 +116,19 @@ class PinButton(QPushButton):
         self._show(pinned)
 
 
-class DockHost(QDockWidget):
-    """One docking area of the main window: its dialogs as tabs.
+class _DialogTabs:
+    """Dialogs held as tabs: what a DockHost and a PageHost share.
 
     A tab's close button (or a middle click on it) closes its dialog, and a
-    dialog that finishes leaves its tab. Empty, the dock hides. The dock has
-    no title bar: the tabs name their dialogs.
+    dialog that finishes leaves its tab. The host shows with its first tab
+    (``_appear``) and goes with its last (``_vanish``). A pure-Python mixin
+    before the Qt class, so its ``eventFilter`` is the one Qt calls.
     """
 
-    def __init__(self, window, area=RIGHT):
-        super().__init__(window)
-        self.setObjectName(f"dock_{area}")
-        self.area = area
-        place, allowed = _AREAS[area]
-        self.setAllowedAreas(allowed)
-        # The tabs name the dialogs and close them: no title bar above them
-        self.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
-        self.setTitleBarWidget(QWidget())
+    tabs = None
+    _window = None
+
+    def _setup_tabs(self, window):
         self._window = window
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
@@ -136,9 +140,17 @@ class DockHost(QDockWidget):
         self.tabs.tabCloseRequested.connect(lambda index: self._close_tab(index))
         self.tabs.currentChanged.connect(lambda _index: self._show_title())
         self.tabs.tabBar().installEventFilter(self)
-        self.setWidget(self.tabs)
-        window.addDockWidget(place, self)
-        self.hide()
+
+    def _appear(self):
+        """Show the host: it holds a dialog in front now."""
+        raise NotImplementedError
+
+    def _vanish(self):
+        """Hide the host: its last dialog left."""
+        raise NotImplementedError
+
+    def remember_size(self):
+        """Keep the host's size while it shows (where it has one to keep)."""
 
     def dialogs(self):
         """The docked dialogs, in the order of their tabs."""
@@ -172,26 +184,7 @@ class DockHost(QDockWidget):
         dialog.show()
         self.tabs.setCurrentWidget(dialog)
         self._show_title()
-        appearing = self.isHidden()
-        self.show()
-        self.raise_()
-        if appearing:
-            self.restore_size()
-
-    def _orientation(self):
-        return Qt.Orientation.Horizontal if self.area == RIGHT else Qt.Orientation.Vertical
-
-    def remember_size(self):
-        """Keep the area's size (RIGHT: width, BOTTOM: height) while it shows."""
-        if self.isVisible():
-            size = self.width() if self.area == RIGHT else self.height()
-            window_state.settings().setValue(f"dock_sizes/{self.area}", size)
-
-    def restore_size(self):
-        """Give the area the size it had when it last hid (or the main window closed)."""
-        size = window_state.settings().value(f"dock_sizes/{self.area}", 0, type=int)
-        if size > 0:
-            self._window.resizeDocks([self], [size], self._orientation())
+        self._appear()
 
     def unpin(self, dialog):
         """Give ``dialog`` a window of its own again."""
@@ -227,7 +220,7 @@ class DockHost(QDockWidget):
             self.remember_size()  # before the last tab goes and the area hides
         self.tabs.removeTab(index)
         if self.tabs.count() == 0:
-            self.hide()
+            self._vanish()
         else:
             self._show_title()
         return True
@@ -271,11 +264,87 @@ class DockHost(QDockWidget):
         self.tabs.setTabText(index, dialog.property(TAB_TITLE) or dialog.windowTitle())
         self.tabs.setTabToolTip(index, dialog.windowTitle())
 
+
+class DockHost(_DialogTabs, QDockWidget):
+    """One docking area of the main window: its dialogs as tabs.
+
+    Empty, the dock hides. The dock has no title bar: the tabs name their
+    dialogs.
+    """
+
+    def __init__(self, window, area=RIGHT):
+        super().__init__(window)
+        self.setObjectName(f"dock_{area}")
+        self.area = area
+        place, allowed = _AREAS[area]
+        self.setAllowedAreas(allowed)
+        # The tabs name the dialogs and close them: no title bar above them
+        self.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+        self.setTitleBarWidget(QWidget())
+        self._setup_tabs(window)
+        self.setWidget(self.tabs)
+        window.addDockWidget(place, self)
+        self.hide()
+
+    def _appear(self):
+        appearing = self.isHidden()
+        self.show()
+        self.raise_()
+        if appearing:
+            self.restore_size()
+
+    def _vanish(self):
+        self.hide()
+
+    def _orientation(self):
+        return Qt.Orientation.Horizontal if self.area == RIGHT else Qt.Orientation.Vertical
+
+    def remember_size(self):
+        """Keep the area's size (RIGHT: width, BOTTOM: height) while it shows."""
+        if self.isVisible():
+            size = self.width() if self.area == RIGHT else self.height()
+            window_state.settings().setValue(f"dock_sizes/{self.area}", size)
+
+    def restore_size(self):
+        """Give the area the size it had when it last hid (or the main window closed)."""
+        size = window_state.settings().value(f"dock_sizes/{self.area}", 0, type=int)
+        if size > 0:
+            self._window.resizeDocks([self], [size], self._orientation())
+
     def closeEvent(self, event):  # pylint: disable=invalid-name
         """Closing the dock closes its dialogs."""
         for dialog in self.dialogs():
             close_dialog(dialog)
         super().closeEvent(event)
+
+
+class PageHost(_DialogTabs, QWidget):
+    """The ``EDITOR`` area: a page among ``tab_widget``'s tabs, holding the
+    editors as tabs of its own. Its tab shows (and comes to the front) with
+    the first editor and hides with the last."""
+
+    def __init__(self, window, tab_widget, title):
+        super().__init__()
+        self.setObjectName("editor_page")
+        self.area = EDITOR
+        self._setup_tabs(window)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.tabs)
+        self._tab_widget = tab_widget
+        tab_widget.addTab(self, title)
+        tab_widget.setTabVisible(tab_widget.indexOf(self), False)
+
+    def _appear(self):
+        self._tab_widget.setTabVisible(self._tab_widget.indexOf(self), True)
+        self._tab_widget.setCurrentWidget(self)
+
+    def _vanish(self):
+        self._tab_widget.setTabVisible(self._tab_widget.indexOf(self), False)
+
+    def is_shown(self):
+        """Whether its tab is among the main window's tabs now."""
+        return self._tab_widget.isTabVisible(self._tab_widget.indexOf(self))
 
 
 class DockManager(QObject):
@@ -294,8 +363,15 @@ class DockManager(QObject):
                 host.remember_size()
         return False
 
+    def register(self, host):
+        """Use ``host`` (a PageHost) for its area instead of a dock."""
+        self._hosts[host.area] = host
+
     def host(self, area):
-        """The DockHost of ``area`` (RIGHT or BOTTOM), created on first use."""
+        """The host of ``area`` (RIGHT or BOTTOM: a DockHost, created on
+        first use; EDITOR: the registered PageHost, else the BOTTOM dock)."""
+        if area == EDITOR and area not in self._hosts:
+            area = BOTTOM
         if area not in self._hosts:
             self._hosts[area] = DockHost(self._window, area)
         return self._hosts[area]
@@ -340,12 +416,21 @@ class DockManager(QObject):
     def set_docked(self, dialog, kind, area, docked):
         """Dock or float ``dialog``; the next dialog of ``kind`` follows."""
         window_state.settings().setValue(f"docking/{kind}", bool(docked))
+        self.place(dialog, area, docked)
+
+    def place(self, dialog, area, docked):
+        """Dock or float ``dialog`` this once: the next one of its kind
+        still follows the last choice of the pin button."""
         if docked:
             self.host(area).pin(dialog)
         else:
             host = self.host_of(dialog)
             if host is not None:
                 host.unpin(dialog)
+            else:
+                dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
 
     def _released(self, dialog):
         for host in self._hosts.values():

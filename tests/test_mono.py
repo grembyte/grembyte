@@ -2627,7 +2627,11 @@ def test_hook_context_menu_offers_what_fits_the_hook(qt_app, translations):
     assert (spec.address, spec.pointer, spec.write_pc, reads) == (0x2000, None, 0x10, False)
     assert panel._hooks[3]["spec"].address is None
     entries, menu = actions(4)
-    assert [enabled for _text, enabled in entries] == [False, False, True]
+    # A method hook's: Edit there, in a window, in the Editor tab (nothing
+    # selected: off), the two address watches (off), the method monitor
+    assert [enabled for _text, enabled in entries] == [False] * 5 + [True]
+    assert [text for text, _enabled in entries][:3] == [
+        "Bearbeiten", "In eigenem Fenster bearbeiten", "Im Editor-Tab bearbeiten"]
     menu.actions()[-1].trigger()
     assert monitored == [_ROLL_DAMAGE]
 

@@ -192,6 +192,44 @@ def scripts_tab(studio):
     return window
 
 
+_EDER_SOURCE = """\
+// Pillars of Eternity: Eder back to full health and stamina
+const health = ctx.find("Health", "Companion_Eder(Clone)_0");
+health.CurrentHealth = health.MaxHealth;
+health.CurrentStamina = health.MaxStamina;
+ctx.log(`Eder: ${health.CurrentHealth} health`);
+return health;
+"""
+
+
+@scene("script-editor-tab", size=(1600, 860),
+       description="The script editor in the Editor tab, an object inspector docked beside it")
+def script_editor_tab(studio):
+    """A Pillars of Eternity script open in the Editor tab, with the object
+    inspector of the component it changes docked at the right."""
+    # pylint: disable=import-outside-toplevel,protected-access
+    from studio import SCENES
+
+    from grembyte.features.scripts import ScriptSpec
+    from grembyte.ui.widgets.docking import RIGHT
+
+    inspector = SCENES["object-inspector"].build(studio)  # attaches the demo game
+    window = studio.window
+    panel = window.script_panel
+    panel.set_process(51874)
+    worker = _ScriptWorkerStub()
+    panel._worker = worker
+    script_id = panel.add_script(ScriptSpec(_EDER_SOURCE, "manual", 0.0, True, "Restore Eder"))
+    panel._on_added(worker, script_id)
+    editor = panel._open_editor(script_id, dock=True)
+    host = window.dock_manager.host(RIGHT)
+    host.pin(inspector)
+    window.resizeDocks([host], [620], Qt.Orientation.Horizontal)
+    editor.code_edit.setFocus()
+    settle()
+    return window
+
+
 @scene("script-params", size=(640, 230),
        description="Parameters asked for before a script runs by hand")
 def script_params(studio):
