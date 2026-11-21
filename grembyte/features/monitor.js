@@ -1013,6 +1013,97 @@ function staticFields(className) {
   });
 }
 
+// --- Members of a class, for the completion of code fields -----------------------
+// (see grembyte/ui/widgets/code_completion.py). Metadata only: no game code runs.
+
+const MAX_MEMBERS = 2000;
+
+function memberClass(name) {
+  // The class a code field names by a type as fields and parameters show it:
+  // "CharacterStats", "UnityEngine.GameObject", Unreal's "ULStatComponent*"
+  // and "FLStatData" (the class is "LStatComponent", the struct "LStatData");
+  // null if there is none.
+  const plain = name.replace(/[\s*&]+$/, '');
+  const candidates = [plain];
+  if (engine.id === 'unreal' && /^[UAF][A-Z]/.test(plain))
+    candidates.push(plain.substring(1));
+  for (const candidate of candidates) {
+    try {
+      return engine.findClass(candidate);
+    } catch (_error) {
+      // the next candidate
+    }
+  }
+  return null;
+}
+
+async function staticFieldSources() {
+  // { engine, assemblies } for the completion of ctx.static (Mono, IL2CPP):
+  // the loaded assemblies (see the adapters' assemblies); none in other games.
+  // grembyte/features/monitor.py reads their fields (assemblyFields) or takes
+  // them from the field catalog's cache.
+  if (!engine.refresh() || (engine.id !== 'mono' && engine.id !== 'il2cpp'))
+    return { engine: null, assemblies: [] };
+  return { engine: engine.id, assemblies: await engine.assemblies() };
+}
+
+function classNames() {
+  // The names of the classes ctx.find and ctx.forEach can find (see the
+  // adapters' findableClasses), for the completion of code fields.
+  return engine.onRuntimeThread(() => engine.findableClasses());
+}
+
+const MAX_PARENTS = 4;
+
+function classInfo(className) {
+  // { name, parents, objects } of the class ctx.find and ctx.forEach look up
+  // by ``className``, for a tooltip: its base classes (the nearest first, at
+  // most MAX_PARENTS) and, in Unreal games, how many live objects it and its
+  // subclasses have (else null); null if no class has that name.
+  return engine.onRuntimeThread(() => {
+    const klass = memberClass(String(className));
+    if (klass === null)
+      return null;
+    const chain = engine.classChain(klass).map(current => engine.layout(current).name);
+    return { name: chain[0], parents: chain.slice(1, 1 + MAX_PARENTS),
+             more: Math.max(0, chain.length - 1 - MAX_PARENTS),
+             objects: engine.id === 'unreal' ? engine.liveObjectCount(klass) : null };
+  });
+}
+
+function classMembers(className) {
+  // { name, fields: [{ name, type, static }], properties: [{ name, type,
+  // static }], methods: [{ name, params: [[type, name]], returns, static }] }
+  // of a class with what it inherits, the most derived first; null if no
+  // class has that name.
+  return engine.onRuntimeThread(() => {
+    const klass = memberClass(String(className));
+    if (klass === null)
+      return null;
+    const layout = engine.layout(klass);
+    const fields = layout.fields.slice(0, MAX_MEMBERS).map(field => (
+      { name: field.name, type: field.type.name, static: field.static }));
+    const properties = engine.properties(klass)
+      .filter(property => !property.special)
+      .slice(0, MAX_MEMBERS)
+      .map(property => ({ name: property.name, type: property.type ? property.type.name : '?',
+                          static: property.static }));
+    const methods = engine.methods(klass).slice(0, MAX_MEMBERS).map(entry => {
+      let params = [];
+      let returns = '?';
+      try {
+        const signature = engine.signatureOf(entry.method);
+        params = signature.params.map(param => [param.type.name, param.name]);
+        returns = signature.returns.name;
+      } catch (_error) {
+        // offered without its parameters
+      }
+      return { name: entry.name, params, returns, static: entry.static };
+    });
+    return { name: layout.name, fields, properties, methods };
+  });
+}
+
 function frameText(address) {
   const module = Process.findModuleByAddress(address);
   if (module !== null)
@@ -2944,6 +3035,12 @@ rpc.exports = {
   callStatic,
   callFound,
   listMethods,
+  classMembers,
+  classInfo,
+  classNames,
+  staticFieldSources,
+  // The fields each class of an assembly declares, as the field catalog reads them
+  assemblyFields: assembly => engine.fields(assembly),
   describeMethod,
   callOn,
   addMethodHook,

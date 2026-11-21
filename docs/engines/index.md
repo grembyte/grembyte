@@ -119,7 +119,7 @@ Inspectors can be [docked](../guide/tools.md#docking-windows) beside the scanner
 
 ## Method hooks
 
-A method hook changes a method's arguments or the fields of its object before it runs, or its result after it. Like value hooks, method hooks use [templates](../guide/templates.md) – their script sees the method's arguments and `ctx.this` – and they are stored per program and reinstalled at the next start.
+A method hook changes a method's arguments or the fields of its object before it runs, or its result after it. Like value hooks, method hooks use [templates](../guide/templates.md) – their script sees the method's arguments and `ctx.this` – and they are stored per program and reinstalled at the next start. In Mono games a method hook also survives a game update that renumbers the methods: Grembyte then finds the method by its class, name and parameters. Only if one of those changed is it no longer found.
 
 Method hook scripts can reach other game code: `ctx.call` calls a static method, `ctx.static` reads static fields, `ctx.find("ClassName")` gives a live object of a class (in Unity games only Unity objects: GameObjects and components).
 

@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-modul
 from grembyte.core import messages
 from grembyte.features.scripts import PARAM_KINDS, ScriptParam, choice_matches
 from grembyte.hooks.syntax import BODY
+from grembyte.ui.widgets.code_completion import SCRIPT
 from grembyte.ui.widgets.code_editor import CodeEditor
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
 from grembyte.ui.widgets.icons import set_button_icon, theme_color
@@ -50,7 +51,8 @@ class ParamEditor(QWidget):
     _COLUMNS = ("scripts.param_name", "scripts.param_label", "scripts.param_kind",
                 "scripts.param_default")
 
-    def __init__(self, translations, params=(), parent=None):
+    def __init__(self, translations, params=(), parent=None, engine=None, members=None):
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.translations = translations
         # the options code of each row (the editor shows the selected row's)
@@ -89,6 +91,7 @@ class ParamEditor(QWidget):
         layout.addWidget(self.options_label)
         self.options_edit = CodeEditor("")
         self.options_edit.setMinimumHeight(60)
+        self.options_edit.set_completion(translations, SCRIPT, engine, members)
         layout.addWidget(self.options_edit, 1)
         self.options_hint = SyntaxHint(translations, self.options_edit, BODY)
         layout.addWidget(self.options_hint)

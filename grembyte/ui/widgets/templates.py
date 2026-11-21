@@ -30,6 +30,7 @@ from grembyte.db.repository.hooks import DuplicateTemplateError
 from grembyte.hooks.transforms import PARAMETER_NAME, TransformDefinition, TransformParameter
 from grembyte.hooks.sandbox import TransformSandbox
 from grembyte.hooks.syntax import BODY, FUNCTION
+from grembyte.ui.widgets.code_completion import hook_context
 from grembyte.ui.widgets.code_editor import CodeEditor
 from grembyte.ui.widgets.hooks import TransformForm, format_number, parse_number
 from grembyte.ui.widgets.icons import set_button_icon, theme_color, theme_qcolor
@@ -203,6 +204,8 @@ class TemplateDialog(QDialog):
         layout.addWidget(QLabel(self.translations["templates.source"]))
         self.source_input = CodeEditor()
         self.source_input.setMinimumHeight(180)
+        self.source_input.set_completion(
+            self.translations, hook_context(self.hook_kind_combo.currentData()))
         layout.addWidget(self.source_input, 1)
         self.syntax_hint = SyntaxHint(self.translations, self.source_input, FUNCTION)
         layout.addWidget(self.syntax_hint)
@@ -255,6 +258,9 @@ class TemplateDialog(QDialog):
         self.param_table.setItem(row, _CHOICES, QTableWidgetItem(format_choices(parameter)))
 
     def _update_script_hint(self):
+        # The hint and the completion follow the kind of hook
+        self.source_input.set_completion(self.translations,
+                                         hook_context(self.hook_kind_combo.currentData()))
         method = self.hook_kind_combo.currentData() == "method"
         self.script_hint.set_hint(
             self.translations["hooks.method_script_hint" if method else "hooks.script_hint"],

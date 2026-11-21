@@ -3474,6 +3474,54 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     return { classes, objects: total };
   }
 
+  function liveObjectCount(klass) {
+    // How many live objects ctx.find can return for ``klass``: those of it
+    // and its subclasses, without templates and reflection objects (as the
+    // object browser counts them), from the object table.
+    reflection();
+    const wanted = Number(klass.toString());
+    const { s, isShown } = browseState(false);
+    const derives = new Map();
+    let count = 0;
+    for (let i = 0; i < s.address.length; i++) {
+      if (!isShown(i))
+        continue;
+      let found = derives.get(s.klass[i]);
+      if (found === undefined) {
+        found = superChain(s.klass[i]).includes(wanted);
+        derives.set(s.klass[i], found);
+      }
+      if (found)
+        count++;
+    }
+    return count;
+  }
+
+  function findableClasses() {
+    // The names of the classes ctx.find can find, for the completion of code
+    // fields (see classNames in grembyte/features/monitor.js): those with live objects, without class
+    // default objects, templates and reflection objects (as the object
+    // browser counts them), read from the object table.
+    reflection();
+    const { s, isShown } = browseState(false);
+    const classes = new Set();
+    for (let i = 0; i < s.address.length; i++) {
+      if (isShown(i))
+        classes.add(s.klass[i]);
+    }
+    const names = new Set();
+    for (const klass of classes) {
+      try {
+        const name = nameOfAddress(klass);
+        if (name !== null)
+          names.add(name);
+      } catch (_error) {
+        // a class that is no object of the table (any more)
+      }
+    }
+    return Array.from(names).sort();
+  }
+
   function browseInstances(klass, options = {}) {
     // The live objects of exactly class ``klass`` (as browseClasses lists
     // it): {instances: [{address, name, outer}], count, truncated}, with
@@ -3962,6 +4010,8 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     // The inspector's title: an object by its FName
     instanceName: uobjectName,
     browseClasses,
+    findableClasses,
+    liveObjectCount,
     browseInstances,
     locateReferences,
     gasAttributes,

@@ -1331,6 +1331,39 @@ def test_method_monitor_logs_arguments_caller_and_result(tmp_path, qt_app):
         target.close()
 
 
+@requires_target
+def test_a_token_from_before_a_game_update_finds_the_method_by_name(tmp_path, qt_app):
+    # A game update renumbers the methods: the saved token names another
+    # method (or none), the class, name and parameters still find it
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.monitor import MethodMonitorWorker
+
+    target = _MonoTarget(_build(tmp_path))
+    worker = MethodMonitorWorker(target.pid)
+    added, failed = {}, {}
+    worker.monitor_added.connect(added.__setitem__)
+    worker.monitor_failed.connect(failed.__setitem__)
+    roll = "Game.Combat:RollDamage (int,single,string,bool,Game.DamageType,int&)"
+    try:
+        worker.start()
+        other = worker.add_monitor({"image": "Assembly-CSharp", "file": None,
+                                    "token": 0x06000001, "method": roll})
+        missing = worker.add_monitor({"image": "Assembly-CSharp", "file": None,
+                                      "token": 0x06000fff, "method": roll})
+        gone = worker.add_monitor({"image": "Assembly-CSharp", "file": None,
+                                   "token": 0x06000004, "method": "Game.Combat:Removed (int)"})
+        _wait_for(qt_app, lambda: len(added) + len(failed) == 3)
+        assert set(added) == {other, missing}
+        assert added[other]["params"][0] == "System.Int32 min"
+        assert failed[gone] == ("Game.Combat:Removed (int) is not in Assembly-CSharp"
+                                " (game updated?)")
+        assert target.send("roll", 5) == (15, 42)
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
 _SET_VALUE = {"image": "Assembly-CSharp", "file": None, "token": 0x0600000e,
               "method": "R3.ReactiveProperty`1:set_Value (T)"}
 
@@ -3283,6 +3316,75 @@ def test_object_browser_keeps_as_many_objects_as_the_setting_says(tmp_path, qt_a
         assert listed["objects"] == 5 and not listed["truncated"]
         # Every mark cleared either way
         assert target.send("liveness", 0)[0] == 0
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
+def test_class_members_for_the_completion(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptWorker
+
+    target = _MonoTarget(_build(tmp_path))
+    worker = ScriptWorker(target.pid)
+    answers, failed = [], []
+    worker.members_read.connect(lambda _request, answer: answers.append(answer))
+    worker.members_failed.connect(lambda _request, message: failed.append(message))
+
+    def members(class_name):
+        answers.clear()
+        failed.clear()
+        worker.class_members(class_name)
+        _wait_for(qt_app, lambda: answers or failed)
+        assert not failed
+        return answers[0]
+
+    try:
+        worker.start()
+        combat = members("Game.Combat")
+        assert combat["name"] == "Game.Combat"
+        fields = {field["name"]: field for field in combat["fields"]}
+        assert fields["Instances"]["static"] and fields["Instances"]["type"] == "System.Int32"
+        assert "IsPartyMember" in {prop["name"] for prop in combat["properties"]}
+        methods = {method["name"]: method for method in combat["methods"]}
+        assert methods["RollDamage"]["params"][0] == ["System.Int32", "min"]
+        assert methods["RollDamage"]["returns"] == "System.Single"
+        # Accessors are properties, not methods
+        assert "get_IsPartyMember" not in methods
+        assert members("Game.Nowhere") is None  # no such class
+
+        # The classes ctx.find finds: those deriving from UnityEngine.Object
+        names = []
+        worker.names_read.connect(lambda _request, answer: names.append(answer))
+        worker.class_names()
+        _wait_for(qt_app, lambda: names or failed)
+        assert not failed
+        assert {"Game.Combat", "UnityEngine.Component", "UnityEngine.Object"} <= set(names[0])
+        assert "Game.Inventory" not in names[0]  # a plain C# class
+        assert "UnityEngine.Component[]" not in names[0]
+
+        # The static fields ctx.static reads: the game's, not the framework's
+        names.clear()
+        worker.static_field_names()
+        _wait_for(qt_app, lambda: names or failed)
+        assert not failed
+        statics = dict(names[0])
+        assert statics["Game.Combat.Instances"] == "System.Int32"
+        assert not any(name.startswith(("System.", "UnityEngine.")) for name in statics)
+
+        # What a tooltip shows of a class: its base classes, no object count
+        infos = []
+        worker.info_read.connect(lambda _request, answer: infos.append(answer))
+        worker.class_info("Game.Combat")
+        worker.class_info("Game.Nowhere")
+        _wait_for(qt_app, lambda: len(infos) == 2 or failed)
+        assert not failed
+        combat, nowhere = infos
+        assert combat["name"] == "Game.Combat" and combat["objects"] is None
+        assert "UnityEngine.Object" in combat["parents"]
+        assert nowhere is None
     finally:
         worker.requestInterruption()
         worker.wait(5000)

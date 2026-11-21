@@ -15,6 +15,15 @@ What was learned while building the features: how they work inside, what broke i
   `CONTEXT` in `pauseThreads`. That is fixed and checked in a 32-bit process. The hook
   engine only handles x64 code (`installSite`), so the watch and hooks take ptrace for 32-bit
   games; Mono features always go through the gadget.
+- **CModule names in 32-bit Windows code (2026-11-21):** TinyCC decorates a `stdcall` function
+  there: `watch_pauses` is `_watch_pauses@4` in the CModule's symbols, while `cdecl` ones
+  (`claim_resume`, `on_enter`) keep their names. The pause watchdog's thread function is
+  `stdcall` (`CreateThread` calls it so), so `startPauseWatch` threw "expected a pointer" and
+  every script run in Might & Magic X – Legacy failed while setting up the main-thread gate. It
+  looks the name up in both forms now and pauses without a watchdog if neither is there. A
+  test script that let the watchdog object be collected ended the game: the CModule was freed
+  while the thread ran in it; the cleanup callback now holds the CModule and disposes it only
+  once the thread has ended.
 - **Gadget through the Windows helper:** `grembyte/attach/inject/inject.c`, built
   with `build.sh` (MinGW or zig) as `grembyte-inject-x86_64.exe` or `-x86.exe` into
   `build/inject/` (not in git; `helper_path` runs `build.sh` once if they are missing), loads the gadget
@@ -247,6 +256,13 @@ Found with Dark Souls III (Arxan/GuardIT):
   Vampire Survivors this broke the object browser's instance list. The agents read game
   strings through `readUtf16Text` (`grembyte/engines/engine_prelude.js`), which turns such
   surrogates into U+FFFD.
+- **Tokens after a game update (2026-11-21):** method hooks, monitors and favorites keep the
+  method's metadata token and its full name. An update of Pillars of Eternity (2026-11-17)
+  renumbered the methods of `Assembly-CSharp`: `StatusEffect:AdjustDamageMultiplier` went
+  from `0x060028CA` to `0x06002D57`, the old token named another method, and the hook failed
+  with "is not in Assembly-CSharp (game updated?)". `resolveMethod` now falls back to the
+  class, name and parameters in the same assembly (`methodBySignature`); the saved token is
+  not rewritten. Methods of generic classes are still found through the token only.
 
 ## IL2CPP adapter
 
@@ -602,6 +618,7 @@ functions called newly or more often when, for example, paying or taking damage.
 - **Native games:** without an engine adapter scripts run when a function the game calls every frame returns on its main thread (`grembyte/features/script_native.js`). The agent hooks the ones the game exports, in this order: `SDL_PollEvent`, `SDL_PumpEvents`, `SDL_GL_SwapWindow`, `glfwPollEvents`, `glfwSwapBuffers`, `PeekMessageW`, `PeekMessageA`, `SwapBuffers`, `wglSwapBuffers`, `glXSwapBuffers`, `eglSwapBuffers`, `vkQueuePresentKHR`, and for GTK and other GLib programs `g_main_context_iteration`. The first of them that runs on the main thread within half a second is kept (if none does, the first that runs on another thread). Games that export none of them, for example with SDL linked in statically, are reported.
 - **Hotkeys are read by Grembyte, not in the game** (`core/hotkeys.py`, `platform/keyboard.py`). On Linux `XQueryKeymap` is polled about 30 times a second and the window with the input focus is matched to the game by `_NET_WM_PID` (or that of the first parent that has one). This needs no code in the game and works for native and Proton games alike: XWayland only knows the keys while one of its windows has the focus, which for a game is exactly when they count. On a plain X11 session the keymap is global, so the focus check is what keeps hotkeys to the game. Keys cannot be taken away from the game this way. Polling the keyboard inside the game (`GetAsyncKeyState` in the Frida agent) would only have covered Wine games. Verified with `grembyte-cli` and the window closed in Pillars of Eternity (native Linux) and Avowed (Unreal, Proton).
 - **Script arguments are checked against the parameters** (`checkArgument` in `grembyte/features/monitor.js`, before every call of game code). Without the check values were written as they came: `true` became an `int32` of 1, `0` a `false`. In Lies of P a script called `ULPlayerEquipment:GetUseItem_SpecifiedLine(int32 SlotIndex, bool FirstLine)` as `(true, index)` and silently got slot 1 of the second line, so `SetCount` changed another item. Overloads are already picked by the number of arguments (`findMethod`), so only the types needed checking. Outputs and `out`/`ref` arguments may stay empty; objects take a wrapper, an address, `null` or (Mono, IL2CPP) a string. The call dialog checks its own input in Python (`parse_argument`) and passes the same check.
+- **Completion of game classes reads the game, not the catalog (2026-11-21):** the catalog cache has no base classes, and the field catalog exists only for builds it was read for (Pillars of Eternity after its update had none). `classMembers` in `grembyte/features/monitor.js` uses the facade's `findClass`, `layout`, `properties`, `methods` and `signatureOf`: metadata only, inherited members included. Types come as fields show them; Unreal's C++ names (`ULStatComponent*`, `FLStatData`) are looked up without the prefix and the pointer. The IL2CPP adapter had no `methods`; it got one like Mono's (no constructors and accessors, overloads by parameter count), which also gives the object inspector methods there. `QCompleter` is not used for the popup: it deletes its popup through a raw pointer, and when the popup was deleted first (closing every top-level window at exit, as the tests' teardown does) the process crashed.
 
 ## Pointer scan
 

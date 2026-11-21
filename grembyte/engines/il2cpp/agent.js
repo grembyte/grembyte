@@ -1045,6 +1045,83 @@ const il2cpp = (() => {
     return result;
   }
 
+  const methodLists = new Map();
+
+  function methods(klass) {
+    // [{ name, method, static, owner }] of the methods of ``klass`` and its
+    // base classes, the most derived first (an override once), as Mono's: no
+    // constructors and no property accessors (see properties). Cached.
+    const key = klass.toString();
+    let result = methodLists.get(key);
+    if (result !== undefined)
+      return result;
+    objectsApi();
+    result = [];
+    const seen = new Set();
+    for (const current of classChain(klass)) {
+      const owner = layout(current).name;
+      eachMethodOf(current, method => {
+        const name = text(api.methodName(method));
+        const count = api.paramCount(method);
+        if (name === '.ctor' || name === '.cctor'
+            || (name.startsWith('get_') && count === 0) || (name.startsWith('set_') && count === 1))
+          return;
+        // Overloads differ in their parameters; an override has the same ones
+        const id = `${name}/${count}`;
+        if (seen.has(id))
+          return;
+        seen.add(id);
+        result.push({ name, method, owner, static: !api.objects.isInstance(method) });
+      });
+    }
+    methodLists.set(key, result);
+    return result;
+  }
+
+  let findable = null;
+
+  function findableClasses() {
+    // The names of the classes ctx.find can find, for the completion of code
+    // fields (see classNames in grembyte/features/monitor.js): those of the loaded assemblies that derive
+    // from UnityEngine.Object, as Mono's. Metadata only.
+    objectsApi();
+    const loaded = images();
+    if (findable !== null && findable.images === loaded.length)
+      return findable.names;
+    const derives = new Map();
+    const isUnityObject = klass => {
+      const chain = [];
+      let answer = false;
+      for (let current = klass; !current.isNull(); current = api.objects.classParent(current)) {
+        const key = current.toString();
+        if (derives.has(key)) {
+          answer = derives.get(key);
+          break;
+        }
+        chain.push(key);
+        if (classNameOf(current)[0] === 'UnityEngine.Object') {
+          answer = true;
+          break;
+        }
+      }
+      for (const key of chain)
+        derives.set(key, answer);
+      return answer;
+    };
+    const names = new Set();
+    for (const { image } of loaded) {
+      eachClass(image, klass => {
+        if (!isUnityObject(klass))
+          return;
+        const name = classNameOf(klass)[0];
+        if (!/[<>`/+]/.test(name))
+          names.add(name);
+      }, false);
+    }
+    findable = { images: loaded.length, names: Array.from(names).sort() };
+    return findable.names;
+  }
+
   function eachMethodOf(klass, visit) {
     const iterator = Memory.alloc(Process.pointerSize);
     iterator.writePointer(NULL);
@@ -1298,6 +1375,8 @@ const il2cpp = (() => {
     layout,
     staticData,
     properties,
+    methods,
+    findableClasses,
     getProperty,
     invoke,
     classChain,

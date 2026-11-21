@@ -1419,6 +1419,63 @@ def test_the_call_dialog_calls_ufunctions_static_and_on_found_objects(tmp_path, 
 
 
 @requires_target
+def test_class_members_follow_unreal_types(tmp_path, qt_app):
+    # The completion asks by the C++ type a field shows (ABP_Hero_C*): the
+    # class is found without the prefix and the pointer
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.scripts import ScriptWorker
+
+    target = _Target(_build(tmp_path))
+    worker = ScriptWorker(target.pid)
+    answers, failed = [], []
+    worker.members_read.connect(lambda _request, answer: answers.append(answer))
+    worker.members_failed.connect(lambda _request, message: failed.append(message))
+
+    def members(class_name):
+        answers.clear()
+        failed.clear()
+        worker.class_members(class_name)
+        _wait_for(qt_app, lambda: answers or failed)
+        assert not failed
+        return answers[0]
+
+    try:
+        worker.start()
+        controller = members("PlayerController")
+        pawn = next(field for field in controller["fields"] if field["name"] == "Pawn")
+        assert pawn["type"].endswith("*")
+        hero = members(pawn["type"])
+        assert hero is not None and "Health" in {field["name"] for field in hero["fields"]}
+        assert "Rename" in {method["name"] for method in hero["methods"]}
+        assert members("ANothing*") is None
+
+        # The classes ctx.find finds: those with live objects
+        names = []
+        worker.names_read.connect(lambda _request, answer: names.append(answer))
+        worker.class_names()
+        _wait_for(qt_app, lambda: names or failed)
+        assert not failed
+        assert {"BP_Hero_C", "PlayerController"} <= set(names[0])
+        assert names[0] == sorted(names[0])
+
+        # What a tooltip shows: base classes and the live objects with subclasses
+        infos = []
+        worker.info_read.connect(lambda _request, answer: infos.append(answer))
+        worker.class_info("BP_Hero_C")
+        worker.class_info("ANothing")
+        _wait_for(qt_app, lambda: len(infos) == 2 or failed)
+        assert not failed
+        hero, nothing = infos
+        assert hero["name"] == "BP_Hero_C" and hero["parents"]
+        assert hero["objects"] >= 2  # BP_Hero_C_0 and BP_Hero_C_1
+        assert nothing is None
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()
+
+
+@requires_target
 @pytest.mark.parametrize("defines", [(), ("LOWERCASE_NAMES",)], ids=["default", "lowercase"])
 def test_scripts_call_unreal_functions_through_process_event(tmp_path, qt_app, defines):
     # pylint: disable=import-outside-toplevel

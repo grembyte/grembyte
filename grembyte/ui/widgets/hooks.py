@@ -39,6 +39,8 @@ from grembyte.hooks.transforms import (
 from grembyte.hooks.saved import method_spec_from_saved, persistable_callers, spec_from_saved
 from grembyte.core.value_types import parse_integer
 from grembyte.hooks.syntax import BODY
+from grembyte.ui.widgets.code_completion import hook_context
+from grembyte.ui.widgets.member_lookup import MemberLookup
 from grembyte.ui.widgets.code_editor import CodeEditor
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
 from grembyte.ui.widgets.docking import close_dialog
@@ -92,10 +94,19 @@ def format_number(value):
 class TransformForm(QWidget):
     """Input form generated from a transform definition's parameters."""
 
-    def __init__(self, definition, translations, values=None, parent=None):
+    def __init__(self, definition, translations, values=None, parent=None, engine=None,
+                 hook_kind=None, members=None, method=None):
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.definition = definition
         self.translations = translations
+        # For the completion of code parameters: the attached game's engine,
+        # and the kind of hook ("value", "method"; the template's by default)
+        self.engine = engine
+        self.hook_kind = hook_kind or definition.kind
+        # The game's classes (a MemberLookup) and a method hook's signature
+        self.members = members
+        self.method = method
         self._editors = {}
         # Parameter name -> SyntaxHint of a code parameter
         self._syntax_hints = {}
@@ -130,6 +141,8 @@ class TransformForm(QWidget):
         if parameter.kind == "code":
             editor = CodeEditor("" if value is None else str(value))
             editor.setMinimumHeight(120)
+            editor.set_completion(self.translations, hook_context(self.hook_kind),
+                                  self.engine, self.members, self.method)
             return editor
         editor = QLineEdit("" if value is None else format_number(value))
         if parameter.optional:
@@ -184,10 +197,13 @@ class HookDialog(QDialog):
 
     def __init__(self, translations, address, value_type, site,
                  transform=None, label="", templates=None, pointer=None, method=None,
-                 phase="after", breakpoint=False, parent=None):
+                 phase="after", breakpoint=False, parent=None, engine=None, members=None):
         # pylint: disable=too-many-arguments,redefined-builtin
         super().__init__(parent)
         self.translations = translations
+        # For the completion of code parameters: the game's engine and classes
+        self.engine = engine
+        self.members = members
         self.pointer = pointer
         self.method = method
         self.phase = phase
@@ -306,7 +322,8 @@ class HookDialog(QDialog):
         for index, definition in enumerate(self._options):
             self.template_combo.addItem(definition.name, index)
             values = self._values if index == self._copy_index else None
-            self.forms.addWidget(TransformForm(definition, self.translations, values))
+            self.forms.addWidget(TransformForm(definition, self.translations, values,
+                                               **self._completion_options()))
         self.template_combo.currentIndexChanged.connect(self._on_template_selected)
         if self._copy_index is not None:
             self.template_combo.setCurrentIndex(self._copy_index)
@@ -339,6 +356,11 @@ class HookDialog(QDialog):
         if self._template is None:
             return "deleted"
         return "changed" if self._template != copy else None
+
+    def _completion_options(self):
+        """What a TransformForm's code parameters complete with."""
+        return {"engine": self.engine, "members": self.members, "method": self.method,
+                "hook_kind": "method" if self.method is not None else "value"}
 
     def _on_template_selected(self, index):
         self.forms.setCurrentIndex(index)
@@ -377,7 +399,8 @@ class HookDialog(QDialog):
         names = {parameter.name for parameter in self._template.parameters}
         values = {name: value for name, value in values.items() if name in names}
         self._options[index] = self._template
-        new_form = TransformForm(self._template, self.translations, values)
+        new_form = TransformForm(self._template, self.translations, values,
+                                 **self._completion_options())
         self.forms.insertWidget(index, new_form)
         self.forms.removeWidget(old_form)
         old_form.deleteLater()
@@ -462,9 +485,15 @@ class HookPanel(QGroupBox):
         "hooks.column_last",
     )
 
-    def __init__(self, translations, parent=None, *, repository=None):
+    def __init__(self, translations, parent=None, *, repository=None, engine=None):
         super().__init__(translations["hooks.title"], parent)
         self.translations = translations
+        # () -> the attached game's engine for the completion of code
+        # parameters (see grembyte.ui.widgets.code_completion)
+        self.engine = engine or (lambda: None)
+        # The game's classes for the completion of method hooks' code
+        self.members = MemberLookup(
+            lambda: self._ensure_method_worker() if self._pid is not None else None, self)
         self._repository = repository
         self._pid = None
         self._process_id = None
@@ -754,6 +783,7 @@ class HookPanel(QGroupBox):
         self.shutdown()
         self._pid = pid
         self._process_id = process_id
+        self.members.clear()
         self._hooks.clear()
         self._trampolines.clear()
         self.table.setRowCount(0)
@@ -798,7 +828,8 @@ class HookPanel(QGroupBox):
             return None
         dialog = HookDialog(
             self.translations, "", "", "", templates=self.templates(),
-            method=method.display_signature, parent=self,
+            method=method.display_signature, parent=self, engine=self.engine(),
+            members=self.members,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
@@ -898,6 +929,7 @@ class HookPanel(QGroupBox):
             self.translations, "", "", "", transform=spec.transform, label=spec.label,
             templates=self.templates(),
             method=state.get("display_signature", spec.signature), phase=spec.phase, parent=self,
+            engine=self.engine(), members=self.members,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return

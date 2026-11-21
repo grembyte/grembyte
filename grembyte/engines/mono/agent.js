@@ -414,7 +414,42 @@ const mono = (() => {
   }
 
   function resolveMethod(identity) {
-    // The method of an identity (on a thread Mono knows).
+    // The method of an identity (on a thread Mono knows). A game update
+    // renumbers the methods of an assembly, so a token saved before it names
+    // another method or none: then the one of the same class, name and
+    // parameters (Pillars of Eternity, 2026-11: 0x060028CA became 0x06002D57).
+    try {
+      return methodOfToken(identity);
+    } catch (error) {
+      const method = methodBySignature(identity);
+      if (method === null)
+        throw error;
+      return method;
+    }
+  }
+
+  function methodBySignature(identity) {
+    // The method of the identity's assembly whose full name is the
+    // identity's, looked up by class and name; null if there is none (or
+    // the class is generic: its instances are found through the token only).
+    const g = api.generics;
+    const wanted = splitSignature(identity.method);
+    if (g === null || wanted === null || wanted.head.includes('<'))
+      return null;
+    const klass = classByName(g, wanted.head, [findImage(identity)]);
+    if (klass.isNull())
+      return null;
+    const iterator = Memory.alloc(Process.pointerSize);
+    iterator.writePointer(NULL);
+    for (let method = g.classMethods(klass, iterator); !method.isNull();
+      method = g.classMethods(klass, iterator)) {
+      if (signatureName(method) === identity.method)
+        return method;
+    }
+    return null;
+  }
+
+  function methodOfToken(identity) {
     const notFound = () => grembyteError('error.mono.method_not_found',
       { method: identity.method, assembly: identity.image });
     const definition = api.getMethod(findImage(identity), identity.token, NULL);
@@ -661,14 +696,14 @@ const mono = (() => {
     return api.imageName(image).readUtf8String();
   }
 
-  function classByName(g, fullName) {
-    // A class of a loaded assembly by Mono's name: 'Ns.Outer/Inner'.
+  function classByName(g, fullName, images = null) {
+    // A class of a loaded assembly (or of ``images``) by Mono's name: 'Ns.Outer/Inner'.
     const [outer, ...nested] = fullName.split('/');
     const dot = outer.lastIndexOf('.');
     const space = Memory.allocUtf8String(dot < 0 ? '' : outer.substring(0, dot));
     const name = Memory.allocUtf8String(outer.substring(dot + 1));
     let klass = NULL;
-    for (const image of loadedImages(api.catalog)) {
+    for (const image of images || loadedImages(api.catalog)) {
       klass = g.classFromName(image, space, name);
       if (!klass.isNull())
         break;
@@ -1358,6 +1393,60 @@ gpointer run_batch (gpointer data) {
         return staticData(klass);
     }
     return null;
+  }
+
+  // --- Classes ctx.find finds -------------------------------------------------
+
+  // { images, names } of the last findableClasses, read anew when more
+  // assemblies are loaded
+  let findable = null;
+
+  function findableClasses() {
+    // The names of the classes ctx.find can find, for the completion of code
+    // fields (see classNames in grembyte/features/monitor.js): those of the loaded assemblies that derive
+    // from UnityEngine.Object (GameObjects, components, ScriptableObjects),
+    // whether or not objects of them live now. Metadata only, on a thread
+    // Mono knows; nested and generic classes are left out (ctx.find takes
+    // neither).
+    const c = catalogApi();
+    const t = typesApi();
+    const images = loadedImages(c);
+    if (findable !== null && findable.images === images.length)
+      return findable.names;
+    const derives = new Map();  // class -> whether it is a UnityEngine.Object
+    const isUnityObject = klass => {
+      const chain = [];
+      let answer = false;
+      for (let current = klass; !current.isNull(); current = t.classParent(current)) {
+        const key = current.toString();
+        if (derives.has(key)) {
+          answer = derives.get(key);
+          break;
+        }
+        chain.push(key);
+        if (cString(c.typeName(c.classType(current))) === 'UnityEngine.Object') {
+          answer = true;
+          break;
+        }
+      }
+      for (const key of chain)
+        derives.set(key, answer);
+      return answer;
+    };
+    const names = new Set();
+    for (const image of images) {
+      const rows = c.tableRows(image, TYPEDEF_TABLE);
+      for (let row = 2; row <= rows; row++) {
+        const klass = c.classGet(image, TYPEDEF_TOKEN | row);
+        if (klass.isNull() || !isUnityObject(klass))
+          continue;
+        const name = cString(c.typeName(c.classType(klass)));
+        if (name !== null && !/[<>`/+]/.test(name))
+          names.add(name);
+      }
+    }
+    findable = { images: images.length, names: Array.from(names).sort() };
+    return findable.names;
   }
 
   // --- Unity object names ----------------------------------------------------
@@ -2806,6 +2895,7 @@ gpointer run_batch (gpointer data) {
     objectClassName, classOf, layout, staticData, staticAreas: classStaticAreas, staticBase,
     onRuntimeThread: onMonoThread, unityName,
     onMainThread, drainMain, properties, getProperty, methods, signatureOf, findClass,
+    findableClasses,
     findMethod, findObject, findObjects, browseClasses, browseInstances, locateReferences, newString, invoke, classChain, writeReference, resolve: resolveMethod,
     virtualMethod: (object, method) => api.invoke.virtualMethod(object, method)
   };

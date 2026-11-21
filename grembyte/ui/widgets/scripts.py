@@ -41,12 +41,14 @@ from grembyte.features.scripts import (
     params_to_json, spec_from_saved)
 from grembyte.platform.keyboard import open_reader
 from grembyte.hooks.syntax import BODY
+from grembyte.ui.widgets.code_completion import SCRIPT
 from grembyte.ui.widgets.code_editor import CodeEditor
 from grembyte.ui.widgets.dialog_buttons import dialog_button_row
 from grembyte.ui.widgets.docking import close_dialog
 from grembyte.ui.widgets.icons import material_icon, set_button_icon, theme_color
 from grembyte.ui.widgets.inspection import Inspections
 from grembyte.ui.widgets.labels import DocsHint, WrappedLabel
+from grembyte.ui.widgets.member_lookup import MemberLookup
 from grembyte.ui.widgets.script_params import ParamEditor, ScriptRunDialog
 from grembyte.ui.widgets.spin_boxes import DoubleSpinBox
 from grembyte.ui.widgets.syntax_hint import SyntaxHint
@@ -93,7 +95,8 @@ def timing_text(translations, spec):
 class ScriptDialog(QDialog):
     """Create or edit a script: description, when it runs, its code and parameters."""
 
-    def __init__(self, translations, parent=None, spec=None):
+    def __init__(self, translations, parent=None, spec=None, engine=None, members=None):
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
         super().__init__(parent)
         self.translations = translations
         self.spec = None
@@ -136,6 +139,7 @@ class ScriptDialog(QDialog):
         code_layout.setContentsMargins(0, 6, 0, 0)
         self.code_edit = CodeEditor(spec.source if spec else EXAMPLE)
         self.code_edit.setMinimumHeight(200)
+        self.code_edit.set_completion(translations, SCRIPT, engine, members)
         code_layout.addWidget(self.code_edit, 1)
         self.syntax_hint = SyntaxHint(translations, self.code_edit, BODY)
         code_layout.addWidget(self.syntax_hint)
@@ -143,7 +147,8 @@ class ScriptDialog(QDialog):
                               "reference/script-context/")
         code_layout.addWidget(help_label)
         self.tabs.addTab(code_page, translations["scripts.code"])
-        self.param_editor = ParamEditor(translations, spec.params if spec else ())
+        self.param_editor = ParamEditor(translations, spec.params if spec else (),
+                                        engine=engine, members=members)
         self.tabs.addTab(self.param_editor, translations["scripts.params"])
         layout.addWidget(self.tabs, 1)
 
@@ -222,9 +227,16 @@ class ScriptPanel(QGroupBox):
         "scripts.column_last",
     )
 
-    def __init__(self, translations, parent=None, *, repository=None, language="en"):
+    def __init__(self, translations, parent=None, *, repository=None, language="en",
+                 engine=None):
         super().__init__(translations["scripts.title"], parent)
         self.translations = translations
+        # () -> the attached game's engine for the code's completion (see
+        # grembyte.ui.widgets.code_completion), None while it is not known
+        self._engine = engine or (lambda: None)
+        # The game's classes for the completion, read through the worker
+        self.members = MemberLookup(
+            lambda: self._ensure_worker() if self._pid is not None else None, self)
         self.language = language
         self._repository = repository
         self._pid = None
@@ -438,6 +450,7 @@ class ScriptPanel(QGroupBox):
         self.shutdown()
         self._pid = pid
         self._process_id = process_id
+        self.members.clear()
         self._scripts.clear()
         self.table.setRowCount(0)
         self.status_label.setText(self.translations["scripts.hint"])
@@ -548,7 +561,8 @@ class ScriptPanel(QGroupBox):
     def _new_script(self):
         if self._pid is None:
             return
-        dialog = ScriptDialog(self.translations, self)
+        dialog = ScriptDialog(self.translations, self, engine=self._engine(),
+                              members=self.members)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.spec is not None:
             self.add_script(dialog.spec)
 
@@ -557,7 +571,8 @@ class ScriptPanel(QGroupBox):
         state = self._scripts.get(script_id)
         if state is None:
             return
-        dialog = ScriptDialog(self.translations, self, state["spec"])
+        dialog = ScriptDialog(self.translations, self, state["spec"], engine=self._engine(),
+                              members=self.members)
         if dialog.exec() != QDialog.DialogCode.Accepted or dialog.spec is None:
             return
         if script_id not in self._scripts:  # the game exited meanwhile

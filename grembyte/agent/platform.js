@@ -273,6 +273,7 @@ const WATCH_STARTED = 0, WATCH_ACTIVE = 4, WATCH_CLAIM = 8, WATCH_BEAT = 12,
   WATCH_COUNT = 16, WATCH_LIMIT = 20, WATCH_FIRED = 24, WATCH_QUIT = 28,
   WATCH_EVENT = 32;
 const WATCH_HANDLES = WATCH_EVENT + Process.pointerSize;
+const WAIT_OBJECT_0 = 0;
 
 const PAUSE_WATCH_SOURCE = `
 #include <glib.h>
@@ -473,8 +474,14 @@ function startPauseWatch(kernel32, fn) {
   if (event.isNull())
     return null;
   memory.add(WATCH_EVENT).writePointer(event);
+  // TinyCC decorates a stdcall function of 32-bit Windows code: "_watch_pauses@4"
+  const watchPauses = cm.watch_pauses || cm[`_watch_pauses@${Process.pointerSize}`];
+  if (watchPauses === undefined) {
+    close(event);
+    return null;
+  }
   const threadId = Memory.alloc(4);
-  const thread = create(NULL, 0, cm.watch_pauses, memory, 0, threadId);
+  const thread = create(NULL, 0, watchPauses, memory, 0, threadId);
   if (thread.isNull()) {
     close(event);
     return null;
@@ -494,13 +501,17 @@ function startPauseWatch(kernel32, fn) {
   } catch (_error) {
     // Older Frida: the others may suspend it, which only matters to this one.
   }
-  // End it before the agent unloads and its C code goes.
+  // End it before the agent unloads and its C code goes. The callback holds
+  // the C code itself: collected with ``watch`` it could be freed before the
+  // thread returned from it (that ended a 32-bit game in a test, 2026-11-21).
   Script.bindWeak(watch, () => {
     memory.add(WATCH_QUIT).writeS32(1);
     setEvent(event);
-    wait(thread, START_MS);
+    const ended = wait(thread, START_MS) === WAIT_OBJECT_0;
     close(thread);
     close(event);
+    if (ended)
+      cm.dispose();  // else it stays: the thread may still run in it
   });
   return watch;
 }

@@ -6,23 +6,38 @@ written, rather than inserting a tab character eight characters wide.
 With several lines selected Tab and Shift+Tab indent and outdent them all.
 Ctrl+mouse wheel, Ctrl+Plus and Ctrl+Minus make the code larger or smaller
 in every code field at once, Ctrl+0 resets it; the size is remembered.
+Line numbers run down the left edge. With ``set_completion`` a popup offers
+the members of ``ctx``, Frida's API and the keywords while typing (see
+grembyte.ui.widgets.code_completion); Ctrl+Space opens it by hand.
 """
 
 import re
 
-from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtCore import QEvent, QRect, QSize, Qt  # pylint: disable=import-error,no-name-in-module
 from PySide6.QtGui import (  # pylint: disable=import-error,no-name-in-module
     QColor,
     QFont,
     QFontDatabase,
     QFontMetricsF,
+    QPainter,
+    QStandardItem,
+    QStandardItemModel,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
 )
-from PySide6.QtWidgets import QApplication, QPlainTextEdit  # pylint: disable=import-error,no-name-in-module
+from PySide6.QtWidgets import (  # pylint: disable=import-error,no-name-in-module
+    QAbstractItemView,
+    QApplication,
+    QHeaderView,
+    QPlainTextEdit,
+    QToolTip,
+    QTreeView,
+    QWidget,
+)
 
 from grembyte.ui import window_state
+from grembyte.ui.widgets import code_completion
 
 INDENT = "  "
 # Font size of the code in pixels: the application stylesheet's for inputs, and the bounds of zooming
@@ -31,6 +46,8 @@ MIN_FONT_SIZE = 8
 MAX_FONT_SIZE = 32
 _FONT_SIZE_KEY = "codeEditor/fontSize"
 _WHEEL_STEP = 120  # angleDelta of one notch of a mouse wheel
+_POPUP_ROWS = 12
+_POPUP_MIN_WIDTH = 320
 _BLOCK_COMMENT = 1
 _TEMPLATE_STRING = 2
 _NUMBER = re.compile(
@@ -183,6 +200,18 @@ def _highlight_javascript(paint, text, previous_state):
 
         position += 1
     return 0
+
+
+def highlight_javascript_tokens(text, state=0):
+    """The token ("text", "keyword", "string", "number", "comment") of each
+    character of one line of JavaScript that starts in ``state``."""
+    tokens = ["text"] * len(text)
+
+    def paint(start, length, token):
+        tokens[start:start + length] = [token] * length
+
+    _highlight_javascript(paint, text, state)
+    return tokens
 
 
 def _highlight_pseudocode(paint, text):
@@ -465,12 +494,252 @@ def set_code_font_size(size):
 class CodeEditor(QPlainTextEdit):
     """QPlainTextEdit for code: fixed-width font, Tab indents by INDENT, zooms."""
 
+    # pylint: disable=too-many-instance-attributes
+
     def __init__(self, text="", parent=None):
         super().__init__(text, parent)
         self.highlighter = JavaScriptHighlighter(self.document(), _CODE_COLORS)
         self.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self._wheel_rest = 0
+        self.line_numbers = _LineNumberArea(self)
+        self.blockCountChanged.connect(self._update_line_number_width)
+        self.updateRequest.connect(self._update_line_numbers)
+        self.cursorPositionChanged.connect(self.line_numbers.update)
+        # What set_completion offers: (translations, context, engine), or None
+        self._completion = None
+        self._scope = None
+        self._waiting_at = None  # the cursor position completions wait for the game at
+        self._tooltip_at = None  # (position, global position) a tooltip waits for the game at
+        self.completion_popup = None
         self.show_font_size(code_font_size())
+
+    # ------------------------------------------------------------------
+    # Line numbers
+    # ------------------------------------------------------------------
+    def line_number_width(self):
+        """The width of the line numbers: at least two digits, a space on
+        each side, the dividing line and a space before the code."""
+        digits = max(2, len(str(max(1, self.blockCount()))))
+        metrics = QFontMetricsF(self.font())
+        return round(metrics.horizontalAdvance("9") * digits
+                     + metrics.horizontalAdvance(" ") * 3) + 1
+
+    def _update_line_number_width(self, _count=0):
+        self.setViewportMargins(self.line_number_width(), 0, 0, 0)
+
+    def _update_line_numbers(self, rect, dy):
+        if dy:
+            self.line_numbers.scroll(0, dy)
+        else:
+            self.line_numbers.update(0, rect.y(), self.line_numbers.width(), rect.height())
+        if rect.contains(self.viewport().rect()):
+            self._update_line_number_width()
+
+    def resizeEvent(self, event):  # pylint: disable=invalid-name
+        if event is not None:
+            super().resizeEvent(event)
+        contents = self.contentsRect()
+        self.line_numbers.setGeometry(QRect(contents.left(), contents.top(),
+                                            self.line_number_width(), contents.height()))
+
+    def paint_line_numbers(self, event):
+        """Paint the numbers of the visible lines; the cursor's stands out."""
+        painter = QPainter(self.line_numbers)
+        painter.setFont(self.font())
+        muted = QColor(_CODE_COLORS["muted"])
+        current = QColor(_CODE_COLORS["code_text"])
+        space = round(QFontMetricsF(self.font()).horizontalAdvance(" "))
+        # A faint line, a space after the numbers and a space before the code
+        divider = QColor(muted)
+        divider.setAlphaF(0.25)
+        painter.setPen(divider)
+        line_x = self.line_numbers.width() - space - 1
+        painter.drawLine(line_x, event.rect().top(), line_x, event.rect().bottom())
+        right = line_x - space
+        cursor_block = self.textCursor().blockNumber()
+        block = self.firstVisibleBlock()
+        offset = self.contentOffset()
+        # The line numbers sit beside the viewport, which starts below the
+        # frame and the padding of the stylesheet
+        shift = self.viewport().geometry().top() - self.line_numbers.geometry().top()
+        top = round(self.blockBoundingGeometry(block).translated(offset).top()) + shift
+        height = self.fontMetrics().height()
+        while block.isValid() and top <= event.rect().bottom():
+            bottom = top + round(self.blockBoundingRect(block).height())
+            if block.isVisible() and bottom >= event.rect().top():
+                painter.setPen(current if block.blockNumber() == cursor_block else muted)
+                painter.drawText(0, top, right, height,
+                                 Qt.AlignmentFlag.AlignRight, str(block.blockNumber() + 1))
+            block = block.next()
+            top = bottom
+        painter.end()
+
+    # ------------------------------------------------------------------
+    # Completion
+    # ------------------------------------------------------------------
+    def set_completion(self, translations, context=code_completion.SCRIPT, engine=None,
+                       members=None, method=None):
+        """Offer completions for code run with ``context``'s ctx (SCRIPT,
+        VALUE_HOOK, METHOD_HOOK or HOOK) in a game with ``engine`` (see
+        grembyte.ui.widgets.code_completion). ``members`` (a MemberLookup)
+        reads the game's classes; ``method`` is a method hook's signature with
+        parameter names, for ctx.args and ctx.this."""
+        # pylint: disable=too-many-arguments,too-many-positional-arguments
+        this, args = code_completion.method_parameters(method) if method else (None, {})
+        changed = getattr(self._scope and self._scope.lookup, "changed", None)
+        if changed is not None:
+            try:
+                changed.disconnect(self._members_changed)
+            except (RuntimeError, TypeError):
+                pass
+        self._scope = code_completion.Scope(members, args, this)
+        changed = getattr(members, "changed", None)
+        if changed is not None:
+            changed.connect(self._members_changed)
+        self._completion = (translations, context, engine)
+        if self.completion_popup is None:
+            self.completion_popup = CompletionPopup(self)
+
+    def _members_changed(self):
+        """The game answered: show what was waiting for it at the cursor, or
+        under the mouse."""
+        if self._waiting_at is not None and self._waiting_at == self.textCursor().position():
+            self.show_completions(typed=False)
+        if self._tooltip_at is not None and QToolTip.isVisible():
+            self.show_string_tooltip(*self._tooltip_at)
+
+    def viewportEvent(self, event):  # pylint: disable=invalid-name
+        if event.type() == QEvent.Type.ToolTip and self._completion is not None:
+            self.show_string_tooltip(event.pos(), event.globalPos())
+            return True
+        return super().viewportEvent(event)
+
+    def show_string_tooltip(self, position, global_position):
+        """Show the tooltip of a ctx.find, ctx.forEach or ctx.static string at
+        ``position`` in the viewport (see code_completion.tooltip); hide any
+        other. Returns its text, or None."""
+        self._tooltip_at = None
+        text = self._string_tooltip(position)
+        if text is None:
+            QToolTip.hideText()
+            return None
+        if self._scope.pending:
+            self._tooltip_at = (position, global_position)
+        QToolTip.showText(global_position, text, self.viewport())
+        return text
+
+    def _string_tooltip(self, position):
+        cursor = self.cursorForPosition(position)
+        block = cursor.block()
+        column = cursor.positionInBlock()
+        line = block.text()
+        # Only over the string itself, not past the end of the line
+        if column >= len(line) or not self.cursorRect(cursor).adjusted(-8, -2, 8, 2).contains(
+                position):
+            return None
+        found = code_completion.string_at(line, column)
+        previous = block.previous()
+        state = max(previous.userState(), 0) if previous.isValid() else 0
+        if found is None or highlight_javascript_tokens(line, state)[column] != "string":
+            return None  # in a comment, or not such a string
+        translations, _context, engine = self._completion
+        self._scope.pending = False
+        return code_completion.tooltip(found[0], found[1], self._scope, translations, engine)
+
+    def completion_entries(self):
+        """``(prefix, entries)`` at the cursor (see code_completion.completions)."""
+        if self._completion is None:
+            return "", ()
+        _translations, context, engine = self._completion
+        cursor = self.textCursor()
+        block = cursor.block()
+        line = block.text()[:cursor.positionInBlock()]
+        previous = block.previous()
+        state = previous.userState() if previous.isValid() else 0
+        source = self.toPlainText()[:cursor.position()]
+        return code_completion.completions(source, line, max(state, 0), context, engine,
+                                           self._scope)
+
+    def show_completions(self, typed=True):
+        """Open, update or close the popup for the cursor's position. ``typed``:
+        a key was typed; then a name needs two letters before keywords show."""
+        popup = self.completion_popup
+        if popup is None:
+            return
+        prefix, entries = self.completion_entries()
+        cursor = self.textCursor()
+        # Members the game is asked for: shown when it answers (_members_changed)
+        self._waiting_at = (cursor.position()
+                            if self._scope is not None and self._scope.pending else None)
+        line = cursor.block().text()[:cursor.positionInBlock()]
+        # After a dot and inside ctx.find("…") the list opens at once
+        after_dot = (line[:len(line) - len(prefix)].rstrip().endswith(".")
+                     or code_completion.string_argument(line) is not None)
+        entries = [entry for entry in entries if code_completion.matches(entry, prefix)]
+        if (not entries or (typed and not after_dot and len(prefix) < 2 and not popup.isVisible())
+                or (len(entries) == 1 and entries[0].name == prefix)):
+            popup.hide()
+            return
+        rect = self.cursorRect()
+        below = self.viewport().mapToGlobal(rect.bottomLeft())
+        popup.show_entries(entries, self._completion[0], below)
+
+    def insert_completion(self, entry):
+        """Put ``entry`` in place of the typed part of its name; a method gets
+        its parentheses, with the cursor inside if it takes any."""
+        if self.completion_popup is not None:
+            self.completion_popup.hide()
+        prefix, _entries = self.completion_entries()
+        cursor = self.textCursor()
+        argument = code_completion.string_argument(
+            cursor.block().text()[:cursor.positionInBlock()])
+        cursor.beginEditBlock()
+        cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor,
+                            len(prefix))
+        following = self.document().characterAt(cursor.selectionEnd())
+        if argument is not None:
+            # A class name: the string is closed after it unless it already is
+            quote = argument[1]
+            cursor.insertText(entry.name + ("" if following == quote else quote))
+        else:
+            method = entry.params is not None and following != "("
+            cursor.insertText(entry.name + ("()" if method else ""))
+            if method and entry.params:
+                cursor.movePosition(QTextCursor.MoveOperation.Left)
+        cursor.endEditBlock()
+        self.setTextCursor(cursor)
+
+    def _popup_key(self, event):
+        """Handle a key for the open popup; whether it took it."""
+        popup = self.completion_popup
+        if popup is None or not popup.isVisible():
+            return False
+        key = event.key()
+        steps = {Qt.Key.Key_Up: -1, Qt.Key.Key_Down: 1,
+                 Qt.Key.Key_PageUp: -popup.page_rows(), Qt.Key.Key_PageDown: popup.page_rows()}
+        if key in steps:
+            popup.move_selection(steps[key])
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab):
+            entry = popup.current_entry()
+            if entry is None:
+                popup.hide()
+                return False
+            self.insert_completion(entry)
+        elif key == Qt.Key.Key_Escape:
+            popup.hide()
+        else:
+            return False
+        return True
+
+    def focusOutEvent(self, event):  # pylint: disable=invalid-name
+        if self.completion_popup is not None:
+            self.completion_popup.hide()
+        super().focusOutEvent(event)
+
+    def mousePressEvent(self, event):  # pylint: disable=invalid-name
+        if self.completion_popup is not None:
+            self.completion_popup.hide()
+        super().mousePressEvent(event)
 
     def show_font_size(self, size):
         """Show the code at ``size`` pixels.
@@ -483,6 +752,8 @@ class CodeEditor(QPlainTextEdit):
         # Tabs pasted from elsewhere are as wide as one indent
         self.setTabStopDistance(
             QFontMetricsF(self.font()).horizontalAdvance(" ") * len(INDENT))
+        self._update_line_number_width()
+        self.resizeEvent(None)
 
     def wheelEvent(self, event):  # pylint: disable=invalid-name
         if not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -497,6 +768,29 @@ class CodeEditor(QPlainTextEdit):
         event.accept()
 
     def keyPressEvent(self, event):  # pylint: disable=invalid-name
+        if self._popup_key(event):
+            return
+        popup = self.completion_popup
+        if (popup is not None and event.key() == Qt.Key.Key_Space
+                and event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            self.show_completions(typed=False)
+            return
+        self._edit_key(event)
+        if popup is not None:
+            text = event.text()
+            if event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
+                if popup.isVisible():
+                    self.show_completions()
+            elif text and text.isprintable():
+                if text[-1].isalnum() or text[-1] in "_$.\"'`":
+                    self.show_completions()
+                else:
+                    popup.hide()
+            elif event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Home,
+                                 Qt.Key.Key_End):
+                popup.hide()
+
+    def _edit_key(self, event):
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             step = {Qt.Key.Key_Plus: 1, Qt.Key.Key_Equal: 1, Qt.Key.Key_Minus: -1}.get(event.key())
             if step:
@@ -562,6 +856,120 @@ class CodeEditor(QPlainTextEdit):
         cursor.endEditBlock()
 
 
+class CompletionPopup(QTreeView):
+    """The list of completions under a CodeEditor's cursor: name and
+    parameters, and a description.
+
+    A window that takes no focus, so typing goes on in the editor, which
+    moves the selection and inserts entries (see CodeEditor._popup_key).
+    A child of the editor, so Qt deletes it with the editor; QCompleter is not
+    used, as it deletes its popup on its own and crashed when the popup was
+    deleted first (closing every window at exit).
+    """
+
+    def __init__(self, editor):
+        super().__init__(editor)
+        self.editor = editor
+        self.setWindowFlags(Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setHeaderHidden(True)
+        self.setRootIsDecorated(False)
+        self.setUniformRowHeights(True)
+        self.setAllColumnsShowFocus(True)
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setModel(QStandardItemModel(self))
+        header = self.header()
+        header.setStretchLastSection(False)
+        # Widths are set in show_entries: what fits right of the cursor
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.clicked.connect(self._chosen)
+
+    def show_entries(self, entries, translations, position):
+        """Show ``entries`` (code_completion.Completion) at the global
+        ``position``, the first one selected."""
+        model = self.model()
+        model.clear()
+        muted = QColor(_CODE_COLORS["muted"])
+        code_font = self.editor.font()  # names as in the code, descriptions as text
+        for entry in entries:
+            text = code_completion.description(entry, translations)
+            name = QStandardItem(entry.label)
+            name.setData(entry, Qt.ItemDataRole.UserRole)
+            # A long signature may be cut short in the list
+            name.setToolTip(f"{entry.label}\n{text}")
+            name.setFont(code_font)
+            detail = QStandardItem(text)
+            detail.setForeground(muted)
+            detail.setToolTip(text)
+            model.appendRow([name, detail])
+        self.setCurrentIndex(model.index(0, 0))
+        self.doItemsLayout()
+        rows = min(len(entries), _POPUP_ROWS)
+        row_height = max(self.sizeHintForRow(0), 1)
+        screen = self.editor.screen().availableGeometry()
+        # It starts at the cursor and takes at most the room to its right;
+        # only a cursor right at the edge moves it left, to keep it usable
+        x = max(screen.left(), min(position.x(), screen.right() + 1 - _POPUP_MIN_WIDTH))
+        room = screen.right() + 1 - x
+        frame = (self.verticalScrollBar().sizeHint().width() if len(entries) > _POPUP_ROWS
+                 else 0) + 2 * self.frameWidth() + 8
+        names, details = self.sizeHintForColumn(0), self.sizeHintForColumn(1)
+        width = min(names + details + frame, room)
+        if names + details + frame > width:
+            # Too wide: names get up to two thirds, cut short with "…"
+            names = min(names, max((width - frame) * 2 // 3, width - frame - details))
+        self.setColumnWidth(0, names)
+        self.setColumnWidth(1, max(width - frame - names, 0))
+        size = QSize(width, row_height * rows + 2 * self.frameWidth())
+        y = position.y()
+        if y + size.height() > screen.bottom():  # above the line instead
+            y -= size.height() + self.editor.cursorRect().height()
+        self.setGeometry(QRect(x, y, size.width(), size.height()))
+        self.show()
+        self.raise_()
+
+    def page_rows(self):
+        """How many rows Page Up and Page Down move."""
+        return max(1, min(self.model().rowCount(), _POPUP_ROWS) - 1)
+
+    def move_selection(self, step):
+        """Select the entry ``step`` rows further, stopping at the ends."""
+        count = self.model().rowCount()
+        if count:
+            row = max(0, min(count - 1, self.currentIndex().row() + step))
+            self.setCurrentIndex(self.model().index(row, 0))
+
+    def current_entry(self):
+        """The selected code_completion.Completion, or None."""
+        index = self.currentIndex()
+        return None if not index.isValid() else index.siblingAtColumn(0).data(
+            Qt.ItemDataRole.UserRole)
+
+    def _chosen(self, index):
+        entry = index.siblingAtColumn(0).data(Qt.ItemDataRole.UserRole)
+        if entry is not None:
+            self.editor.insert_completion(entry)
+
+
+class _LineNumberArea(QWidget):
+    """The strip left of a CodeEditor's text with the line numbers."""
+
+    def __init__(self, editor):
+        super().__init__(editor)
+        self.editor = editor
+
+    def sizeHint(self):  # pylint: disable=invalid-name
+        return QSize(self.editor.line_number_width(), 0)
+
+    def paintEvent(self, event):  # pylint: disable=invalid-name
+        self.editor.paint_line_numbers(event)
+
+
 def apply_code_theme(colors):
     """Apply syntax colors to current and future code editors."""
     _CODE_COLORS.update({key: colors[key] for key in (
@@ -572,6 +980,7 @@ def apply_code_theme(colors):
     for widget in application.allWidgets():
         if isinstance(widget, CodeEditor):
             widget.highlighter.set_colors(_CODE_COLORS)
+            widget.line_numbers.update()
         highlighter = getattr(widget, "pseudocode_highlighter", None)
         if isinstance(highlighter, PseudocodeHighlighter):
             highlighter.set_colors(_CODE_COLORS)
