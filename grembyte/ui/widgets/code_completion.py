@@ -224,6 +224,48 @@ MODULE_API = _group("module_api", (
     _method("getGlobalExportByName", "name"),
 ))
 
+# JavaScript's own values: what a game's texts, numbers and Unreal arrays are
+# in a script (an FString, System.String, int32 or TArray reads as one)
+STRING = _group("string", (
+    _value("length"),
+    _method("startsWith", "search"),
+    _method("endsWith", "search"),
+    _method("includes", "search"),
+    _method("indexOf", "search"),
+    _method("slice", "start[, end]"),
+    _method("substring", "start[, end]"),
+    _method("toLowerCase"),
+    _method("toUpperCase"),
+    _method("trim"),
+    _method("split", "separator"),
+    _method("replace", "pattern, replacement"),
+    _method("padStart", "length[, fill]"),
+    _method("match", "regex"),
+))
+
+NUMBER = _group("number", (
+    _method("toFixed", "digits"),
+    _method("toPrecision", "digits"),
+    _method("toString", "[radix]"),
+))
+
+ARRAY = _group("array", (
+    _value("length"),
+    _method("find", "callback"),
+    _method("filter", "callback"),
+    _method("map", "callback"),
+    _method("forEach", "callback"),
+    _method("some", "callback"),
+    _method("every", "callback"),
+    _method("findIndex", "callback"),
+    _method("indexOf", "value"),
+    _method("includes", "value"),
+    _method("at", "index"),
+    _method("slice", "start[, end]"),
+    _method("sort", "[compare]"),
+    _method("join", "[separator]"),
+))
+
 # Names that stand on their own: Frida's globals and ctx
 GLOBALS = _group("global", (
     _value("ctx"),
@@ -249,10 +291,15 @@ KEYWORDS = tuple(Completion(word, "completion.keyword") for word in sorted({
     "this", "throw", "true", "try", "typeof", "undefined", "var", "void", "while", "yield",
 }))
 
+# Words a variable cannot be named
+_RESERVED = frozenset(entry.name for entry in KEYWORDS) | {"ctx"}
+
 # What an expression is, and what follows its dot
 _POINTER, _WRAPPER, _MODULE, _CLASS = "pointer", "wrapper", "module", "class"
+_STRING, _NUMBER, _ARRAY = "string", "number", "array"
 _MEMBERS = {
     _POINTER: POINTER, _WRAPPER: WRAPPER, _MODULE: MODULE, "native": NATIVE_CONTEXT,
+    _STRING: STRING, _NUMBER: NUMBER,
     "gas": GAS, "memory": MEMORY, "process": PROCESS, "module_api": MODULE_API,
 }
 # NativePointer methods that give a NativePointer again
@@ -287,7 +334,8 @@ _STEPS = {
     **{(_POINTER, name, True): _POINTER for name in _POINTER_METHODS},
 }
 _PREFIX = re.compile(r"[\w$]*$")
-_MAX_DEPTH = 6
+# Steps and variables an expression is followed through (a guard against loops)
+_MAX_DEPTH = 32
 
 
 def _skip_back(text, end, opening, closing):
@@ -621,6 +669,65 @@ def _class_kind(type_name):
     return None if name is None else (_CLASS, name)
 
 
+_STRING_TYPES = frozenset({"string", "system.string", "fstring", "fname", "ftext"})
+_NUMBER_TYPES = frozenset({
+    "byte", "sbyte", "short", "ushort", "int", "uint", "long", "ulong", "single", "float",
+    "double", "decimal", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32",
+    "uint64", "system.byte", "system.sbyte", "system.int16", "system.uint16", "system.int32",
+    "system.uint32", "system.int64", "system.uint64", "system.single", "system.double",
+    "system.decimal"})
+_POINTER_TYPES = frozenset({"intptr", "uintptr", "system.intptr", "system.uintptr"})
+# Unreal's containers that read as JavaScript arrays (see engine.valueJs)
+_ARRAY_TYPE = re.compile(r"(?:TArray|TSet)<(.+)>")
+
+
+def value_kind(type_name):
+    """What a value of ``type_name`` is in a script: a wrapper of a class
+    (``("class", name)``), "string", "number", "pointer", an Unreal array of
+    elements (``("array", element type)``), or None (bool, enum, unknown)."""
+    name = (type_name or "").strip().rstrip("&").strip()
+    lower = name.lower()
+    if lower in _STRING_TYPES:
+        return _STRING
+    if lower in _NUMBER_TYPES:
+        return _NUMBER
+    if lower in _POINTER_TYPES:
+        return _POINTER
+    array = _ARRAY_TYPE.fullmatch(name)
+    if array is not None:
+        return (_ARRAY, array.group(1).strip())
+    return _class_kind(name)
+
+
+# What a step on a JavaScript value gives: (kind, member) of a call -> kind;
+# "element" for an array's element, "same" for the array itself
+_VALUE_STEPS = {
+    _STRING: {**dict.fromkeys(("slice", "substring", "toLowerCase", "toUpperCase", "trim",
+                               "replace", "padStart"), _STRING),
+              "indexOf": _NUMBER, "split": (_ARRAY, "System.String")},
+    _NUMBER: dict.fromkeys(("toFixed", "toPrecision", "toString"), _STRING),
+    _ARRAY: {**dict.fromkeys(("find", "at"), "element"),
+             **dict.fromkeys(("filter", "slice", "sort"), "same"),
+             "findIndex": _NUMBER, "indexOf": _NUMBER, "join": _STRING},
+}
+# Array methods whose callback gets an element first: arr.find(u => u.…)
+_CALLBACK_METHODS = ("find", "filter", "map", "forEach", "some", "every", "findIndex",
+                     "findLast", "findLastIndex", "flatMap")
+
+
+def _value_step(kind, member, called):
+    """The kind a member of a JavaScript value gives (see _VALUE_STEPS)."""
+    base = kind[0] if isinstance(kind, tuple) else kind
+    if member == "length" and not called and base in (_STRING, _ARRAY):
+        return _NUMBER
+    result = _VALUE_STEPS.get(base, {}).get(member) if called else None
+    if result == "element":
+        return value_kind(kind[1])
+    if result == "same":
+        return kind
+    return result
+
+
 def classify(chain, source="", depth=0, scope=None):
     """What the expression ``chain`` gives, as far as known: "ctx",
     "pointer", "wrapper", "module", "native", "gas", "memory", "process",
@@ -633,6 +740,12 @@ def classify(chain, source="", depth=0, scope=None):
     chain = chain.strip()
     if chain.startswith("new "):
         return _POINTER if re.fullmatch(r"new\s+NativePointer\s*\(.*\)", chain, re.S) else None
+    if chain.endswith("]"):
+        # arr[0]: an element of an Unreal array
+        start = _skip_back(chain, len(chain), "[", "]")
+        owner = chain[:start].rstrip().removesuffix("?.") if start > 0 else ""
+        kind = classify(owner, source, depth + 1, scope) if owner else None
+        return value_kind(kind[1]) if isinstance(kind, tuple) and kind[0] == _ARRAY else None
     parts = _split_last(chain)
     if parts is None:
         return None
@@ -645,9 +758,11 @@ def classify(chain, source="", depth=0, scope=None):
     if kind == "ctx":
         return _ctx_step(member, called, arguments, scope)
     if kind == "args":
-        return None if called else _class_kind(scope.args.get(member))
-    if isinstance(kind, tuple):
+        return None if called else value_kind(scope.args.get(member))
+    if isinstance(kind, tuple) and kind[0] == _CLASS:
         return _class_step(kind[1], member, called, arguments, scope)
+    if kind in (_STRING, _NUMBER) or (isinstance(kind, tuple) and kind[0] == _ARRAY):
+        return _value_step(kind, member, called)
     return _STEPS.get((kind, member, called))
 
 
@@ -665,7 +780,7 @@ def _ctx_step(member, called, arguments, scope):
             return None
         owner, _dot, field = named.group(2).replace(":", ".").rpartition(".")
         members = scope.members(owner) if owner else None
-        return None if members is None else _class_kind(members.member_type(field, False))
+        return None if members is None else value_kind(members.member_type(field, False))
     if member == "args" and not called and scope.args:
         return "args"
     return _STEPS.get(("ctx", member, called))
@@ -683,20 +798,53 @@ def _class_step(class_name, member, called, arguments, scope):
             return None
         member, called = named.group(2), member == "call"
     members = scope.members(class_name)
-    return None if members is None else _class_kind(members.member_type(member, called))
+    return None if members is None else value_kind(members.member_type(member, called))
 
 
 def _variable(name, source, depth, scope):
     """What the variable ``name`` holds, from its last ``const``/``let``/``var``
-    before the cursor; None if it is not assigned there or not known."""
-    found = None
+    before the cursor, or as the element of an array it walks: a callback's
+    first parameter (``arr.find(u => …)``) or ``for (const x of arr)``; None
+    if it is not known."""
+    escaped = re.escape(name)
+    candidates = []
+    for match in re.finditer(rf"\b(?:const|let|var)\s+{escaped}\s*=\s*([^;\n]+)", source):
+        candidates.append((match.start(), "value", match))
     for match in re.finditer(
-            rf"\b(?:const|let|var)\s+{re.escape(name)}\s*=\s*([^;\n]+)", source):
-        found = match
-    if found is None:
+            rf"(?:\?\.|\.)\s*(?:{'|'.join(_CALLBACK_METHODS)})\s*\(\s*"
+            rf"(?:\(\s*{escaped}\s*(?:,[^)]*)?\)|{escaped})\s*=>", source):
+        candidates.append((match.start(), "callback", match))
+    for match in re.finditer(
+            rf"\bfor\s*\(\s*(?:const|let|var)\s+{escaped}\s+of\s+([^)\n]+)\)", source):
+        candidates.append((match.start(), "of", match))
+    if not candidates:
         return None
-    value = re.sub(r"//.*$", "", found.group(1)).strip()
-    return classify(value, source[:found.start()], depth + 1, scope)
+    start, how, match = max(candidates, key=lambda candidate: candidate[0])
+    if how == "value":
+        value = re.sub(r"//.*$", "", match.group(1)).strip()
+        return classify(value, source[:start], depth + 1, scope)
+    walked = (receiver(source[:start].rstrip()) if how == "callback"
+              else match.group(1).strip())
+    kind = classify(walked, source[:start], depth + 1, scope) if walked else None
+    return value_kind(kind[1]) if isinstance(kind, tuple) and kind[0] == _ARRAY else None
+
+
+_DECLARED = re.compile(
+    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)"
+    r"|\bfunction\s+([A-Za-z_$][\w$]*)"
+    r"|(?:\(\s*|,\s*)([A-Za-z_$][\w$]*)\s*(?=[,)][^;{]*=>)"
+    r"|\b([A-Za-z_$][\w$]*)\s*=>")
+
+
+def declared_names(source):
+    """The names ``source`` declares (variables, functions, parameters of
+    arrow functions), in order, each once; scopes are not told apart."""
+    names = []
+    for match in _DECLARED.finditer(source):
+        name = next(group for group in match.groups() if group)
+        if name not in names and name not in _RESERVED:
+            names.append(name)
+    return names
 
 
 def _in_code(line, state):
@@ -758,6 +906,8 @@ def completions(source, line, state=0, context=SCRIPT, engine=None, scope=None):
             members = tuple(Completion(name, "completion.member.argument",
                                        values=(("type", type_name),))
                             for name, type_name in scope.args.items())
+        elif isinstance(kind, tuple) and kind[0] == _ARRAY:
+            members = ARRAY
         elif isinstance(kind, tuple):
             found = scope.members(kind[1])
             members = (found.entries() if found is not None else ()) + WRAPPER
@@ -766,7 +916,19 @@ def completions(source, line, state=0, context=SCRIPT, engine=None, scope=None):
         return prefix, tuple(entry for entry in members if entry.available(engine))
     if not expression_starts(line[:len(line) - len(prefix)]):
         return prefix, ()
-    return prefix, GLOBALS + KEYWORDS
+    globals_ = {entry.name for entry in GLOBALS}
+    variables = tuple(_variable_entry(name, before, scope)
+                      for name in declared_names(before) if name not in globals_)
+    return prefix, variables + GLOBALS + KEYWORDS
+
+
+def _variable_entry(name, source, scope):
+    """The entry of a variable of the script, with what it holds if known
+    (as its tooltip says, see variable_tooltip)."""
+    kind = _variable(name, source, 0, scope)
+    if kind is None:
+        return Completion(name, "completion.variable")
+    return Completion(name, "completion.variable_typed", values=(("kind", kind),))
 
 
 # Before a name that starts an expression or a statement: an operator or an
@@ -790,5 +952,167 @@ def expression_starts(text):
 
 
 def description(entry, translations):
-    """The entry's translated description."""
-    return translations[entry.description].format(**dict(entry.values))
+    """The entry's translated description; a variable's ``kind`` is named as
+    its tooltip names it."""
+    values = dict(entry.values)
+    if "kind" in values:
+        values["type"] = _kind_text(values.pop("kind"), translations)
+    return translations[entry.description].format(**values)
+
+
+# --- Signature while typing ---------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class Signature:
+    """One way to call the method whose arguments are being typed: its name,
+    parameters (texts) and return type (None if not known); ``entry`` is the
+    fixed Completion it stems from, for its description, else None."""
+
+    name: str
+    params: tuple
+    returns: str | None = None
+    entry: Completion | None = None
+
+
+def split_params(text):
+    """The parameters of a parameter list as the completion shows it:
+    ``className[, objectName]`` is ``("className", "[objectName]")``,
+    ``System.Int32 min, Dictionary<A, B> table`` keeps the generic's comma."""
+    text = (text or "").replace("[, ", ", [")
+    params, depth, part = [], 0, ""
+    for character in text:
+        depth += {"<": 1, "(": 1, "[": 1, ">": -1, ")": -1, "]": -1}.get(character, 0)
+        if character == "," and depth == 0:
+            params.append(part.strip())
+            part = ""
+        else:
+            part += character
+    if part.strip():
+        params.append(part.strip())
+    return tuple(params)
+
+
+def _open_call(source):
+    """``(position of its "(", arguments before the cursor)`` of the innermost
+    call whose parentheses are open at the end of ``source``, or None (also
+    inside a comment). Strings, comments and other brackets are skipped."""
+    stack = []  # [bracket, position, commas]
+    position, end = 0, len(source)
+    while position < end:
+        character = source[position]
+        if character in "'\"`":
+            closing = source.find(character, position + 1)
+            while closing > 0 and source[closing - 1] == "\\":
+                closing = source.find(character, closing + 1)
+            if closing < 0:
+                break  # the cursor is inside this string: an argument being typed
+            position = closing + 1
+            continue
+        if source.startswith("//", position):
+            newline = source.find("\n", position)
+            if newline < 0:
+                return None
+            position = newline + 1
+            continue
+        if source.startswith("/*", position):
+            closing = source.find("*/", position + 2)
+            if closing < 0:
+                return None
+            position = closing + 2
+            continue
+        if character in "([{":
+            stack.append([character, position, 0])
+        elif character in ")]}":
+            if stack:
+                stack.pop()
+        elif character == "," and stack:
+            stack[-1][2] += 1
+        position += 1
+    for bracket, opened, commas in reversed(stack):
+        if bracket == "(":
+            return opened, commas
+    return None
+
+
+def signature_help(source, context=SCRIPT, engine=None, scope=None):
+    """``(signatures, index)`` of the call whose arguments are typed at the
+    end of ``source``: the ways to call it (Signature, one per overload) and
+    the number of the argument at the cursor; None where no known method is
+    called. ``scope.pending`` tells whether the game is still asked."""
+    scope = scope or Scope()
+    scope.pending = False
+    found = _open_call(source)
+    if found is None:
+        return None
+    opened, index = found
+    chain = receiver(source[:opened].rstrip())
+    parts = _split_last(chain) if chain else None
+    if parts is None or parts[2]:
+        return None  # not a name before "(", or a call's result called
+    owner, member, _called, _arguments = parts
+    signatures = _signatures(owner, member, source[:opened], context, engine, scope)
+    return (tuple(signatures), index) if signatures else None
+
+
+def _signatures(owner, member, source, context, engine, scope):
+    # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def fixed(entries):
+        return [Signature(entry.name, split_params(entry.params), None, entry)
+                for entry in entries
+                if entry.name == member and entry.params is not None and entry.available(engine)]
+
+    if owner == "":
+        return fixed(GLOBALS)
+    kind = classify(owner, source, scope=scope)
+    if kind == "ctx":
+        return fixed(_CONTEXTS[context])
+    if isinstance(kind, tuple) and kind[0] == _ARRAY:
+        return fixed(ARRAY)
+    if isinstance(kind, tuple):
+        members = scope.members(kind[1])
+        overloads = members.methods.get(member, ()) if members is not None else ()
+        if overloads:
+            return [Signature(member, split_params(params), returns)
+                    for params, returns in overloads]
+        return fixed(WRAPPER)
+    return fixed(_MEMBERS.get(kind, ()))
+
+
+# --- Tooltips of the script's variables ---------------------------------------------
+
+_IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
+
+
+def identifier_at(line, column):
+    """``(name, start)`` of the name on ``line`` that holds ``column``, or None."""
+    for match in _IDENTIFIER.finditer(line):
+        if match.start() <= column < match.end():
+            return match.group(), match.start()
+    return None
+
+
+def _kind_text(kind, translations):
+    """What a kind of value is, as a tooltip names it."""
+    if isinstance(kind, tuple):
+        if kind[0] == _ARRAY:
+            return translations["completion.kind_array"].format(element=kind[1])
+        return kind[1]
+    key = {_STRING: "string", _NUMBER: "number", _POINTER: "pointer", _MODULE: "module",
+           _WRAPPER: "object", "ctx": "ctx", "native": "native", "gas": "gas"}.get(kind)
+    return translations[f"completion.kind_{key}" if key else "completion.kind_unknown"]
+
+
+def variable_tooltip(name, source, scope, translations):
+    """The tooltip of the script's variable ``name``: what it holds (a game
+    class, an array of …, a text, a number, a Frida pointer …), as far as the
+    completion can tell from ``source`` (the code up to the end of the line
+    it is shown for); None if ``source`` declares no such name. While the
+    game is asked it says so, and ``scope.pending`` is set."""
+    if name not in declared_names(source):
+        return None
+    kind = _variable(name, source, 0, scope)
+    if scope.pending:
+        return translations["completion.tooltip_reading"]
+    return translations["completion.tooltip_variable"].format(
+        name=name, type=_kind_text(kind, translations))

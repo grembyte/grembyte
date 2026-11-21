@@ -1034,6 +1034,17 @@ function memberClass(name) {
       // the next candidate
     }
   }
+  // An Unreal struct (the element of a TArray<FLUseSlotData>): findClass
+  // finds classes only
+  if (engine.id === 'unreal') {
+    for (const candidate of candidates.slice().reverse()) {
+      try {
+        return engine.findStruct(candidate);
+      } catch (_error) {
+        // the next candidate
+      }
+    }
+  }
   return null;
 }
 

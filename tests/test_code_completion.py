@@ -382,9 +382,9 @@ def test_an_arguments_fields_properties_and_methods():
     assert _scoped('ctx.args.roller.field("m_health").', scope)[1][0] == "m_current"
     assert _scoped("const s = ctx.args.roller;\nconst h = s.m_health;\nh.", scope)[1][0] == \
         "m_current"
-    # Numbers, unknown members and Frida pointers
-    assert _scoped("ctx.args.scale.", scope)[1] == []
-    assert _scoped("ctx.args.roller.Level.", scope)[1] == []
+    # Numbers are JavaScript numbers; unknown members and Frida pointers
+    assert _scoped("ctx.args.scale.", scope)[1] == ["toFixed", "toPrecision", "toString"]
+    assert _scoped("ctx.args.roller.Level.", scope)[1] == ["toFixed", "toPrecision", "toString"]
     assert _scoped("ctx.args.roller.Missing.", scope)[1] == []
     assert "readPointer" in _scoped("ctx.args.roller.address.", scope)[1]
 
@@ -575,8 +575,9 @@ def test_a_static_fields_object_offers_its_members():
         "m_current"
     assert _scoped('const h = ctx.static("CharacterStats.m_health");\nh.', scope, SCRIPT,
                    "mono")[1][0] == "m_current"
-    # An unknown field or one of a plain type: nothing
-    assert _scoped('ctx.static("CharacterStats.Level").', scope, SCRIPT, "mono")[1] == []
+    # A number field: a JavaScript number; an unknown field: nothing
+    assert _scoped('ctx.static("CharacterStats.Level").', scope, SCRIPT, "mono")[1][0] == \
+        "toFixed"
     assert _scoped('ctx.static("Nothing.Here").', scope, SCRIPT, "mono")[1] == []
 
 
@@ -690,4 +691,238 @@ def test_the_editor_shows_a_tooltip_and_updates_it_when_the_game_answers(qt_app)
     assert editor.show_string_tooltip(editor.cursorRect(cursor).center(), global_position) is None
     cursor.setPosition(block.position() + 2)  # "return"
     assert editor.show_string_tooltip(editor.cursorRect(cursor).center(), global_position) is None
+    editor.close()
+
+
+def _signature(source, scope=None, context=SCRIPT, engine="mono"):
+    found = code_completion.signature_help(source, context, engine, scope)
+    if found is None:
+        return None
+    signatures, index = found
+    return [(signature.name, signature.params, signature.returns) for signature in signatures], index
+
+
+def test_the_signature_of_the_call_being_typed():
+    assert _signature("ctx.find(") == ([("find", ("className", "[objectName]"), None)], 0)
+    # Arguments are counted past strings, nested calls and brackets
+    assert _signature('ctx.find("A, (b", ')[1] == 1
+    assert _signature('ctx.native.fn(at, "void", ["int", f(1, 2)], ')[1] == 3
+    assert _signature('ctx.native.fn(')[0][0][1] == ("address", "returnType", "argTypes",
+                                                     "[abi]")
+    assert _signature('ctx.log(a, b, ')[0][0][1] == ("...items",)
+    assert _signature("ptr(")[0][0][0] == "ptr"
+    assert _signature('const p = ctx.find("A").address;\np.add(0x10).writeS32(')[0][0][0] == \
+        "writeS32"
+    # Inside the string being typed as the first argument
+    assert _signature('ctx.find("BP_Pla')[1] == 0
+    # No call, a closed one, a comment, an unknown function, another engine's
+    for source in ("ctx.find", 'ctx.find("x")', "// ctx.find(", "/* ctx.find(", "foo(",
+                   "if (", "function heal(", "f()("):
+        assert _signature(source) is None, source
+    assert _signature("ctx.isPlaying(", engine="mono") is None
+    assert _signature("ctx.isPlaying(", engine="unreal")[0][0][1] == ()
+
+
+def test_the_signatures_of_a_game_methods_overloads():
+    members = code_completion.ClassMembers.from_agent({
+        "name": "Inventory", "fields": [], "properties": [],
+        "methods": [
+            {"name": "Add", "params": [["System.Int32", "count"]], "returns": "System.Void",
+             "static": False},
+            {"name": "Add", "params": [["Item", "item"], ["System.Int32", "count"]],
+             "returns": "System.Boolean", "static": False}]})
+    scope = code_completion.Scope(lambda name: members)
+    signatures, index = _signature('ctx.find("Inventory").Add(item, ', scope)
+    assert index == 1
+    assert signatures == [("Add", ("System.Int32 count",), "System.Void"),
+                          ("Add", ("Item item", "System.Int32 count"), "System.Boolean")]
+    # The wrapper's own methods where the game has none of that name
+    assert _signature('ctx.find("Inventory").call(', scope)[0][0][1] == ("name", "...args")
+    # The game is still asked
+    pending = code_completion.Scope(lambda name: code_completion.PENDING)
+    assert code_completion.signature_help('ctx.find("Inventory").Heal(', SCRIPT, "mono",
+                                          pending) is None
+    assert pending.pending
+
+
+def test_the_editor_shows_the_signature_with_the_current_argument(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtTest import QTest  # pylint: disable=import-error,no-name-in-module
+
+    editor = _editor_at_end("", engine="unreal")
+    hint = editor.signature_hint
+    _typed(editor, "ctx.find(")
+    assert hint.isVisible()
+    assert "<b>className</b>" in hint.text() and "Find a live object" not in hint.text()
+    assert "A live object of the class" in hint.text()  # the description
+    _typed(editor, '"BP_Hero_C", ')
+    assert "<b>[objectName]</b>" in hint.text()
+    _typed(editor, '"Hero")')
+    assert not hint.isVisible()  # the call is closed
+    # Escape closes it; Ctrl+Shift+Space opens it again
+    _typed(editor, ";\nctx.log(")
+    assert hint.isVisible()
+    QTest.keyClick(editor, Qt.Key.Key_Escape)
+    assert not hint.isVisible()
+    QTest.keyClick(editor, Qt.Key.Key_Space,
+                   Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+    assert hint.isVisible() and "<b>...items</b>" in hint.text()
+    # Moving the cursor out of the call hides it
+    editor.moveCursor(editor.textCursor().MoveOperation.Start)
+    assert not hint.isVisible()
+    # A method chosen in the popup shows its signature at once
+    editor.setPlainText("")
+    _typed(editor, "ctx.fin")
+    QTest.keyClick(editor, Qt.Key.Key_Return)
+    assert editor.toPlainText() == "ctx.find()" and hint.isVisible()
+    editor.close()
+
+
+# The classes of the Lies of P script: an equipment, its use slots (an Unreal
+# array of structs with an FString) and an item
+_LIES_OF_P = {
+    "LPlayerEquipment": {"name": "LPlayerEquipment", "fields": [], "properties": [], "methods": [
+        {"name": "GetUseSlotsLine_AllSlot", "params": [["bool", "FirstLine"]],
+         "returns": "TArray<FLUseSlotData>", "static": False},
+        {"name": "GetUseItem_SpecifiedLine", "params": [["int32", "SlotIndex"],
+                                                        ["bool", "FirstLine"]],
+         "returns": "ULItem*", "static": False}]},
+    "FLUseSlotData": {"name": "LUseSlotData", "properties": [], "methods": [], "fields": [
+        {"name": "ItemCodeName", "type": "FString", "static": False},
+        {"name": "SlotIndex", "type": "int32", "static": False}]},
+    "ULItem": {"name": "LItem", "fields": [], "properties": [], "methods": [
+        {"name": "SetCount", "params": [["int32", "Count"]], "returns": "void",
+         "static": False}]},
+}
+_SCRIPT_HEAD = ('if (!ctx.isPlaying()) return;\n\n'
+                'const equipment = ctx.find("LPlayerEquipment");\n'
+                'const slots = equipment?.GetUseSlotsLine_AllSlot(true);\n')
+
+
+def _lies_of_p(source):
+    found = {name: code_completion.ClassMembers.from_agent(members)
+             for name, members in _LIES_OF_P.items()}
+    scope = code_completion.Scope(found.get)
+    return _scoped(_SCRIPT_HEAD + source, scope, SCRIPT, "unreal")
+
+
+def test_unreal_arrays_their_elements_and_callback_parameters():
+    array = ["length", "find", "filter", "map", "forEach", "some", "every", "findIndex"]
+    assert _lies_of_p("slots?.")[1][:8] == array
+    # The element: in a callback, through find, an index, at and for … of
+    for source in ("const bp = slots?.find(u => u.", "slots.filter((u, i) => u.",
+                   'const bp = slots?.find(u => u.SlotIndex > 0);\nbp.',
+                   "const bp = slots[0];\nbp.", "slots.at(-1).", "for (const s of slots) s.",
+                   "slots.filter(u => u).find(u => u."):
+        assert _lies_of_p(source)[1][:2] == ["ItemCodeName", "SlotIndex"], source
+    # Texts and numbers are JavaScript's
+    names = _lies_of_p("const bp = slots?.find(u => u.ItemCodeName?.")[1]
+    assert {"startsWith", "includes", "toLowerCase", "length"} <= set(names)
+    assert _lies_of_p("slots.length.")[1][0] == "toFixed"
+    assert _lies_of_p("slots[0].ItemCodeName.split(',').")[1][1] == "find"
+    # The item the method returns
+    assert _lies_of_p("const item = equipment.GetUseItem_SpecifiedLine(0, true);\n"
+                      "item.")[1][0] == "SetCount"
+    # A callback of something not known gives its parameter nothing
+    assert _lies_of_p("list.find(u => u.")[1] == []
+
+
+def test_the_scripts_own_variables_come_first():
+    names = _lies_of_p("const bp = 1;\nfor (const s of slots) {}\nslots.map((v, i) => v);\n"
+                       "function heal() {}\n  ")[1]
+    assert names[:7] == ["equipment", "slots", "bp", "s", "v", "i", "heal"]
+    assert names[7] == "ctx"  # then the globals and keywords
+    assert code_completion.declared_names("const ctx = 1; let return_ = 2") == ["return_"]
+
+
+def test_tooltips_of_the_scripts_variables():
+    translations = load_translations("en")
+    found = {name: code_completion.ClassMembers.from_agent(members)
+             for name, members in _LIES_OF_P.items()}
+    scope = code_completion.Scope(found.get)
+    source = (_SCRIPT_HEAD + 'const bp = slots?.find(u => u.ItemCodeName?.startsWith("C"));\n'
+              "const code = bp.ItemCodeName;\nconst count = bp.SlotIndex + 1;\n"
+              "const at = bp.address;\nconst x = foo();")
+
+    def tip(name):
+        return code_completion.variable_tooltip(name, source, scope, translations)
+
+    assert tip("equipment") == "Variable equipment: LPlayerEquipment"
+    assert tip("slots") == "Variable slots: array of FLUseSlotData"
+    assert tip("bp") == "Variable bp: FLUseSlotData"
+    assert tip("u") == "Variable u: FLUseSlotData"
+    assert tip("code") == "Variable code: text (string)"
+    assert tip("at") == "Variable at: NativePointer (an address)"
+    assert tip("x") == "Variable x: type not known"
+    assert tip("ctx") is None and tip("nothing") is None
+    pending = code_completion.Scope(lambda name: code_completion.PENDING)
+    assert code_completion.variable_tooltip("slots", source, pending, translations) == (
+        "Reading from the game …")
+    assert code_completion.identifier_at("  item.SetCount(3)", 3) == ("item", 2)
+
+
+def test_the_editor_shows_a_variables_tooltip(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    found = {name: code_completion.ClassMembers.from_agent(members)
+             for name, members in _LIES_OF_P.items()}
+
+    class Lookup:
+        def __call__(self, name):
+            return found.get(name)
+
+    editor = _editor_at_end("", engine="unreal")
+    editor.set_completion(load_translations("en"), SCRIPT, "unreal", Lookup())
+    editor.setPlainText(_SCRIPT_HEAD + "// slots\nreturn slots.length;")
+    editor.resize(700, 300)
+    qt_app.processEvents()
+
+    def tip_over(line_number, word):
+        block = editor.document().findBlockByNumber(line_number)
+        cursor = editor.textCursor()
+        cursor.setPosition(block.position() + block.text().index(word) + 1)
+        point = editor.cursorRect(cursor).center()
+        return editor.show_string_tooltip(point, editor.viewport().mapToGlobal(point))
+
+    assert tip_over(3, "slots") == "Variable slots: array of FLUseSlotData"  # its declaration
+    assert tip_over(5, "slots") == "Variable slots: array of FLUseSlotData"
+    assert tip_over(4, "slots") is None  # in a comment
+    assert tip_over(5, "length") is None  # a member
+    assert tip_over(5, "return") is None  # a keyword
+    editor.close()
+
+
+def test_a_variables_entry_names_what_it_holds():
+    translations = load_translations("en")
+    found = {name: code_completion.ClassMembers.from_agent(members)
+             for name, members in _LIES_OF_P.items()}
+    scope = code_completion.Scope(found.get)
+    source = _SCRIPT_HEAD + "let test = foo();\n  "
+    _prefix, entries = completions(source, "  ", 0, SCRIPT, "unreal", scope)
+    described = {entry.name: code_completion.description(entry, translations)
+                 for entry in entries[:3]}
+    assert described == {"equipment": "Variable of this script: LPlayerEquipment",
+                         "slots": "Variable of this script: array of FLUseSlotData",
+                         "test": "Variable of this script"}
+
+
+def test_names_are_bold_and_descriptions_quieter(qt_app):
+    # pylint: disable=import-outside-toplevel,unused-argument
+    from PySide6.QtCore import Qt  # pylint: disable=import-error,no-name-in-module
+    from PySide6.QtGui import QFont, QFontInfo  # pylint: disable=import-error,no-name-in-module
+
+    editor = _editor_at_end("", engine="unreal")
+    large = QFont(qt_app.font())
+    large.setPixelSize(QFontInfo(editor.font()).pixelSize() + 6)
+    editor.completion_popup.setFont(large)  # an interface font larger than the code
+    _typed(editor, "ctx.")
+    model = editor.completion_popup.model()
+    name, detail = model.item(0, 0), model.item(0, 1)
+    code = QFontInfo(editor.font()).pixelSize()
+    assert QFontInfo(name.font()).pixelSize() == code and name.font().bold()
+    # A little smaller than the code, not as large as the interface font
+    assert QFontInfo(detail.font()).pixelSize() == round(code * 0.9)
+    assert detail.foreground().color().alphaF() < 1
+    for item in (name, detail):
+        assert item.textAlignment() & Qt.AlignmentFlag.AlignVCenter
     editor.close()
