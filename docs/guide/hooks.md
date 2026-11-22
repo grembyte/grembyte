@@ -15,7 +15,7 @@ A value hook changes writes to a target address: with the Frida backend it inter
 3. Give it a **Description**, e.g. *Gold*: it names the hook in the table and in the messages of [grembyte-cli](launch-option.md).
 4. Choose a [template](templates.md) and fill in its parameters. The built-in ones are **Multiplier**, **Fixed value** and **Clamp**.
 
-The top of the dialog names the target: its address and type, and the write site, the code location as `module+offset`. A hook created from a tracked address with a [pointer chain](pointer-scan.md) follows the chain.
+The top of the dialog names the target: its address and type, and the write site, the code location as `module+offset`. A hook created from a tracked address with a [pointer chain](pointer-scan.md) follows the chain. An entry located by a [field of an object](addresses.md#fields-of-objects) hands only its address to the hook: the hook cannot find the object by its field and learns its callers instead.
 
 <figure markdown="span">
   ![Create hook](../assets/screenshots/hook-dialog-dark.webp#only-dark){ width="640" }

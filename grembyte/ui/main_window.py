@@ -40,9 +40,14 @@ from grembyte.ui.widgets.table import (
 from grembyte.core.pointer import (
     chain_bases,
     chain_for_static_address,
+    forget_managed_bases,
     missing_managed_bases,
     module_bases,
+    object_chain,
+    object_chains,
+    remember_managed_bases,
     resolve_chain,
+    split_object,
 )
 from grembyte.features.freeze import FreezeWorker, FrozenValue
 from grembyte.features.managed_statics import StaticBasesWorker
@@ -102,6 +107,7 @@ from grembyte.ui.widgets.favorites import FavoritesDialog, FavoriteStore
 from grembyte.ui.widgets.gas_attributes import GasAttributesDialog
 from grembyte.ui.widgets.object_browser import ObjectBrowserDialog
 from grembyte.ui.widgets.reference_graph import ReferenceGraphDialog
+from grembyte.ui.widgets.owning_objects import MAX_ADDRESSES, OwningObjectsDialog
 from grembyte.ui.widgets.game_export import GameExportDialog, GameImportDialog
 from grembyte.ui.widgets.game_notes import GameNotesDialog
 from grembyte.ui.widgets.hooks import HookDialog, HookPanel
@@ -145,6 +151,13 @@ RESULT_DISPLAY_LIMIT = 1000
 # How often chain bases in a class's static data are looked for again while
 # they cannot be found (the class may not have run its static constructor).
 STATIC_BASES_RETRY_S = 30
+# How often the objects of field targets are checked (and looked for again
+# when gone); while one is missing, less often: in Mono games looking for it
+# reads all live objects
+OBJECT_BASES_CHECK_S = 1.0
+OBJECT_BASES_RETRY_S = 5.0
+# A lookup of field targets the agent has not answered by then is given up
+OBJECT_BASES_TIMEOUT_S = 15.0
 
 # The app icon (window and taskbar, see grembyte.main; toolbar)
 ICON_PATH = Path(__file__).parent / "resources" / "favicon.svg"
@@ -517,6 +530,15 @@ class MainWindow(QMainWindow):
         # Looks up managed chain bases (see _request_static_bases)
         self._static_bases_worker = None
         self._static_bases_next = 0.0
+        # Finds the objects of field targets (see _request_object_bases):
+        # (worker, request id, base names, sent) while asked; the next time;
+        # (pid, base name) -> the object found last (hex text); the worker
+        # whose answers are connected; inspector fields waiting for their object
+        self._object_bases_request = None
+        self._object_bases_next = 0.0
+        self._object_hints = {}
+        self._object_worker = None
+        self._inspected_targets = {}
         self._memory_viewer = None
         self._catalog = None
         self._method_monitor = None
@@ -2122,6 +2144,18 @@ class MainWindow(QMainWindow):
                                       is_framework=self._engine.is_framework_assembly)
         self.dock_manager.add(dialog, "references", RIGHT)
 
+    def find_owning_objects(self, entries, truncated=0):
+        """Show the object (class, name, field) each address of ``entries``
+        lies in (see owning_objects); from there a field becomes the target of
+        an address-list entry (add_field_target)."""
+        if not entries or not self.can_open_reference_graph() or self.script_panel is None:
+            return
+        dialog = OwningObjectsDialog(self.translations, self.script_panel, entries,
+                                     framework=self._engine.framework_prefixes,
+                                     truncated=truncated, parent=self)
+        dialog.target_requested.connect(self.add_field_target)
+        self.dock_manager.add(dialog, "owning_objects", RIGHT)
+
     def _open_gas_attributes(self):
         """Show the player's GAS attributes (Unreal games); one window at a time."""
         dialog = self._gas_dialog
@@ -2456,6 +2490,31 @@ class MainWindow(QMainWindow):
             self.translations["address_table.watch_access"],
             lambda: self._start_write_monitor(address, value_type, pointer, reads=True),
         )
+        menu.addSeparator()
+        value_item = table.item(row, 2 if table is self.result_table else 3)
+        label_item = table.item(row, 0) if table is self.addr_table else None
+        owning = menu.addAction(
+            self.translations["address_table.owning_object"],
+            lambda: self.find_owning_objects([{
+                "address": address_value,
+                "value": value_item.text() if value_item is not None else "",
+                "type": value_type,
+                # an entry of the list gets the target itself
+                "entry_id": self._address_meta(row)["id"] if table is self.addr_table else None,
+                "label": label_item.text() if label_item is not None else None,
+            }]),
+        )
+        owning.setEnabled(address_value is not None and self.can_open_reference_graph())
+        if table is self.result_table:
+            owning_all = menu.addAction(
+                self.translations["results.owning_objects"],
+                lambda: self.find_owning_objects(
+                    [{"address": result["address"], "value": str(result["value"]),
+                      "type": result["type"]}
+                     for result in self._scan_results[:MAX_ADDRESSES]],
+                    truncated=max(0, len(self._scan_results) - MAX_ADDRESSES)),
+            )
+            owning_all.setEnabled(bool(self._scan_results) and self.can_open_reference_graph())
         if table is self.addr_table:
             menu.addSeparator()
             meta = self._address_meta(row)
@@ -2600,6 +2659,10 @@ class MainWindow(QMainWindow):
         """Ask for a transform and hook the write instruction before trap_pc."""
         if self._current_pid is None or self.hook_panel is None:
             return
+        # The hook agent resolves chains itself and cannot find an object by
+        # its field (a field target): the hook targets the address and learns
+        # callers instead
+        hook_pointer = None if pointer is None or split_object(pointer.module) else pointer
         dialog = HookDialog(
             self.translations,
             f"0x{address_value:X}",
@@ -2607,7 +2670,7 @@ class MainWindow(QMainWindow):
             site,
             label=self._tracked_description(address_value),
             templates=self.hook_panel.templates(),
-            pointer=pointer,
+            pointer=hook_pointer,
             parent=self._write_watch_dialog or self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -2618,7 +2681,7 @@ class MainWindow(QMainWindow):
             dialog.transform,
             trap_pc=trap_pc,
             caller_depth=dialog.caller_depth,
-            pointer=pointer,
+            pointer=hook_pointer,
             breakpoint=dialog.breakpoint,
             label=dialog.label,
         )
@@ -3305,6 +3368,7 @@ class MainWindow(QMainWindow):
             entries[address, item2.text()] = {"address": address, "type": item2.text()}
 
         self._request_static_bases(chains)
+        self._request_object_bases(chains)
         if not entries:
             return
 
@@ -3342,6 +3406,123 @@ class MainWindow(QMainWindow):
         self._static_bases_worker = worker
         workers.keep_until_finished(worker)
         worker.start()
+
+    # --- Field targets (object bases, see grembyte.core.pointer) --------------------
+    def _object_worker_for(self):
+        """The scripts tab's worker with its answers connected, or None."""
+        if self.script_panel is None or not self.can_open_reference_graph():
+            return None
+        worker = self.script_panel.worker()
+        if worker is not None and worker is not self._object_worker:
+            self._object_worker = worker
+            worker.fields_located.connect(
+                lambda request, answer: self._on_fields_located(worker, request, answer))
+            worker.fields_failed.connect(
+                lambda request, message: self._on_fields_failed(worker, request, message))
+            worker.references_resolved.connect(
+                lambda request, answer: self._on_inspected_field(worker, request, answer))
+        return worker
+
+    def _request_object_bases(self, chains):
+        """Have the engine find the objects of the field targets ``chains`` use,
+        and check those found before; the next refreshes resolve them.
+
+        One request at a time, every OBJECT_BASES_CHECK_S, OBJECT_BASES_RETRY_S
+        while one is missing.
+        """
+        targets = object_chains(chains)
+        pid = self._current_pid
+        now = time.monotonic()
+        pending = self._object_bases_request
+        if pending is not None and now - pending[3] > OBJECT_BASES_TIMEOUT_S:
+            self._object_bases_request = pending = None
+        if not targets or pid is None or pending is not None or now < self._object_bases_next:
+            return
+        worker = self._object_worker_for()
+        if worker is None:
+            return
+        names = [chain.module for chain in targets]
+        request = worker.locate_fields([
+            {"className": class_name, "field": field, "name": name,
+             "hint": self._object_hints.get((pid, base))}
+            for base, (class_name, field, name) in ((base, split_object(base)) for base in names)])
+        self._object_bases_request = (worker, request, names, now)
+        self._object_bases_next = now + OBJECT_BASES_CHECK_S
+
+    def _on_fields_located(self, worker, request, answer):
+        pending = self._object_bases_request
+        if pending is None or pending[0] is not worker or pending[1] != request:
+            return
+        self._object_bases_request = None
+        pid = self._current_pid
+        if pid is None:
+            return
+        found, gone = {}, set()
+        for name, entry in zip(pending[2], answer or []):
+            if entry:
+                found[name] = int(entry["address"], 16)
+                self._object_hints[(pid, name)] = entry["object"]
+            else:
+                gone.add(name)
+                self._object_hints.pop((pid, name), None)
+        forget_managed_bases(pid, gone)
+        remember_managed_bases(pid, found)
+        if gone:
+            self._object_bases_next = time.monotonic() + OBJECT_BASES_RETRY_S
+
+    def _on_fields_failed(self, worker, request, message):
+        pending = self._object_bases_request
+        if pending is None or pending[0] is not worker or pending[1] != request:
+            return
+        self._object_bases_request = None
+        self._object_bases_next = time.monotonic() + OBJECT_BASES_RETRY_S
+        self.lbl_status.setText(
+            self.translations["address_table.object_bases_failed"].format(message=message))
+
+    def add_field_target(self, entry):
+        """Locate an address-list entry by a field of an object (see owning_objects):
+        ``entry`` has ``address`` (int, the field's now), ``object`` (hex text),
+        ``className``, ``field``, ``name``, ``type`` and ``label``; with
+        ``entry_id`` that entry of the list gets the target, else a new one."""
+        pid = self._current_pid
+        if pid is None:
+            return
+        chain = object_chain(entry["className"], entry["field"], entry.get("name") or "")
+        # Known now: no wait for the next lookup
+        remember_managed_bases(pid, {chain.module: entry["address"]})
+        self._object_hints[(pid, chain.module)] = entry["object"]
+        if entry.get("entry_id") is not None:
+            self._set_pointer_for(entry["entry_id"], chain)
+        else:
+            saved_id = None
+            if self._process_id is not None:
+                saved_id = self._store_address(
+                    self._address_repository.add_address, self._process_id,
+                    label=entry["label"], value_type=entry["type"], address=entry["address"],
+                    pointer=chain,
+                )
+            self._add_address_row(entry["label"], f"0x{entry['address']:X}", entry["type"],
+                                  "?", saved_id=saved_id, pointer=chain)
+        self.lbl_status.setText(self.translations["address_table.field_target_set"].format(
+            target=chain.text()))
+        if self._scan_worker is None:
+            self._refresh_timer.start()
+
+    def _on_inspected_field(self, worker, request, answer):
+        """A field put on the list from the object inspector: once the engine
+        named its object, the entry is located by that field (see _add_inspected_address)."""
+        waiting = self._inspected_targets.pop((worker, request), None)
+        if waiting is None or not answer:
+            return
+        entry_id, value_type, label = waiting
+        found = answer[0]
+        if found.get("kind") != "field" or not found.get("object"):
+            return
+        self.add_field_target({
+            "address": int(found["location"], 16), "object": found["object"],
+            "className": found.get("className") or "", "field": found.get("field") or "",
+            "name": found.get("name") or "", "type": value_type, "label": label,
+            "entry_id": entry_id})
 
     def _on_refreshed_values(self, values):
         """Update both tables with values returned by the refresh worker."""
@@ -3568,18 +3749,30 @@ class MainWindow(QMainWindow):
         self._refresh_timer.start()
 
     def _add_inspected_address(self, entry):
-        """Put a field of an object in the object inspector on the address list."""
+        """Put a field of an object in the object inspector on the address list.
+
+        Where the engine names the object it lies in (Unreal, Mono), the entry
+        is then located by that field, so it survives a restart.
+        """
         if self._current_pid is None:
             return
         address = entry["address"]
-        self._add_tracked_address(
+        saved_id, pointer = self._add_tracked_address(
             {"address": f"0x{address:X}", "address_value": address,
              "type": entry["value_type"], "value": ""},
             entry["label"],
         )
+        if saved_id is None or pointer is not None:
+            return  # not saved, or static: module + offset already survives
+        worker = self._object_worker_for()
+        if worker is not None:
+            request = worker.resolve_references([address])
+            self._inspected_targets[(worker, request)] = (saved_id, entry["value_type"],
+                                                           entry["label"])
 
     def _add_tracked_address(self, data, label=None):
-        """Add a scan result to the address list and save it for the program.
+        """Add a scan result to the address list and save it for the program;
+        returns ``(saved id or None, pointer or None)``.
 
         An address inside a module's static data is saved as module + offset,
         so it is found again after a restart without a pointer scan.
@@ -3603,6 +3796,7 @@ class MainWindow(QMainWindow):
         )
         if self._current_pid is not None and self._scan_worker is None:
             self._refresh_timer.start()
+        return saved_id, pointer
 
     def _edit_description(self):
         """Prompt for a new description of the selected tracked address."""

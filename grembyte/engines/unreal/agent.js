@@ -3645,6 +3645,77 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     });
   }
 
+  // --- Field targets of the address list ------------------------------------------
+  // An address-list entry can name a field of an object instead of an address
+  // (grembyte.core.pointer, object bases): the class, the field as
+  // locateReferences names it, and the object's name. After a restart, or
+  // once the game made the object anew, it is found again here.
+
+  function fieldOffset(klass, path) {
+    // The offset of ``path`` (as propertyAt writes it: "Stats.Value",
+    // "Slots[3]", "Health+0x2", "+0x70") from an object's start, or null
+    // when the class has no such field (any more)
+    const L = ue.layout;
+    const match = /^(.*?)(?:\+0x([0-9a-f]+))?$/i.exec(path);
+    const extra = match[2] === undefined ? 0 : parseInt(match[2], 16);
+    if (match[1] === '')
+      return match[2] === undefined ? null : extra;
+    let current = klass;
+    let offset = 0;
+    const parts = match[1].split('.');
+    for (let k = 0; k < parts.length; k++) {
+      const part = /^(.+?)(?:\[(\d+)\])?$/.exec(parts[k]);
+      const field = layout(current).fields.find(
+        candidate => sameName(candidate.name.replace(/\[\d+\]$/, ''), part[1]));
+      if (field === undefined)
+        return null;
+      const index = part[2] === undefined ? 0 : Number(part[2]);
+      offset += field.offset + index * field.property.add(L.elementSize).readS32();
+      if (k < parts.length - 1) {
+        if (field.type.kind !== KIND.VALUETYPE || field.type.klass.isNull())
+          return null;
+        current = field.type.klass;
+      }
+    }
+    return offset + extra;
+  }
+
+  function locateField(className, path, named, hint) {
+    // { address, object } of field ``path`` of the live object of class
+    // ``className`` (that very class): the only one, else the one named
+    // ``named``; null if there is none. ``hint``, the object found last, is
+    // kept while an object of the class lives there. Memory reads only.
+    reflection();
+    let klass;
+    try {
+      klass = findClass(className);
+    } catch (_error) {
+      return null;  // not loaded (yet)
+    }
+    const offset = fieldOffset(klass, path);
+    if (offset === null)
+      return null;
+    const answer = object => ({ address: object.add(offset).toString(),
+                                object: object.toString() });
+    const ofClass = object => {
+      try {
+        return isObject(object) && object.add(OBJECT_CLASS).readPointer().equals(klass);
+      } catch (_error) {
+        return false;  // freed since
+      }
+    };
+    if (hint !== null && ofClass(hint))
+      return answer(hint);
+    const found = retryFresh(() => {
+      const candidates = searchObjects(Number(klass.toString()), null, Number.MAX_SAFE_INTEGER)
+        .filter(ofClass);
+      if (candidates.length === 1)
+        return candidates[0];
+      return candidates.find(object => named !== null && isNamed(object, named)) || null;
+    });
+    return found === null ? null : answer(found);
+  }
+
   // --- Gameplay Ability System: the player's attributes -----------------------------
   // GAS games keep attributes (Health, Might, DamageOutgoingMult ...) as
   // FGameplayAttributeData (vtable, BaseValue, CurrentValue) in UAttributeSet
@@ -4018,6 +4089,7 @@ guint32 read_objects (guint8 ** chunks, guint32 count, guint32 item_size,
     findStruct,
     browseInstances,
     locateReferences,
+    locateField,
     gasAttributes,
     gasSetBase,
     classChain,

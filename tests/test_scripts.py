@@ -340,6 +340,8 @@ class _FakeScriptWorker:
             instances_failed = Signal(int, str)
             references_resolved = Signal(int, object)
             references_failed = Signal(int, str)
+            fields_located = Signal(int, object)
+            fields_failed = Signal(int, str)
             statics_read = Signal(int, object)
             statics_failed = Signal(int, str)
             expression_inspected = Signal(int, object)
@@ -374,6 +376,8 @@ class _FakeScriptWorker:
         self.instances_failed = self.signals.instances_failed
         self.references_resolved = self.signals.references_resolved
         self.references_failed = self.signals.references_failed
+        self.fields_located = self.signals.fields_located
+        self.fields_failed = self.signals.fields_failed
         self.statics_read = self.signals.statics_read
         self.statics_failed = self.signals.statics_failed
         self.expression_inspected = self.signals.expression_inspected
@@ -446,6 +450,10 @@ class _FakeScriptWorker:
 
     def resolve_references(self, locations, framework=()):
         self.requests.append(("resolve_references", list(locations), tuple(framework)))
+        return len(self.requests)
+
+    def locate_fields(self, targets):
+        self.requests.append(("locate_fields", list(targets)))
         return len(self.requests)
 
 

@@ -749,6 +749,8 @@ int main(void) {
     Object *blueprint = object(package_class, "/Game/Blueprints/BP_Hero", NULL);
     Object *bp_hero = object(generated_class, "BP_Hero_C", blueprint);
     bp_hero->super = hero;
+    /* Up to the last field (Focus, 0x74): what an object of them covers */
+    hero->properties_size = bp_hero->properties_size = 0x78;
 #ifdef ANIM_BLUEPRINT
     /* The hero's Animation Blueprint (Lies of P: BP_CH_PC_Pino_C and
        ABP_CH_PC_Pino_C): a class named as the hero's with a C++ prefix */
@@ -2025,9 +2027,11 @@ def test_reference_graph_names_the_objects_holding_one(tmp_path, qt_app):
     target = _Target(_build(tmp_path))
     worker = ScriptWorker(target.pid)
     answers, failed = [], []
-    for answer in ("classes_browsed", "instances_browsed", "references_resolved"):
+    for answer in ("classes_browsed", "instances_browsed", "references_resolved",
+                   "fields_located"):
         getattr(worker, answer).connect(lambda _request, value: answers.append(value))
-    for failure in ("browse_failed", "instances_failed", "references_failed"):
+    for failure in ("browse_failed", "instances_failed", "references_failed",
+                    "fields_failed"):
         getattr(worker, failure).connect(lambda _request, message: failed.append(message))
 
     def ask(request, *args):
@@ -2062,6 +2066,25 @@ def test_reference_graph_names_the_objects_holding_one(tmp_path, qt_app):
         assert int(own["object"], 16) == address and own["size"] >= 0x28
         pairs, _total = index.pointers_in(address, address + own["size"])
         assert int(classes["BP_Hero_C"]["klass"], 16) in {value for _location, value in pairs}
+        # A value, not a pointer (a scan result): the field it is (Hero.Health, +0x70)
+        health = ask("resolve_references", [address + 0x70])[0]
+        assert (health["kind"], health["field"], health["name"]) == (
+            "field", "Health", "BP_Hero_C_0")
+        assert int(health["object"], 16) == address
+
+        # A field target of the address list finds the object again: two heroes
+        # live, so by their name; a field the class lacks finds nothing
+        targets = [{"className": "BP_Hero_C", "field": "Health", "name": "BP_Hero_C_0"},
+                   {"className": "BP_Hero_C", "field": "Health", "name": ""},
+                   {"className": "BP_Hero_C", "field": "Mana", "name": "BP_Hero_C_0"},
+                   {"className": "NoSuchClass", "field": "Health", "name": ""},
+                   {"className": "BP_Hero_C", "field": "Health", "name": "",
+                    "hint": hex(address)}]
+        located = ask("locate_fields", targets)
+        assert located[0] == {"address": hex(address + 0x70), "object": hex(address)}
+        assert located[1:4] == [None, None, None]
+        # The object found last stays while it lives
+        assert located[4] == located[0]
     finally:
         worker.requestInterruption()
         worker.wait(5000)

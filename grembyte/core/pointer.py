@@ -38,6 +38,13 @@ game runs. Such a block can be a chain base too (``static_areas``), named
 address is only known by asking the runtime, so it is looked up once per run
 of the game and remembered here (``remember_managed_bases``);
 ``chain_bases`` has module and managed bases alike for ``resolve_chain``.
+
+In Unreal and Mono games a chain can also start at a field of an object the
+engine names (``object_base``): ``object:<class>|<field>|<object name>``,
+e.g. the field PrevSoul of the one UIW_ProfileItem_Ergo_C. The engine finds
+the object again after a restart or once the game made it anew (the
+adapters' ``locateField``), so the base is the field's address itself and is
+checked again and again (``remember_managed_bases``, ``forget_managed_bases``).
 """
 
 from dataclasses import dataclass
@@ -79,11 +86,17 @@ class PointerChain:
     def text(self):
         """Readable form, e.g. ``game+0x2a1f0 → 0x18 → 0x40``.
 
-        Managed bases read ``[Assembly-CSharp] Game.GameState+0x18``.
+        Managed bases read ``[Assembly-CSharp] Game.GameState+0x18``, object
+        bases ``UIW_ProfileItem_Ergo_C.PrevSoul``.
         """
-        managed = split_managed(self.module)
-        base = self.module if managed is None else f"[{managed[0]}] {managed[1]}"
-        parts = [f"{base}+0x{self.base_offset:x}"]
+        target = split_object(self.module)
+        if target is not None:
+            base = f"{target[0]}.{target[1]}"
+            parts = [base if self.base_offset == 0 else f"{base}+0x{self.base_offset:x}"]
+        else:
+            managed = split_managed(self.module)
+            base = self.module if managed is None else f"[{managed[0]}] {managed[1]}"
+            parts = [f"{base}+0x{self.base_offset:x}"]
         parts += [f"{offset:#x}" if offset >= 0 else f"-{-offset:#x}" for offset in self.offsets]
         return " → ".join(parts)
 
@@ -113,7 +126,36 @@ def split_managed(name):
     return (assembly, class_name) if separator and assembly and class_name else None
 
 
-# pid -> (start time, {managed base name: address}) of the running game
+OBJECT_PREFIX = "object:"
+
+
+def object_base(class_name, field, name=""):
+    """The chain base name of a field of an object (see the module doc)."""
+    return f"{OBJECT_PREFIX}{class_name}|{field}|{name or ''}"
+
+
+def object_chain(class_name, field, name=""):
+    """A chain to a field of an object: its base alone."""
+    return PointerChain(object_base(class_name, field, name), 0)
+
+
+def split_object(name):
+    """``(class, field, object name)`` of an object base name, else None."""
+    if not name.startswith(OBJECT_PREFIX):
+        return None
+    parts = name[len(OBJECT_PREFIX):].split("|", 2)
+    if len(parts) != 3 or not parts[0] or not parts[1]:
+        return None
+    return parts[0], parts[1], parts[2]
+
+
+def object_chains(chains):
+    """The chains of ``chains`` that start at an object base, without repeats."""
+    return list(dict.fromkeys(chain for chain in chains
+                              if chain is not None and split_object(chain.module) is not None))
+
+
+# pid -> (start time, {managed or object base name: address}) of the running game
 _managed_bases = {}
 
 
@@ -124,6 +166,15 @@ def remember_managed_bases(pid, bases):
     merged = dict(known[1]) if known is not None and known[0] == started else {}
     merged.update(bases)
     _managed_bases[pid] = (started, merged)
+
+
+def forget_managed_bases(pid, names):
+    """Drop bases of this run of ``pid`` that are gone (an object the game freed)."""
+    known = _managed_bases.get(pid)
+    if known is None or known[0] != process_start_time(pid):
+        return
+    _managed_bases[pid] = (known[0], {name: address for name, address in known[1].items()
+                                      if name not in names})
 
 
 def managed_bases(pid):

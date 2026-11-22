@@ -98,7 +98,10 @@ usually lie next to it.
   or class, only singletons, a highlighted way and an HTML export. Open: the element
   blocks of Unreal's `TArray`/`TMap`/`TSet` (a location there is not yet traced to the
   container's field, and the other way does not follow them), IL2CPP (needs its object
-  browser), and native memory without an engine's reflection.
+  browser), and native memory without an engine's reflection. The same lookup names the
+  object and field of scan results and address-list entries (`owning_objects.py`) and makes
+  field targets of them; the container blocks are open there too (Lies of P's stats lie in a
+  `TArray<FLStatData>`).
 
 ### 4. Entry points through strings, RTTI and symbols
 
@@ -291,9 +294,12 @@ watch on such a field ends in `VCRUNTIME140.dll!memmove`, called through a wrapp
 the copy routine nor its caller can tell this field from any other, so no write-site hook
 fits.
 
-- **Target:** the agent resolves the field's address through the engine's reflection (as the
-  inspector and the field catalog do) and resolves it again when the object is created anew
-  (level change, loaded save) and after a restart; no pointer chain, no training.
+- **Target:** the agent resolves the field's address through the engine's reflection and
+  resolves it again when the object is created anew (level change, loaded save) and after a
+  restart; no pointer chain, no training. Exists for the address list: field targets
+  (`object:` chain bases in `grembyte/core/pointer.py`, the adapters' `locateField`, set from
+  the window of objects at addresses and the inspector's "Add to address list"). The hook
+  agent still has to resolve them itself (a hook made from such an entry targets the address).
 - **Mechanism:** a hardware data watchpoint on the field. After each write of the game the
   agent applies the manipulation (templates, scripts) and stores the result. The watchpoint
   fires after the write, so the agent keeps the old value itself; its own write must not

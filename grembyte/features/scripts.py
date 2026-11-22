@@ -399,6 +399,9 @@ class ScriptWorker(QThread):
     # request id, what holds each location (see resolve_references)
     references_resolved = Signal(int, object)
     references_failed = Signal(int, str)
+    # request id, where each field target is (see locate_fields)
+    fields_located = Signal(int, object)
+    fields_failed = Signal(int, str)
     # request id, a choice parameter's options [{label, value}] (see script_options)
     options_listed = Signal(int, object)
     options_failed = Signal(int, str)
@@ -593,6 +596,19 @@ class ScriptWorker(QThread):
                              _reference_options(framework))))
         return request_id
 
+    def locate_fields(self, targets):
+        """Find the field targets of the address list again (see
+        grembyte.core.pointer, object bases); expect fields_located or fields_failed.
+
+        ``targets`` are ``[{className, field, name, hint}]``, ``hint`` the
+        object found last (hex text) or None. The answer has one entry per
+        target, in their order: ``{address, object}`` (hex texts) or None.
+        """
+        request_id = next(self._requests)
+        self._commands.put(("locate_fields", request_id,
+                            (list(targets), _reference_options(()))))
+        return request_id
+
     def full_text(self, text_id):
         """Fetch the whole text of a long string value (its ``fullText``)."""
         request_id = next(self._requests)
@@ -707,6 +723,7 @@ class ScriptWorker(QThread):
         "static_fields": ("static_fields", "statics_read", "statics_failed"),
         "resolve_references": ("resolve_references", "references_resolved",
                                "references_failed"),
+        "locate_fields": ("locate_fields", "fields_located", "fields_failed"),
     }
 
     def _answer(self, api, action, request_id, argument):
