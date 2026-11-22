@@ -2613,6 +2613,80 @@ gpointer run_batch (gpointer data) {
     });
   }
 
+  // --- Field targets of the address list ------------------------------------------
+  // An address-list entry can name a field of an object instead of an address
+  // (grembyte.core.pointer, object bases): the class, the field as
+  // locateReferences names it, and the object's name. After a restart, or
+  // once the game made the object anew, it is found again here.
+
+  function fieldOffset(klass, path) {
+    // The offset of ``path`` (as fieldAt writes it: "stats.Value",
+    // "gold+0x2", "+0x18") from an object's start, or null when the class
+    // has no such field (any more)
+    const match = /^(.*?)(?:\+0x([0-9a-f]+))?$/i.exec(path);
+    const extra = match[2] === undefined ? 0 : parseInt(match[2], 16);
+    if (match[1] === '')
+      return match[2] === undefined ? null : extra;
+    let current = klass;
+    let offset = 0;
+    const parts = match[1].split('.');
+    for (let k = 0; k < parts.length; k++) {
+      const field = layout(current).fields.find(
+        candidate => !candidate.static && candidate.name === parts[k]);
+      if (field === undefined)
+        return null;
+      // A struct's field offsets count from an object header it does not have
+      offset += k === 0 ? field.offset : field.offset - 2 * Process.pointerSize;
+      if (k < parts.length - 1) {
+        if (field.type.kind !== TYPE.VALUETYPE || !field.type.klass)
+          return null;
+        current = field.type.klass;
+      }
+    }
+    return offset + extra;
+  }
+
+  function locateField(className, path, named, hint, options = {}) {
+    // { address, object } of field ``path`` of the live object of class
+    // ``className`` (that very class): the only one, else the one named
+    // ``named``; null if there is none. ``hint``, the object found last, is
+    // kept while an object of the class lives there (memory reads only);
+    // searching reads the live objects on the main thread (see liveObjects).
+    typesApi();
+    let klass;
+    try {
+      klass = findClass(className);
+    } catch (_error) {
+      return null;  // not loaded (yet)
+    }
+    const offset = fieldOffset(klass, path);
+    if (offset === null)
+      return null;
+    const answer = object => ({ address: object.add(offset).toString(),
+                                object: object.toString() });
+    const ofClass = object => {
+      const found = classOf(object);
+      return found !== null && found.equals(klass);
+    };
+    if (hint !== null && ofClass(hint))
+      return answer(hint);
+    return onMainThread(() => {
+      const live = liveObjects(options.maxObjects);
+      const candidates = (live.byClass.get(Number(klass.toString())) || [])
+        .map(number => ptr(number)).filter(ofClass);
+      if (candidates.length === 1)
+        return answer(candidates[0]);
+      const found = candidates.find(object => {
+        try {
+          return named !== null && objectName(object, klass) === named;
+        } catch (_error) {
+          return false;  // a destroyed Unity object
+        }
+      });
+      return found === undefined ? null : answer(found);
+    });
+  }
+
   function writeReference(object, field, value) {
     // Store reference ``value`` in the field at ``field`` of ``object``.
     if (api.writeBarrier !== null && object !== null)
@@ -2896,7 +2970,7 @@ gpointer run_batch (gpointer data) {
     onRuntimeThread: onMonoThread, unityName,
     onMainThread, drainMain, properties, getProperty, methods, signatureOf, findClass,
     findableClasses,
-    findMethod, findObject, findObjects, browseClasses, browseInstances, locateReferences, newString, invoke, classChain, writeReference, resolve: resolveMethod,
+    findMethod, findObject, findObjects, browseClasses, browseInstances, locateReferences, locateField, newString, invoke, classChain, writeReference, resolve: resolveMethod,
     virtualMethod: (object, method) => api.invoke.virtualMethod(object, method)
   };
 })();

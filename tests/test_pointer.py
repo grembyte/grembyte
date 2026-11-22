@@ -163,6 +163,34 @@ def test_managed_bases_name_a_class_of_an_assembly(monkeypatch):
     assert pointer_module.managed_bases(5) == {}
 
 
+def test_object_bases_name_a_field_of_an_object(monkeypatch):
+    # pylint: disable=protected-access
+    monkeypatch.setattr(pointer_module, "_managed_bases", {})
+    monkeypatch.setattr(pointer_module, "process_start_time", lambda pid: 7)
+    chain = pointer_module.object_chain("UIW_ProfileItem_Ergo_C", "PrevSoul",
+                                        "UIW_ProfileItem_Ergo_C_0")
+    assert chain.module == "object:UIW_ProfileItem_Ergo_C|PrevSoul|UIW_ProfileItem_Ergo_C_0"
+    assert chain.text() == "UIW_ProfileItem_Ergo_C.PrevSoul"
+    assert PointerChain.from_json(chain.to_json()) == chain
+    # An object name may hold anything, even the separator
+    assert pointer_module.split_object(pointer_module.object_base("Game.Bank", "gold",
+                                                                  "Bank|Main")) == (
+        "Game.Bank", "gold", "Bank|Main")
+    assert pointer_module.split_object("object:broken") is None
+    assert pointer_module.split_object("game.exe") is None
+    assert pointer_module.split_managed(chain.module) is None
+    native = PointerChain("game.exe", 0x10)
+    assert pointer_module.object_chains([chain, native, None, chain]) == [chain]
+    # Not a Mono static base
+    assert pointer_module.missing_managed_bases(5, [chain]) == {}
+
+    # Found, gone, found again: resolve_chain takes the field's address
+    pointer_module.remember_managed_bases(5, {chain.module: 0x7010})
+    assert pointer_module.managed_bases(5) == {chain.module: 0x7010}
+    pointer_module.forget_managed_bases(5, {chain.module})
+    assert pointer_module.managed_bases(5) == {}
+
+
 def test_static_regions_include_bss_behind_a_module():
     mappings = parse_maps([
         "1000-2000 r--p 00000000 08:01 1 /opt/game/game",

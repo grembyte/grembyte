@@ -3227,9 +3227,11 @@ def test_reference_graph_names_what_holds_an_object(tmp_path, qt_app):
     target = _MonoTarget(_build(tmp_path, ("FAKE_LIVENESS_BLOCKS",)))
     worker = ScriptWorker(target.pid)
     answers, failed = [], []
-    for answer in ("classes_browsed", "instances_browsed", "references_resolved"):
+    for answer in ("classes_browsed", "instances_browsed", "references_resolved",
+                   "fields_located"):
         getattr(worker, answer).connect(lambda _request, value: answers.append(value))
-    for failure in ("browse_failed", "instances_failed", "references_failed"):
+    for failure in ("browse_failed", "instances_failed", "references_failed",
+                    "fields_failed"):
         getattr(worker, failure).connect(lambda _request, message: failed.append(message))
 
     def ask(request, *args):
@@ -3278,6 +3280,19 @@ def test_reference_graph_names_what_holds_an_object(tmp_path, qt_app):
         # Only for an object's start: a field's location has none
         assert all("statics" not in entry for entry in resolved
                    if entry.get("object") and entry["object"] != entry["location"])
+
+        # A field target of the address list: the first field after the
+        # header, found again by class, field and name
+        field = ask("resolve_references", [address + 16], ("mscorlib", "UnityEngine"))[0]
+        assert field["kind"] == "field" and field["className"] == "Game.Combat"
+        targets = [{"className": "Game.Combat", "field": field["field"], "name": "Young Wolf"},
+                   {"className": "Game.Combat", "field": "noSuchField", "name": "Young Wolf"},
+                   {"className": "Game.Combat", "field": field["field"], "name": "",
+                    "hint": hex(address)}]
+        located = ask("locate_fields", targets)
+        assert located[0] == {"address": hex(address + 16), "object": hex(address)}
+        assert located[1] is None
+        assert located[2] == located[0]
     finally:
         worker.requestInterruption()
         worker.wait(5000)

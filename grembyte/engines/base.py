@@ -93,6 +93,11 @@ pointer to an object: ``locateReferences(locations, {maxObjects})`` answers
 for each ``{location, kind, object, klass, className, name, field}``, ``kind``
 'field', 'element' (of an array), 'static' (a class's static field, no
 ``object``) or 'unknown' (see the Mono adapter).
+It also finds a field again for the address list's field targets:
+``locateField(className, field, name, hint, {maxObjects})`` gives ``{address,
+object}`` of ``field`` (as ``locateReferences`` names it) of the live object of
+that class, the only one or the one named ``name``, or null; ``hint`` (the
+object found last) is kept while it is alive.
 The object inspector lists what it can call with ``methods(klass)``: ``[{name,
 method, static, owner}]``, the class's own methods first; a ``properties``
 entry's ``setter`` (Mono) is the property's set_ method or null.
@@ -136,7 +141,8 @@ GAS = "gas"
 # The object browser: every live object by its class (``browseClasses``,
 # ``browseInstances``): Unreal's object table, Mono's liveness calculation
 OBJECT_BROWSER = "object_browser"
-# The reference graph: which objects hold an object (``locateReferences``)
+# The reference graph: which objects hold an object (``locateReferences``);
+# field targets of the address list (``locateField``)
 OBJECT_REFERENCES = "object_references"
 
 

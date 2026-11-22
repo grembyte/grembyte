@@ -3004,6 +3004,20 @@ function resolveReferences(locations, options) {
   return engine.locateReferences(locations, options || {});
 }
 
+// The address list's field targets (see grembyte.core.pointer, object bases):
+// [{ className, field, name, hint }] -> [{ address, object } or null]. Mono
+// answers a search with a promise (it runs on the main thread).
+function locateFields(targets, options) {
+  return Promise.all(targets.map(async target => {
+    try {
+      return await engine.locateField(target.className, target.field, target.name || null,
+                                      target.hint ? ptr(target.hint) : null, options || {});
+    } catch (_error) {
+      return null;  // e.g. memory freed while it was read
+    }
+  }));
+}
+
 // ctx.gas in scripts (they run on the game thread)
 const scriptGas = {
   attributes: gasAttributes,
@@ -3107,6 +3121,7 @@ rpc.exports = {
   browseClasses,
   browseInstances,
   resolveReferences,
+  locateFields,
   addScript,
   updateScript,
   removeScript,

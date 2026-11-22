@@ -60,6 +60,6 @@ The test game has examples of both:
 
 ## Taking results
 
-Results show the address, type and live value. Select one or several and click **Track** (or double-click) to move them to the [tracked addresses](addresses.md). A right-click offers the memory viewer and the [write and read watch](write-watch.md) for a result directly.
+Results show the address, type and live value. Select one or several and click **Track** (or double-click) to move them to the [tracked addresses](addresses.md). A right-click offers the memory viewer and the [write and read watch](write-watch.md) for a result directly. In Unreal and Unity Mono games it also finds the objects the results lie in, one or all of them, and can put a result on the list located by its object's field (see [Fields of objects](addresses.md#fields-of-objects)).
 
 The scan area folds away with **Hide address search** next to the tabs, **View → Address search** or ++ctrl+shift+f++; Grembyte remembers the choice.
