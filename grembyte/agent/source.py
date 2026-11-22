@@ -11,3 +11,6 @@ def load_agent_source(module_file, name=None):
 
 # Prepended to every agent source that reports errors (see grembyte.core.messages).
 MESSAGES_SOURCE = load_agent_source(__file__, "messages.js")
+
+# The stack scan for return addresses (callers.js), for agents that name callers.
+CALLERS_SOURCE = load_agent_source(__file__, "callers.js")

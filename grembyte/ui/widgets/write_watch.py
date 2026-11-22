@@ -20,14 +20,17 @@ from grembyte.ui.widgets.table import copy_menu, resizable_columns, set_row_heig
 
 
 # Result table columns.
-_COUNT, _PC, _SITE, _READ, _WRITE, _VALUE, _THREAD, _TIME = range(8)
+_COUNT, _PC, _SITE, _CALLER, _READ, _WRITE, _VALUE, _THREAD, _TIME = range(9)
 
 
 class WriteWatchDialog(QDialog):
     """Display grouped write-watch hits and let the user stop monitoring.
 
     With ``reads`` the watch reports reads as well; the "read" and "write"
-    columns tell what each instruction does with the target.
+    columns tell what each instruction does with the target. The "called
+    from" column names the most frequent caller of the writing function, the
+    tooltip all of them; one the stack scan could not check is marked "?". A row in a copy routine of the C runtime (memcpy …)
+    cannot be hooked; a hint below the table points to the caller instead.
     """
 
     stop_requested = Signal()
@@ -42,6 +45,10 @@ class WriteWatchDialog(QDialog):
         super().__init__(parent)
         self.translations = translations
         self._rows_by_pc = {}
+        # trap PC -> {caller address: {"site": …, "count": …}}
+        self._callers_by_pc = {}
+        # trap PC -> name of the copy routine it lies in
+        self._copy_routines = {}
         self._failed = False
         self.setWindowTitle(
             translations["watch.title_access" if reads else "watch.title"].format(
@@ -66,12 +73,13 @@ class WriteWatchDialog(QDialog):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
-        self.results_table = QTableWidget(0, 8)
+        self.results_table = QTableWidget(0, 9)
         self.results_table.setHorizontalHeaderLabels(
             [
                 self.translations["watch.column_count"],
                 self.translations["watch.column_trap_pc"],
                 self.translations["watch.column_site"],
+                self.translations["watch.column_caller"],
                 self.translations["watch.column_read"],
                 self.translations["watch.column_write"],
                 self.translations["watch.column_value"],
@@ -90,7 +98,7 @@ class WriteWatchDialog(QDialog):
             for column in range(self.results_table.columnCount()):
                 header.setSectionResizeMode(
                     column,
-                    QHeaderView.ResizeMode.Stretch if column == _SITE
+                    QHeaderView.ResizeMode.Stretch if column in (_SITE, _CALLER)
                     else QHeaderView.ResizeMode.ResizeToContents,
                 )
             resizable_columns(self.results_table)
@@ -100,6 +108,11 @@ class WriteWatchDialog(QDialog):
         self.results_table.itemSelectionChanged.connect(self._update_hook_button)
         self.results_table.doubleClicked.connect(self._request_hook)
         layout.addWidget(self.results_table)
+
+        self.copy_routine_label = QLabel()
+        self.copy_routine_label.setWordWrap(True)
+        self.copy_routine_label.setVisible(False)
+        layout.addWidget(self.copy_routine_label)
 
         buttons = QHBoxLayout()
         self.hook_button = QPushButton(self.translations["watch.create_hook"])
@@ -153,6 +166,13 @@ class WriteWatchDialog(QDialog):
                 site_item = self.results_table.item(row, _SITE)
                 site_item.setText(hit["method"])
                 site_item.setToolTip(hit.get("site", pc))
+            if hit.get("copyRoutine") and pc not in self._copy_routines:
+                self._copy_routines[pc] = hit["copyRoutine"]
+                site_item = self.results_table.item(row, _SITE)
+                site_item.setText(self.translations["watch.copy_routine_site"].format(
+                    site=site_item.text(), routine=hit["copyRoutine"]))
+            if hit.get("callers"):
+                self._add_callers(row, pc, hit["callers"])
             count_item = self.results_table.item(row, _COUNT)
             count_item.setText(str(int(count_item.text()) + hit.get("count", 1)))
             # Older agents report writes only.
@@ -163,6 +183,28 @@ class WriteWatchDialog(QDialog):
             self.results_table.item(row, _THREAD).setText(str(hit.get("threadId", "")))
             self.results_table.item(row, _TIME).setText(self._hit_time(hit))
         self._update_hook_button()
+
+    def _add_callers(self, row, pc, callers):
+        """Count the callers of a batch and show them in the row."""
+        known = self._callers_by_pc.setdefault(pc, {})
+        for caller in callers:
+            site = caller.get("method") or caller.get("site", caller["address"])
+            if caller.get("checked") is False:
+                # Only the next return address on the stack: may be stale.
+                site = self.translations["watch.caller_unchecked"].format(caller=site)
+            entry = known.setdefault(caller["address"], {"site": site, "count": 0})
+            entry["count"] += caller.get("count", 1)
+        ranked = sorted(known.values(), key=lambda entry: -entry["count"])
+        text = ranked[0]["site"]
+        if len(ranked) > 1:
+            text = self.translations["watch.caller_more"].format(
+                caller=text, more=len(ranked) - 1)
+        item = self.results_table.item(row, _CALLER)
+        item.setText(text)
+        item.setToolTip("\n".join(
+            self.translations["watch.caller_entry"].format(count=entry["count"],
+                                                           caller=entry["site"])
+            for entry in ranked))
 
     @staticmethod
     def _hit_time(hit):
@@ -203,9 +245,23 @@ class WriteWatchDialog(QDialog):
         return (self.results_table.selectionModel().hasSelection() and item is not None
                 and item.checkState() == Qt.CheckState.Checked)
 
+    def _selected_copy_routine(self):
+        """Return the copy routine the selected row lies in, or None."""
+        row = self.results_table.currentRow()
+        pc_item = self.results_table.item(row, _PC) if row >= 0 else None
+        if pc_item is None or not self.results_table.selectionModel().hasSelection():
+            return None
+        return self._copy_routines.get(pc_item.text())
+
     def _update_hook_button(self):
-        # Only writes can be hooked: the hook rewrites the written value.
-        self.hook_button.setEnabled(self._selected_writes())
+        # Only writes can be hooked: the hook rewrites the written value. A
+        # copy routine writes for the whole game and is too short for a hook.
+        routine = self._selected_copy_routine()
+        self.hook_button.setEnabled(self._selected_writes() and routine is None)
+        self.copy_routine_label.setVisible(routine is not None)
+        if routine is not None:
+            self.copy_routine_label.setText(
+                self.translations["watch.copy_routine_hint"].format(routine=routine))
         self.monitor_button.setEnabled(self.results_table.currentRow() >= 0
                                        and self.results_table.selectionModel().hasSelection())
 
@@ -217,10 +273,10 @@ class WriteWatchDialog(QDialog):
 
     def _request_hook(self):
         row = self.results_table.currentRow()
-        if row < 0 or not self._selected_writes():
+        if row < 0 or not self._selected_writes() or self._selected_copy_routine():
             return
-        pc_item = self.results_table.item(row, 1)
-        site_item = self.results_table.item(row, 2)
+        pc_item = self.results_table.item(row, _PC)
+        site_item = self.results_table.item(row, _SITE)
         if pc_item is None:
             return
         self.hook_requested.emit(

@@ -424,3 +424,51 @@ def test_window_offers_the_function_around_an_instruction(tmp_path, qt_app, tran
         dialog.close()
         target.close()
 
+
+
+# A tiny function right before the next one: no room for Frida's jump.
+_TINY_TARGET_SOURCE = _TARGET_SOURCE.replace("int main(void) {\n", r"""
+__asm__(".text\n"
+        ".globl set_gold\n"
+        ".type set_gold, @function\n"
+        "set_gold:\n"
+        "    movl %esi, (%rdi)\n"
+        "    ret\n"
+        ".globl set_mana\n"
+        ".type set_mana, @function\n"
+        "set_mana:\n"
+        "    movl %esi, 4(%rdi)\n"
+        "    ret\n");
+void set_gold(int *wallet, int gold);
+
+int main(void) {
+    int wallet[2];
+    if (getenv("NEVER_SET") != NULL)
+        set_gold(wallet, 1);
+""").replace("#include <unistd.h>\n", "#include <unistd.h>\n#include <stdlib.h>\n")
+
+
+@requires_target
+def test_code_too_short_for_frida_is_reported_as_such(tmp_path, qt_app):
+    # pylint: disable=import-outside-toplevel
+    from grembyte.features.native_monitor import FUNCTION, NativeMonitorWorker
+
+    (tmp_path / "game.c").write_text(_TINY_TARGET_SOURCE)
+    binary = tmp_path / "game"
+    subprocess.run(["gcc", "-O1", str(tmp_path / "game.c"), "-o", str(binary)], check=True)
+    target = _Target(binary)
+    worker = NativeMonitorWorker(target.pid)
+    failed = []
+    worker.add_failed.connect(lambda monitor_id, message: failed.append((monitor_id, message)))
+    worker.worker_failed.connect(lambda message: failed.append(("worker", message)))
+    try:
+        worker.start()
+        worker.add(0, {"name": "set_gold"}, kind=FUNCTION)
+        _wait_for(qt_app, lambda: failed)
+        assert failed[0][0] == 0
+        assert "too short for its jump" in failed[0][1]
+        assert "please file a bug" not in failed[0][1]
+    finally:
+        worker.requestInterruption()
+        worker.wait(5000)
+        target.close()

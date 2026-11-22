@@ -4,6 +4,22 @@ const conditions = '__CONDITIONS__';  // 'w' or 'rw'
 const watchpointId = 0;
 const MAX_INSTRUCTION_SIZE = 15;
 const SYNC_WINDOW = 48;
+// Stack scans per trap PC for its callers; a frequent write keeps the callers
+// it showed by then (the scan costs more than the rest of a hit).
+const MAX_CALLER_SCANS = 2000;
+const MAX_CALLERS = 32;
+// Slots right above the writer's stack pointer searched for any return
+// address when the checked scan finds none (e.g. memmove reached through a
+// wrapper that jumps to it): unchecked, the dialog marks it so.
+const UNCHECKED_SLOTS = 4;
+// Flushes with hits (100 ms apart) between snapshots of executable memory for the scan.
+const RANGES_REFRESH_TICKS = 50;
+// C runtimes whose copy routines write for the whole program, and their names
+// (glibc's variants such as __memmove_avx_unaligned_erms included).
+const COPY_RUNTIME = /^(vcruntime\d+(_\d+)?|msvcr\d*|msvcrt|ucrtbase|ntdll)\.dll$|^(libc\.so|libc-|ld-linux)/i;
+const COPY_ROUTINE = /^_*(w?mem(cpy|move|set)(_s)?|Rtl(Copy|Move|Fill|Zero)Memory)(_|$)/i;
+// Farthest a location in a copy routine lies from its export.
+const MAX_ROUTINE_SIZE = 0x2000;
 // Read/write per trap PC; decoding is too slow for every frequent read.
 const accessByPc = new Map();
 // An access watchpoint traps reads, too, so reading the target from a
@@ -13,6 +29,10 @@ const readInHandler = conditions === 'w';
 const armedThreads = new Map();
 const pendingHits = new Map();
 const threadErrors = [];
+const callerScans = new Map();   // trap PC -> stack scans so far
+const copyRoutines = new Map();  // trap PC -> routine name or null
+const exportsByModule = new Map();
+let rangesTicks = 0;
 let initializing = true;
 let threadObserver = null;
 
@@ -80,8 +100,108 @@ function accessOf(pc) {
   return access;
 }
 
+function exportsOf(module) {
+  // The module's function exports sorted by address.
+  let list = exportsByModule.get(module.name);
+  if (list === undefined) {
+    try {
+      list = module.enumerateExports()
+        .filter(entry => entry.type === 'function')
+        .sort((a, b) => a.address.compare(b.address));
+    } catch (_error) {
+      list = [];
+    }
+    exportsByModule.set(module.name, list);
+  }
+  return list;
+}
+
+function routineName(pc, module) {
+  // The function ``pc`` lies in: by its symbol natively (glibc's variants
+  // are not exported), by the closest export before it under Wine.
+  if (Process.platform !== 'windows') {
+    try {
+      const name = DebugSymbol.fromAddress(pc).name;
+      if (name !== null && !name.startsWith('0x'))
+        return name.replace(/\+0x[0-9a-f]+$/, '');
+    } catch (_error) {
+    }
+  }
+  let best = null;
+  for (const entry of exportsOf(module)) {
+    if (entry.address.compare(pc) > 0)
+      break;
+    best = entry;
+  }
+  if (best === null || pc.sub(best.address).compare(ptr(MAX_ROUTINE_SIZE)) > 0)
+    return null;
+  return best.name;
+}
+
+function copyRoutine(pc) {
+  // The name of the C runtime's copy routine (memcpy …) ``pc`` lies in, or null.
+  const key = pc.toString();
+  let name = copyRoutines.get(key);
+  if (name === undefined) {
+    name = null;
+    const module = Process.findModuleByAddress(pc);
+    if (module !== null && COPY_RUNTIME.test(module.name)) {
+      const routine = routineName(pc, module);
+      if (routine !== null && COPY_ROUTINE.test(routine))
+        name = routine;
+    }
+    copyRoutines.set(key, name);
+  }
+  return name;
+}
+
+function uncheckedCaller(sp) {
+  // The first value near the stack pointer that follows a call instruction.
+  for (let slot = 0; slot < UNCHECKED_SLOTS; slot++) {
+    const value = sp.add(slot * Process.pointerSize).readPointer();
+    if (callBefore(value) !== null)
+      return value;
+  }
+  return null;
+}
+
+function callerOf(context) {
+  // { address, checked } of the function that wrote, or null; only for the
+  // first MAX_CALLER_SCANS hits of a trap PC.
+  const key = context.pc.toString();
+  const scans = callerScans.get(key) || 0;
+  if (scans >= MAX_CALLER_SCANS)
+    return null;
+  callerScans.set(key, scans + 1);
+  try {
+    const found = callerFrame(context.sp, context.pc);
+    if (found !== null)
+      return { address: found.value.toString(), checked: true };
+    const unchecked = uncheckedCaller(context.sp);
+    return unchecked === null ? null : { address: unchecked.toString(), checked: false };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function countCaller(hit, caller) {
+  if (caller === null)
+    return;
+  const known = hit.callers.get(caller.address);
+  if (known !== undefined)
+    known.count++;
+  else if (hit.callers.size < MAX_CALLERS)
+    hit.callers.set(caller.address, { count: 1, checked: caller.checked });
+}
+
+function describeAddress(address) {
+  const module = Process.findModuleByAddress(address);
+  return module ? `${module.name}+${address.sub(module.base)}` : address.toString();
+}
+
 function recordHit(threadId, context) {
   const pc = context.pc;
+  const caller = callerOf(context);
   const value = readInHandler ? readTargetBytes() : null;
   const access = accessOf(pc);
   const module = Process.findModuleByAddress(pc);
@@ -97,12 +217,13 @@ function recordHit(threadId, context) {
     hit.write = hit.write || access.write;
     hit.threadId = threadId;
     hit.time = Date.now();
+    countCaller(hit, caller);
     return;
   }
   // The trapping thread runs the JIT code, so Mono can name it here.
   if (module === null)
     engine.locate(pc);
-  pendingHits.set(key, {
+  const added = {
     pc: key,
     site,
     value,
@@ -110,8 +231,11 @@ function recordHit(threadId, context) {
     write: access.write,
     threadId,
     count: 1,
-    time: Date.now()
-  });
+    time: Date.now(),
+    callers: new Map()
+  };
+  countCaller(added, caller);
+  pendingHits.set(key, added);
 }
 
 Process.setExceptionHandler(details => {
@@ -146,6 +270,10 @@ function armThread(thread) {
   }
 }
 
+// A copy routine of a DLL is called through the import table (callers.js).
+followCallPointers = true;
+// Taken now, not in the first trapping thread.
+loadExecutableRanges();
 for (const thread of Process.enumerateThreads())
   armThread(thread);
 
@@ -162,13 +290,29 @@ initializing = false;
 function flushHits() {
   if (pendingHits.size === 0)
     return;
+  // New modules and JIT code: the scan only counts calls from executable memory.
+  if (++rangesTicks >= RANGES_REFRESH_TICKS) {
+    rangesTicks = 0;
+    loadExecutableRanges();
+  }
   const hits = Array.from(pendingHits.values());
   pendingHits.clear();
   engine.refresh();
   for (const hit of hits) {
-    const method = engine.name(ptr(hit.pc));
+    const pc = ptr(hit.pc);
+    const method = engine.name(pc);
     if (method !== null)
       hit.method = method;
+    const routine = copyRoutine(pc);
+    if (routine !== null)
+      hit.copyRoutine = routine;
+    hit.callers = Array.from(hit.callers, ([address, { count, checked }]) => {
+      const caller = { address, site: describeAddress(ptr(address)), count, checked };
+      const callerMethod = engine.name(ptr(address));
+      if (callerMethod !== null)
+        caller.method = callerMethod;
+      return caller;
+    });
   }
   if (!readInHandler) {
     const value = readTargetBytes();

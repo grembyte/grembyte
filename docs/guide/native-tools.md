@@ -50,4 +50,6 @@ Open it from a candidate of the native trace, from a favorite, or with a locatio
 - **Compare (bytes):** how many bytes behind each pointer argument are compared before and after the call; `0` turns the comparison off. More finds more fields but costs time for functions called often.
 - The kind: **Function start** logs arguments, result, caller and the memory comparison; **Single instruction** only the registers at every pass, for a location inside a function, e.g. from the [write watch](write-watch.md). **Automatic** takes the function start where a symbol begins, else the instruction. Never monitor an address inside a function as a function start: that overwrites a local variable of the game. For such a location **Monitor enclosing function** monitors the function it lies in.
 
+Frida replaces the first bytes at the location with a jump. A tiny function that ends before the jump fits, or a short piece of a copy routine such as `memcpy`, cannot be monitored; Grembyte says so. Monitor the code that calls it instead, e.g. the caller the [write watch](write-watch.md) shows.
+
 Both options apply to functions added afterwards. **Only calls with changes** shows only calls after which something changed behind a pointer argument. Beyond 200 calls a second, calls are only counted, so that the game stays playable.

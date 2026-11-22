@@ -30,7 +30,7 @@ flowchart BT
 
 | Package | Contents |
 | --- | --- |
-| `grembyte/agent` | What every agent builds on: loading agent sources (`source.py`), errors in the user's language (`messages.js`), what differs between Linux and Windows inside the game (`platform.js`). Imports nothing else from Grembyte. |
+| `grembyte/agent` | What every agent builds on: loading agent sources (`source.py`), errors in the user's language (`messages.js`), return addresses on the stack for hooks and the write watch (`callers.js`), what differs between Linux and Windows inside the game (`platform.js`). Imports nothing else from Grembyte. |
 | `grembyte/platform` | Grembyte's own side of a process: reading memory and mappings, process facts (`linux.py`, `windows.py`), PE images of Wine processes (`wine.py`). |
 | `grembyte/core` | Memory access, the value scanner, pointer chains and value types; settings, logs, the activity log, the session registry, and taking over the files of Hermes Hook, the former name (`former_name.py`). |
 | `grembyte/attach` | Getting into a process: Frida sessions (`frida_attach.py`), the Wine gadget and its Windows helper (`wine_gadget.py`, `wine_helper.py`, `inject/`), shared ptrace machinery (`ptrace_engine.py`), the watch backend names. |
@@ -44,7 +44,7 @@ flowchart BT
 
 ## Agents
 
-A feature's agent is put together from parts: the platform helpers (`agent/platform.js` with `agent/messages.js`), the engine prelude, every engine adapter's agent, the engine facade, and the feature's own script. The engine adapters register themselves; the facade picks the one whose runtime the game has loaded, so features use one `engine` object whatever the engine.
+A feature's agent is put together from parts: the platform helpers (`agent/platform.js` with `agent/messages.js`), the engine prelude, every engine adapter's agent, the engine facade, and the feature's own script. The hook engine and the write watch also load `agent/callers.js`, which finds the callers of the running code on the stack. The engine adapters register themselves; the facade picks the one whose runtime the game has loaded, so features use one `engine` object whatever the engine.
 
 Python calls an agent through Frida's RPC (`rpc.exports`, called as `script.exports_sync.<name>` in snake case). The [agent interface](agent-interface.md) lists every agent's exports and where Python calls them; `scripts/agent_interface.py` writes that page, and `tests/test_agent_interface.py` fails when it is out of date.
 

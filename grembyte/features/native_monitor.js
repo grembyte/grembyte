@@ -171,9 +171,21 @@ function admit(monitor) {
   return true;
 }
 
+function intercept(address, callbacks) {
+  // Interceptor.attach with Frida's "unable to intercept …; please file a
+  // bug" (too little code for its jump) as a message the user can act on.
+  try {
+    return Interceptor.attach(address, callbacks);
+  } catch (error) {
+    if (/unable to intercept/.test(String(error && error.message || error)))
+      throw grembyteError('error.native_monitor.too_short', { address });
+    throw error;
+  }
+}
+
 function probe(monitor) {
   // A function as callback: an instruction probe, which leaves the stack alone.
-  return Interceptor.attach(monitor.address, function () {
+  return intercept(monitor.address, function () {
     if (!admit(monitor))
       return;
     const context = this.context;
@@ -192,7 +204,7 @@ function probe(monitor) {
 }
 
 function attach(monitor) {
-  return Interceptor.attach(monitor.address, {
+  return intercept(monitor.address, {
     onEnter(args) {
       if (!admit(monitor)) {
         this.call = null;
