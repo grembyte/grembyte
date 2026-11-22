@@ -281,6 +281,33 @@ engine and uses much of what exists. Among the adapters, the call dialog is left
 
 The adapter layer is described in the [architecture](docs/development/architecture.md#adding-an-engine).
 
+### Field hooks (Unreal and Unity)
+
+A hook on a field found through reflection instead of on a write instruction: engine, class,
+field (e.g. `UIW_ProfileItem_Ergo_C.PrevSoul`) and which instance (the only one, the first).
+Some fields are only written by generic code: Unreal's Blueprint VM sets every Blueprint
+variable through `FProperty::CopySingleValue` → `FMemory::Memmove`. In Lies of P the write
+watch on such a field ends in `VCRUNTIME140.dll!memmove`, called through a wrapper; neither
+the copy routine nor its caller can tell this field from any other, so no write-site hook
+fits.
+
+- **Target:** the agent resolves the field's address through the engine's reflection (as the
+  inspector and the field catalog do) and resolves it again when the object is created anew
+  (level change, loaded save) and after a restart; no pointer chain, no training.
+- **Mechanism:** a hardware data watchpoint on the field. After each write of the game the
+  agent applies the manipulation (templates, scripts) and stores the result. The watchpoint
+  fires after the write, so the agent keeps the old value itself; its own write must not
+  trap again. The ptrace hook already rewrites values at a data watchpoint for fixed
+  addresses; new are a Frida variant and the target resolved by reflection.
+- **UI and storage:** "Create field hook …" in the inspector and the field catalog; saved per
+  program with engine, class, field and instance selector.
+- **Limits:** at most 4 debug registers, shared with the write watch: a few fields, not "all
+  enemies" (method hooks remain the way there). Every write stops the writing thread briefly,
+  fine for currencies, noticeable for fields written every frame. Anti-tamper code that checks
+  debug registers (Arxan) crashes the game, as with the write watch.
+- Before relying on a UI widget's field: it may only be a display copy (`PrevSoul` is likely
+  the previous value for the counting animation); check that changing it changes the game.
+
 ### Data type explorer (Mono/IL2CPP and Unreal)
 
 The catalog lists methods and, switched to **Fields**, the fields each class declares with

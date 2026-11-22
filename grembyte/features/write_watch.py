@@ -5,6 +5,13 @@ mode. So the agent decodes the instruction before each new trap PC to tell
 whether it reads and/or writes the target.
 
 In Mono games (Unity) a hit in JIT code names its C# method (``method``).
+
+Each hit also names the code that called the writing function (``callers``:
+return address, module + offset, how often), found by the stack scan the
+hooks use (callers.js). A hit in a copy routine of the C runtime
+(``memcpy``, ``memmove``, ``memset`` …) names it (``copyRoutine``): such a
+location writes for the whole program, and the caller is where the value
+comes from.
 """
 
 import threading
@@ -16,14 +23,14 @@ from grembyte.core import logs, messages
 from grembyte.core import sessions
 from grembyte.engines.registry import ENGINE_AGENT_SOURCE
 from grembyte.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_session
-from grembyte.agent.source import load_agent_source
+from grembyte.agent.source import CALLERS_SOURCE, load_agent_source
 
 
 _AGENT_SOURCE = load_agent_source(__file__)
 
 
 def _build_agent_source(address, size, reads=False):
-    return ENGINE_AGENT_SOURCE + (
+    return ENGINE_AGENT_SOURCE + CALLERS_SOURCE + (
         _AGENT_SOURCE
         .replace("__ADDRESS__", hex(address))
         .replace("__SIZE__", str(size))

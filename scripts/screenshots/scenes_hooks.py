@@ -83,17 +83,20 @@ def _template(window, name):
 # ----------------------------------------------------------------------
 # Write watch
 # ----------------------------------------------------------------------
-def _watch_hit(instruction, count, seconds, read, write, value):
+def _watch_hit(instruction, count, seconds, read, write, value, callers=()):
+    # pylint: disable=too-many-arguments
     offset, length, _text = instruction
     trap = offset + length
     return {
         "pc": f"{MODULE_BASE + trap:#x}", "site": _site(trap), "count": count,
         "read": read, "write": write, "value": value, "threadId": 48213,
         "time": _moment(seconds),
+        "callers": [{"address": f"{MODULE_BASE + at:#x}", "site": _site(at), "count": hits}
+                    for at, hits in callers],
     }
 
 
-@scene("write-watch", size=(980, 300),
+@scene("write-watch", size=(1160, 300),
        description="Reads and writes of the gold, grouped by instruction")
 def write_watch(studio):
     """The access watch on the gold after buying and finding treasure a few times."""
@@ -102,9 +105,10 @@ def write_watch(studio):
         f"0x{GOLD:X}", 4, studio.translations, window, reads=True))
     dialog.set_monitoring(4)
     dialog.add_hits([
-        _watch_hit(ADD_GOLD, 4, 41.2, True, True, "46 05 00 00"),
-        _watch_hit(REMOVE_GOLD, 1, 31.5, True, True, "84 03 00 00"),
-        _watch_hit(SHOW_GOLD, 5, 41.2, True, False, "46 05 00 00"),
+        _watch_hit(ADD_GOLD, 4, 41.2, True, True, "46 05 00 00",
+                   callers=((0x1C52, 3), (0x1C8E, 1))),
+        _watch_hit(REMOVE_GOLD, 1, 31.5, True, True, "84 03 00 00", callers=((0x1CB3, 1),)),
+        _watch_hit(SHOW_GOLD, 5, 41.2, True, False, "46 05 00 00", callers=((0x1D0A, 5),)),
     ])
     dialog.results_table.selectRow(0)
     return dialog

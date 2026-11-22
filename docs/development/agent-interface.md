@@ -93,9 +93,9 @@ Agent: [`features/native_monitor.js`](https://github.com/grembyte/grembyte/blob/
 
 | Export | Python | Called in | Same name elsewhere |
 | --- | --- | --- | --- |
-| [`add`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/native_monitor.js#L366) | `add` | [`features/native_monitor.py:182`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/native_monitor.py#L182) (+2) | – |
-| [`remove`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/native_monitor.js#L367) | `remove` | [`features/native_monitor.py:185`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/native_monitor.py#L185) (+2) | – |
-| [`dispose`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/native_monitor.js#L368) | `dispose` | [`features/trace.py:399`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/trace.py#L399) | – |
+| [`add`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/native_monitor.js#L378) | `add` | [`features/native_monitor.py:182`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/native_monitor.py#L182) (+2) | – |
+| [`remove`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/native_monitor.js#L379) | `remove` | [`features/native_monitor.py:185`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/native_monitor.py#L185) (+2) | – |
+| [`dispose`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/native_monitor.js#L380) | `dispose` | [`features/trace.py:399`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/trace.py#L399) | – |
 
 ## `features/native_trace.js`
 
@@ -131,7 +131,7 @@ Agent: [`features/write_watch.js`](https://github.com/grembyte/grembyte/blob/mai
 
 | Export | Python | Called in | Same name elsewhere |
 | --- | --- | --- | --- |
-| [`stop`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/write_watch.js#L189) | `stop` | [`features/write_watch.py:103`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/write_watch.py#L103) | – |
+| [`stop`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/write_watch.js#L333) | `stop` | [`features/write_watch.py:110`](https://github.com/grembyte/grembyte/blob/main/grembyte/features/write_watch.py#L110) | – |
 
 ## `hooks/engine.js`
 
@@ -139,15 +139,15 @@ Agent: [`hooks/engine.js`](https://github.com/grembyte/grembyte/blob/main/gremby
 
 | Export | Python | Called in | Same name elsewhere |
 | --- | --- | --- | --- |
-| [`addHook`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L3109) | `add_hook` | [`hooks/engine.py:442`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L442) | [`cli.py:674`](https://github.com/grembyte/grembyte/blob/main/grembyte/cli.py#L674), [`ui/main_window.py:2625`](https://github.com/grembyte/grembyte/blob/main/grembyte/ui/main_window.py#L2625), [`ui/widgets/hooks.py:838`](https://github.com/grembyte/grembyte/blob/main/grembyte/ui/widgets/hooks.py#L838) (+4) |
-| [`removeHook`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L3110) | `remove_hook` | [`hooks/engine.py:450`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L450) | [`ui/widgets/hooks.py:1820`](https://github.com/grembyte/grembyte/blob/main/grembyte/ui/widgets/hooks.py#L1820) (+1) |
-| [`setTrainingPaused`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L3111) | `set_training_paused` | [`hooks/engine.py:461`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L461) | – |
-| [`setTransform`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L3112) | `set_transform` | [`hooks/engine.py:453`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L453) | [`ui/widgets/hooks.py:1072`](https://github.com/grembyte/grembyte/blob/main/grembyte/ui/widgets/hooks.py#L1072) (+1) |
-| [`setRepatch`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L3126) | `set_repatch` | [`hooks/engine.py:392`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L392) (+1) | – |
-| [`setProfiling`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L3130) | `set_profiling` | [`hooks/engine.py:393`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L393) (+1) | – |
-| [`setDebug`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L3136) | `set_debug` | [`hooks/engine.py:465`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L465) | [`ui/widgets/hooks.py:1160`](https://github.com/grembyte/grembyte/blob/main/grembyte/ui/widgets/hooks.py#L1160) (+2) |
-| [`setEnabled`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L3147) | `set_enabled` | [`hooks/engine.py:456`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L456) | [`ui/widgets/hooks.py:1863`](https://github.com/grembyte/grembyte/blob/main/grembyte/ui/widgets/hooks.py#L1863) |
-| [`dispose`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L3160) | `dispose` | [`hooks/engine.py:418`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L418) | – |
+| [`addHook`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L2866) | `add_hook` | [`hooks/engine.py:442`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L442) | [`cli.py:674`](https://github.com/grembyte/grembyte/blob/main/grembyte/cli.py#L674), [`ui/main_window.py:2625`](https://github.com/grembyte/grembyte/blob/main/grembyte/ui/main_window.py#L2625), [`ui/widgets/hooks.py:838`](https://github.com/grembyte/grembyte/blob/main/grembyte/ui/widgets/hooks.py#L838) (+4) |
+| [`removeHook`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L2867) | `remove_hook` | [`hooks/engine.py:450`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L450) | [`ui/widgets/hooks.py:1820`](https://github.com/grembyte/grembyte/blob/main/grembyte/ui/widgets/hooks.py#L1820) (+1) |
+| [`setTrainingPaused`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L2868) | `set_training_paused` | [`hooks/engine.py:461`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L461) | – |
+| [`setTransform`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L2869) | `set_transform` | [`hooks/engine.py:453`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L453) | [`ui/widgets/hooks.py:1072`](https://github.com/grembyte/grembyte/blob/main/grembyte/ui/widgets/hooks.py#L1072) (+1) |
+| [`setRepatch`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L2883) | `set_repatch` | [`hooks/engine.py:392`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L392) (+1) | – |
+| [`setProfiling`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L2887) | `set_profiling` | [`hooks/engine.py:393`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L393) (+1) | – |
+| [`setDebug`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L2893) | `set_debug` | [`hooks/engine.py:465`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L465) | [`ui/widgets/hooks.py:1160`](https://github.com/grembyte/grembyte/blob/main/grembyte/ui/widgets/hooks.py#L1160) (+2) |
+| [`setEnabled`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L2904) | `set_enabled` | [`hooks/engine.py:456`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L456) | [`ui/widgets/hooks.py:1863`](https://github.com/grembyte/grembyte/blob/main/grembyte/ui/widgets/hooks.py#L1863) |
+| [`dispose`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.js#L2917) | `dispose` | [`hooks/engine.py:418`](https://github.com/grembyte/grembyte/blob/main/grembyte/hooks/engine.py#L418) | – |
 
 ## `hooks/syntax.py`
 

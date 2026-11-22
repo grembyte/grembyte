@@ -126,7 +126,7 @@ from grembyte.attach.frida_attach import CLEANUP_ERRORS, FRIDA_ERRORS, attach_se
 from grembyte.attach.backends import BACKEND_PTRACE
 from grembyte.core.value_types import watch_size_for_type
 from grembyte.hooks.transforms import ValueTransform
-from grembyte.agent.source import load_agent_source
+from grembyte.agent.source import CALLERS_SOURCE, load_agent_source
 
 
 MAX_CALLER_DEPTH = 4
@@ -252,7 +252,7 @@ class HookSpec:
 
 
 def build_agent_source():
-    return ENGINE_AGENT_SOURCE + _AGENT_SOURCE
+    return ENGINE_AGENT_SOURCE + CALLERS_SOURCE + _AGENT_SOURCE
 
 
 def create_hook_worker(backend, pid, parent=None) -> QThread:

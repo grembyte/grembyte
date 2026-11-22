@@ -3,7 +3,8 @@
 ``source``
     Loads an agent's JavaScript from the .js file beside its module, and
     ``MESSAGES_SOURCE`` (messages.js): errors grembyte renders in the user's
-    language.
+    language, and ``CALLERS_SOURCE`` (callers.js): return addresses on the
+    stack, for hooks and the write watch.
 ``platform``
     What differs between Linux and Windows (Wine/Proton) inside the game.
 
